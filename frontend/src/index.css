@@ -1,0 +1,40 @@
+/* Importamos Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales */
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900;
+    /* Evitamos el "bounce" en iOS al hacer scroll */
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Clases utilitarias personalizadas */
+@layer components {
+  /* Botón primario reutilizable */
+  .btn-primario {
+    @apply w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg
+           hover:bg-blue-700 active:bg-blue-800 transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Botón secundario reutilizable */
+  .btn-secundario {
+    @apply w-full bg-gray-200 text-gray-800 font-semibold py-3 px-4 rounded-lg
+           hover:bg-gray-300 active:bg-gray-400 transition-colors;
+  }
+
+  /* Campo de formulario */
+  .campo-form {
+    @apply w-full border border-gray-300 rounded-lg px-4 py-3 text-base
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  }
+
+  /* Tarjeta */
+  .tarjeta {
+    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-4;
+  }
+}
