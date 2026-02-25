@@ -51,6 +51,7 @@ router.post('/login', async (req, res) => {
         username: perfil.username,
         rol: perfil.rol,
         nombre: perfil.nombre,
+        sucursal_id: perfil.sucursal_id || null,
       },
     })
   } catch (err) {
@@ -79,6 +80,7 @@ router.get('/me', verificarAuth, (req, res) => {
     username: req.perfil.username,
     rol: req.perfil.rol,
     nombre: req.perfil.nombre,
+    sucursal_id: req.perfil.sucursal_id || null,
   })
 })
 
@@ -102,7 +104,7 @@ router.get('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
 // POST /api/auth/usuarios
 // Admin: crea un nuevo usuario
 router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
-  const { username, password, nombre, rol } = req.body
+  const { username, password, nombre, rol, sucursal_id } = req.body
 
   if (!username || !password || !nombre) {
     return res.status(400).json({ error: 'Username, contraseña y nombre son requeridos' })
@@ -110,6 +112,10 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
 
   if (!['admin', 'operario'].includes(rol)) {
     return res.status(400).json({ error: 'El rol debe ser "admin" o "operario"' })
+  }
+
+  if (rol === 'operario' && !sucursal_id) {
+    return res.status(400).json({ error: 'Los operarios deben tener una sucursal asignada' })
   }
 
   if (password.length < 6) {
@@ -150,14 +156,19 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     }
 
     // Crear perfil
+    const perfilData = {
+      user_id: authData.user.id,
+      username: usernameLimpio,
+      nombre,
+      rol,
+    }
+    if (rol === 'operario' && sucursal_id) {
+      perfilData.sucursal_id = sucursal_id
+    }
+
     const { data: perfil, error: perfilError } = await supabase
       .from('perfiles')
-      .insert({
-        user_id: authData.user.id,
-        username: usernameLimpio,
-        nombre,
-        rol,
-      })
+      .insert(perfilData)
       .select()
       .single()
 

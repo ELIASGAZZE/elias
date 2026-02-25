@@ -45,4 +45,23 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// DELETE /api/sucursales/:id
+// Admin: elimina una sucursal
+router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const { error } = await supabase
+      .from('sucursales')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+    res.json({ mensaje: 'Sucursal eliminada correctamente' })
+  } catch (err) {
+    console.error('Error al eliminar sucursal:', err)
+    res.status(500).json({ error: 'Error al eliminar sucursal' })
+  }
+})
+
 module.exports = router

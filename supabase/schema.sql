@@ -28,6 +28,10 @@ CREATE TABLE articulos (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   codigo TEXT NOT NULL UNIQUE,
   nombre TEXT NOT NULL,
+  -- 'manual' = creado a mano, 'automatico' = sincronizado desde ERP Centum
+  tipo TEXT NOT NULL DEFAULT 'manual' CHECK (tipo IN ('manual', 'automatico')),
+  rubro TEXT,
+  marca TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -38,6 +42,8 @@ CREATE TABLE articulos_por_sucursal (
   articulo_id UUID REFERENCES articulos(id) ON DELETE CASCADE NOT NULL,
   sucursal_id UUID REFERENCES sucursales(id) ON DELETE CASCADE NOT NULL,
   habilitado BOOLEAN DEFAULT TRUE,
+  -- Stock ideal que debería tener la sucursal (para referencia del operario)
+  stock_ideal INTEGER DEFAULT 0,
   -- Cada artículo aparece una sola vez por sucursal
   UNIQUE(articulo_id, sucursal_id)
 );

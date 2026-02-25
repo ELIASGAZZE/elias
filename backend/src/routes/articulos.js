@@ -30,7 +30,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
     const { data, error } = await supabase
       .from('articulos_por_sucursal')
-      .select('articulos(id, codigo, nombre), habilitado')
+      .select('articulos(id, codigo, nombre, tipo, rubro, marca), habilitado, stock_ideal')
       .eq('sucursal_id', sucursalId)
       .eq('habilitado', true)
 
@@ -40,6 +40,7 @@ router.get('/', verificarAuth, async (req, res) => {
     const articulosHabilitados = data.map(item => ({
       ...item.articulos,
       habilitado: item.habilitado,
+      stock_ideal: item.stock_ideal,
     }))
 
     res.json(articulosHabilitados)
@@ -57,7 +58,7 @@ router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) =
 
     const { data, error } = await supabase
       .from('articulos_por_sucursal')
-      .select('habilitado, articulos(id, codigo, nombre)')
+      .select('habilitado, stock_ideal, articulos(id, codigo, nombre, tipo, rubro, marca)')
       .eq('sucursal_id', sucursalId)
       .order('articulos(nombre)')
 
@@ -66,6 +67,7 @@ router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) =
     const resultado = data.map(item => ({
       ...item.articulos,
       habilitado: item.habilitado,
+      stock_ideal: item.stock_ideal,
     }))
 
     res.json(resultado)
@@ -76,20 +78,25 @@ router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) =
 })
 
 // PUT /api/articulos/:articuloId/sucursal/:sucursalId
-// Admin: habilitar o deshabilitar un artículo para una sucursal
+// Admin: habilitar/deshabilitar un artículo y/o actualizar stock_ideal
 router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { articuloId, sucursalId } = req.params
-    const { habilitado } = req.body
+    const { habilitado, stock_ideal } = req.body
 
-    if (typeof habilitado !== 'boolean') {
-      return res.status(400).json({ error: 'El campo "habilitado" debe ser true o false' })
+    const upsertData = { articulo_id: articuloId, sucursal_id: sucursalId }
+
+    if (typeof habilitado === 'boolean') {
+      upsertData.habilitado = habilitado
+    }
+    if (typeof stock_ideal === 'number') {
+      upsertData.stock_ideal = stock_ideal
     }
 
     // Hacemos upsert (insertar o actualizar si ya existe)
     const { data, error } = await supabase
       .from('articulos_por_sucursal')
-      .upsert({ articulo_id: articuloId, sucursal_id: sucursalId, habilitado })
+      .upsert(upsertData)
       .select()
       .single()
 
@@ -102,7 +109,7 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
 })
 
 // POST /api/articulos
-// Admin: crea un artículo individual
+// Admin: crea un artículo individual (manual)
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { codigo, nombre } = req.body
@@ -122,10 +129,10 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(409).json({ error: `Ya existe un artículo con el código "${codigo}"` })
     }
 
-    // Crear el artículo
+    // Crear el artículo (forzamos tipo manual)
     const { data: articulo, error } = await supabase
       .from('articulos')
-      .insert({ codigo, nombre })
+      .insert({ codigo, nombre, tipo: 'manual' })
       .select()
       .single()
 
@@ -152,6 +159,98 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al crear artículo:', err)
     res.status(500).json({ error: 'Error al crear artículo' })
+  }
+})
+
+// POST /api/articulos/sincronizar-erp
+// Admin: sincroniza artículos desde ERP Centum
+router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const baseUrl = process.env.CENTUM_BASE_URL
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID
+    const clientId = process.env.CENTUM_CLIENT_ID
+
+    if (!baseUrl || !apiKey) {
+      return res.status(500).json({ error: 'Faltan credenciales del ERP Centum en las variables de entorno' })
+    }
+
+    // Llamar al ERP Centum
+    const response = await fetch(`${baseUrl}/Articulos/Venta`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'ConsumidorApiPublicaID': consumerId,
+      },
+      body: JSON.stringify({
+        Clave: apiKey,
+        IdCliente: parseInt(clientId),
+      }),
+    })
+
+    if (!response.ok) {
+      const texto = await response.text()
+      console.error('Error del ERP Centum:', response.status, texto)
+      return res.status(502).json({ error: `Error al conectar con ERP Centum (${response.status})` })
+    }
+
+    const erpData = await response.json()
+
+    // Filtrar solo habilitados
+    const articulosERP = (Array.isArray(erpData) ? erpData : erpData.Datos || erpData.datos || [])
+      .filter(art => art.Habilitado === true)
+
+    if (articulosERP.length === 0) {
+      return res.json({ mensaje: 'No se encontraron artículos habilitados en el ERP', cantidad: 0 })
+    }
+
+    // Mapear campos del ERP a nuestro schema
+    const articulosMapeados = articulosERP.map(art => ({
+      codigo: String(art.Codigo),
+      nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
+      rubro: art.Rubro?.Nombre || null,
+      marca: art.MarcaArticulo?.Nombre || null,
+      tipo: 'automatico',
+    }))
+
+    // Upsert en articulos por codigo
+    const { data: articulosInsertados, error: errorUpsert } = await supabase
+      .from('articulos')
+      .upsert(articulosMapeados, { onConflict: 'codigo' })
+      .select()
+
+    if (errorUpsert) throw errorUpsert
+
+    // Obtener todas las sucursales para crear filas en articulos_por_sucursal
+    const { data: sucursales } = await supabase
+      .from('sucursales')
+      .select('id')
+
+    if (sucursales && sucursales.length > 0 && articulosInsertados && articulosInsertados.length > 0) {
+      const filasRelacion = []
+      for (const art of articulosInsertados) {
+        for (const suc of sucursales) {
+          filasRelacion.push({
+            articulo_id: art.id,
+            sucursal_id: suc.id,
+            habilitado: false,
+          })
+        }
+      }
+
+      // Upsert para no duplicar si ya existen
+      await supabase
+        .from('articulos_por_sucursal')
+        .upsert(filasRelacion, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+    }
+
+    res.json({
+      mensaje: `${articulosInsertados.length} artículos sincronizados desde el ERP`,
+      cantidad: articulosInsertados.length,
+    })
+  } catch (err) {
+    console.error('Error al sincronizar con ERP:', err)
+    res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })
   }
 })
 

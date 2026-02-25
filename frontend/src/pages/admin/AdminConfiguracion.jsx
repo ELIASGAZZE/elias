@@ -15,7 +15,7 @@ const AdminConfiguracion = () => {
   // Usuarios
   const [usuarios, setUsuarios] = useState([])
   const [cargandoUsuarios, setCargandoUsuarios] = useState(true)
-  const [nuevoUsuario, setNuevoUsuario] = useState({ username: '', password: '', nombre: '', rol: 'operario' })
+  const [nuevoUsuario, setNuevoUsuario] = useState({ username: '', password: '', nombre: '', rol: 'operario', sucursal_id: '' })
   const [creandoUsuario, setCreandoUsuario] = useState(false)
   const [mensajeUsuario, setMensajeUsuario] = useState('')
 
@@ -78,13 +78,18 @@ const AdminConfiguracion = () => {
       return
     }
 
+    if (nuevoUsuario.rol === 'operario' && !nuevoUsuario.sucursal_id) {
+      setMensajeUsuario('Seleccioná una sucursal para el operario')
+      return
+    }
+
     setCreandoUsuario(true)
     setMensajeUsuario('')
 
     try {
       await api.post('/api/auth/usuarios', nuevoUsuario)
       setMensajeUsuario('ok:Usuario creado correctamente')
-      setNuevoUsuario({ username: '', password: '', nombre: '', rol: 'operario' })
+      setNuevoUsuario({ username: '', password: '', nombre: '', rol: 'operario', sucursal_id: '' })
       await cargarUsuarios()
     } catch (err) {
       const msg = err.response?.data?.error || 'Error al crear usuario'
@@ -138,12 +143,24 @@ const AdminConfiguracion = () => {
             />
             <select
               value={nuevoUsuario.rol}
-              onChange={(e) => setNuevoUsuario(prev => ({ ...prev, rol: e.target.value }))}
+              onChange={(e) => setNuevoUsuario(prev => ({ ...prev, rol: e.target.value, sucursal_id: '' }))}
               className="campo-form text-sm"
             >
               <option value="operario">Operario</option>
               <option value="admin">Administrador</option>
             </select>
+            {nuevoUsuario.rol === 'operario' && (
+              <select
+                value={nuevoUsuario.sucursal_id}
+                onChange={(e) => setNuevoUsuario(prev => ({ ...prev, sucursal_id: e.target.value }))}
+                className="campo-form text-sm"
+              >
+                <option value="">Seleccioná una sucursal</option>
+                {sucursales.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre}</option>
+                ))}
+              </select>
+            )}
             <button
               type="submit"
               disabled={creandoUsuario}

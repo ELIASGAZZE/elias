@@ -1,6 +1,7 @@
 // Vista principal del operario: crear un nuevo pedido
 // Diseño mobile-first con tarjetas táctiles grandes
-import React, { useState, useEffect } from 'react'
+// Artículos agrupados por rubro y marca
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import { OPERARIO_TABS } from '../../components/layout/navTabs'
@@ -58,6 +59,41 @@ const NuevoPedido = () => {
     // Limpiamos cantidades al cambiar de sucursal
     setCantidades({})
   }, [sucursalSeleccionada])
+
+  // Agrupar artículos por rubro → marca
+  const articulosAgrupados = useMemo(() => {
+    const grupos = {}
+
+    articulos.forEach(art => {
+      const rubro = art.rubro || 'Sin rubro'
+      const marca = art.marca || 'Sin marca'
+
+      if (!grupos[rubro]) grupos[rubro] = {}
+      if (!grupos[rubro][marca]) grupos[rubro][marca] = []
+      grupos[rubro][marca].push(art)
+    })
+
+    // Convertir a array ordenado
+    return Object.keys(grupos)
+      .sort((a, b) => {
+        if (a === 'Sin rubro') return 1
+        if (b === 'Sin rubro') return -1
+        return a.localeCompare(b)
+      })
+      .map(rubro => ({
+        rubro,
+        marcas: Object.keys(grupos[rubro])
+          .sort((a, b) => {
+            if (a === 'Sin marca') return 1
+            if (b === 'Sin marca') return -1
+            return a.localeCompare(b)
+          })
+          .map(marca => ({
+            marca,
+            articulos: grupos[rubro][marca].sort((a, b) => a.nombre.localeCompare(b.nombre)),
+          })),
+      }))
+  }, [articulos])
 
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
@@ -172,17 +208,35 @@ const NuevoPedido = () => {
               Tocá un artículo para agregar cantidad
             </p>
 
-            {/* Lista de artículos */}
-            <div className="space-y-3">
-              {articulos.map(articulo => (
-                <ArticuloCard
-                  key={articulo.id}
-                  articulo={articulo}
-                  cantidad={cantidades[articulo.id] || 0}
-                  onChange={(val) => actualizarCantidad(articulo.id, val)}
-                />
-              ))}
-            </div>
+            {/* Lista de artículos agrupada por rubro/marca */}
+            {articulosAgrupados.map(grupo => (
+              <div key={grupo.rubro} className="mb-4">
+                {/* Header de rubro */}
+                <h2 className="text-sm font-bold text-gray-700 bg-gray-200 px-3 py-2 rounded-t-lg uppercase tracking-wide">
+                  {grupo.rubro}
+                </h2>
+
+                {grupo.marcas.map(subgrupo => (
+                  <div key={subgrupo.marca}>
+                    {/* Header de marca */}
+                    <h3 className="text-xs font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 border-b border-blue-100">
+                      {subgrupo.marca}
+                    </h3>
+
+                    <div className="space-y-3 py-2">
+                      {subgrupo.articulos.map(articulo => (
+                        <ArticuloCard
+                          key={articulo.id}
+                          articulo={articulo}
+                          cantidad={cantidades[articulo.id] || 0}
+                          onChange={(val) => actualizarCantidad(articulo.id, val)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
 
             {articulos.length === 0 && (
               <p className="text-center text-gray-400 mt-10">
@@ -232,6 +286,9 @@ const ArticuloCard = ({ articulo, cantidad, onChange }) => {
       <div className="flex-1 min-w-0 mr-3">
         <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
         <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
+        {articulo.stock_ideal > 0 && (
+          <p className="text-xs text-blue-500 mt-0.5">Stock ideal: {articulo.stock_ideal}</p>
+        )}
       </div>
 
       {/* Selector de cantidad con botones +/- grandes (fáciles de tocar) */}
