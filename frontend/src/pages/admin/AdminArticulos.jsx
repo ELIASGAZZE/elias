@@ -1,6 +1,7 @@
 // Panel de administrador: gestionar artículos habilitados por sucursal
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
+import { ADMIN_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 const AdminArticulos = () => {
@@ -11,6 +12,12 @@ const AdminArticulos = () => {
   const [importando, setImportando] = useState(false)
   const [urlSheets, setUrlSheets] = useState('')
   const [mensaje, setMensaje] = useState('')
+
+  // Estado para creación manual de artículo
+  const [nuevoCodigo, setNuevoCodigo] = useState('')
+  const [nuevoNombre, setNuevoNombre] = useState('')
+  const [creando, setCreando] = useState(false)
+  const [mensajeCrear, setMensajeCrear] = useState('')
 
   // Cargamos las sucursales al iniciar
   useEffect(() => {
@@ -55,8 +62,40 @@ const AdminArticulos = () => {
     }
   }
 
+  // Crear artículo manual
+  const crearArticulo = async (e) => {
+    e.preventDefault()
+    if (!nuevoCodigo.trim() || !nuevoNombre.trim()) {
+      setMensajeCrear('Completá código y nombre')
+      return
+    }
+
+    setCreando(true)
+    setMensajeCrear('')
+
+    try {
+      await api.post('/api/articulos', {
+        codigo: nuevoCodigo.trim(),
+        nombre: nuevoNombre.trim(),
+      })
+      setMensajeCrear('ok:Artículo creado correctamente')
+      setNuevoCodigo('')
+      setNuevoNombre('')
+
+      // Recargamos la lista si hay sucursal seleccionada
+      if (sucursalSeleccionada) {
+        const { data } = await api.get(`/api/articulos/sucursal/${sucursalSeleccionada}`)
+        setArticulos(data)
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear artículo'
+      setMensajeCrear(msg)
+    } finally {
+      setCreando(false)
+    }
+  }
+
   // Importar artículos desde Google Sheets
-  // La URL pública del Sheet se convierte a formato JSON
   const importarDesdeSheets = async () => {
     if (!urlSheets.trim()) {
       setMensaje('Ingresá la URL del Google Sheet')
@@ -67,9 +106,6 @@ const AdminArticulos = () => {
     setMensaje('')
 
     try {
-      // Convertimos la URL de Google Sheets al endpoint CSV exportable
-      // Ejemplo URL: https://docs.google.com/spreadsheets/d/ID/edit#gid=0
-      // El Sheet debe tener columnas: codigo, nombre (en la primera fila)
       const match = urlSheets.match(/\/d\/([a-zA-Z0-9-_]+)/)
       if (!match) {
         setMensaje('URL inválida. Copiá la URL completa del Google Sheet.')
@@ -81,7 +117,6 @@ const AdminArticulos = () => {
       const respuesta = await fetch(csvUrl)
       const texto = await respuesta.text()
 
-      // Parseamos el CSV simple (asumimos primera fila como headers)
       const filas = texto.trim().split('\n')
       const headers = filas[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''))
       const idxCodigo = headers.indexOf('codigo')
@@ -98,7 +133,7 @@ const AdminArticulos = () => {
       }).filter(a => a.codigo && a.nombre)
 
       const { data } = await api.post('/api/articulos/importar', { articulos: articulosImportar })
-      setMensaje(`✅ ${data.articulos.length} artículos importados correctamente`)
+      setMensaje(`ok:${data.articulos.length} artículos importados correctamente`)
 
       // Recargamos la lista
       const res = await api.get(`/api/articulos/sucursal/${sucursalSeleccionada}`)
@@ -113,9 +148,42 @@ const AdminArticulos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Administrador - Artículos" />
+      <Navbar titulo="Artículos" tabs={ADMIN_TABS} />
 
       <div className="px-4 py-4 space-y-4">
+
+        {/* Sección de creación manual de artículo */}
+        <div className="tarjeta">
+          <h2 className="font-semibold text-gray-700 mb-3">Crear artículo</h2>
+          <form onSubmit={crearArticulo} className="space-y-3">
+            <input
+              type="text"
+              value={nuevoCodigo}
+              onChange={(e) => setNuevoCodigo(e.target.value)}
+              placeholder="Código"
+              className="campo-form text-sm"
+            />
+            <input
+              type="text"
+              value={nuevoNombre}
+              onChange={(e) => setNuevoNombre(e.target.value)}
+              placeholder="Nombre del artículo"
+              className="campo-form text-sm"
+            />
+            <button
+              type="submit"
+              disabled={creando}
+              className="btn-primario"
+            >
+              {creando ? 'Creando...' : 'Crear artículo'}
+            </button>
+            {mensajeCrear && (
+              <p className={`text-sm ${mensajeCrear.startsWith('ok:') ? 'text-green-600' : 'text-red-600'}`}>
+                {mensajeCrear.startsWith('ok:') ? mensajeCrear.slice(3) : mensajeCrear}
+              </p>
+            )}
+          </form>
+        </div>
 
         {/* Sección de importación desde Google Sheets */}
         <div className="tarjeta">
@@ -138,8 +206,8 @@ const AdminArticulos = () => {
             {importando ? 'Importando...' : 'Importar artículos'}
           </button>
           {mensaje && (
-            <p className={`text-sm mt-2 ${mensaje.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>
-              {mensaje}
+            <p className={`text-sm mt-2 ${mensaje.startsWith('ok:') ? 'text-green-600' : 'text-red-600'}`}>
+              {mensaje.startsWith('ok:') ? mensaje.slice(3) : mensaje}
             </p>
           )}
         </div>
@@ -165,7 +233,7 @@ const AdminArticulos = () => {
             <div className="space-y-2">
               {articulos.length === 0 && (
                 <p className="text-gray-400 text-sm text-center py-4">
-                  No hay artículos. Importá desde Google Sheets primero.
+                  No hay artículos. Importá desde Google Sheets o creá uno manualmente.
                 </p>
               )}
               {articulos.map(articulo => (

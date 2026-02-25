@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import { OPERARIO_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 // Colores para los distintos estados del pedido
@@ -33,7 +34,7 @@ const MisPedidos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Mis Pedidos" />
+      <Navbar titulo="Mis Pedidos" tabs={OPERARIO_TABS} />
 
       <div className="px-4 py-4 space-y-3">
         {cargando && (

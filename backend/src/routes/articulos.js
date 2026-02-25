@@ -97,6 +97,60 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
   }
 })
 
+// POST /api/articulos
+// Admin: crea un artículo individual
+router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { codigo, nombre } = req.body
+
+    if (!codigo || !nombre) {
+      return res.status(400).json({ error: 'Se requiere "codigo" y "nombre"' })
+    }
+
+    // Verificar duplicado por código
+    const { data: existente } = await supabase
+      .from('articulos')
+      .select('id')
+      .eq('codigo', codigo)
+      .single()
+
+    if (existente) {
+      return res.status(409).json({ error: `Ya existe un artículo con el código "${codigo}"` })
+    }
+
+    // Crear el artículo
+    const { data: articulo, error } = await supabase
+      .from('articulos')
+      .insert({ codigo, nombre })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    // Insertar filas en articulos_por_sucursal para todas las sucursales (habilitado: false)
+    const { data: sucursales } = await supabase
+      .from('sucursales')
+      .select('id')
+
+    if (sucursales && sucursales.length > 0) {
+      const filas = sucursales.map(s => ({
+        articulo_id: articulo.id,
+        sucursal_id: s.id,
+        habilitado: false,
+      }))
+
+      await supabase
+        .from('articulos_por_sucursal')
+        .insert(filas)
+    }
+
+    res.status(201).json(articulo)
+  } catch (err) {
+    console.error('Error al crear artículo:', err)
+    res.status(500).json({ error: 'Error al crear artículo' })
+  }
+})
+
 // POST /api/articulos/importar
 // Admin: importa artículos desde Google Sheets (o futura API externa)
 router.post('/importar', verificarAuth, soloAdmin, async (req, res) => {

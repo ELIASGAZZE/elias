@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import { OPERARIO_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 const NuevoPedido = () => {
@@ -70,7 +71,7 @@ const NuevoPedido = () => {
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Nuevo Pedido" />
+        <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
         </div>
@@ -82,7 +83,7 @@ const NuevoPedido = () => {
   if (exito) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Nuevo Pedido" />
+        <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
         <div className="flex flex-col items-center justify-center h-[80vh] px-4 text-center">
           <div className="text-6xl mb-4">✅</div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">¡Pedido enviado!</h2>
@@ -106,7 +107,7 @@ const NuevoPedido = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
-      <Navbar titulo="Nuevo Pedido" />
+      <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
 
       <div className="px-4 py-4">
         <p className="text-gray-500 text-sm mb-4">
