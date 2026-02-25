@@ -103,14 +103,14 @@ const AdminPedidos = () => {
 
         {/* Filtros */}
         <div className="tarjeta mb-4">
-          <h2 className="font-semibold text-gray-700 mb-3">Filtros</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <h2 className="font-semibold text-gray-700 mb-2 text-sm">Filtros</h2>
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Sucursal</label>
+              <label className="text-xs text-gray-500 mb-0.5 block">Sucursal</label>
               <select
                 value={filtroSucursal}
                 onChange={(e) => setFiltroSucursal(e.target.value)}
-                className="campo-form text-sm py-2"
+                className="campo-form text-xs py-1.5 px-2"
               >
                 <option value="">Todas</option>
                 {sucursales.map(s => (
@@ -120,11 +120,11 @@ const AdminPedidos = () => {
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Estado</label>
+              <label className="text-xs text-gray-500 mb-0.5 block">Estado</label>
               <select
                 value={filtroEstado}
                 onChange={(e) => setFiltroEstado(e.target.value)}
-                className="campo-form text-sm py-2"
+                className="campo-form text-xs py-1.5 px-2"
               >
                 <option value="">Todos</option>
                 {ESTADOS.map(e => (
@@ -134,22 +134,22 @@ const AdminPedidos = () => {
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Desde</label>
+              <label className="text-xs text-gray-500 mb-0.5 block">Desde</label>
               <input
                 type="date"
                 value={filtroFechaDesde}
                 onChange={(e) => setFiltroFechaDesde(e.target.value)}
-                className="campo-form text-sm py-2"
+                className="campo-form text-xs py-1.5 px-2"
               />
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Hasta</label>
+              <label className="text-xs text-gray-500 mb-0.5 block">Hasta</label>
               <input
                 type="date"
                 value={filtroFechaHasta}
                 onChange={(e) => setFiltroFechaHasta(e.target.value)}
-                className="campo-form text-sm py-2"
+                className="campo-form text-xs py-1.5 px-2"
               />
             </div>
           </div>
