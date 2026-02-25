@@ -175,16 +175,49 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Faltan credenciales del ERP Centum en las variables de entorno' })
     }
 
-    // Llamar al ERP Centum
+    // Llamar al ERP Centum con el body completo requerido
+    const hoy = new Date().toISOString().split('T')[0]
     const response = await fetch(`${baseUrl}/Articulos/Venta`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'ConsumidorApiPublicaID': consumerId,
+        'Clave': apiKey,
       },
       body: JSON.stringify({
-        Clave: apiKey,
         IdCliente: parseInt(clientId),
+        FechaDocumento: hoy,
+        Codigo: '', CodigoExacto: '', CodigoDesde: '', CodigoHasta: '',
+        CodigoBarras: '', CodigoAuxiliar: '', Nombre: '',
+        IdsRubro: [], IdsSubRubro: [], IdsCategoriaArticulo: [],
+        IdsSociedadArticulo: [], IdsMarcaArticulo: [],
+        IdGrupoArticulo: 0, NombreGrupoArticulo: '',
+        Habilitado: true, ActivoWeb: false, ImprimeLista: '',
+        PrecioDesde: '', PrecioHasta: '',
+        StockTotalDesde: '', StockTotalHasta: '',
+        StockSucursalDesde: '', StockSucursalHasta: '',
+        StockSucursalMayorIgualStockIdeal: false, StockSucursalMenorIgualStockIdeal: false,
+        StockSucursalMayorIgualStockMinimo: false, StockSucursalMenorIgualStockMinimo: false,
+        StockSucursalMayorIgualStockCritico: false, StockSucursalMenorIgualStockCritico: false,
+        StockSucursalMayorIgualStockExcesivo: false, StockSucursalMenorIgualStockExcesivo: false,
+        FechaCreacionDesde: '', FechaCreacionHasta: '',
+        FechaPrecioActualizadoDesde: '', FechaPrecioActualizadoHasta: '',
+        FechaPromocion: '',
+        PoseePrecioPorCantidad: false,
+        PoseePorcentajeDescuentoPromocion: false,
+        PoseePorcentajeDescuentoPromocionPorUnidades: false,
+        PoseePorcentajeDescuentoPromocionPorValores: false,
+        IdValorPromocion: 0, IdArticuloRelacion: 0, IdTipoRelacionArticulo: 0,
+        PoseeAlMenosUnaPublicacionTiendaOnline: false,
+        SoloUnArticuloPorGrupoArticulo: false,
+        Ids: [], IdsExcluir: [], IdsAtributoArticuloAtributoArticuloValor: [],
+        Tags: [], PreciosDesdeHastaStocksDesdeHasta: [],
+        PoseeImagenes: false,
+        RetornarNoCumplenPoliticaStock: false,
+        OrdenarPrimeroCumplePoliticaStock: false,
+        FechaModificacionDesde: '', FechaModificacionImagenesDesde: '',
+        FechaTrazaArticuloDesde: '', IdProveedor: '',
+        FechaTrazaArticuloComprometidoDesde: '',
       }),
     })
 
@@ -196,9 +229,9 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
 
     const erpData = await response.json()
 
-    // Filtrar solo habilitados
-    const articulosERP = (Array.isArray(erpData) ? erpData : erpData.Datos || erpData.datos || [])
-      .filter(art => art.Habilitado === true)
+    // Los artículos están en Articulos.Items[]
+    const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
+    const articulosERP = items.filter(art => art.Habilitado === true || art.Habilitado === undefined)
 
     if (articulosERP.length === 0) {
       return res.json({ mensaje: 'No se encontraron artículos habilitados en el ERP', cantidad: 0 })
