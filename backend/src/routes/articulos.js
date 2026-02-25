@@ -169,55 +169,28 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
     const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
     const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
     const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
-    const clientId = process.env.CENTUM_CLIENT_ID || '1'
+    const clientId = process.env.CENTUM_CLIENT_ID || '2'
 
     if (!baseUrl || !apiKey) {
       return res.status(500).json({ error: 'Faltan credenciales del ERP Centum en las variables de entorno' })
     }
 
-    // Llamar al ERP Centum con el body completo requerido
+    // Generar access token (por ahora usa la clave directamente)
+    const accessToken = apiKey
+
+    // Llamar al ERP Centum
     const hoy = new Date().toISOString().split('T')[0]
     const response = await fetch(`${baseUrl}/Articulos/Venta`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'ConsumidorApiPublicaID': consumerId,
-        'Clave': apiKey,
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
       },
       body: JSON.stringify({
         IdCliente: parseInt(clientId),
         FechaDocumento: hoy,
-        Codigo: '', CodigoExacto: '', CodigoDesde: '', CodigoHasta: '',
-        CodigoBarras: '', CodigoAuxiliar: '', Nombre: '',
-        IdsRubro: [], IdsSubRubro: [], IdsCategoriaArticulo: [],
-        IdsSociedadArticulo: [], IdsMarcaArticulo: [],
-        IdGrupoArticulo: 0, NombreGrupoArticulo: '',
-        Habilitado: true, ActivoWeb: false, ImprimeLista: '',
-        PrecioDesde: '', PrecioHasta: '',
-        StockTotalDesde: '', StockTotalHasta: '',
-        StockSucursalDesde: '', StockSucursalHasta: '',
-        StockSucursalMayorIgualStockIdeal: false, StockSucursalMenorIgualStockIdeal: false,
-        StockSucursalMayorIgualStockMinimo: false, StockSucursalMenorIgualStockMinimo: false,
-        StockSucursalMayorIgualStockCritico: false, StockSucursalMenorIgualStockCritico: false,
-        StockSucursalMayorIgualStockExcesivo: false, StockSucursalMenorIgualStockExcesivo: false,
-        FechaCreacionDesde: '', FechaCreacionHasta: '',
-        FechaPrecioActualizadoDesde: '', FechaPrecioActualizadoHasta: '',
-        FechaPromocion: '',
-        PoseePrecioPorCantidad: false,
-        PoseePorcentajeDescuentoPromocion: false,
-        PoseePorcentajeDescuentoPromocionPorUnidades: false,
-        PoseePorcentajeDescuentoPromocionPorValores: false,
-        IdValorPromocion: 0, IdArticuloRelacion: 0, IdTipoRelacionArticulo: 0,
-        PoseeAlMenosUnaPublicacionTiendaOnline: false,
-        SoloUnArticuloPorGrupoArticulo: false,
-        Ids: [], IdsExcluir: [], IdsAtributoArticuloAtributoArticuloValor: [],
-        Tags: [], PreciosDesdeHastaStocksDesdeHasta: [],
-        PoseeImagenes: false,
-        RetornarNoCumplenPoliticaStock: false,
-        OrdenarPrimeroCumplePoliticaStock: false,
-        FechaModificacionDesde: '', FechaModificacionImagenesDesde: '',
-        FechaTrazaArticuloDesde: '', IdProveedor: '',
-        FechaTrazaArticuloComprometidoDesde: '',
+        Habilitado: true,
       }),
     })
 
