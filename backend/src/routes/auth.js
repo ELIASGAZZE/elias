@@ -2,6 +2,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
+const { crearClienteAuth } = require('../config/supabase')
 const { verificarAuth } = require('../middleware/auth')
 
 // POST /api/auth/login
@@ -14,7 +15,9 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    // Usamos un cliente descartable para signIn (no contamina el cliente principal)
+    const clienteAuth = crearClienteAuth()
+    const { data, error } = await clienteAuth.auth.signInWithPassword({
       email,
       password,
     })
@@ -24,12 +27,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales incorrectas', detalle: error.message })
     }
 
-    // Obtenemos el perfil con la sucursal del usuario
-    const { data: perfil } = await supabase
+    // Obtenemos el perfil con el cliente principal (service key, bypasea RLS)
+    const { data: perfil, error: errorPerfil } = await supabase
       .from('perfiles')
       .select('*, sucursales(id, nombre)')
       .eq('user_id', data.user.id)
       .single()
+
+    if (errorPerfil || !perfil) {
+      console.error('Error obteniendo perfil:', errorPerfil?.message)
+      return res.status(401).json({ error: 'Perfil de usuario no encontrado' })
+    }
 
     res.json({
       token: data.session.access_token,

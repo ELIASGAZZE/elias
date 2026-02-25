@@ -10,8 +10,7 @@ if (!supabaseUrl || !supabaseServiceKey) {
   throw new Error('Faltan las variables de entorno SUPABASE_URL o SUPABASE_SERVICE_KEY')
 }
 
-// El cliente con service key puede saltear las políticas de seguridad (RLS)
-// Solo debe usarse en el backend, NUNCA en el frontend
+// Cliente principal con service key para queries de datos (bypasea RLS)
 const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
@@ -19,4 +18,16 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   },
 })
 
+// Crea un cliente descartable para operaciones de auth que cambian el estado interno
+// (signInWithPassword modifica el contexto del cliente, lo que afecta queries posteriores)
+function crearClienteAuth() {
+  return createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  })
+}
+
 module.exports = supabase
+module.exports.crearClienteAuth = crearClienteAuth
