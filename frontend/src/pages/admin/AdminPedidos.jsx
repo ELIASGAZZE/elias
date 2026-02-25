@@ -169,16 +169,16 @@ const AdminPedidos = () => {
             {pedidos.map(pedido => (
               <div key={pedido.id} className="tarjeta">
                 {/* Encabezado del pedido */}
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <p className="font-semibold text-gray-800">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-800 truncate">
                       {pedido.sucursales?.nombre}
                     </p>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-gray-500 truncate">
                       {new Date(pedido.fecha).toLocaleDateString('es-AR')} · {pedido.perfiles?.nombre}
                     </p>
                   </div>
-                  <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado]}`}>
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ${COLORES_ESTADO[pedido.estado]}`}>
                     {pedido.estado}
                   </span>
                 </div>
@@ -195,12 +195,12 @@ const AdminPedidos = () => {
                 {pedidoExpandido === pedido.id && (
                   <div className="mt-3 border-t border-gray-100 pt-3 space-y-1">
                     {pedido.items_pedido?.map((item, i) => (
-                      <div key={i} className="flex justify-between text-sm">
-                        <span className="text-gray-600">
+                      <div key={i} className="flex justify-between text-sm gap-2">
+                        <span className="text-gray-600 min-w-0 truncate">
                           <span className="text-gray-400 mr-1">{item.articulos.codigo}</span>
                           {item.articulos.nombre}
                         </span>
-                        <span className="font-medium">{item.cantidad}</span>
+                        <span className="font-medium flex-shrink-0">{item.cantidad}</span>
                       </div>
                     ))}
                   </div>

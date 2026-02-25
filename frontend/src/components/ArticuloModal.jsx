@@ -88,35 +88,37 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
           {sucursales.map(s => {
             const estado = estadoPorSucursal[s.id]
             return (
-              <div key={s.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0 gap-3">
-                <span className="text-sm text-gray-700 flex-1">{s.nombre}</span>
+              <div key={s.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0 gap-2">
+                <span className="text-sm text-gray-700 min-w-0 truncate">{s.nombre}</span>
 
-                {/* Stock ideal (solo si habilitado) */}
-                {estado.habilitado && (
-                  <input
-                    type="number"
-                    min="0"
-                    value={estado.stock_ideal}
-                    onChange={e => actualizarStock(s.id, e.target.value)}
-                    className="w-16 text-center text-sm border border-gray-300 rounded py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    title="Stock ideal"
-                  />
-                )}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Stock ideal (solo si habilitado) */}
+                  {estado.habilitado && (
+                    <input
+                      type="number"
+                      min="0"
+                      value={estado.stock_ideal}
+                      onChange={e => actualizarStock(s.id, e.target.value)}
+                      className="w-14 text-center text-sm border border-gray-300 rounded py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      title="Stock ideal"
+                    />
+                  )}
 
-                {/* Toggle */}
-                <button
-                  onClick={() => toggleHabilitado(s.id)}
-                  disabled={guardando === s.id}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                    estado.habilitado ? 'bg-blue-600' : 'bg-gray-300'
-                  } ${guardando === s.id ? 'opacity-50' : ''}`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      estado.habilitado ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
+                  {/* Toggle */}
+                  <button
+                    onClick={() => toggleHabilitado(s.id)}
+                    disabled={guardando === s.id}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+                      estado.habilitado ? 'bg-blue-600' : 'bg-gray-300'
+                    } ${guardando === s.id ? 'opacity-50' : ''}`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        estado.habilitado ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             )
           })}

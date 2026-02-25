@@ -41,14 +41,14 @@ const Navbar = ({ titulo, tabs }) => {
 
       {/* Fila de tabs de navegación */}
       {tabs && tabs.length > 0 && (
-        <div className="bg-white border-b border-gray-200 flex overflow-x-auto">
+        <div className="bg-white border-b border-gray-200 flex">
           {tabs.map(tab => {
             const activo = location.pathname === tab.path
             return (
               <Link
                 key={tab.path}
                 to={tab.path}
-                className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
+                className={`flex-1 text-center px-2 py-3 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                   activo
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-500 hover:text-gray-700'

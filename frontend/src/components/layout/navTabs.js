@@ -1,8 +1,8 @@
 export const ADMIN_TABS = [
   { label: 'Pedidos', path: '/admin' },
-  { label: 'Artículos ERP', path: '/admin/articulos' },
-  { label: 'Art. Manuales', path: '/admin/articulos-manuales' },
-  { label: 'Configuración', path: '/admin/configuracion' },
+  { label: 'Art. ERP', path: '/admin/articulos' },
+  { label: 'Art. Manual', path: '/admin/articulos-manuales' },
+  { label: 'Config', path: '/admin/configuracion' },
 ]
 
 export const OPERARIO_TABS = [

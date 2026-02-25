@@ -191,16 +191,16 @@ const AdminConfiguracion = () => {
                 </p>
               )}
               {usuarios.map(usuario => (
-                <div key={usuario.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{usuario.nombre}</p>
-                    <p className="text-xs text-gray-400">
+                <div key={usuario.id} className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-800 truncate">{usuario.nombre}</p>
+                    <p className="text-xs text-gray-400 truncate">
                       @{usuario.username} · {usuario.rol}
                     </p>
                   </div>
                   <button
                     onClick={() => eliminarUsuario(usuario.id, usuario.nombre)}
-                    className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                    className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
                   >
                     Eliminar
                   </button>
