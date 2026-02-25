@@ -12,6 +12,11 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 // El cliente con service key puede saltear las políticas de seguridad (RLS)
 // Solo debe usarse en el backend, NUNCA en el frontend
-const supabase = createClient(supabaseUrl, supabaseServiceKey)
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+})
 
 module.exports = supabase
