@@ -11,6 +11,7 @@ import NuevoPedido from './pages/operario/NuevoPedido'
 import MisPedidos from './pages/operario/MisPedidos'
 import AdminPedidos from './pages/admin/AdminPedidos'
 import AdminArticulos from './pages/admin/AdminArticulos'
+import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
 
 // Redirige al home correcto según el rol del usuario
@@ -54,6 +55,11 @@ const App = () => {
           <Route path="/admin/articulos" element={
             <RutaProtegida soloAdmin>
               <AdminArticulos />
+            </RutaProtegida>
+          } />
+          <Route path="/admin/articulos-manuales" element={
+            <RutaProtegida soloAdmin>
+              <AdminArticulosManuales />
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion" element={

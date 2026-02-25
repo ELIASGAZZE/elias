@@ -1,6 +1,7 @@
 export const ADMIN_TABS = [
   { label: 'Pedidos', path: '/admin' },
-  { label: 'Artículos', path: '/admin/articulos' },
+  { label: 'Artículos ERP', path: '/admin/articulos' },
+  { label: 'Art. Manuales', path: '/admin/articulos-manuales' },
   { label: 'Configuración', path: '/admin/configuracion' },
 ]
 
