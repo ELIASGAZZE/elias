@@ -12,11 +12,19 @@ router.get('/', verificarAuth, async (req, res) => {
     const esAdmin = req.perfil.rol === 'admin'
 
     if (esAdmin) {
-      // Admin ve todos los artículos
-      const { data, error } = await supabase
+      // Admin ve todos los artículos con estado por sucursal
+      let query = supabase
         .from('articulos')
-        .select('*')
+        .select('*, articulos_por_sucursal(sucursal_id, habilitado, stock_ideal)')
         .order('nombre')
+
+      // Filtro opcional por tipo (automatico/manual)
+      const tipo = req.query.tipo
+      if (tipo) {
+        query = query.eq('tipo', tipo)
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
       return res.json(data)
