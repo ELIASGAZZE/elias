@@ -104,7 +104,7 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
     // Hacemos upsert (insertar o actualizar si ya existe)
     const { data, error } = await supabase
       .from('articulos_por_sucursal')
-      .upsert(upsertData)
+      .upsert(upsertData, { onConflict: 'articulo_id,sucursal_id' })
       .select()
       .single()
 
