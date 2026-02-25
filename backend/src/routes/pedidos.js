@@ -22,9 +22,9 @@ router.get('/', verificarAuth, async (req, res) => {
       `)
       .order('created_at', { ascending: false })
 
-    // Si es operario, filtramos solo su sucursal
+    // Si es operario, filtramos solo sus pedidos
     if (!esAdmin) {
-      query = query.eq('sucursal_id', req.perfil.sucursal_id)
+      query = query.eq('usuario_id', req.perfil.id)
     }
 
     // Filtros opcionales para el admin
@@ -52,7 +52,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
     const { data, error } = await supabase
       .from('pedidos')
       .select(`
-        id, fecha, estado, created_at,
+        id, fecha, estado, created_at, usuario_id,
         sucursales(id, nombre),
         perfiles(id, nombre),
         items_pedido(cantidad, articulos(id, codigo, nombre))
@@ -64,8 +64,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Pedido no encontrado' })
     }
 
-    // El operario solo puede ver pedidos de su sucursal
-    if (req.perfil.rol !== 'admin' && data.sucursales.id !== req.perfil.sucursal_id) {
+    // El operario solo puede ver sus propios pedidos
+    if (req.perfil.rol !== 'admin' && data.usuario_id !== req.perfil.id) {
       return res.status(403).json({ error: 'No tenés acceso a este pedido' })
     }
 
@@ -80,7 +80,11 @@ router.get('/:id', verificarAuth, async (req, res) => {
 // Operario crea un nuevo pedido
 router.post('/', verificarAuth, async (req, res) => {
   try {
-    const { items } = req.body // [{ articulo_id, cantidad }]
+    const { items, sucursal_id } = req.body // items: [{ articulo_id, cantidad }]
+
+    if (!sucursal_id) {
+      return res.status(400).json({ error: 'La sucursal es requerida' })
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'El pedido debe tener al menos un artículo' })
@@ -97,7 +101,7 @@ router.post('/', verificarAuth, async (req, res) => {
     const { data: pedido, error: errorPedido } = await supabase
       .from('pedidos')
       .insert({
-        sucursal_id: req.perfil.sucursal_id,
+        sucursal_id,
         usuario_id: req.perfil.id,
         fecha: new Date().toISOString().split('T')[0], // solo la fecha YYYY-MM-DD
         estado: 'pendiente',

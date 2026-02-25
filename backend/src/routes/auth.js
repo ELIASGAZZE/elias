@@ -3,18 +3,23 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { crearClienteAuth } = require('../config/supabase')
-const { verificarAuth } = require('../middleware/auth')
+const { verificarAuth, soloAdmin } = require('../middleware/auth')
+
+// Convención: username → email oculto para Supabase Auth
+const usernameToEmail = (username) => username.toLowerCase() + '@padano.app'
 
 // POST /api/auth/login
-// Recibe email y contraseña, devuelve token de sesión
+// Recibe username y contraseña, devuelve token de sesión
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body
+  const { username, password } = req.body
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email y contraseña son requeridos' })
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Usuario y contraseña son requeridos' })
   }
 
   try {
+    const email = usernameToEmail(username)
+
     // Usamos un cliente descartable para signIn (no contamina el cliente principal)
     const clienteAuth = crearClienteAuth()
     const { data, error } = await clienteAuth.auth.signInWithPassword({
@@ -24,13 +29,13 @@ router.post('/login', async (req, res) => {
 
     if (error) {
       console.error('Error de Supabase en login:', error.message)
-      return res.status(401).json({ error: 'Credenciales incorrectas', detalle: error.message })
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
     }
 
     // Obtenemos el perfil con el cliente principal (service key, bypasea RLS)
     const { data: perfil, error: errorPerfil } = await supabase
       .from('perfiles')
-      .select('*, sucursales(id, nombre)')
+      .select('*')
       .eq('user_id', data.user.id)
       .single()
 
@@ -43,9 +48,8 @@ router.post('/login', async (req, res) => {
       token: data.session.access_token,
       usuario: {
         id: data.user.id,
-        email: data.user.email,
+        username: perfil.username,
         rol: perfil.rol,
-        sucursal: perfil.sucursales,
         nombre: perfil.nombre,
       },
     })
@@ -72,33 +76,174 @@ router.post('/logout', verificarAuth, async (req, res) => {
 router.get('/me', verificarAuth, (req, res) => {
   res.json({
     id: req.usuario.id,
-    email: req.usuario.email,
+    username: req.perfil.username,
     rol: req.perfil.rol,
-    sucursal: req.perfil.sucursales,
     nombre: req.perfil.nombre,
   })
 })
 
-// POST /api/auth/setup-admin
-// Ruta temporal para crear/recrear el usuario admin
-// ELIMINAR después de configurar el sistema
-router.post('/setup-admin', async (req, res) => {
-  const { email, password, nombre } = req.body
+// GET /api/auth/usuarios
+// Admin: lista todos los usuarios
+router.get('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('perfiles')
+      .select('id, user_id, username, nombre, rol, created_at')
+      .order('created_at', { ascending: false })
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email y contraseña son requeridos' })
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al obtener usuarios:', err)
+    res.status(500).json({ error: 'Error al obtener usuarios' })
+  }
+})
+
+// POST /api/auth/usuarios
+// Admin: crea un nuevo usuario
+router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
+  const { username, password, nombre, rol } = req.body
+
+  if (!username || !password || !nombre) {
+    return res.status(400).json({ error: 'Username, contraseña y nombre son requeridos' })
+  }
+
+  if (!['admin', 'operario'].includes(rol)) {
+    return res.status(400).json({ error: 'El rol debe ser "admin" o "operario"' })
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+  }
+
+  const usernameLimpio = username.toLowerCase().trim()
+
+  // Validar formato: solo letras, números y puntos
+  if (!/^[a-z0-9.]+$/.test(usernameLimpio)) {
+    return res.status(400).json({ error: 'El usuario solo puede contener letras, números y puntos' })
   }
 
   try {
-    // Paso 1: Verificar si el usuario ya existe en Auth
+    // Verificar si el username ya existe
+    const { data: existente } = await supabase
+      .from('perfiles')
+      .select('id')
+      .eq('username', usernameLimpio)
+      .single()
+
+    if (existente) {
+      return res.status(409).json({ error: `Ya existe un usuario con el nombre "${usernameLimpio}"` })
+    }
+
+    const email = usernameToEmail(usernameLimpio)
+
+    // Crear en Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    })
+
+    if (authError) {
+      console.error('Error creando usuario en Auth:', authError.message)
+      return res.status(500).json({ error: 'Error al crear usuario' })
+    }
+
+    // Crear perfil
+    const { data: perfil, error: perfilError } = await supabase
+      .from('perfiles')
+      .insert({
+        user_id: authData.user.id,
+        username: usernameLimpio,
+        nombre,
+        rol,
+      })
+      .select()
+      .single()
+
+    if (perfilError) {
+      // Si falla el perfil, eliminar el usuario de Auth para no dejar basura
+      await supabase.auth.admin.deleteUser(authData.user.id)
+      throw perfilError
+    }
+
+    res.status(201).json(perfil)
+  } catch (err) {
+    console.error('Error al crear usuario:', err)
+    res.status(500).json({ error: 'Error al crear usuario' })
+  }
+})
+
+// DELETE /api/auth/usuarios/:id
+// Admin: elimina un usuario (por perfiles.id)
+router.delete('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
+  const { id } = req.params
+
+  // No permitir eliminarse a sí mismo
+  if (id === req.perfil.id) {
+    return res.status(400).json({ error: 'No podés eliminar tu propio usuario' })
+  }
+
+  try {
+    // Buscar el perfil para obtener el user_id
+    const { data: perfil, error: errorPerfil } = await supabase
+      .from('perfiles')
+      .select('user_id, nombre')
+      .eq('id', id)
+      .single()
+
+    if (errorPerfil || !perfil) {
+      return res.status(404).json({ error: 'Usuario no encontrado' })
+    }
+
+    // Verificar si tiene pedidos
+    const { count } = await supabase
+      .from('pedidos')
+      .select('id', { count: 'exact', head: true })
+      .eq('usuario_id', id)
+
+    if (count > 0) {
+      return res.status(400).json({ error: `No se puede eliminar: el usuario tiene ${count} pedido(s)` })
+    }
+
+    // Eliminar de Supabase Auth (cascadea a perfiles si hay ON DELETE CASCADE)
+    const { error: authError } = await supabase.auth.admin.deleteUser(perfil.user_id)
+    if (authError) throw authError
+
+    // Si no hay cascade, eliminar perfil manualmente
+    await supabase.from('perfiles').delete().eq('id', id)
+
+    res.json({ mensaje: 'Usuario eliminado correctamente' })
+  } catch (err) {
+    console.error('Error al eliminar usuario:', err)
+    res.status(500).json({ error: 'Error al eliminar usuario' })
+  }
+})
+
+// POST /api/auth/setup-admin
+// Ruta para migrar/crear el usuario admin con el nuevo sistema de usernames
+router.post('/setup-admin', async (req, res) => {
+  const { username, password, nombre } = req.body
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username y contraseña son requeridos' })
+  }
+
+  const email = usernameToEmail(username)
+
+  try {
+    // Buscar si existe un usuario con este email o el email viejo
     const { data: usuarios } = await supabase.auth.admin.listUsers()
-    const existente = usuarios.users.find((u) => u.email === email)
+    const existente = usuarios.users.find(
+      (u) => u.email === email || u.email === `${username}@padano.com.ar`
+    )
 
     let userId
 
     if (existente) {
-      // El usuario existe: actualizamos la contraseña y confirmamos el email
-      const { data, error } = await supabase.auth.admin.updateUserById(existente.id, {
+      // Actualizar email al nuevo formato y contraseña
+      const { error } = await supabase.auth.admin.updateUserById(existente.id, {
+        email,
         password,
         email_confirm: true,
       })
@@ -106,9 +251,8 @@ router.post('/setup-admin', async (req, res) => {
         return res.status(500).json({ error: 'Error actualizando usuario', detalle: error.message })
       }
       userId = existente.id
-      console.log('Usuario existente actualizado:', email)
     } else {
-      // Crear usuario nuevo con email confirmado
+      // Crear usuario nuevo
       const { data, error } = await supabase.auth.admin.createUser({
         email,
         password,
@@ -118,10 +262,9 @@ router.post('/setup-admin', async (req, res) => {
         return res.status(500).json({ error: 'Error creando usuario', detalle: error.message })
       }
       userId = data.user.id
-      console.log('Usuario nuevo creado:', email)
     }
 
-    // Paso 2: Verificar/crear el perfil en la tabla perfiles
+    // Verificar/crear el perfil
     const { data: perfilExistente } = await supabase
       .from('perfiles')
       .select('*')
@@ -129,42 +272,24 @@ router.post('/setup-admin', async (req, res) => {
       .single()
 
     if (perfilExistente) {
-      // Actualizar rol a admin si no lo es
       await supabase
         .from('perfiles')
-        .update({ rol: 'admin', nombre: nombre || 'Administrador' })
+        .update({ rol: 'admin', nombre: nombre || 'Administrador', username })
         .eq('user_id', userId)
-      console.log('Perfil existente actualizado a admin')
     } else {
-      // Crear perfil admin
       const { error: errorPerfil } = await supabase
         .from('perfiles')
-        .insert({ user_id: userId, nombre: nombre || 'Administrador', rol: 'admin' })
+        .insert({ user_id: userId, nombre: nombre || 'Administrador', rol: 'admin', username })
       if (errorPerfil) {
         return res.status(500).json({ error: 'Error creando perfil', detalle: errorPerfil.message })
       }
-      console.log('Perfil admin creado')
-    }
-
-    // Paso 3: Verificar que el login funciona
-    const { data: loginTest, error: loginError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (loginError) {
-      return res.status(500).json({
-        error: 'Usuario creado pero el login falla',
-        detalle: loginError.message,
-        userId,
-      })
     }
 
     res.json({
       mensaje: 'Admin configurado correctamente',
       userId,
+      username,
       email,
-      loginFunciona: true,
     })
   } catch (err) {
     console.error('Error en setup-admin:', err)

@@ -22,8 +22,12 @@ router.get('/', verificarAuth, async (req, res) => {
       return res.json(data)
     }
 
-    // Operario ve solo los habilitados para su sucursal
-    const sucursalId = req.perfil.sucursal_id
+    // Operario ve solo los habilitados para la sucursal indicada
+    const sucursalId = req.query.sucursal_id
+    if (!sucursalId) {
+      return res.status(400).json({ error: 'Se requiere sucursal_id' })
+    }
+
     const { data, error } = await supabase
       .from('articulos_por_sucursal')
       .select('articulos(id, codigo, nombre), habilitado')

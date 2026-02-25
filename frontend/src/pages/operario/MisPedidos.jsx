@@ -58,7 +58,7 @@ const MisPedidos = () => {
                   Pedido del {new Date(pedido.fecha).toLocaleDateString('es-AR')}
                 </p>
                 <p className="text-sm text-gray-500 mt-0.5">
-                  {pedido.items_pedido?.length} artículo{pedido.items_pedido?.length !== 1 ? 's' : ''}
+                  {pedido.sucursales?.nombre} · {pedido.items_pedido?.length} artículo{pedido.items_pedido?.length !== 1 ? 's' : ''}
                 </p>
               </div>
               {/* Badge de estado */}

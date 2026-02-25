@@ -6,7 +6,7 @@ const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
 // GET /api/sucursales
 // Admin: lista todas las sucursales
-router.get('/', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/', verificarAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('sucursales')

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 const Login = () => {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(false)
@@ -18,7 +18,7 @@ const Login = () => {
     setCargando(true)
 
     try {
-      const usuario = await login(email, password)
+      const usuario = await login(username, password)
 
       // Redirigimos según el rol del usuario
       if (usuario.rol === 'admin') {
@@ -27,7 +27,7 @@ const Login = () => {
         navigate('/operario')
       }
     } catch (err) {
-      setError('Email o contraseña incorrectos')
+      setError('Usuario o contraseña incorrectos')
     } finally {
       setCargando(false)
     }
@@ -49,19 +49,19 @@ const Login = () => {
         <div className="tarjeta">
           <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* Email */}
+            {/* Usuario */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
+                Usuario
               </label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="campo-form"
-                placeholder="usuario@empresa.com"
+                placeholder="elias"
                 required
-                autoComplete="email"
+                autoComplete="username"
               />
             </div>
 

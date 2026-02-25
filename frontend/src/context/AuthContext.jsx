@@ -42,8 +42,8 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   // Función de login
-  const login = async (email, password) => {
-    const { data } = await api.post('/api/auth/login', { email, password })
+  const login = async (username, password) => {
+    const { data } = await api.post('/api/auth/login', { username, password })
 
     // Guardamos el token y los datos del usuario en localStorage
     localStorage.setItem('token', data.token)

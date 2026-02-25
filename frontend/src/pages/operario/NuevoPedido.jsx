@@ -7,19 +7,46 @@ import { OPERARIO_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 const NuevoPedido = () => {
+  const [sucursales, setSucursales] = useState([])
+  const [sucursalSeleccionada, setSucursalSeleccionada] = useState('')
   const [articulos, setArticulos] = useState([])
   const [cantidades, setCantidades] = useState({}) // { articulo_id: cantidad }
-  const [cargando, setCargando] = useState(true)
+  const [cargando, setCargando] = useState(false)
+  const [cargandoSucursales, setCargandoSucursales] = useState(true)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState(false)
   const navigate = useNavigate()
 
-  // Cargamos los artículos habilitados para esta sucursal
+  // Cargamos las sucursales al iniciar
   useEffect(() => {
-    const cargarArticulos = async () => {
+    const cargar = async () => {
       try {
-        const { data } = await api.get('/api/articulos')
+        const { data } = await api.get('/api/sucursales')
+        setSucursales(data)
+      } catch (err) {
+        setError('Error al cargar sucursales')
+      } finally {
+        setCargandoSucursales(false)
+      }
+    }
+    cargar()
+  }, [])
+
+  // Cargamos artículos cuando cambia la sucursal
+  useEffect(() => {
+    if (!sucursalSeleccionada) {
+      setArticulos([])
+      return
+    }
+
+    const cargarArticulos = async () => {
+      setCargando(true)
+      setError('')
+      try {
+        const { data } = await api.get('/api/articulos', {
+          params: { sucursal_id: sucursalSeleccionada }
+        })
         setArticulos(data)
       } catch (err) {
         setError('Error al cargar artículos')
@@ -28,7 +55,9 @@ const NuevoPedido = () => {
       }
     }
     cargarArticulos()
-  }, [])
+    // Limpiamos cantidades al cambiar de sucursal
+    setCantidades({})
+  }, [sucursalSeleccionada])
 
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
@@ -57,9 +86,8 @@ const NuevoPedido = () => {
     setError('')
 
     try {
-      await api.post('/api/pedidos', { items })
+      await api.post('/api/pedidos', { items, sucursal_id: sucursalSeleccionada })
       setExito(true)
-      // Limpiamos las cantidades
       setCantidades({})
     } catch (err) {
       setError('Error al enviar el pedido. Intentá nuevamente.')
@@ -68,7 +96,7 @@ const NuevoPedido = () => {
     }
   }
 
-  if (cargando) {
+  if (cargandoSucursales) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
@@ -110,26 +138,58 @@ const NuevoPedido = () => {
       <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
 
       <div className="px-4 py-4">
-        <p className="text-gray-500 text-sm mb-4">
-          Tocá un artículo para agregar cantidad
-        </p>
 
-        {/* Lista de artículos */}
-        <div className="space-y-3">
-          {articulos.map(articulo => (
-            <ArticuloCard
-              key={articulo.id}
-              articulo={articulo}
-              cantidad={cantidades[articulo.id] || 0}
-              onChange={(val) => actualizarCantidad(articulo.id, val)}
-            />
-          ))}
+        {/* Selector de sucursal */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Sucursal</label>
+          <select
+            value={sucursalSeleccionada}
+            onChange={(e) => setSucursalSeleccionada(e.target.value)}
+            className="campo-form"
+          >
+            <option value="">Seleccioná una sucursal</option>
+            {sucursales.map(s => (
+              <option key={s.id} value={s.id}>{s.nombre}</option>
+            ))}
+          </select>
         </div>
 
-        {articulos.length === 0 && (
+        {!sucursalSeleccionada && (
           <p className="text-center text-gray-400 mt-10">
-            No hay artículos habilitados para tu sucursal
+            Seleccioná una sucursal para ver los artículos
           </p>
+        )}
+
+        {cargando && (
+          <div className="flex justify-center items-center h-32">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+          </div>
+        )}
+
+        {sucursalSeleccionada && !cargando && (
+          <>
+            <p className="text-gray-500 text-sm mb-4">
+              Tocá un artículo para agregar cantidad
+            </p>
+
+            {/* Lista de artículos */}
+            <div className="space-y-3">
+              {articulos.map(articulo => (
+                <ArticuloCard
+                  key={articulo.id}
+                  articulo={articulo}
+                  cantidad={cantidades[articulo.id] || 0}
+                  onChange={(val) => actualizarCantidad(articulo.id, val)}
+                />
+              ))}
+            </div>
+
+            {articulos.length === 0 && (
+              <p className="text-center text-gray-400 mt-10">
+                No hay artículos habilitados para esta sucursal
+              </p>
+            )}
+          </>
         )}
 
         {error && (
@@ -140,20 +200,22 @@ const NuevoPedido = () => {
       </div>
 
       {/* Barra inferior fija con el botón de enviar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-gray-500">
-            {totalArticulos} artículo{totalArticulos !== 1 ? 's' : ''} seleccionado{totalArticulos !== 1 ? 's' : ''}
-          </span>
+      {sucursalSeleccionada && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-500">
+              {totalArticulos} artículo{totalArticulos !== 1 ? 's' : ''} seleccionado{totalArticulos !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <button
+            onClick={handleEnviar}
+            disabled={enviando || totalArticulos === 0}
+            className="btn-primario"
+          >
+            {enviando ? 'Enviando...' : 'Confirmar pedido'}
+          </button>
         </div>
-        <button
-          onClick={handleEnviar}
-          disabled={enviando || totalArticulos === 0}
-          className="btn-primario"
-        >
-          {enviando ? 'Enviando...' : 'Confirmar pedido'}
-        </button>
-      </div>
+      )}
     </div>
   )
 }
