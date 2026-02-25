@@ -12,3 +12,11 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: CENTUM_BASE_URL
+        sync: false
+      - key: CENTUM_API_KEY
+        sync: false
+      - key: CENTUM_CONSUMER_ID
+        sync: false
+      - key: CENTUM_CLIENT_ID
+        sync: false
