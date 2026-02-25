@@ -162,6 +162,33 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// Genera el access token para la API de Centum
+// Algoritmo: fechaUTC + " " + uuid + " " + SHA1(fechaUTC + " " + uuid + " " + clavePublica)
+const crypto = require('crypto')
+
+function generateAccessToken(clavePublica) {
+  // 1. Fecha UTC: yyyy-MM-dd'T'HH:mm:ss
+  const now = new Date()
+  const fechaUTC = now.getUTCFullYear() + '-' +
+    String(now.getUTCMonth() + 1).padStart(2, '0') + '-' +
+    String(now.getUTCDate()).padStart(2, '0') + 'T' +
+    String(now.getUTCHours()).padStart(2, '0') + ':' +
+    String(now.getUTCMinutes()).padStart(2, '0') + ':' +
+    String(now.getUTCSeconds()).padStart(2, '0')
+
+  // 2. UUID sin guiones en minúsculas
+  const uuid = crypto.randomUUID().replace(/-/g, '').toLowerCase()
+
+  // 3. Concatenar
+  const textoParaHash = fechaUTC + ' ' + uuid + ' ' + clavePublica
+
+  // 4-5. SHA-1 en hex mayúsculas
+  const hashHex = crypto.createHash('sha1').update(textoParaHash, 'utf8').digest('hex').toUpperCase()
+
+  // 6. Token final
+  return fechaUTC + ' ' + uuid + ' ' + hashHex
+}
+
 // POST /api/articulos/sincronizar-erp
 // Admin: sincroniza artículos desde ERP Centum
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
@@ -175,8 +202,7 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Faltan credenciales del ERP Centum en las variables de entorno' })
     }
 
-    // Generar access token (por ahora usa la clave directamente)
-    const accessToken = apiKey
+    const accessToken = generateAccessToken(apiKey)
 
     // Llamar al ERP Centum
     const hoy = new Date().toISOString().split('T')[0]
