@@ -90,7 +90,7 @@ router.post('/setup-admin', async (req, res) => {
 
     if (existente) {
       // El usuario existe: actualizamos la contraseña y confirmamos el email
-      const { data, error } = await supabase.auth.admin.updateUser(existente.id, {
+      const { data, error } = await supabase.auth.admin.updateUserById(existente.id, {
         password,
         email_confirm: true,
       })
