@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import api from '../services/api'
 
 const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
-  // Mapa local del estado por sucursal para UI inmediata
+  // Mapa local del estado por sucursal — cambios se acumulan hasta guardar
   const [estadoPorSucursal, setEstadoPorSucursal] = useState(() => {
     const mapa = {}
     sucursales.forEach(s => {
@@ -14,48 +14,47 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
     })
     return mapa
   })
-  const [guardando, setGuardando] = useState(null) // sucursalId que está guardando
+  const [guardando, setGuardando] = useState(false)
 
-  const toggleHabilitado = async (sucursalId) => {
-    const actual = estadoPorSucursal[sucursalId]
-    const nuevoValor = !actual.habilitado
-    setGuardando(sucursalId)
-    try {
-      await api.put(`/api/articulos/${articulo.id}/sucursal/${sucursalId}`, {
-        habilitado: nuevoValor,
-      })
-      setEstadoPorSucursal(prev => ({
-        ...prev,
-        [sucursalId]: { ...prev[sucursalId], habilitado: nuevoValor },
-      }))
-      onUpdate()
-    } catch (err) {
-      console.error('Error al togglear habilitado:', err)
-    } finally {
-      setGuardando(null)
-    }
+  const toggleHabilitado = (sucursalId) => {
+    setEstadoPorSucursal(prev => ({
+      ...prev,
+      [sucursalId]: { ...prev[sucursalId], habilitado: !prev[sucursalId].habilitado },
+    }))
   }
 
-  const actualizarStock = async (sucursalId, valor) => {
+  const cambiarStock = (sucursalId, valor) => {
     const stock_ideal = Math.max(0, parseInt(valor) || 0)
     setEstadoPorSucursal(prev => ({
       ...prev,
       [sucursalId]: { ...prev[sucursalId], stock_ideal },
     }))
+  }
+
+  const guardar = async () => {
+    setGuardando(true)
     try {
-      await api.put(`/api/articulos/${articulo.id}/sucursal/${sucursalId}`, {
-        stock_ideal,
-      })
+      const promesas = sucursales.map(s =>
+        api.put(`/api/articulos/${articulo.id}/sucursal/${s.id}`, {
+          habilitado: estadoPorSucursal[s.id].habilitado,
+          stock_ideal: estadoPorSucursal[s.id].stock_ideal,
+        })
+      )
+      await Promise.all(promesas)
       onUpdate()
+      onClose()
     } catch (err) {
-      console.error('Error al actualizar stock ideal:', err)
+      console.error('Error al guardar:', err)
+      alert('Error al guardar los cambios')
+    } finally {
+      setGuardando(false)
     }
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-xl w-full max-w-md max-h-[80vh] overflow-y-auto shadow-xl"
+        className="bg-white rounded-xl w-full max-w-md max-h-[80vh] flex flex-col shadow-xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -74,16 +73,10 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
               </div>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="ml-2 text-gray-400 hover:text-gray-600 text-xl leading-none flex-shrink-0"
-          >
-            &times;
-          </button>
         </div>
 
         {/* Lista de sucursales */}
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3 overflow-y-auto flex-1">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sucursales</h3>
           {sucursales.map(s => {
             const estado = estadoPorSucursal[s.id]
@@ -98,7 +91,7 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
                       type="number"
                       min="0"
                       value={estado.stock_ideal}
-                      onChange={e => actualizarStock(s.id, e.target.value)}
+                      onChange={e => cambiarStock(s.id, e.target.value)}
                       className="w-14 text-center text-sm border border-gray-300 rounded py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       title="Stock ideal"
                     />
@@ -107,10 +100,9 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
                   {/* Toggle */}
                   <button
                     onClick={() => toggleHabilitado(s.id)}
-                    disabled={guardando === s.id}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
                       estado.habilitado ? 'bg-blue-600' : 'bg-gray-300'
-                    } ${guardando === s.id ? 'opacity-50' : ''}`}
+                    }`}
                   >
                     <span
                       className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -122,6 +114,23 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
               </div>
             )
           })}
+        </div>
+
+        {/* Botones */}
+        <div className="flex gap-3 p-4 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {guardando ? 'Guardando...' : 'Guardar'}
+          </button>
         </div>
       </div>
     </div>
