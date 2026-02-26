@@ -9,7 +9,7 @@ function iniciarCronJobs() {
     console.log(`[CRON ${inicio}] Iniciando sincronización ERP automática...`)
 
     try {
-      const resultado = await sincronizarERP()
+      const resultado = await sincronizarERP('cron')
       console.log(`[CRON ${new Date().toISOString()}] Sync ERP completada: ${resultado.mensaje}`)
     } catch (err) {
       console.error(`[CRON ${new Date().toISOString()}] Error en sync ERP:`, err.message)
@@ -22,7 +22,7 @@ function iniciarCronJobs() {
     console.log(`[CRON ${inicio}] Iniciando sincronización de stock depósito...`)
 
     try {
-      const resultado = await sincronizarStock()
+      const resultado = await sincronizarStock(false, 'cron')
       console.log(`[CRON ${new Date().toISOString()}] Sync stock completada: ${resultado.mensaje}`)
     } catch (err) {
       console.error(`[CRON ${new Date().toISOString()}] Error en sync stock:`, err.message)

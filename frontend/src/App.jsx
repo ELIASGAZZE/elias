@@ -17,6 +17,7 @@ import DetallePedido from './pages/DetallePedido'
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
+import AdminApiLogs from './pages/admin/AdminApiLogs'
 
 import Login from './pages/Login'
 
@@ -78,6 +79,11 @@ const App = () => {
           <Route path="/admin/configuracion" element={
             <RutaProtegida soloAdmin>
               <AdminConfiguracion />
+            </RutaProtegida>
+          } />
+          <Route path="/admin/api" element={
+            <RutaProtegida soloAdmin>
+              <AdminApiLogs />
             </RutaProtegida>
           } />
 

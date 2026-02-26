@@ -90,6 +90,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
           .eq('tipo', 'automatico')
           .eq('es_pesable', false)
           .in('id', idsArray)
+          .order('stock_deposito', { ascending: false, nullsFirst: false })
           .order('nombre')
         if (error) throw error
         return res.json({ articulos: data, total: data.length })
@@ -101,6 +102,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
       .select('id, codigo, nombre, rubro, marca, stock_deposito', { count: 'exact' })
       .eq('tipo', 'automatico')
       .eq('es_pesable', false)
+      .order('stock_deposito', { ascending: false, nullsFirst: false })
       .order('nombre')
       .range(from, to)
 
@@ -393,7 +395,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 // Admin: sincroniza artículos desde ERP Centum
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const resultado = await sincronizarERP()
+    const resultado = await sincronizarERP('manual')
     res.json(resultado)
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
@@ -408,7 +410,7 @@ router.post('/sincronizar-stock', verificarAuth, soloAdmin, async (req, res) => 
   res.json({ mensaje: 'Sincronización de stock iniciada en background' })
 
   try {
-    const resultado = await sincronizarStock(true)
+    const resultado = await sincronizarStock(true, 'manual')
     console.log('[Stock] Sync manual completada:', resultado.mensaje)
   } catch (err) {
     console.error('[Stock] Error al sincronizar stock:', err.message)

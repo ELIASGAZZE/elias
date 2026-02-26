@@ -1,6 +1,7 @@
 // Servicio de sincronización con ERP Centum
 const crypto = require('crypto')
 const supabase = require('../config/supabase')
+const { registrarLlamada } = require('./apiLogger')
 
 // Genera el access token para la API de Centum
 // Algoritmo: fechaUTC + " " + uuid + " " + SHA1(fechaUTC + " " + uuid + " " + clavePublica)
@@ -24,7 +25,7 @@ function generateAccessToken(clavePublica) {
  * Sincroniza artículos desde ERP Centum.
  * Retorna { mensaje, cantidad } o lanza error.
  */
-async function sincronizarERP() {
+async function sincronizarERP(origen = 'cron') {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
@@ -35,27 +36,46 @@ async function sincronizarERP() {
   }
 
   const accessToken = generateAccessToken(apiKey)
+  const endpoint = `${baseUrl}/Articulos/Venta`
+  const inicioFetch = Date.now()
 
   // Llamar al ERP Centum
   const hoy = new Date().toISOString().split('T')[0]
-  const response = await fetch(`${baseUrl}/Articulos/Venta`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'CentumSuiteConsumidorApiPublicaId': consumerId,
-      'CentumSuiteAccessToken': accessToken,
-    },
-    body: JSON.stringify({
-      IdCliente: parseInt(clientId),
-      FechaDocumento: hoy,
-      Habilitado: true,
-      EsCombo: false,
-    }),
-  })
+  let response
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify({
+        IdCliente: parseInt(clientId),
+        FechaDocumento: hoy,
+        Habilitado: true,
+        EsCombo: false,
+      }),
+    })
+  } catch (fetchErr) {
+    const duracion = Date.now() - inicioFetch
+    registrarLlamada({
+      servicio: 'centum_articulos', endpoint, metodo: 'POST',
+      estado: 'error', duracion_ms: duracion,
+      error_mensaje: fetchErr.message, origen,
+    })
+    throw fetchErr
+  }
 
   if (!response.ok) {
     const texto = await response.text()
+    const duracion = Date.now() - inicioFetch
     console.error('Error del ERP Centum:', response.status, texto)
+    registrarLlamada({
+      servicio: 'centum_articulos', endpoint, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: duracion,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen,
+    })
     throw new Error(`Error al conectar con ERP Centum (${response.status})`)
   }
 
@@ -128,6 +148,13 @@ async function sincronizarERP() {
     }
   }
 
+  const duracion = Date.now() - inicioFetch
+  registrarLlamada({
+    servicio: 'centum_articulos', endpoint, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: duracion,
+    items_procesados: totalInsertados, origen,
+  })
+
   return {
     mensaje: `${totalInsertados} artículos sincronizados desde el ERP`,
     cantidad: totalInsertados,
@@ -140,12 +167,14 @@ async function sincronizarERP() {
  * Fase 1: descarga existencias paginando.
  * Fase 2: batch upsert contra la BD matcheando por id_centum.
  */
-async function sincronizarStock(fullSync = false) {
+async function sincronizarStock(fullSync = false, origen = 'cron') {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
 
   const syncInicio = new Date().toISOString()
+  const inicioTotal = Date.now()
+  const endpointBase = `${baseUrl}/ArticulosExistencias`
 
   // Leer última fecha de sync para filtro incremental
   let fechaDesde = null
@@ -184,6 +213,12 @@ async function sincronizarStock(fullSync = false) {
 
     if (!response.ok) {
       const texto = await response.text()
+      const duracion = Date.now() - inicioTotal
+      registrarLlamada({
+        servicio: 'centum_stock', endpoint: endpointBase, metodo: 'GET',
+        estado: 'error', status_code: response.status, duracion_ms: duracion,
+        error_mensaje: `Página ${pagina} - HTTP ${response.status}: ${texto.slice(0, 500)}`, origen,
+      })
       throw new Error(`Error al consultar existencias ERP página ${pagina} (${response.status}): ${texto}`)
     }
 
@@ -267,6 +302,13 @@ async function sincronizarStock(fullSync = false) {
   if (configError) {
     console.error('[Stock] Error guardando fecha de sync:', configError.message)
   }
+
+  const duracionTotal = Date.now() - inicioTotal
+  registrarLlamada({
+    servicio: 'centum_stock', endpoint: endpointBase, metodo: 'GET',
+    estado: 'ok', status_code: 200, duracion_ms: duracionTotal,
+    items_procesados: totalProcesados, origen,
+  })
 
   return {
     mensaje: `Stock sincronizado: ${totalActualizados} artículos actualizados (${totalProcesados} procesados del ERP, ${fullSync ? 'full' : fechaDesde ? 'incremental' : 'primera sync'})`,
