@@ -1,7 +1,7 @@
 // Vista principal del operario: crear un nuevo pedido
 // Diseño mobile-first con tarjetas táctiles grandes
 // Soporta pedidos Regular (artículos habilitados por sucursal) y Extraordinario (todos los artículos ERP)
-import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
@@ -54,8 +54,8 @@ const NuevoPedido = () => {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState(false)
-  const [pedidoPendienteExiste, setPedidoPendienteExiste] = useState(false)
   const [borradorRecuperado, setBorradorRecuperado] = useState(false)
+  const [soloSeleccionados, setSoloSeleccionados] = useState(false)
   const navigate = useNavigate()
   const borradorAplicado = useRef(false)
   const restauracionLista = useRef(false)
@@ -103,25 +103,6 @@ const NuevoPedido = () => {
     }
     cargar()
   }, [])
-
-  // Verificar si hay pedido pendiente para la sucursal seleccionada
-  useEffect(() => {
-    if (!sucursalSeleccionada) {
-      setPedidoPendienteExiste(false)
-      return
-    }
-    const verificar = async () => {
-      try {
-        const { data } = await api.get('/api/pedidos/check-pendiente', {
-          params: { sucursal_id: sucursalSeleccionada }
-        })
-        setPedidoPendienteExiste(data.tiene_pendiente)
-      } catch {
-        setPedidoPendienteExiste(false)
-      }
-    }
-    verificar()
-  }, [sucursalSeleccionada])
 
   // Cargamos artículos cuando cambia la sucursal (solo flujo regular)
   useEffect(() => {
@@ -225,8 +206,9 @@ const NuevoPedido = () => {
   // Agrupar artículos por rubro -> marca (solo flujo regular)
   const articulosAgrupados = useMemo(() => {
     if (esExtraordinario) return []
-    const sinAgregar = articulos.filter(a => !cantidades[a.id] || cantidades[a.id] <= 0)
-    const lista = filtroRubro ? sinAgregar.filter(a => (a.rubro || 'Sin rubro') === filtroRubro) : sinAgregar
+    let base = articulos
+    if (soloSeleccionados) base = base.filter(a => cantidades[a.id] > 0)
+    const lista = filtroRubro ? base.filter(a => (a.rubro || 'Sin rubro') === filtroRubro) : base
     const grupos = {}
 
     lista.forEach(art => {
@@ -258,7 +240,7 @@ const NuevoPedido = () => {
             articulos: grupos[rubro][marca].sort((a, b) => a.nombre.localeCompare(b.nombre)),
           })),
       }))
-  }, [articulos, esExtraordinario, filtroRubro, cantidades])
+  }, [articulos, esExtraordinario, filtroRubro, cantidades, soloSeleccionados])
 
   // Cargar datos completos de artículos seleccionados (con cantidad > 0) en flujo extraordinario
   useEffect(() => {
@@ -303,26 +285,8 @@ const NuevoPedido = () => {
     guardarBorrador(sucursalSeleccionada, cantidades, nombrePedido, tipoPedido)
   }, [sucursalSeleccionada, cantidades, nombrePedido, tipoPedido])
 
-  // Compensación de scroll: evita que la página salte al crecer "En el pedido"
-  const scrollCompRef = useRef(null)
-
-  useLayoutEffect(() => {
-    if (!scrollCompRef.current) return
-    const { id, topAntes } = scrollCompRef.current
-    scrollCompRef.current = null
-    const el = document.querySelector(`[data-lista-id="${id}"]`)
-    if (el) {
-      const diff = el.getBoundingClientRect().top - topAntes
-      if (Math.abs(diff) > 1) window.scrollBy(0, diff)
-    }
-  }, [cantidades])
-
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
-    const el = document.querySelector(`[data-lista-id="${articuloId}"]`)
-    if (el) {
-      scrollCompRef.current = { id: articuloId, topAntes: el.getBoundingClientRect().top }
-    }
     const cantidad = Math.max(0, parseInt(valor) || 0)
     setCantidades(prev => ({
       ...prev,
@@ -384,12 +348,7 @@ const NuevoPedido = () => {
       setNombrePedido('')
       setBorradorRecuperado(false)
     } catch (err) {
-      if (err.response?.status === 409) {
-        setPedidoPendienteExiste(true)
-        setError('Ya tenés un pedido pendiente para esta sucursal.')
-      } else {
-        setError('Error al enviar el pedido. Intentá nuevamente.')
-      }
+      setError('Error al enviar el pedido. Intentá nuevamente.')
     } finally {
       setEnviando(false)
     }
@@ -520,14 +479,6 @@ const NuevoPedido = () => {
           </div>
         )}
 
-        {/* Banner de pedido pendiente existente */}
-        {pedidoPendienteExiste && (
-          <div className="mb-4 bg-red-50 border border-red-300 rounded-lg px-4 py-3">
-            <p className="text-sm font-medium text-red-800">Ya tenés un pedido pendiente para esta sucursal</p>
-            <p className="text-xs text-red-600 mt-0.5">Esperá a que se procese antes de crear otro pedido</p>
-          </div>
-        )}
-
         {!sucursalSeleccionada && (
           <p className="text-center text-gray-400 mt-10">
             Seleccioná una sucursal para ver los artículos
@@ -561,33 +512,23 @@ const NuevoPedido = () => {
                   </div>
                 )}
 
-                {/* Resumen de artículos en el pedido */}
+                {/* Toggle ver seleccionados / ver todos */}
                 {totalArticulos > 0 && (
                   <div className="mb-4">
-                    <h2 className="text-sm font-bold text-blue-700 bg-blue-50 px-3 py-2 rounded-t-lg uppercase tracking-wide border border-blue-200 border-b-0">
-                      En el pedido ({totalArticulos})
-                    </h2>
-                    <div className="space-y-3 py-2 px-1 bg-blue-50/30 border border-blue-200 border-t-0 rounded-b-lg">
-                      {articulos
-                        .filter(a => cantidades[a.id] > 0)
-                        .sort((a, b) => a.nombre.localeCompare(b.nombre))
-                        .map(articulo => (
-                          <ArticuloCard
-                            key={'resumen-' + articulo.id}
-                            articulo={articulo}
-                            cantidad={cantidades[articulo.id] || 0}
-                            onChange={(val) => actualizarCantidad(articulo.id, val)}
-                            sucursalId={sucursalSeleccionada}
-                            mostrarStockIdeal={false}
-                          />
-                        ))}
-                    </div>
+                    <button
+                      onClick={() => setSoloSeleccionados(prev => !prev)}
+                      className={`w-full py-2.5 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                        soloSeleccionados
+                          ? 'bg-green-600 text-white border-green-600'
+                          : 'bg-white text-green-700 border-green-400 hover:bg-green-50'
+                      }`}
+                    >
+                      {soloSeleccionados
+                        ? 'Ver todos los artículos'
+                        : `Revisar pedido (${totalArticulos} artículo${totalArticulos !== 1 ? 's' : ''})`}
+                    </button>
                   </div>
                 )}
-
-                <p className="text-gray-500 text-sm mb-4">
-                  Tocá un artículo para agregar cantidad
-                </p>
 
                 {/* Lista de artículos agrupada por rubro/marca */}
                 {articulosAgrupados.map(grupo => (
@@ -606,15 +547,14 @@ const NuevoPedido = () => {
 
                         <div className="space-y-3 py-2">
                           {subgrupo.articulos.map(articulo => (
-                            <div key={articulo.id} data-lista-id={articulo.id}>
-                              <ArticuloCard
-                                articulo={articulo}
-                                cantidad={cantidades[articulo.id] || 0}
-                                onChange={(val) => actualizarCantidad(articulo.id, val)}
-                                sucursalId={sucursalSeleccionada}
-                                mostrarStockIdeal
-                              />
-                            </div>
+                            <ArticuloCard
+                              key={articulo.id}
+                              articulo={articulo}
+                              cantidad={cantidades[articulo.id] || 0}
+                              onChange={(val) => actualizarCantidad(articulo.id, val)}
+                              sucursalId={sucursalSeleccionada}
+                              mostrarStockIdeal
+                            />
                           ))}
                         </div>
                       </div>
@@ -686,14 +626,13 @@ const NuevoPedido = () => {
                 {/* Lista plana de artículos ERP */}
                 <div className="space-y-3">
                   {articulosErp.map(articulo => (
-                    <div key={articulo.id} data-lista-id={articulo.id}>
-                      <ArticuloCard
-                        articulo={articulo}
-                        cantidad={cantidades[articulo.id] || 0}
-                        onChange={(val) => actualizarCantidad(articulo.id, val)}
-                        mostrarStockIdeal={false}
-                      />
-                    </div>
+                    <ArticuloCard
+                      key={articulo.id}
+                      articulo={articulo}
+                      cantidad={cantidades[articulo.id] || 0}
+                      onChange={(val) => actualizarCantidad(articulo.id, val)}
+                      mostrarStockIdeal={false}
+                    />
                   ))}
                 </div>
 
@@ -747,10 +686,10 @@ const NuevoPedido = () => {
           </div>
           <button
             onClick={handleEnviar}
-            disabled={enviando || totalArticulos === 0 || pedidoPendienteExiste}
+            disabled={enviando || totalArticulos === 0}
             className="btn-primario"
           >
-            {enviando ? 'Enviando...' : pedidoPendienteExiste ? 'Pedido pendiente existente' : 'Confirmar pedido'}
+            {enviando ? 'Enviando...' : 'Confirmar pedido'}
           </button>
         </div>
       )}
@@ -783,7 +722,7 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId, mostrarStockId
 
   return (
     <div className={`tarjeta transition-all ${
-      tieneUnidades ? 'border-blue-400 bg-blue-50' : ''
+      tieneUnidades ? 'border-green-400 bg-green-50' : ''
     }`}>
       {/* Info del artículo */}
       <div className="mb-2">

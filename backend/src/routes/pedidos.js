@@ -165,21 +165,6 @@ router.post('/', verificarAuth, async (req, res) => {
       }
     }
 
-    // Verificar que no exista pedido pendiente para esta sucursal/usuario
-    const { data: pendientes, error: errPend } = await supabase
-      .from('pedidos')
-      .select('id')
-      .eq('sucursal_id', sucursal_id)
-      .eq('usuario_id', req.perfil.id)
-      .eq('estado', 'pendiente')
-      .limit(1)
-
-    if (errPend) throw errPend
-
-    if (pendientes.length > 0) {
-      return res.status(409).json({ error: 'Ya tenés un pedido pendiente para esta sucursal. Esperá a que se procese antes de crear otro.' })
-    }
-
     // Creamos el pedido
     const pedidoData = {
       sucursal_id,
