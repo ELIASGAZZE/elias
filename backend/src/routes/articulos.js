@@ -386,6 +386,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
         Nombre: a.Nombre,
         NombreFantasia: a.NombreFantasia,
         Habilitado: a.Habilitado,
+        EsCombo: a.EsCombo,
         Rubro: a.Rubro?.Nombre,
         Marca: a.MarcaArticulo?.Nombre,
       })),
