@@ -90,7 +90,7 @@ router.get('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('perfiles')
-      .select('id, user_id, username, nombre, rol, created_at')
+      .select('id, user_id, username, nombre, rol, sucursal_id, created_at')
       .order('created_at', { ascending: false })
 
     if (error) throw error
@@ -182,6 +182,46 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al crear usuario:', err)
     res.status(500).json({ error: 'Error al crear usuario' })
+  }
+})
+
+// PUT /api/auth/usuarios/:id
+// Admin: edita perfil de un usuario (nombre, rol, sucursal_id)
+router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
+  const { id } = req.params
+  const { nombre, rol, sucursal_id } = req.body
+
+  if (!nombre || !nombre.trim()) {
+    return res.status(400).json({ error: 'El nombre es requerido' })
+  }
+
+  if (!['admin', 'operario'].includes(rol)) {
+    return res.status(400).json({ error: 'El rol debe ser "admin" o "operario"' })
+  }
+
+  if (rol === 'operario' && !sucursal_id) {
+    return res.status(400).json({ error: 'Los operarios deben tener una sucursal asignada' })
+  }
+
+  try {
+    const updateData = {
+      nombre: nombre.trim(),
+      rol,
+      sucursal_id: rol === 'operario' ? sucursal_id : null,
+    }
+
+    const { data, error } = await supabase
+      .from('perfiles')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al editar usuario:', err)
+    res.status(500).json({ error: 'Error al editar usuario' })
   }
 })
 

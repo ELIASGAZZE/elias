@@ -4,7 +4,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
-import { OPERARIO_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 const NuevoPedido = () => {
@@ -135,7 +134,7 @@ const NuevoPedido = () => {
   if (cargandoSucursales) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
+        <Navbar titulo="Nuevo Pedido" />
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
         </div>
@@ -147,7 +146,7 @@ const NuevoPedido = () => {
   if (exito) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
+        <Navbar titulo="Nuevo Pedido" />
         <div className="flex flex-col items-center justify-center h-[80vh] px-4 text-center">
           <div className="text-6xl mb-4">✅</div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">¡Pedido enviado!</h2>
@@ -159,7 +158,7 @@ const NuevoPedido = () => {
             Hacer otro pedido
           </button>
           <button
-            onClick={() => navigate('/operario/pedidos')}
+            onClick={() => navigate('/pedidos/historial')}
             className="btn-secundario max-w-xs mt-3"
           >
             Ver mis pedidos
@@ -171,7 +170,7 @@ const NuevoPedido = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
-      <Navbar titulo="Nuevo Pedido" tabs={OPERARIO_TABS} />
+      <Navbar titulo="Nuevo Pedido" />
 
       <div className="px-4 py-4">
 

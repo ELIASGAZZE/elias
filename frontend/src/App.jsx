@@ -5,23 +5,27 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import RutaProtegida from './components/auth/RutaProtegida'
 
-// Páginas
-import Login from './pages/Login'
+// Páginas comunes (todos los roles)
 import NuevoPedido from './pages/operario/NuevoPedido'
 import MisPedidos from './pages/operario/MisPedidos'
+
+// Páginas solo admin
 import AdminPedidos from './pages/admin/AdminPedidos'
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
 
-// Redirige al home correcto según el rol del usuario
-const RedirigirSegunRol = () => {
-  const { esAdmin, estaLogueado, cargando } = useAuth()
+// Redirige al home según si está logueado
+const RedirigirHome = () => {
+  const { estaLogueado, cargando } = useAuth()
 
   if (cargando) return null
   if (!estaLogueado) return <Navigate to="/login" replace />
-  return <Navigate to={esAdmin ? '/admin' : '/operario'} replace />
+  return <Navigate to="/pedidos/nuevo" replace />
 }
+
+// Importar Login
+import Login from './pages/Login'
 
 const App = () => {
   return (
@@ -31,23 +35,23 @@ const App = () => {
           {/* Ruta pública */}
           <Route path="/login" element={<Login />} />
 
-          {/* Redirige la raíz según rol */}
-          <Route path="/" element={<RedirigirSegunRol />} />
+          {/* Redirige la raíz */}
+          <Route path="/" element={<RedirigirHome />} />
 
-          {/* Rutas del operario */}
-          <Route path="/operario" element={
+          {/* Rutas comunes — cualquier usuario logueado */}
+          <Route path="/pedidos/nuevo" element={
             <RutaProtegida>
               <NuevoPedido />
             </RutaProtegida>
           } />
-          <Route path="/operario/pedidos" element={
+          <Route path="/pedidos/historial" element={
             <RutaProtegida>
               <MisPedidos />
             </RutaProtegida>
           } />
 
-          {/* Rutas del administrador */}
-          <Route path="/admin" element={
+          {/* Rutas admin — requieren rol admin */}
+          <Route path="/admin/pedidos" element={
             <RutaProtegida soloAdmin>
               <AdminPedidos />
             </RutaProtegida>
@@ -67,6 +71,11 @@ const App = () => {
               <AdminConfiguracion />
             </RutaProtegida>
           } />
+
+          {/* Redirects de compatibilidad con rutas viejas */}
+          <Route path="/operario" element={<Navigate to="/pedidos/nuevo" replace />} />
+          <Route path="/operario/pedidos" element={<Navigate to="/pedidos/historial" replace />} />
+          <Route path="/admin" element={<Navigate to="/admin/pedidos" replace />} />
 
           {/* Cualquier ruta desconocida redirige al inicio */}
           <Route path="*" element={<Navigate to="/" replace />} />

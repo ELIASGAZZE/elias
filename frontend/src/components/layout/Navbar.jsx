@@ -2,11 +2,14 @@
 import React from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { getTabsParaRol } from './navTabs'
 
-const Navbar = ({ titulo, tabs }) => {
+const Navbar = ({ titulo }) => {
   const { usuario, logout, esAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+
+  const tabs = getTabsParaRol(esAdmin)
 
   const handleLogout = async () => {
     await logout()
@@ -40,15 +43,15 @@ const Navbar = ({ titulo, tabs }) => {
       </nav>
 
       {/* Fila de tabs de navegación */}
-      {tabs && tabs.length > 0 && (
-        <div className="bg-white border-b border-gray-200 flex">
+      {tabs.length > 0 && (
+        <div className="bg-white border-b border-gray-200 flex overflow-x-auto">
           {tabs.map(tab => {
             const activo = location.pathname === tab.path
             return (
               <Link
                 key={tab.path}
                 to={tab.path}
-                className={`flex-1 text-center px-2 py-3 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
+                className={`flex-shrink-0 text-center px-3 py-3 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                   activo
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-500 hover:text-gray-700'

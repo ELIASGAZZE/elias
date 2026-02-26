@@ -1,7 +1,6 @@
 // Panel de administrador: ver y gestionar todos los pedidos
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
-import { ADMIN_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 const ESTADOS = ['pendiente', 'confirmado', 'entregado', 'cancelado']
@@ -97,7 +96,7 @@ const AdminPedidos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar titulo="Pedidos" tabs={ADMIN_TABS} />
+      <Navbar titulo="Todos los Pedidos" />
 
       <div className="px-4 py-4">
 

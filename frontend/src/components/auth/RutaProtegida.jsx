@@ -27,7 +27,7 @@ const RutaProtegida = ({ children, soloAdmin = false }) => {
 
   // Si la ruta es solo para admins y no lo es, redirigimos
   if (soloAdmin && !esAdmin) {
-    return <Navigate to="/operario" replace />
+    return <Navigate to="/pedidos/nuevo" replace />
   }
 
   return children

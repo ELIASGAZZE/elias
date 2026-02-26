@@ -20,12 +20,8 @@ const Login = () => {
     try {
       const usuario = await login(username, password)
 
-      // Redirigimos según el rol del usuario
-      if (usuario.rol === 'admin') {
-        navigate('/admin')
-      } else {
-        navigate('/operario')
-      }
+      // Todos van al mismo home
+      navigate('/pedidos/nuevo')
     } catch (err) {
       setError('Usuario o contraseña incorrectos')
     } finally {

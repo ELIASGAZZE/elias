@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
-import { OPERARIO_TABS } from '../../components/layout/navTabs'
 import api from '../../services/api'
 
 // Colores para los distintos estados del pedido
@@ -34,7 +33,7 @@ const MisPedidos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Mis Pedidos" tabs={OPERARIO_TABS} />
+      <Navbar titulo="Mis Pedidos" />
 
       <div className="px-4 py-4 space-y-3">
         {cargando && (
@@ -87,7 +86,7 @@ const MisPedidos = () => {
 
       {/* Botón flotante para hacer nuevo pedido */}
       <button
-        onClick={() => navigate('/operario')}
+        onClick={() => navigate('/pedidos/nuevo')}
         className="fixed bottom-6 right-6 bg-blue-600 text-white rounded-full w-16 h-16
                    flex items-center justify-center shadow-lg text-2xl
                    hover:bg-blue-700 active:bg-blue-800 transition-colors"

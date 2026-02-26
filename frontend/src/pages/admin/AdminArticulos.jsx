@@ -1,7 +1,6 @@
 // Panel de administrador: gestionar artículos ERP — lista plana con búsqueda, filtro, paginación y modal
 import React, { useState, useEffect, useMemo } from 'react'
 import Navbar from '../../components/layout/Navbar'
-import { ADMIN_TABS } from '../../components/layout/navTabs'
 import ArticuloModal from '../../components/ArticuloModal'
 import api from '../../services/api'
 
@@ -112,7 +111,7 @@ const AdminArticulos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Artículos ERP" tabs={ADMIN_TABS} />
+      <Navbar titulo="Artículos ERP" />
 
       <div className="px-4 py-4 space-y-4">
 

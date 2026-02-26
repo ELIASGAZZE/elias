@@ -1,7 +1,6 @@
 // Panel de administrador: gestionar artículos manuales — lista plana con búsqueda, filtro, paginación y modal
 import React, { useState, useEffect, useMemo } from 'react'
 import Navbar from '../../components/layout/Navbar'
-import { ADMIN_TABS } from '../../components/layout/navTabs'
 import ArticuloModal from '../../components/ArticuloModal'
 import api from '../../services/api'
 
@@ -139,7 +138,7 @@ const AdminArticulosManuales = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Art. Manuales" tabs={ADMIN_TABS} />
+      <Navbar titulo="Art. Manuales" />
 
       <div className="px-4 py-4 space-y-4">
 

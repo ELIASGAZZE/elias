@@ -45,6 +45,32 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// PUT /api/sucursales/:id
+// Admin: edita una sucursal
+router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { nombre } = req.body
+
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({ error: 'El nombre de la sucursal es requerido' })
+    }
+
+    const { data, error } = await supabase
+      .from('sucursales')
+      .update({ nombre: nombre.trim() })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al editar sucursal:', err)
+    res.status(500).json({ error: 'Error al editar sucursal' })
+  }
+})
+
 // DELETE /api/sucursales/:id
 // Admin: elimina una sucursal
 router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
