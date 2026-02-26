@@ -1,7 +1,13 @@
 import React, { useState } from 'react'
 import api from '../services/api'
 
-const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
+const ArticuloModal = ({ articulo, sucursales, rubros = [], onClose, onUpdate }) => {
+  const esManual = articulo.tipo === 'manual'
+
+  // Campos editables (solo para manuales)
+  const [nombre, setNombre] = useState(articulo.nombre || '')
+  const [rubro, setRubro] = useState(articulo.rubro || '')
+
   // Estado original para detectar qué cambió
   const buildEstado = () => {
     const mapa = {}
@@ -35,9 +41,28 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
   }
 
   const guardar = async () => {
+    if (esManual && !nombre.trim()) {
+      alert('El nombre es obligatorio')
+      return
+    }
+    if (esManual && !rubro.trim()) {
+      alert('El rubro es obligatorio')
+      return
+    }
+
     setGuardando(true)
     try {
-      // Solo guardar sucursales que cambiaron
+      // 1. Guardar cambios de nombre/rubro si es manual y cambió algo
+      let articuloActualizado = null
+      if (esManual && (nombre.trim() !== articulo.nombre || rubro.trim() !== (articulo.rubro || ''))) {
+        const { data } = await api.put(`/api/articulos/${articulo.id}`, {
+          nombre: nombre.trim(),
+          rubro: rubro.trim(),
+        })
+        articuloActualizado = data
+      }
+
+      // 2. Guardar sucursales que cambiaron
       const cambios = sucursales.filter(s => {
         const original = estadoOriginal[s.id]
         const actual = estadoPorSucursal[s.id]
@@ -52,15 +77,16 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
           })
         )
         await Promise.all(promesas)
-
-        // Pasar el estado actualizado para update local inmediato
-        const nuevasRelaciones = sucursales.map(s => ({
-          sucursal_id: s.id,
-          habilitado: estadoPorSucursal[s.id].habilitado,
-          stock_ideal: estadoPorSucursal[s.id].stock_ideal,
-        }))
-        onUpdate(articulo.id, nuevasRelaciones)
       }
+
+      // Pasar el estado actualizado para update local inmediato
+      const nuevasRelaciones = sucursales.map(s => ({
+        sucursal_id: s.id,
+        habilitado: estadoPorSucursal[s.id].habilitado,
+        stock_ideal: estadoPorSucursal[s.id].stock_ideal,
+      }))
+      onUpdate(articulo.id, nuevasRelaciones, articuloActualizado)
+
       onClose()
     } catch (err) {
       console.error('Error al guardar:', err)
@@ -78,21 +104,44 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between p-4 border-b border-gray-100">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-gray-800 truncate">{articulo.nombre}</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
-            {(articulo.rubro || articulo.marca) && (
-              <div className="flex gap-2 mt-1 flex-wrap">
-                {articulo.rubro && (
-                  <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{articulo.rubro}</span>
-                )}
-                {articulo.marca && (
-                  <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{articulo.marca}</span>
-                )}
-              </div>
-            )}
-          </div>
+        <div className="p-4 border-b border-gray-100">
+          {esManual ? (
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={nombre}
+                onChange={e => setNombre(e.target.value)}
+                className="w-full text-base font-semibold text-gray-800 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="Nombre del artículo"
+              />
+              <select
+                value={rubro}
+                onChange={e => setRubro(e.target.value)}
+                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">Seleccioná un rubro</option>
+                {rubros.map(r => (
+                  <option key={r.id} value={r.nombre}>{r.nombre}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400">Código: {articulo.codigo}</p>
+            </div>
+          ) : (
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-semibold text-gray-800 truncate">{articulo.nombre}</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
+              {(articulo.rubro || articulo.marca) && (
+                <div className="flex gap-2 mt-1 flex-wrap">
+                  {articulo.rubro && (
+                    <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{articulo.rubro}</span>
+                  )}
+                  {articulo.marca && (
+                    <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{articulo.marca}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Lista de sucursales */}

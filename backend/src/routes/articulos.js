@@ -127,6 +127,51 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
   }
 })
 
+// PUT /api/articulos/:id
+// Admin: edita nombre y/o rubro de un artículo manual
+router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { nombre, rubro } = req.body
+
+    // Verificar que el artículo existe y es manual
+    const { data: existente, error: errBuscar } = await supabase
+      .from('articulos')
+      .select('id, tipo')
+      .eq('id', id)
+      .single()
+
+    if (errBuscar || !existente) {
+      return res.status(404).json({ error: 'Artículo no encontrado' })
+    }
+
+    if (existente.tipo !== 'manual') {
+      return res.status(400).json({ error: 'Solo se pueden editar artículos manuales' })
+    }
+
+    const updates = {}
+    if (nombre !== undefined) updates.nombre = nombre.trim()
+    if (rubro !== undefined) updates.rubro = rubro.trim()
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No se enviaron campos para actualizar' })
+    }
+
+    const { data, error } = await supabase
+      .from('articulos')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al editar artículo:', err)
+    res.status(500).json({ error: 'Error al editar artículo' })
+  }
+})
+
 // POST /api/articulos
 // Admin: crea un artículo individual (manual) con código autogenerado
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {

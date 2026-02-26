@@ -125,10 +125,15 @@ const AdminArticulosManuales = () => {
   }
 
   // Callback cuando el modal guarda — update local inmediato
-  const handleModalUpdate = (articuloId, nuevasRelaciones) => {
+  const handleModalUpdate = (articuloId, nuevasRelaciones, articuloActualizado) => {
     setArticulos(prev => prev.map(a => {
       if (a.id !== articuloId) return a
-      return { ...a, articulos_por_sucursal: nuevasRelaciones }
+      const updated = { ...a, articulos_por_sucursal: nuevasRelaciones }
+      if (articuloActualizado) {
+        updated.nombre = articuloActualizado.nombre
+        updated.rubro = articuloActualizado.rubro
+      }
+      return updated
     }))
   }
 
@@ -268,6 +273,7 @@ const AdminArticulosManuales = () => {
         <ArticuloModal
           articulo={articuloModal}
           sucursales={sucursales}
+          rubros={rubros}
           onClose={() => setArticuloModal(null)}
           onUpdate={handleModalUpdate}
         />
