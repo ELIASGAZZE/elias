@@ -437,7 +437,13 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
 
     // Los artículos están en Articulos.Items[]
     const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
-    const articulosERP = items.filter(art => (art.Habilitado === true || art.Habilitado === undefined) && !art.EsCombo)
+    const articulosERP = items.filter(art => {
+      if (art.Habilitado === false) return false
+      if (art.EsCombo === true) return false
+      const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
+      if (nombre.startsWith('COMBO ') || nombre.startsWith('COMBO\t')) return false
+      return true
+    })
 
     if (articulosERP.length === 0) {
       return res.json({ mensaje: 'No se encontraron artículos habilitados en el ERP', cantidad: 0 })
