@@ -59,6 +59,9 @@ CREATE TABLE pedidos (
   fecha DATE NOT NULL,
   estado TEXT NOT NULL DEFAULT 'pendiente'
     CHECK (estado IN ('pendiente', 'confirmado', 'entregado', 'cancelado')),
+  -- 'regular' = artículos habilitados por sucursal, 'extraordinario' = todos los artículos ERP
+  tipo TEXT NOT NULL DEFAULT 'regular'
+    CHECK (tipo IN ('regular', 'extraordinario')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

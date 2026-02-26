@@ -1,6 +1,6 @@
 // Vista principal del operario: crear un nuevo pedido
 // Diseño mobile-first con tarjetas táctiles grandes
-// Artículos agrupados por rubro y marca
+// Soporta pedidos Regular (artículos habilitados por sucursal) y Extraordinario (todos los artículos ERP)
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
@@ -8,7 +8,7 @@ import api from '../../services/api'
 
 const BORRADOR_KEY = 'pedido_borrador'
 
-const guardarBorrador = (sucursalId, cantidades, nombre) => {
+const guardarBorrador = (sucursalId, cantidades, nombre, tipoPedido) => {
   const hayItems = Object.values(cantidades).some(c => c > 0)
   if (!sucursalId || !hayItems) {
     localStorage.removeItem(BORRADOR_KEY)
@@ -18,6 +18,7 @@ const guardarBorrador = (sucursalId, cantidades, nombre) => {
     sucursal_id: sucursalId,
     cantidades,
     nombre: nombre || '',
+    tipo: tipoPedido || 'regular',
     timestamp: Date.now(),
   }))
 }
@@ -44,6 +45,7 @@ const limpiarBorrador = () => localStorage.removeItem(BORRADOR_KEY)
 const NuevoPedido = () => {
   const [sucursales, setSucursales] = useState([])
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState('')
+  const [tipoPedido, setTipoPedido] = useState('regular')
   const [articulos, setArticulos] = useState([])
   const [cantidades, setCantidades] = useState({}) // { articulo_id: cantidad }
   const [nombrePedido, setNombrePedido] = useState('')
@@ -56,6 +58,17 @@ const NuevoPedido = () => {
   const navigate = useNavigate()
   const borradorAplicado = useRef(false)
   const restauracionLista = useRef(false)
+
+  // Estado para flujo extraordinario
+  const [articulosErp, setArticulosErp] = useState([])
+  const [totalErp, setTotalErp] = useState(0)
+  const [paginaErp, setPaginaErp] = useState(1)
+  const [busquedaErp, setBusquedaErp] = useState('')
+  const [buscandoErp, setBuscandoErp] = useState(false)
+  const busquedaTimerRef = useRef(null)
+  const ERP_LIMIT = 20
+
+  const esExtraordinario = tipoPedido === 'extraordinario'
 
   // Cargamos las sucursales al iniciar
   useEffect(() => {
@@ -70,6 +83,7 @@ const NuevoPedido = () => {
           if (borrador) {
             setSucursalSeleccionada(borrador.sucursal_id)
             if (borrador.nombre) setNombrePedido(borrador.nombre)
+            if (borrador.tipo) setTipoPedido(borrador.tipo)
             // Las cantidades se aplican después de que carguen los artículos
             borradorAplicado.current = borrador
           } else {
@@ -86,10 +100,10 @@ const NuevoPedido = () => {
     cargar()
   }, [])
 
-  // Cargamos artículos cuando cambia la sucursal
+  // Cargamos artículos cuando cambia la sucursal (solo flujo regular)
   useEffect(() => {
-    if (!sucursalSeleccionada) {
-      setArticulos([])
+    if (!sucursalSeleccionada || esExtraordinario) {
+      if (!esExtraordinario) setArticulos([])
       return
     }
 
@@ -104,7 +118,7 @@ const NuevoPedido = () => {
 
         // Si hay borrador pendiente para esta sucursal, restaurar cantidades
         const borrador = borradorAplicado.current
-        if (borrador && borrador.sucursal_id === sucursalSeleccionada) {
+        if (borrador && borrador.sucursal_id === sucursalSeleccionada && (!borrador.tipo || borrador.tipo === 'regular')) {
           const idsValidos = new Set(data.map(a => a.id))
           const cantidadesRestauradas = {}
           Object.entries(borrador.cantidades).forEach(([id, cant]) => {
@@ -118,7 +132,7 @@ const NuevoPedido = () => {
           }
           borradorAplicado.current = false
           restauracionLista.current = true
-        } else {
+        } else if (!borradorAplicado.current) {
           // Limpiamos cantidades al cambiar de sucursal manualmente
           setCantidades({})
         }
@@ -129,10 +143,53 @@ const NuevoPedido = () => {
       }
     }
     cargarArticulos()
-  }, [sucursalSeleccionada])
+  }, [sucursalSeleccionada, esExtraordinario])
 
-  // Agrupar artículos por rubro → marca
+  // Cargar artículos ERP cuando cambia página, búsqueda o se activa flujo extraordinario
+  useEffect(() => {
+    if (!sucursalSeleccionada || !esExtraordinario) {
+      setArticulosErp([])
+      setTotalErp(0)
+      return
+    }
+
+    const cargarErp = async () => {
+      setBuscandoErp(true)
+      setError('')
+      try {
+        const params = { page: paginaErp, limit: ERP_LIMIT }
+        if (busquedaErp.trim()) params.buscar = busquedaErp.trim()
+
+        const { data } = await api.get('/api/articulos/erp', { params })
+        setArticulosErp(data.articulos)
+        setTotalErp(data.total)
+
+        // Restaurar cantidades del borrador extraordinario
+        const borrador = borradorAplicado.current
+        if (borrador && borrador.tipo === 'extraordinario') {
+          const cantidadesRestauradas = {}
+          Object.entries(borrador.cantidades).forEach(([id, cant]) => {
+            if (cant > 0) cantidadesRestauradas[id] = cant
+          })
+          if (Object.keys(cantidadesRestauradas).length > 0) {
+            setCantidades(cantidadesRestauradas)
+            setBorradorRecuperado(true)
+          }
+          borradorAplicado.current = false
+          restauracionLista.current = true
+        }
+      } catch (err) {
+        setError('Error al cargar artículos ERP')
+      } finally {
+        setBuscandoErp(false)
+      }
+    }
+    cargarErp()
+  }, [sucursalSeleccionada, esExtraordinario, paginaErp, busquedaErp])
+
+  // Agrupar artículos por rubro -> marca (solo flujo regular)
   const articulosAgrupados = useMemo(() => {
+    if (esExtraordinario) return []
     const grupos = {}
 
     articulos.forEach(art => {
@@ -164,14 +221,14 @@ const NuevoPedido = () => {
             articulos: grupos[rubro][marca].sort((a, b) => a.nombre.localeCompare(b.nombre)),
           })),
       }))
-  }, [articulos])
+  }, [articulos, esExtraordinario])
 
   // Autoguardar borrador cada vez que cambian cantidades o sucursal
   // No ejecutar hasta que la restauración del borrador previo haya terminado
   useEffect(() => {
     if (!restauracionLista.current) return
-    guardarBorrador(sucursalSeleccionada, cantidades, nombrePedido)
-  }, [sucursalSeleccionada, cantidades, nombrePedido])
+    guardarBorrador(sucursalSeleccionada, cantidades, nombrePedido, tipoPedido)
+  }, [sucursalSeleccionada, cantidades, nombrePedido, tipoPedido])
 
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
@@ -189,14 +246,33 @@ const NuevoPedido = () => {
     setBorradorRecuperado(false)
   }, [])
 
+  // Al cambiar tipo de pedido, limpiar cantidades y estados del otro flujo
+  const handleCambiarTipo = (nuevoTipo) => {
+    if (nuevoTipo === tipoPedido) return
+    setTipoPedido(nuevoTipo)
+    setCantidades({})
+    setBorradorRecuperado(false)
+    setBusquedaErp('')
+    setPaginaErp(1)
+  }
+
+  // Búsqueda con debounce para flujo extraordinario
+  const handleBusquedaErp = (valor) => {
+    setBusquedaErp(valor)
+    setPaginaErp(1)
+  }
+
   // Cuenta cuántos artículos tienen cantidad > 0
   const totalArticulos = Object.values(cantidades).filter(c => c > 0).length
 
+  const totalPaginasErp = Math.max(1, Math.ceil(totalErp / ERP_LIMIT))
+
   // Envía el pedido al backend
   const handleEnviar = async () => {
-    const items = articulos
-      .filter(art => cantidades[art.id] > 0)
-      .map(art => ({ articulo_id: art.id, cantidad: cantidades[art.id] }))
+    // Para extraordinario, los items vienen de cantidades directamente (no de articulosErp de la página actual)
+    const items = Object.entries(cantidades)
+      .filter(([, cant]) => cant > 0)
+      .map(([articuloId, cant]) => ({ articulo_id: articuloId, cantidad: cant }))
 
     if (items.length === 0) {
       setError('Debés agregar al menos un artículo al pedido')
@@ -207,7 +283,7 @@ const NuevoPedido = () => {
     setError('')
 
     try {
-      const body = { items, sucursal_id: sucursalSeleccionada }
+      const body = { items, sucursal_id: sucursalSeleccionada, tipo: tipoPedido }
       if (nombrePedido.trim()) body.nombre = nombrePedido.trim()
       await api.post('/api/pedidos', body)
       limpiarBorrador()
@@ -243,7 +319,7 @@ const NuevoPedido = () => {
           <h2 className="text-2xl font-bold text-gray-800 mb-2">¡Pedido enviado!</h2>
           <p className="text-gray-500 mb-6">Tu pedido fue registrado correctamente</p>
           <button
-            onClick={() => { limpiarBorrador(); setExito(false) }}
+            onClick={() => { limpiarBorrador(); setExito(false); setTipoPedido('regular') }}
             className="btn-primario max-w-xs"
           >
             Hacer otro pedido
@@ -279,6 +355,40 @@ const NuevoPedido = () => {
             ))}
           </select>
         </div>
+
+        {/* Selector de tipo de pedido */}
+        {sucursalSeleccionada && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de pedido</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleCambiarTipo('regular')}
+                className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                  tipoPedido === 'regular'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Regular
+              </button>
+              <button
+                onClick={() => handleCambiarTipo('extraordinario')}
+                className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                  tipoPedido === 'extraordinario'
+                    ? 'bg-purple-600 text-white border-purple-600'
+                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Extraordinario
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              {esExtraordinario
+                ? 'Todos los artículos del ERP disponibles para pedir'
+                : 'Artículos habilitados para la sucursal'}
+            </p>
+          </div>
+        )}
 
         {/* Nombre del pedido (opcional) */}
         {sucursalSeleccionada && (
@@ -319,53 +429,134 @@ const NuevoPedido = () => {
           </p>
         )}
 
-        {cargando && (
-          <div className="flex justify-center items-center h-32">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
-          </div>
-        )}
-
-        {sucursalSeleccionada && !cargando && (
+        {/* ───── FLUJO REGULAR ───── */}
+        {sucursalSeleccionada && !esExtraordinario && (
           <>
-            <p className="text-gray-500 text-sm mb-4">
-              Tocá un artículo para agregar cantidad
-            </p>
+            {cargando && (
+              <div className="flex justify-center items-center h-32">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+              </div>
+            )}
 
-            {/* Lista de artículos agrupada por rubro/marca */}
-            {articulosAgrupados.map(grupo => (
-              <div key={grupo.rubro} className="mb-4">
-                {/* Header de rubro */}
-                <h2 className="text-sm font-bold text-gray-700 bg-gray-200 px-3 py-2 rounded-t-lg uppercase tracking-wide">
-                  {grupo.rubro}
-                </h2>
+            {!cargando && (
+              <>
+                <p className="text-gray-500 text-sm mb-4">
+                  Tocá un artículo para agregar cantidad
+                </p>
 
-                {grupo.marcas.map(subgrupo => (
-                  <div key={subgrupo.marca}>
-                    {/* Header de marca */}
-                    <h3 className="text-xs font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 border-b border-blue-100">
-                      {subgrupo.marca}
-                    </h3>
+                {/* Lista de artículos agrupada por rubro/marca */}
+                {articulosAgrupados.map(grupo => (
+                  <div key={grupo.rubro} className="mb-4">
+                    {/* Header de rubro */}
+                    <h2 className="text-sm font-bold text-gray-700 bg-gray-200 px-3 py-2 rounded-t-lg uppercase tracking-wide">
+                      {grupo.rubro}
+                    </h2>
 
-                    <div className="space-y-3 py-2">
-                      {subgrupo.articulos.map(articulo => (
-                        <ArticuloCard
-                          key={articulo.id}
-                          articulo={articulo}
-                          cantidad={cantidades[articulo.id] || 0}
-                          onChange={(val) => actualizarCantidad(articulo.id, val)}
-                          sucursalId={sucursalSeleccionada}
-                        />
-                      ))}
-                    </div>
+                    {grupo.marcas.map(subgrupo => (
+                      <div key={subgrupo.marca}>
+                        {/* Header de marca */}
+                        <h3 className="text-xs font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 border-b border-blue-100">
+                          {subgrupo.marca}
+                        </h3>
+
+                        <div className="space-y-3 py-2">
+                          {subgrupo.articulos.map(articulo => (
+                            <ArticuloCard
+                              key={articulo.id}
+                              articulo={articulo}
+                              cantidad={cantidades[articulo.id] || 0}
+                              onChange={(val) => actualizarCantidad(articulo.id, val)}
+                              sucursalId={sucursalSeleccionada}
+                              mostrarStockIdeal
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ))}
-              </div>
-            ))}
 
-            {articulos.length === 0 && (
-              <p className="text-center text-gray-400 mt-10">
-                No hay artículos habilitados para esta sucursal
-              </p>
+                {articulos.length === 0 && (
+                  <p className="text-center text-gray-400 mt-10">
+                    No hay artículos habilitados para esta sucursal
+                  </p>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ───── FLUJO EXTRAORDINARIO ───── */}
+        {sucursalSeleccionada && esExtraordinario && (
+          <>
+            {/* Buscador */}
+            <div className="mb-4">
+              <input
+                type="text"
+                value={busquedaErp}
+                onChange={(e) => handleBusquedaErp(e.target.value)}
+                placeholder="Buscar por nombre o código..."
+                className="campo-form"
+              />
+            </div>
+
+            {buscandoErp && (
+              <div className="flex justify-center items-center h-32">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600" />
+              </div>
+            )}
+
+            {!buscandoErp && (
+              <>
+                <p className="text-gray-500 text-sm mb-3">
+                  {totalErp} artículo{totalErp !== 1 ? 's' : ''} encontrado{totalErp !== 1 ? 's' : ''}
+                  {totalArticulos > 0 && (
+                    <span className="text-purple-600 font-medium"> · {totalArticulos} seleccionado{totalArticulos !== 1 ? 's' : ''}</span>
+                  )}
+                </p>
+
+                {/* Lista plana de artículos ERP */}
+                <div className="space-y-3">
+                  {articulosErp.map(articulo => (
+                    <ArticuloCard
+                      key={articulo.id}
+                      articulo={articulo}
+                      cantidad={cantidades[articulo.id] || 0}
+                      onChange={(val) => actualizarCantidad(articulo.id, val)}
+                      mostrarStockIdeal={false}
+                    />
+                  ))}
+                </div>
+
+                {articulosErp.length === 0 && (
+                  <p className="text-center text-gray-400 mt-10">
+                    No se encontraron artículos
+                  </p>
+                )}
+
+                {/* Paginación */}
+                {totalErp > ERP_LIMIT && (
+                  <div className="flex items-center justify-between mt-4 gap-2">
+                    <button
+                      onClick={() => setPaginaErp(p => Math.max(1, p - 1))}
+                      disabled={paginaErp <= 1}
+                      className="text-sm px-4 py-2 rounded-lg bg-white border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-sm text-gray-500">
+                      Página {paginaErp} de {totalPaginasErp}
+                    </span>
+                    <button
+                      onClick={() => setPaginaErp(p => Math.min(totalPaginasErp, p + 1))}
+                      disabled={paginaErp >= totalPaginasErp}
+                      className="text-sm px-4 py-2 rounded-lg bg-white border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -398,8 +589,8 @@ const NuevoPedido = () => {
   )
 }
 
-// Componente de tarjeta de artículo con selector de cantidad y stock ideal editable
-const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
+// Componente de tarjeta de artículo con selector de cantidad y stock ideal editable (opcional)
+const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId, mostrarStockIdeal = true }) => {
   const tieneUnidades = cantidad > 0
   const [stockIdeal, setStockIdeal] = useState(articulo.stock_ideal || 0)
   const guardandoRef = useRef(false)
@@ -432,7 +623,7 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
       </div>
 
       {/* Fila: Cantidad a pedir */}
-      <div className="flex items-center justify-between mb-2">
+      <div className={`flex items-center justify-between ${mostrarStockIdeal ? 'mb-2' : ''}`}>
         <span className="text-sm text-gray-600 font-medium">Cantidad</span>
         <div className="flex items-center gap-2">
           <button
@@ -463,37 +654,39 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
         </div>
       </div>
 
-      {/* Fila: Stock ideal */}
-      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-        <span className="text-sm text-gray-600 font-medium">Stock ideal</span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => cambiarStock(stockIdeal - 1)}
-            className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 text-xl font-bold
-                       flex items-center justify-center hover:bg-gray-300 active:bg-gray-400
-                       disabled:opacity-30"
-            disabled={stockIdeal <= 0}
-          >
-            −
-          </button>
-          <input
-            type="number"
-            value={stockIdeal || ''}
-            onChange={(e) => cambiarStock(e.target.value)}
-            placeholder="0"
-            min="0"
-            className="w-12 text-center text-lg font-semibold border border-gray-300 rounded-lg py-1
-                       focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={() => cambiarStock(stockIdeal + 1)}
-            className="w-10 h-10 rounded-full bg-blue-600 text-white text-xl font-bold
-                       flex items-center justify-center hover:bg-blue-700 active:bg-blue-800"
-          >
-            +
-          </button>
+      {/* Fila: Stock ideal (solo en flujo regular) */}
+      {mostrarStockIdeal && (
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <span className="text-sm text-gray-600 font-medium">Stock ideal</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => cambiarStock(stockIdeal - 1)}
+              className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 text-xl font-bold
+                         flex items-center justify-center hover:bg-gray-300 active:bg-gray-400
+                         disabled:opacity-30"
+              disabled={stockIdeal <= 0}
+            >
+              −
+            </button>
+            <input
+              type="number"
+              value={stockIdeal || ''}
+              onChange={(e) => cambiarStock(e.target.value)}
+              placeholder="0"
+              min="0"
+              className="w-12 text-center text-lg font-semibold border border-gray-300 rounded-lg py-1
+                         focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={() => cambiarStock(stockIdeal + 1)}
+              className="w-10 h-10 rounded-full bg-blue-600 text-white text-xl font-bold
+                         flex items-center justify-center hover:bg-blue-700 active:bg-blue-800"
+            >
+              +
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

@@ -188,9 +188,16 @@ const AdminPedidos = () => {
                         {new Date(pedido.fecha).toLocaleDateString('es-AR')} · {pedido.perfiles?.nombre}
                       </p>
                     </div>
-                    <span className={`text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ${COLORES_ESTADO[pedido.estado]}`}>
-                      {pedido.estado}
-                    </span>
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado]}`}>
+                        {pedido.estado}
+                      </span>
+                      {pedido.tipo === 'extraordinario' && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                          Extraordinario
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <p className="text-xs text-gray-400 mt-2">

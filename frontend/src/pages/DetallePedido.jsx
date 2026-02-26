@@ -129,9 +129,18 @@ const DetallePedido = () => {
                 {new Date(pedido.fecha).toLocaleDateString('es-AR')} · {pedido.perfiles?.nombre}
               </p>
             </div>
-            <span className={`text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ${COLORES_ESTADO[pedido.estado]}`}>
-              {pedido.estado}
-            </span>
+            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado]}`}>
+                {pedido.estado}
+              </span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                pedido.tipo === 'extraordinario'
+                  ? 'bg-purple-100 text-purple-700'
+                  : 'bg-gray-100 text-gray-600'
+              }`}>
+                {pedido.tipo === 'extraordinario' ? 'Extraordinario' : 'Regular'}
+              </span>
+            </div>
           </div>
         </div>
 

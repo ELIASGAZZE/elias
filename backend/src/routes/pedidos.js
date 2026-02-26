@@ -18,7 +18,7 @@ router.get('/', verificarAuth, async (req, res) => {
     let query = supabase
       .from('pedidos')
       .select(`
-        id, nombre, fecha, estado, created_at,
+        id, nombre, fecha, estado, tipo, created_at,
         sucursales(id, nombre),
         perfiles(id, nombre),
         items_pedido(cantidad, articulos(id, codigo, nombre))
@@ -52,7 +52,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
     const { data, error } = await supabase
       .from('pedidos')
       .select(`
-        id, nombre, fecha, estado, created_at, usuario_id,
+        id, nombre, fecha, estado, tipo, created_at, usuario_id,
         sucursales(id, nombre),
         perfiles(id, nombre),
         items_pedido(cantidad, articulos(id, codigo, nombre))
@@ -80,7 +80,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
 // Operario crea un nuevo pedido
 router.post('/', verificarAuth, async (req, res) => {
   try {
-    const { items, sucursal_id, nombre } = req.body // items: [{ articulo_id, cantidad }]
+    const { items, sucursal_id, nombre, tipo } = req.body // items: [{ articulo_id, cantidad }]
 
     if (!sucursal_id) {
       return res.status(400).json({ error: 'La sucursal es requerida' })
@@ -105,6 +105,7 @@ router.post('/', verificarAuth, async (req, res) => {
       estado: 'pendiente',
     }
     if (nombre && nombre.trim()) pedidoData.nombre = nombre.trim()
+    if (tipo === 'extraordinario') pedidoData.tipo = 'extraordinario'
 
     const { data: pedido, error: errorPedido } = await supabase
       .from('pedidos')

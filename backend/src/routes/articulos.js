@@ -67,6 +67,38 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/articulos/erp
+// Cualquier usuario autenticado: artículos ERP paginados con búsqueda
+// Usado para pedidos extraordinarios (todos los artículos ERP, sin filtro por sucursal)
+router.get('/erp', verificarAuth, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1
+    const limit = parseInt(req.query.limit) || 20
+    const buscar = req.query.buscar?.trim() || ''
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+
+    let query = supabase
+      .from('articulos')
+      .select('id, codigo, nombre, rubro, marca', { count: 'exact' })
+      .eq('tipo', 'automatico')
+      .order('nombre')
+      .range(from, to)
+
+    if (buscar) {
+      query = query.or(`nombre.ilike.%${buscar}%,codigo.ilike.%${buscar}%`)
+    }
+
+    const { data, error, count } = await query
+    if (error) throw error
+
+    res.json({ articulos: data, total: count })
+  } catch (err) {
+    console.error('Error al obtener artículos ERP:', err)
+    res.status(500).json({ error: 'Error al obtener artículos ERP' })
+  }
+})
+
 // GET /api/articulos/sucursal/:sucursalId
 // Admin: ver artículos con su estado para una sucursal específica
 router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) => {
