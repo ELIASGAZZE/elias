@@ -234,7 +234,7 @@ router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
 
     const erp = data.filter(item => item.articulos.tipo === 'automatico')
-    const lineas = erp.map(item => `${item.articulos.codigo} ${item.cantidad}`)
+    const lineas = erp.map(item => `${item.articulos.codigo}\t${item.cantidad}`)
     const txt = lineas.join('\n')
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8')
