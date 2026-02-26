@@ -57,16 +57,16 @@ const DetallePedido = () => {
     }
   }
 
-  const descargarCSV = () => {
+  const descargarTXT = () => {
     const token = localStorage.getItem('token')
-    const url = `${import.meta.env.VITE_API_URL}/api/pedidos/${id}/csv`
+    const url = `${import.meta.env.VITE_API_URL}/api/pedidos/${id}/txt`
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.blob())
       .then(blob => {
         const objectUrl = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = objectUrl
-        a.setAttribute('download', `pedido-${id}.csv`)
+        a.setAttribute('download', `pedido-${id}.txt`)
         a.click()
         URL.revokeObjectURL(objectUrl)
       })
@@ -145,10 +145,10 @@ const DetallePedido = () => {
               </select>
 
               <button
-                onClick={descargarCSV}
+                onClick={descargarTXT}
                 className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
               >
-                Descargar CSV
+                Descargar TXT
               </button>
 
               <button

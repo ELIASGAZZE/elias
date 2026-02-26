@@ -220,33 +220,28 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// GET /api/pedidos/:id/csv
-// Admin: descarga un pedido como CSV con codigo_articulo y cantidad
-router.get('/:id/csv', verificarAuth, soloAdmin, async (req, res) => {
+// GET /api/pedidos/:id/txt
+// Admin: descarga un pedido como TXT con "codigo cantidad" por línea
+router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
 
     const { data, error } = await supabase
       .from('items_pedido')
-      .select('cantidad, articulos(codigo, nombre)')
+      .select('cantidad, articulos(codigo)')
       .eq('pedido_id', id)
 
     if (error) throw error
 
-    // Generamos el CSV manualmente
-    const filas = ['codigo_articulo,cantidad']
-    data.forEach(item => {
-      filas.push(`${item.articulos.codigo},${item.cantidad}`)
-    })
-    const csv = filas.join('\n')
+    const lineas = data.map(item => `${item.articulos.codigo} ${item.cantidad}`)
+    const txt = lineas.join('\n')
 
-    // Configuramos los headers para que el navegador descargue el archivo
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-    res.setHeader('Content-Disposition', `attachment; filename="pedido-${id}.csv"`)
-    res.send(csv)
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="pedido-${id}.txt"`)
+    res.send(txt)
   } catch (err) {
-    console.error('Error al generar CSV:', err)
-    res.status(500).json({ error: 'Error al generar CSV' })
+    console.error('Error al generar TXT:', err)
+    res.status(500).json({ error: 'Error al generar TXT' })
   }
 })
 
