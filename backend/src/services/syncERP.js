@@ -136,7 +136,8 @@ async function sincronizarERP() {
 
 /**
  * Sincroniza stock del depósito central (sucursal física Centum ID 6087) desde ERP.
- * Fase 1: descarga todo el stock del ERP (paginado).
+ * Usa GET /ArticulosExistencias (rápido, ~1.5s/página) con filtro por sucursal.
+ * Fase 1: descarga existencias paginando.
  * Fase 2: batch upsert contra la BD matcheando por id_centum.
  */
 async function sincronizarStock() {
@@ -144,14 +145,15 @@ async function sincronizarStock() {
   const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
 
-  // Fase 1: descargar todo el stock del ERP
+  // Fase 1: descargar existencias del depósito (sucursal 6087)
   const PAGE_SIZE = 500
   let pagina = 1
   const stockPorIdCentum = {}
 
+  console.log('[Stock] Fase 1: descargando existencias del depósito...')
   while (true) {
     const accessToken = generateAccessToken(apiKey)
-    const url = `${baseUrl}/ArticulosSucursalesFisicas?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
+    const url = `${baseUrl}/ArticulosExistencias?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
 
     const response = await fetch(url, {
       method: 'GET',
@@ -164,19 +166,23 @@ async function sincronizarStock() {
 
     if (!response.ok) {
       const texto = await response.text()
-      throw new Error(`Error al consultar stock ERP (${response.status}): ${texto}`)
+      throw new Error(`Error al consultar existencias ERP página ${pagina} (${response.status}): ${texto}`)
     }
 
     const data = await response.json()
     const items = data.Items || []
+    const total = data.CantidadTotalItems || '?'
 
     if (items.length === 0) break
 
     for (const item of items) {
       if (item.IdArticulo) {
-        stockPorIdCentum[item.IdArticulo] = Math.floor(item.Existencias || 0)
+        // ExistenciasSucursales = stock en la sucursal filtrada (depósito 6087)
+        stockPorIdCentum[item.IdArticulo] = Math.floor(item.ExistenciasSucursales || 0)
       }
     }
+
+    console.log(`[Stock] Página ${pagina}: ${items.length} items (acumulado: ${Object.keys(stockPorIdCentum).length}/${total})`)
 
     if (items.length < PAGE_SIZE) break
     pagina++
@@ -187,11 +193,14 @@ async function sincronizarStock() {
     return { mensaje: 'No se encontraron datos de stock en el ERP', actualizados: 0, procesados: 0 }
   }
 
-  // Fase 2: leer artículos de BD que tienen id_centum y hacer batch upsert
+  // Fase 2: leer artículos de BD y agrupar por stock para batch updates
+  console.log(`[Stock] Fase 2: actualizando BD (${totalProcesados} items del ERP)...`)
   const BATCH = 500
   let totalActualizados = 0
   const allIdsCentum = Object.keys(stockPorIdCentum).map(Number)
 
+  // Leer todos los artículos matcheados y agrupar por valor de stock
+  const stockPorValor = {} // { stockValue: [uuid, uuid, ...] }
   for (let i = 0; i < allIdsCentum.length; i += BATCH) {
     const lote = allIdsCentum.slice(i, i + BATCH)
 
@@ -200,22 +209,36 @@ async function sincronizarStock() {
       .select('id, id_centum')
       .in('id_centum', lote)
 
-    if (!articulosDB || articulosDB.length === 0) continue
+    if (!articulosDB) continue
 
-    // Preparar lote de upsert con id + stock_deposito
-    const upsertLote = articulosDB.map(art => ({
-      id: art.id,
-      stock_deposito: stockPorIdCentum[art.id_centum] || 0,
-    }))
+    for (const art of articulosDB) {
+      const stock = stockPorIdCentum[art.id_centum] || 0
+      if (!stockPorValor[stock]) stockPorValor[stock] = []
+      stockPorValor[stock].push(art.id)
+    }
+  }
 
-    const { error } = await supabase
-      .from('articulos')
-      .upsert(upsertLote, { onConflict: 'id' })
+  // Batch update: un UPDATE por cada valor de stock distinto
+  const valoresUnicos = Object.keys(stockPorValor)
+  console.log(`[Stock] ${valoresUnicos.length} valores de stock distintos para actualizar`)
 
-    if (error) {
-      console.error('[Stock] Error en batch upsert:', error.message)
-    } else {
-      totalActualizados += upsertLote.length
+  for (const stockStr of valoresUnicos) {
+    const stock = parseInt(stockStr)
+    const ids = stockPorValor[stockStr]
+
+    // Supabase .in() tiene límite, hacemos lotes
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const loteIds = ids.slice(i, i + BATCH)
+      const { error } = await supabase
+        .from('articulos')
+        .update({ stock_deposito: stock })
+        .in('id', loteIds)
+
+      if (error) {
+        console.error(`[Stock] Error update stock=${stock}:`, error.message)
+      } else {
+        totalActualizados += loteIds.length
+      }
     }
   }
 

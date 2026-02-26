@@ -403,13 +403,15 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
 
 // POST /api/articulos/sincronizar-stock
 // Admin: sincroniza stock del depósito central desde ERP Centum
+// Responde inmediatamente y corre la sync en background (evita timeout de Render)
 router.post('/sincronizar-stock', verificarAuth, soloAdmin, async (req, res) => {
+  res.json({ mensaje: 'Sincronización de stock iniciada en background' })
+
   try {
     const resultado = await sincronizarStock()
-    res.json(resultado)
+    console.log('[Stock] Sync completada:', resultado.mensaje)
   } catch (err) {
-    console.error('Error al sincronizar stock:', err)
-    res.status(500).json({ error: 'Error al sincronizar stock del depósito', detalle: err.message })
+    console.error('[Stock] Error al sincronizar stock:', err.message)
   }
 })
 
