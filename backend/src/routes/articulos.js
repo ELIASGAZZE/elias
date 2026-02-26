@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
-const { sincronizarERP, generateAccessToken } = require('../services/syncERP')
+const { sincronizarERP, sincronizarStock, generateAccessToken } = require('../services/syncERP')
 
 // GET /api/articulos
 // Con sucursal_id: devuelve artículos habilitados para esa sucursal (rápido, cualquier rol)
@@ -86,7 +86,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
       if (idsArray.length > 0) {
         const { data, error } = await supabase
           .from('articulos')
-          .select('id, codigo, nombre, rubro, marca')
+          .select('id, codigo, nombre, rubro, marca, stock_deposito')
           .eq('tipo', 'automatico')
           .eq('es_pesable', false)
           .in('id', idsArray)
@@ -98,7 +98,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('articulos')
-      .select('id, codigo, nombre, rubro, marca', { count: 'exact' })
+      .select('id, codigo, nombre, rubro, marca, stock_deposito', { count: 'exact' })
       .eq('tipo', 'automatico')
       .eq('es_pesable', false)
       .order('nombre')
@@ -373,7 +373,10 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
       sin_campo_habilitado: sinCampo,
       busqueda: buscar || null,
       resultados_busqueda: resultado.length,
-      muestra: resultado.slice(0, 20).map(a => ({
+      muestra: resultado.slice(0, 5).map(a => ({
+        _todas_las_keys: Object.keys(a),
+        Id: a.Id,
+        IdArticulo: a.IdArticulo,
         Codigo: a.Codigo,
         Nombre: a.Nombre,
         NombreFantasia: a.NombreFantasia,
@@ -441,6 +444,18 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
     res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })
+  }
+})
+
+// POST /api/articulos/sincronizar-stock
+// Admin: sincroniza stock del depósito central desde ERP Centum
+router.post('/sincronizar-stock', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const resultado = await sincronizarStock()
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error al sincronizar stock:', err)
+    res.status(500).json({ error: 'Error al sincronizar stock del depósito', detalle: err.message })
   }
 })
 

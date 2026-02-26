@@ -133,4 +133,102 @@ async function sincronizarERP() {
   }
 }
 
-module.exports = { sincronizarERP, generateAccessToken }
+/**
+ * Sincroniza stock del depósito central (sucursal física Centum ID 6087) desde ERP.
+ * Pagina de 500 en 500, matchea por código de artículo, y actualiza stock_deposito.
+ */
+async function sincronizarStock() {
+  const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+  const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+  const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+  const PAGE_SIZE = 500
+  let pagina = 1
+  let totalProcesados = 0
+  let totalActualizados = 0
+
+  while (true) {
+    const accessToken = generateAccessToken(apiKey)
+    const url = `${baseUrl}/ArticulosSucursalesFisicas?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+    })
+
+    if (!response.ok) {
+      const texto = await response.text()
+      throw new Error(`Error al consultar stock ERP (${response.status}): ${texto}`)
+    }
+
+    const data = await response.json()
+    const items = data.Items || []
+
+    if (items.length === 0) break
+
+    // Mapear: extraer código y existencias de cada item
+    const stockPorCodigo = {}
+    for (const item of items) {
+      const codigo = item.Articulo?.Codigo != null ? String(item.Articulo.Codigo).trim() : null
+      if (!codigo) continue
+
+      // Sumar existencias de todas las secciones del artículo en esta sucursal
+      let existencia = 0
+      if (Array.isArray(item.Existencias)) {
+        for (const ex of item.Existencias) {
+          existencia += (ex.Cantidad || ex.Existencia || 0)
+        }
+      } else if (typeof item.Existencia === 'number') {
+        existencia = item.Existencia
+      } else if (typeof item.Existencias === 'number') {
+        existencia = item.Existencias
+      } else if (typeof item.Stock === 'number') {
+        existencia = item.Stock
+      }
+
+      stockPorCodigo[codigo] = Math.floor(existencia)
+    }
+
+    totalProcesados += items.length
+
+    // Actualizar en lotes: buscar artículos por código y actualizar stock_deposito
+    const codigos = Object.keys(stockPorCodigo)
+    const BATCH = 500
+    for (let i = 0; i < codigos.length; i += BATCH) {
+      const lote = codigos.slice(i, i + BATCH)
+
+      // Obtener IDs de artículos por código
+      const { data: articulosDB } = await supabase
+        .from('articulos')
+        .select('id, codigo')
+        .in('codigo', lote)
+
+      if (articulosDB && articulosDB.length > 0) {
+        for (const art of articulosDB) {
+          const stock = stockPorCodigo[art.codigo] || 0
+          await supabase
+            .from('articulos')
+            .update({ stock_deposito: stock })
+            .eq('id', art.id)
+          totalActualizados++
+        }
+      }
+    }
+
+    // Si recibimos menos que PAGE_SIZE, terminamos
+    if (items.length < PAGE_SIZE) break
+    pagina++
+  }
+
+  return {
+    mensaje: `Stock sincronizado: ${totalActualizados} artículos actualizados (${totalProcesados} procesados del ERP)`,
+    actualizados: totalActualizados,
+    procesados: totalProcesados,
+  }
+}
+
+module.exports = { sincronizarERP, sincronizarStock, generateAccessToken }

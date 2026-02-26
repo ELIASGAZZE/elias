@@ -679,6 +679,13 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId, mostrarStockId
       <div className="mb-2">
         <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
         <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
+        {!mostrarStockIdeal && articulo.stock_deposito != null && (
+          <p className={`text-xs mt-0.5 font-medium ${
+            articulo.stock_deposito > 0 ? 'text-green-600' : 'text-gray-400'
+          }`}>
+            Stock depósito: {articulo.stock_deposito}
+          </p>
+        )}
       </div>
 
       {/* Fila: Cantidad a pedir */}
