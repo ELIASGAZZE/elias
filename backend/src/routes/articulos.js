@@ -197,6 +197,80 @@ function generateAccessToken(clavePublica) {
   return fechaUTC + ' ' + uuid + ' ' + hashHex
 }
 
+// GET /api/articulos/diagnostico-erp
+// Admin: consulta la API de Centum y devuelve info de diagnóstico sin importar/filtrar nada
+router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+    const clientId = process.env.CENTUM_CLIENT_ID || '2'
+
+    const accessToken = generateAccessToken(apiKey)
+    const hoy = new Date().toISOString().split('T')[0]
+
+    // Llamada SIN filtro de Habilitado
+    const response = await fetch(`${baseUrl}/Articulos/Venta`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify({
+        IdCliente: parseInt(clientId),
+        FechaDocumento: hoy,
+      }),
+    })
+
+    if (!response.ok) {
+      const texto = await response.text()
+      return res.status(502).json({ error: `ERP respondió ${response.status}`, detalle: texto })
+    }
+
+    const erpData = await response.json()
+    const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
+
+    // Buscar artículos que contengan el término de búsqueda (si se pasa ?buscar=cagnoli)
+    const buscar = req.query.buscar?.toLowerCase()
+    let resultado = items
+
+    if (buscar) {
+      resultado = items.filter(art => {
+        const nombre = (art.Nombre || '').toLowerCase()
+        const fantasia = (art.NombreFantasia || '').toLowerCase()
+        const codigo = String(art.Codigo || '').toLowerCase()
+        return nombre.includes(buscar) || fantasia.includes(buscar) || codigo.includes(buscar)
+      })
+    }
+
+    // Estadísticas
+    const habilitados = items.filter(a => a.Habilitado === true).length
+    const deshabilitados = items.filter(a => a.Habilitado === false).length
+    const sinCampo = items.filter(a => a.Habilitado === undefined || a.Habilitado === null).length
+
+    res.json({
+      total_items_erp: items.length,
+      habilitados,
+      deshabilitados,
+      sin_campo_habilitado: sinCampo,
+      busqueda: buscar || null,
+      resultados_busqueda: resultado.length,
+      muestra: resultado.slice(0, 20).map(a => ({
+        Codigo: a.Codigo,
+        Nombre: a.Nombre,
+        NombreFantasia: a.NombreFantasia,
+        Habilitado: a.Habilitado,
+        Rubro: a.Rubro?.Nombre,
+        Marca: a.MarcaArticulo?.Nombre,
+      })),
+    })
+  } catch (err) {
+    console.error('Error en diagnóstico ERP:', err)
+    res.status(500).json({ error: 'Error al consultar ERP', detalle: err.message })
+  }
+})
+
 // POST /api/articulos/sincronizar-erp
 // Admin: sincroniza artículos desde ERP Centum
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
