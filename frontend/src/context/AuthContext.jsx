@@ -83,6 +83,7 @@ export const AuthProvider = ({ children }) => {
     logout,
     estaLogueado: !!usuario,
     esAdmin: usuario?.rol === 'admin',
+    esGestor: usuario?.rol === 'gestor',
   }
 
   return (

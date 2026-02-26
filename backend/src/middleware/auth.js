@@ -48,4 +48,12 @@ const soloAdmin = (req, res, next) => {
   next()
 }
 
-module.exports = { verificarAuth, soloAdmin }
+// Middleware para verificar que el usuario sea gestor o administrador
+const soloGestorOAdmin = (req, res, next) => {
+  if (!['admin', 'gestor'].includes(req.perfil.rol)) {
+    return res.status(403).json({ error: 'Acceso denegado: se requiere rol de gestor o administrador' })
+  }
+  next()
+}
+
+module.exports = { verificarAuth, soloAdmin, soloGestorOAdmin }

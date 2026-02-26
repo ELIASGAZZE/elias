@@ -5,11 +5,12 @@ import { useAuth } from '../../context/AuthContext'
 
 /**
  * Uso:
- * <RutaProtegida>              → requiere estar logueado
- * <RutaProtegida soloAdmin>   → requiere ser administrador
+ * <RutaProtegida>                              → requiere estar logueado
+ * <RutaProtegida soloAdmin>                   → requiere ser administrador
+ * <RutaProtegida rolesPermitidos={['admin','gestor']}> → requiere uno de los roles
  */
-const RutaProtegida = ({ children, soloAdmin = false }) => {
-  const { estaLogueado, esAdmin, cargando } = useAuth()
+const RutaProtegida = ({ children, soloAdmin = false, rolesPermitidos }) => {
+  const { estaLogueado, esAdmin, cargando, usuario } = useAuth()
 
   // Mientras verificamos la sesión, mostramos un spinner
   if (cargando) {
@@ -27,7 +28,12 @@ const RutaProtegida = ({ children, soloAdmin = false }) => {
 
   // Si la ruta es solo para admins y no lo es, redirigimos
   if (soloAdmin && !esAdmin) {
-    return <Navigate to="/pedidos/nuevo" replace />
+    return <Navigate to="/apps" replace />
+  }
+
+  // Si hay roles permitidos y el rol del usuario no está en la lista
+  if (rolesPermitidos && !rolesPermitidos.includes(usuario?.rol)) {
+    return <Navigate to="/apps" replace />
   }
 
   return children

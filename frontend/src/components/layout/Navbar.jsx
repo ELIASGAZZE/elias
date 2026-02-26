@@ -54,7 +54,7 @@ const Navbar = ({ titulo, sinTabs }) => {
           <div className="text-right hidden sm:block">
             <p className="text-sm font-medium leading-tight">{usuario?.nombre}</p>
             <p className="text-xs text-blue-200 leading-tight">
-              {esAdmin ? 'Administrador' : 'Operario'}
+              {esAdmin ? 'Administrador' : usuario?.rol === 'gestor' ? 'Gestor' : 'Operario'}
             </p>
           </div>
 

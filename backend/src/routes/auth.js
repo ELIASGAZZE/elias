@@ -110,12 +110,12 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Username, contraseña y nombre son requeridos' })
   }
 
-  if (!['admin', 'operario'].includes(rol)) {
-    return res.status(400).json({ error: 'El rol debe ser "admin" o "operario"' })
+  if (!['admin', 'operario', 'gestor'].includes(rol)) {
+    return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
   }
 
-  if (rol === 'operario' && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios deben tener una sucursal asignada' })
+  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
+    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
   if (password.length < 6) {
@@ -162,7 +162,7 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
       nombre,
       rol,
     }
-    if (rol === 'operario' && sucursal_id) {
+    if ((rol === 'operario' || rol === 'gestor') && sucursal_id) {
       perfilData.sucursal_id = sucursal_id
     }
 
@@ -195,12 +195,12 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'El nombre es requerido' })
   }
 
-  if (!['admin', 'operario'].includes(rol)) {
-    return res.status(400).json({ error: 'El rol debe ser "admin" o "operario"' })
+  if (!['admin', 'operario', 'gestor'].includes(rol)) {
+    return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
   }
 
-  if (rol === 'operario' && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios deben tener una sucursal asignada' })
+  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
+    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
   if (password && password.length < 6) {
@@ -259,7 +259,7 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     const updateData = {
       nombre: nombre.trim(),
       rol,
-      sucursal_id: rol === 'operario' ? sucursal_id : null,
+      sucursal_id: (rol === 'operario' || rol === 'gestor') ? sucursal_id : null,
       username: usernameLimpio,
     }
 

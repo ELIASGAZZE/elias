@@ -13,6 +13,12 @@ import NuevoPedido from './pages/operario/NuevoPedido'
 import Pedidos from './pages/admin/AdminPedidos'
 import DetallePedido from './pages/DetallePedido'
 
+// Páginas de la app Control de Cajas
+import CajasHome from './pages/cajas/CajasHome'
+import NuevoCierre from './pages/cajas/NuevoCierre'
+import DetalleCierre from './pages/cajas/DetalleCierre'
+import VerificarCierre from './pages/cajas/VerificarCierre'
+
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
@@ -62,6 +68,28 @@ const App = () => {
           <Route path="/pedidos/:id" element={
             <RutaProtegida>
               <DetallePedido />
+            </RutaProtegida>
+          } />
+
+          {/* App: Control de Cajas */}
+          <Route path="/cajas" element={
+            <RutaProtegida>
+              <CajasHome />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/cierre/nuevo" element={
+            <RutaProtegida rolesPermitidos={['operario', 'admin']}>
+              <NuevoCierre />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/cierre/:id" element={
+            <RutaProtegida>
+              <DetalleCierre />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/verificar/:id" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <VerificarCierre />
             </RutaProtegida>
           } />
 

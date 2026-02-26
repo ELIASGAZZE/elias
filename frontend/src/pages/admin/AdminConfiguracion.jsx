@@ -234,8 +234,8 @@ const AdminConfiguracion = () => {
       return
     }
 
-    if (nuevoUsuario.rol === 'operario' && !nuevoUsuario.sucursal_id) {
-      setMensajeUsuario('Seleccioná una sucursal para el operario')
+    if ((nuevoUsuario.rol === 'operario' || nuevoUsuario.rol === 'gestor') && !nuevoUsuario.sucursal_id) {
+      setMensajeUsuario('Seleccioná una sucursal')
       return
     }
 
@@ -293,8 +293,8 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('El usuario es requerido')
       return
     }
-    if (editUsuarioData.rol === 'operario' && !editUsuarioData.sucursal_id) {
-      setMensajeEditUsuario('Seleccioná una sucursal para el operario')
+    if ((editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && !editUsuarioData.sucursal_id) {
+      setMensajeEditUsuario('Seleccioná una sucursal')
       return
     }
     if (editUsuarioData.password && editUsuarioData.password.length < 6) {
@@ -362,9 +362,10 @@ const AdminConfiguracion = () => {
               className="campo-form text-sm"
             >
               <option value="operario">Operario</option>
+              <option value="gestor">Gestor</option>
               <option value="admin">Administrador</option>
             </select>
-            {nuevoUsuario.rol === 'operario' && (
+            {(nuevoUsuario.rol === 'operario' || nuevoUsuario.rol === 'gestor') && (
               <select
                 value={nuevoUsuario.sucursal_id}
                 onChange={(e) => setNuevoUsuario(prev => ({ ...prev, sucursal_id: e.target.value }))}
@@ -657,11 +658,12 @@ const AdminConfiguracion = () => {
                   className="campo-form text-sm"
                 >
                   <option value="operario">Operario</option>
+                  <option value="gestor">Gestor</option>
                   <option value="admin">Administrador</option>
                 </select>
               </div>
 
-              {editUsuarioData.rol === 'operario' && (
+              {(editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && (
                 <div>
                   <label className="text-xs font-medium text-gray-500 mb-1 block">Sucursal</label>
                   <select
