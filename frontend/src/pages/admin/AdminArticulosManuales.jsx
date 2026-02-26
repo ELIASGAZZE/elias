@@ -13,7 +13,6 @@ const AdminArticulosManuales = () => {
   const [cargando, setCargando] = useState(false)
 
   // Creación manual
-  const [nuevoCodigo, setNuevoCodigo] = useState('')
   const [nuevoNombre, setNuevoNombre] = useState('')
   const [creando, setCreando] = useState(false)
   const [mensajeCrear, setMensajeCrear] = useState('')
@@ -90,8 +89,8 @@ const AdminArticulosManuales = () => {
   // Crear artículo manual
   const crearArticulo = async (e) => {
     e.preventDefault()
-    if (!nuevoCodigo.trim() || !nuevoNombre.trim()) {
-      setMensajeCrear('Completá código y nombre')
+    if (!nuevoNombre.trim()) {
+      setMensajeCrear('Ingresá el nombre del artículo')
       return
     }
 
@@ -100,11 +99,9 @@ const AdminArticulosManuales = () => {
 
     try {
       await api.post('/api/articulos', {
-        codigo: nuevoCodigo.trim(),
         nombre: nuevoNombre.trim(),
       })
       setMensajeCrear('ok:Artículo creado correctamente')
-      setNuevoCodigo('')
       setNuevoNombre('')
       await cargarDatos()
     } catch (err) {
@@ -139,13 +136,6 @@ const AdminArticulosManuales = () => {
         <div className="tarjeta">
           <h2 className="font-semibold text-gray-700 mb-3">Crear artículo manual</h2>
           <form onSubmit={crearArticulo} className="space-y-3">
-            <input
-              type="text"
-              value={nuevoCodigo}
-              onChange={(e) => setNuevoCodigo(e.target.value)}
-              placeholder="Código"
-              className="campo-form text-sm"
-            />
             <input
               type="text"
               value={nuevoNombre}

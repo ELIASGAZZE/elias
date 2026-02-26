@@ -129,30 +129,36 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
 })
 
 // POST /api/articulos
-// Admin: crea un artículo individual (manual)
+// Admin: crea un artículo individual (manual) con código autogenerado
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { codigo, nombre } = req.body
+    const { nombre } = req.body
 
-    if (!codigo || !nombre) {
-      return res.status(400).json({ error: 'Se requiere "codigo" y "nombre"' })
+    if (!nombre) {
+      return res.status(400).json({ error: 'Se requiere "nombre"' })
     }
 
-    // Verificar duplicado por código
-    const { data: existente } = await supabase
+    // Generar código automático: M-0001, M-0002, etc.
+    const { data: ultimo } = await supabase
       .from('articulos')
-      .select('id')
-      .eq('codigo', codigo)
+      .select('codigo')
+      .like('codigo', 'M-%')
+      .order('codigo', { ascending: false })
+      .limit(1)
       .single()
 
-    if (existente) {
-      return res.status(409).json({ error: `Ya existe un artículo con el código "${codigo}"` })
+    let siguienteNumero = 1
+    if (ultimo) {
+      const num = parseInt(ultimo.codigo.replace('M-', ''))
+      if (!isNaN(num)) siguienteNumero = num + 1
     }
+
+    const codigo = `M-${String(siguienteNumero).padStart(4, '0')}`
 
     // Crear el artículo (forzamos tipo manual)
     const { data: articulo, error } = await supabase
       .from('articulos')
-      .insert({ codigo, nombre, tipo: 'manual' })
+      .insert({ codigo, nombre: nombre.trim(), tipo: 'manual' })
       .select()
       .single()
 
