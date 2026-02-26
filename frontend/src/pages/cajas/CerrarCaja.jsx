@@ -1,6 +1,6 @@
-// Formulario de verificación ciega — gestor cuenta sin ver montos del cajero
+// Wizard de 2 pasos para cerrar una caja abierta (conteo completo)
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
@@ -17,12 +17,12 @@ const formatFecha = (fecha) => {
   return `${d}/${m}/${y}`
 }
 
-const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$' }) => {
+const ContadorDenominacion = ({ valor, cantidad, onChange }) => {
   const total = valor * cantidad
   return (
     <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-3 py-2.5">
       <div className="min-w-[80px]">
-        <span className="text-sm font-semibold text-gray-800">{prefijo}{valor.toLocaleString('es-AR')}</span>
+        <span className="text-sm font-semibold text-gray-800">${valor.toLocaleString('es-AR')}</span>
         {cantidad > 0 && (
           <span className="text-xs text-gray-400 ml-1.5">= {formatMonto(total)}</span>
         )}
@@ -86,14 +86,14 @@ const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange })
   </div>
 )
 
-const VerificarCierre = () => {
+const CerrarCaja = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const [cierre, setCierre] = useState(null)
   const [cargando, setCargando] = useState(true)
+  const [paso, setPaso] = useState(1)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
-  const [paso, setPaso] = useState(1)
 
   // Paso 1: efectivo
   const [billetes, setBilletes] = useState({})
@@ -119,8 +119,8 @@ const VerificarCierre = () => {
       try {
         const { data } = await api.get(`/api/cierres/${id}`)
         setCierre(data)
-        if (data.estado !== 'pendiente_gestor') {
-          setError('Este cierre ya fue verificado')
+        if (data.estado !== 'abierta') {
+          setError('Esta caja ya fue cerrada')
         }
       } catch (err) {
         setError(err.response?.data?.error || 'Error al cargar cierre')
@@ -141,11 +141,11 @@ const VerificarCierre = () => {
   const totalOtrosMedios = cheques + vouchersTc + vouchersTd + transferencias + pagosDigitales + otros
   const totalGeneral = totalEfectivo + totalOtrosMedios
 
-  const enviarVerificacion = async () => {
+  const cerrarCaja = async () => {
     setEnviando(true)
     setError('')
     try {
-      await api.post(`/api/cierres/${id}/verificar`, {
+      await api.put(`/api/cierres/${id}/cerrar`, {
         billetes,
         monedas,
         total_efectivo: totalEfectivo,
@@ -166,7 +166,7 @@ const VerificarCierre = () => {
       })
       navigate(`/cajas/cierre/${id}`)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error al enviar verificación')
+      setError(err.response?.data?.error || 'Error al cerrar caja')
     } finally {
       setEnviando(false)
     }
@@ -175,7 +175,7 @@ const VerificarCierre = () => {
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Verificar Cierre" sinTabs />
+        <Navbar titulo="Cerrar Caja" sinTabs />
         <div className="flex justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
         </div>
@@ -186,9 +186,10 @@ const VerificarCierre = () => {
   if (error && !cierre) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Verificar Cierre" sinTabs />
+        <Navbar titulo="Cerrar Caja" sinTabs />
         <div className="px-4 py-10 text-center">
           <p className="text-red-600 text-sm">{error}</p>
+          <Link to="/cajas" className="text-sm text-emerald-600 mt-4 inline-block">Volver</Link>
         </div>
       </div>
     )
@@ -196,15 +197,14 @@ const VerificarCierre = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
-      <Navbar titulo="Verificar Cierre" sinTabs />
+      <Navbar titulo="Cerrar Caja" sinTabs />
 
       <div className="px-4 py-4 max-w-lg mx-auto">
 
-        {/* Info del cierre (sin montos) */}
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 text-sm text-yellow-800">
-          <p className="font-semibold">Planilla #{cierre.planilla_id} — {formatFecha(cierre.fecha)}</p>
-          <p>Cajero: {cierre.cajero?.nombre}</p>
-          <p className="text-xs mt-1">Conteo independiente — no verás los montos del cajero hasta enviar.</p>
+        {/* Info de la caja */}
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4 text-sm text-emerald-800">
+          <p className="font-semibold">Planilla #{cierre.planilla_id}</p>
+          <p>{formatFecha(cierre.fecha)} · Cambio inicial: {formatMonto(cierre.fondo_fijo)}</p>
         </div>
 
         {/* Indicador de pasos */}
@@ -272,7 +272,7 @@ const VerificarCierre = () => {
           </div>
         )}
 
-        {/* Paso 2: Otros medios + Resumen + Confirmar */}
+        {/* Paso 2: Otros medios + Resumen */}
         {paso === 2 && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-800">Otros medios de pago</h2>
@@ -318,8 +318,16 @@ const VerificarCierre = () => {
 
             {/* Resumen */}
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-emerald-800">Resumen de tu verificación</h3>
+              <h3 className="text-sm font-semibold text-emerald-800">Resumen del cierre</h3>
               <div className="text-sm space-y-1">
+                <div className="flex justify-between text-gray-600">
+                  <span>Planilla:</span>
+                  <span className="font-medium">#{cierre.planilla_id}</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>Cambio inicial:</span>
+                  <span className="font-medium">{formatMonto(cierre.fondo_fijo)}</span>
+                </div>
                 <div className="flex justify-between text-gray-600">
                   <span>Total efectivo:</span>
                   <span className="font-medium">{formatMonto(totalEfectivo)}</span>
@@ -349,11 +357,11 @@ const VerificarCierre = () => {
                 Atrás
               </button>
               <button
-                onClick={enviarVerificacion}
+                onClick={cerrarCaja}
                 disabled={enviando}
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
               >
-                {enviando ? 'Enviando...' : 'Enviar verificación'}
+                {enviando ? 'Cerrando...' : 'Confirmar cierre'}
               </button>
             </div>
           </div>
@@ -363,4 +371,4 @@ const VerificarCierre = () => {
   )
 }
 
-export default VerificarCierre
+export default CerrarCaja

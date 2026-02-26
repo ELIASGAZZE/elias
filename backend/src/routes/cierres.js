@@ -9,8 +9,8 @@ router.get('/', verificarAuth, async (req, res) => {
   try {
     let query = supabase
       .from('cierres')
-      .select('*, cajas(id, nombre, sucursal_id, sucursales(id, nombre)), cajero:perfiles!cajero_id(id, nombre, username)')
-      .order('fecha', { ascending: false })
+      .select('*, cajero:perfiles!cajero_id(id, nombre, username, sucursal_id, sucursales(id, nombre))')
+      .order('created_at', { ascending: false })
 
     const { rol, sucursal_id } = req.perfil
 
@@ -18,9 +18,9 @@ router.get('/', verificarAuth, async (req, res) => {
       // Operario solo ve sus propios cierres
       query = query.eq('cajero_id', req.perfil.id)
     } else if (rol === 'gestor') {
-      // Gestor ve cierres de su sucursal
+      // Gestor ve cierres de cajeros de su misma sucursal
       if (!sucursal_id) return res.json([])
-      query = query.eq('cajas.sucursal_id', sucursal_id)
+      // Filtramos en JS después porque no se puede filtrar por relación anidada fácilmente
     }
     // Admin ve todo
 
@@ -31,18 +31,15 @@ router.get('/', verificarAuth, async (req, res) => {
     if (req.query.estado) {
       query = query.eq('estado', req.query.estado)
     }
-    if (req.query.caja_id) {
-      query = query.eq('caja_id', req.query.caja_id)
-    }
-    if (req.query.sucursal_id) {
-      query = query.eq('cajas.sucursal_id', req.query.sucursal_id)
-    }
 
     const { data, error } = await query
     if (error) throw error
 
-    // Para gestor: filtrar los que tienen cajas (el inner filter de sucursal_id puede dejar nulls)
-    const filtered = rol === 'gestor' ? data.filter(c => c.cajas) : data
+    // Para gestor: filtrar solo cierres de cajeros de su sucursal
+    let filtered = data
+    if (rol === 'gestor') {
+      filtered = data.filter(c => c.cajero?.sucursal_id === sucursal_id)
+    }
 
     res.json(filtered)
   } catch (err) {
@@ -56,7 +53,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
   try {
     const { data: cierre, error } = await supabase
       .from('cierres')
-      .select('*, cajas(id, nombre, sucursal_id, sucursales(id, nombre)), cajero:perfiles!cajero_id(id, nombre, username)')
+      .select('*, cajero:perfiles!cajero_id(id, nombre, username, sucursal_id, sucursales(id, nombre))')
       .eq('id', req.params.id)
       .single()
 
@@ -72,7 +69,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
     }
 
     // Gestor solo puede ver cierres de su sucursal
-    if (rol === 'gestor' && cierre.cajas.sucursal_id !== sucursal_id) {
+    if (rol === 'gestor' && cierre.cajero?.sucursal_id !== sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a este cierre' })
     }
 
@@ -86,25 +83,18 @@ router.get('/:id', verificarAuth, async (req, res) => {
         .single()
 
       if (!verificacion) {
-        // Retornar cierre sin montos
         return res.json({
           id: cierre.id,
-          caja_id: cierre.caja_id,
+          planilla_id: cierre.planilla_id,
           cajero_id: cierre.cajero_id,
           fecha: cierre.fecha,
           estado: cierre.estado,
-          cajas: cierre.cajas,
           cajero: cierre.cajero,
           fondo_fijo: cierre.fondo_fijo,
           created_at: cierre.created_at,
           _blind: true,
         })
       }
-    }
-
-    // Operario NO ve la verificación del gestor (solo sus propios montos)
-    if (rol === 'operario') {
-      return res.json({ ...cierre, _blind: false })
     }
 
     res.json({ ...cierre, _blind: false })
@@ -114,55 +104,86 @@ router.get('/:id', verificarAuth, async (req, res) => {
   }
 })
 
-// POST /api/cierres — operario crea cierre
-router.post('/', verificarAuth, async (req, res) => {
+// POST /api/cierres/abrir — operario/admin abre una caja con planilla de Centum
+router.post('/abrir', verificarAuth, async (req, res) => {
   const { rol } = req.perfil
 
   if (rol === 'gestor') {
-    return res.status(403).json({ error: 'Los gestores no pueden crear cierres de caja' })
+    return res.status(403).json({ error: 'Los gestores no pueden abrir cajas' })
   }
 
-  const {
-    caja_id, billetes, monedas, total_efectivo,
-    cheques, cheques_cantidad,
-    vouchers_tc, vouchers_tc_cantidad,
-    vouchers_td, vouchers_td_cantidad,
-    transferencias, transferencias_cantidad,
-    pagos_digitales, pagos_digitales_cantidad,
-    otros, otros_detalle,
-    total_general, fondo_fijo, observaciones,
-  } = req.body
+  const { planilla_id, fondo_fijo } = req.body
 
-  if (!caja_id) {
-    return res.status(400).json({ error: 'La caja es requerida' })
+  if (!planilla_id || !planilla_id.toString().trim()) {
+    return res.status(400).json({ error: 'El ID de planilla de caja es requerido' })
   }
 
   try {
-    // Verificar que la caja existe y pertenece a la sucursal del operario
-    const { data: caja, error: errorCaja } = await supabase
-      .from('cajas')
-      .select('id, sucursal_id, activo')
-      .eq('id', caja_id)
-      .single()
-
-    if (errorCaja || !caja) {
-      return res.status(404).json({ error: 'Caja no encontrada' })
-    }
-
-    if (!caja.activo) {
-      return res.status(400).json({ error: 'Esta caja está desactivada' })
-    }
-
-    // Operario: verificar que la caja sea de su sucursal
-    if (rol === 'operario' && caja.sucursal_id !== req.perfil.sucursal_id) {
-      return res.status(403).json({ error: 'No tenés acceso a esta caja' })
-    }
-
     const { data, error } = await supabase
       .from('cierres')
       .insert({
-        caja_id,
+        planilla_id: planilla_id.toString().trim(),
         cajero_id: req.perfil.id,
+        fondo_fijo: fondo_fijo || 0,
+        estado: 'abierta',
+        billetes: {},
+        monedas: {},
+        total_efectivo: 0,
+        total_general: 0,
+      })
+      .select('*, cajero:perfiles!cajero_id(id, nombre, username)')
+      .single()
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Ya existe un cierre con esa planilla de caja' })
+      }
+      throw error
+    }
+
+    res.status(201).json(data)
+  } catch (err) {
+    console.error('Error al abrir caja:', err)
+    res.status(500).json({ error: 'Error al abrir caja' })
+  }
+})
+
+// PUT /api/cierres/:id/cerrar — operario/admin cierra la caja con el conteo completo
+router.put('/:id/cerrar', verificarAuth, async (req, res) => {
+  try {
+    const { data: cierre, error: errorCierre } = await supabase
+      .from('cierres')
+      .select('id, cajero_id, estado')
+      .eq('id', req.params.id)
+      .single()
+
+    if (errorCierre || !cierre) {
+      return res.status(404).json({ error: 'Cierre no encontrado' })
+    }
+
+    if (cierre.estado !== 'abierta') {
+      return res.status(400).json({ error: 'Esta caja ya fue cerrada' })
+    }
+
+    // Solo el cajero que abrió o un admin puede cerrar
+    if (req.perfil.rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
+      return res.status(403).json({ error: 'Solo podés cerrar tu propia caja' })
+    }
+
+    const {
+      billetes, monedas, total_efectivo,
+      cheques, cheques_cantidad,
+      vouchers_tc, vouchers_tc_cantidad,
+      vouchers_td, vouchers_td_cantidad,
+      transferencias, transferencias_cantidad,
+      pagos_digitales, pagos_digitales_cantidad,
+      otros, otros_detalle,
+      total_general, observaciones,
+    } = req.body
+
+    const { data, error } = await supabase
+      .from('cierres')
+      .update({
         billetes: billetes || {},
         monedas: monedas || {},
         total_efectivo: total_efectivo || 0,
@@ -179,23 +200,18 @@ router.post('/', verificarAuth, async (req, res) => {
         otros: otros || 0,
         otros_detalle: otros_detalle || '',
         total_general: total_general || 0,
-        fondo_fijo: fondo_fijo || 0,
         observaciones: observaciones || '',
+        estado: 'pendiente_gestor',
       })
-      .select('*, cajas(id, nombre, sucursales(id, nombre))')
+      .eq('id', req.params.id)
+      .select('*, cajero:perfiles!cajero_id(id, nombre, username)')
       .single()
 
-    if (error) {
-      if (error.code === '23505') {
-        return res.status(409).json({ error: 'Ya existe un cierre para esta caja en el día de hoy' })
-      }
-      throw error
-    }
-
-    res.status(201).json(data)
+    if (error) throw error
+    res.json(data)
   } catch (err) {
-    console.error('Error al crear cierre:', err)
-    res.status(500).json({ error: 'Error al crear cierre' })
+    console.error('Error al cerrar caja:', err)
+    res.status(500).json({ error: 'Error al cerrar caja' })
   }
 })
 
@@ -204,7 +220,7 @@ router.get('/:id/verificacion', verificarAuth, async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
-      .select('id, cajero_id, cajas(sucursal_id)')
+      .select('id, cajero_id')
       .eq('id', req.params.id)
       .single()
 
@@ -212,7 +228,6 @@ router.get('/:id/verificacion', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    // Operario no puede ver verificaciones
     if (req.perfil.rol === 'operario') {
       return res.status(403).json({ error: 'No tenés acceso a la verificación' })
     }
@@ -237,10 +252,9 @@ router.get('/:id/verificacion', verificarAuth, async (req, res) => {
 // POST /api/cierres/:id/verificar — gestor/admin envía verificación ciega
 router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    // Obtener el cierre
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
-      .select('*, cajas(id, sucursal_id)')
+      .select('*, cajero:perfiles!cajero_id(id, sucursal_id)')
       .eq('id', req.params.id)
       .single()
 
@@ -248,18 +262,16 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    // Validar estado
     if (cierre.estado !== 'pendiente_gestor') {
-      return res.status(400).json({ error: 'Este cierre ya fue verificado' })
+      return res.status(400).json({ error: 'Este cierre no está pendiente de verificación' })
     }
 
-    // Gestor ≠ cajero
     if (cierre.cajero_id === req.perfil.id) {
       return res.status(403).json({ error: 'No podés verificar tu propio cierre' })
     }
 
     // Gestor: verificar misma sucursal
-    if (req.perfil.rol === 'gestor' && cierre.cajas.sucursal_id !== req.perfil.sucursal_id) {
+    if (req.perfil.rol === 'gestor' && cierre.cajero?.sucursal_id !== req.perfil.sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a esta sucursal' })
     }
 
@@ -274,7 +286,6 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
       total_general, observaciones,
     } = req.body
 
-    // Crear verificación
     const { data: verificacion, error: errorVerif } = await supabase
       .from('verificaciones')
       .insert({
@@ -308,7 +319,6 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
       throw errorVerif
     }
 
-    // Cambiar estado del cierre a pendiente_agente
     await supabase
       .from('cierres')
       .update({ estado: 'pendiente_agente' })

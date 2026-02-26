@@ -6,6 +6,7 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADOS = {
+  abierta: { label: 'Abierta', color: 'bg-emerald-100 text-emerald-700' },
   pendiente_gestor: { label: 'Pendiente verificación', color: 'bg-yellow-100 text-yellow-700' },
   pendiente_agente: { label: 'Verificado', color: 'bg-blue-100 text-blue-700' },
   cerrado: { label: 'Cerrado', color: 'bg-green-100 text-green-700' },
@@ -105,7 +106,7 @@ const DetalleCierre = () => {
         {/* Metadata */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">{cierre.cajas?.nombre}</h2>
+            <h2 className="text-lg font-semibold text-gray-800">Planilla #{cierre.planilla_id}</h2>
             <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${estadoCfg.color}`}>
               {estadoCfg.label}
             </span>
@@ -113,14 +114,24 @@ const DetalleCierre = () => {
           <div className="text-sm text-gray-500 space-y-0.5">
             <p>Fecha: {formatFecha(cierre.fecha)}</p>
             <p>Cajero: {cierre.cajero?.nombre}</p>
-            {cierre.cajas?.sucursales?.nombre && (
-              <p>Sucursal: {cierre.cajas.sucursales.nombre}</p>
+            {cierre.cajero?.sucursales?.nombre && (
+              <p>Sucursal: {cierre.cajero.sucursales.nombre}</p>
             )}
-            {!esBlind && cierre.fondo_fijo > 0 && (
-              <p>Fondo fijo: {formatMonto(cierre.fondo_fijo)}</p>
+            {cierre.fondo_fijo > 0 && (
+              <p>Cambio inicial: {formatMonto(cierre.fondo_fijo)}</p>
             )}
           </div>
         </div>
+
+        {/* Si está abierta, botón para cerrar */}
+        {cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin) && (
+          <Link
+            to={`/cajas/cierre/${cierre.id}/cerrar`}
+            className="block w-full bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
+          >
+            Cerrar caja
+          </Link>
+        )}
 
         {/* Modo ciego para gestor */}
         {esBlind && (

@@ -15,7 +15,7 @@ import DetallePedido from './pages/DetallePedido'
 
 // Páginas de la app Control de Cajas
 import CajasHome from './pages/cajas/CajasHome'
-import NuevoCierre from './pages/cajas/NuevoCierre'
+import CerrarCaja from './pages/cajas/CerrarCaja'
 import DetalleCierre from './pages/cajas/DetalleCierre'
 import VerificarCierre from './pages/cajas/VerificarCierre'
 
@@ -77,9 +77,9 @@ const App = () => {
               <CajasHome />
             </RutaProtegida>
           } />
-          <Route path="/cajas/cierre/nuevo" element={
+          <Route path="/cajas/cierre/:id/cerrar" element={
             <RutaProtegida rolesPermitidos={['operario', 'admin']}>
-              <NuevoCierre />
+              <CerrarCaja />
             </RutaProtegida>
           } />
           <Route path="/cajas/cierre/:id" element={

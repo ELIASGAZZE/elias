@@ -1,11 +1,12 @@
 // Página principal de la app Control de Cajas
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADOS = {
+  abierta: { label: 'Abierta', color: 'bg-emerald-100 text-emerald-700' },
   pendiente_gestor: { label: 'Pendiente verificación', color: 'bg-yellow-100 text-yellow-700' },
   pendiente_agente: { label: 'Verificado', color: 'bg-blue-100 text-blue-700' },
   cerrado: { label: 'Cerrado', color: 'bg-green-100 text-green-700' },
@@ -32,40 +33,27 @@ const formatMonto = (monto) => {
 }
 
 const CajasHome = () => {
+  const navigate = useNavigate()
   const { usuario, esAdmin, esGestor } = useAuth()
   const [cierres, setCierres] = useState([])
   const [cargando, setCargando] = useState(true)
-  const [cajas, setCajas] = useState([])
-  const [sucursales, setSucursales] = useState([])
-  const [filtroSucursal, setFiltroSucursal] = useState('')
 
-  // Admin: gestión de cajas
-  const [mostrarGestionCajas, setMostrarGestionCajas] = useState(false)
-  const [nuevaCaja, setNuevaCaja] = useState({ nombre: '', sucursal_id: '' })
-  const [creandoCaja, setCreandoCaja] = useState(false)
-  const [mensajeCaja, setMensajeCaja] = useState('')
+  // Modal abrir caja
+  const [mostrarAbrir, setMostrarAbrir] = useState(false)
+  const [planillaId, setPlanillaId] = useState('')
+  const [fondoFijo, setFondoFijo] = useState('')
+  const [abriendo, setAbriendo] = useState(false)
+  const [errorAbrir, setErrorAbrir] = useState('')
 
   useEffect(() => {
     cargarDatos()
-  }, [filtroSucursal])
+  }, [])
 
   const cargarDatos = async () => {
     setCargando(true)
     try {
-      const params = {}
-      if (filtroSucursal) params.sucursal_id = filtroSucursal
-
-      const [cierresRes, cajasRes] = await Promise.all([
-        api.get('/api/cierres', { params }),
-        api.get('/api/cajas', { params: { todas: 'true', ...(filtroSucursal ? { sucursal_id: filtroSucursal } : {}) } }),
-      ])
-      setCierres(cierresRes.data)
-      setCajas(cajasRes.data)
-
-      if (esAdmin) {
-        const sucRes = await api.get('/api/sucursales')
-        setSucursales(sucRes.data)
-      }
+      const { data } = await api.get('/api/cierres')
+      setCierres(data)
     } catch (err) {
       console.error('Error cargando datos:', err)
     } finally {
@@ -73,33 +61,43 @@ const CajasHome = () => {
     }
   }
 
-  const crearCaja = async (e) => {
+  const abrirCaja = async (e) => {
     e.preventDefault()
-    if (!nuevaCaja.nombre.trim() || !nuevaCaja.sucursal_id) {
-      setMensajeCaja('Completá nombre y sucursal')
+    if (!planillaId.trim()) {
+      setErrorAbrir('Ingresá el ID de planilla de caja')
       return
     }
-    setCreandoCaja(true)
-    setMensajeCaja('')
+
+    setAbriendo(true)
+    setErrorAbrir('')
     try {
-      await api.post('/api/cajas', nuevaCaja)
-      setNuevaCaja({ nombre: '', sucursal_id: '' })
-      setMensajeCaja('')
+      const { data } = await api.post('/api/cierres/abrir', {
+        planilla_id: planillaId.trim(),
+        fondo_fijo: parseFloat(fondoFijo) || 0,
+      })
+      setPlanillaId('')
+      setFondoFijo('')
+      setMostrarAbrir(false)
       await cargarDatos()
     } catch (err) {
-      setMensajeCaja(err.response?.data?.error || 'Error al crear caja')
+      setErrorAbrir(err.response?.data?.error || 'Error al abrir caja')
     } finally {
-      setCreandoCaja(false)
+      setAbriendo(false)
     }
   }
 
-  const toggleActivoCaja = async (caja) => {
-    try {
-      await api.put(`/api/cajas/${caja.id}`, { activo: !caja.activo })
-      await cargarDatos()
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al actualizar caja')
+  // Separar cajas abiertas del resto
+  const cajasAbiertas = cierres.filter(c => c.estado === 'abierta')
+  const cierresCerrados = cierres.filter(c => c.estado !== 'abierta')
+
+  const getLinkCierre = (cierre) => {
+    if (cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin)) {
+      return `/cajas/cierre/${cierre.id}/cerrar`
     }
+    if (esGestor && cierre.estado === 'pendiente_gestor') {
+      return `/cajas/verificar/${cierre.id}`
+    }
+    return `/cajas/cierre/${cierre.id}`
   }
 
   return (
@@ -108,91 +106,82 @@ const CajasHome = () => {
 
       <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
 
-        {/* Acciones principales */}
-        <div className="flex flex-wrap gap-2">
-          {(usuario?.rol === 'operario' || esAdmin) && (
-            <Link
-              to="/cajas/cierre/nuevo"
-              className="flex-1 min-w-[140px] bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
-            >
-              + Nuevo Cierre
-            </Link>
-          )}
-          {esAdmin && (
-            <button
-              onClick={() => setMostrarGestionCajas(!mostrarGestionCajas)}
-              className="flex-1 min-w-[140px] bg-gray-600 hover:bg-gray-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
-            >
-              {mostrarGestionCajas ? 'Ocultar Cajas' : 'Gestionar Cajas'}
-            </button>
-          )}
-        </div>
-
-        {/* Filtro admin por sucursal */}
-        {esAdmin && (
-          <select
-            value={filtroSucursal}
-            onChange={(e) => setFiltroSucursal(e.target.value)}
-            className="campo-form text-sm"
+        {/* Botón abrir caja (operario/admin) */}
+        {(usuario?.rol === 'operario' || esAdmin) && (
+          <button
+            onClick={() => setMostrarAbrir(!mostrarAbrir)}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-medium transition-colors text-sm"
           >
-            <option value="">Todas las sucursales</option>
-            {sucursales.map(s => (
-              <option key={s.id} value={s.id}>{s.nombre}</option>
-            ))}
-          </select>
+            {mostrarAbrir ? 'Cancelar' : 'Abrir Caja'}
+          </button>
         )}
 
-        {/* Gestión de cajas (admin) */}
-        {esAdmin && mostrarGestionCajas && (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-            <h3 className="font-semibold text-gray-700 text-sm">Cajas registradoras</h3>
-
-            <form onSubmit={crearCaja} className="flex flex-col sm:flex-row gap-2">
+        {/* Formulario abrir caja */}
+        {mostrarAbrir && (
+          <form onSubmit={abrirCaja} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <h3 className="font-semibold text-gray-700 text-sm">Abrir caja</h3>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">ID Planilla de Caja (Centum)</label>
               <input
                 type="text"
-                value={nuevaCaja.nombre}
-                onChange={(e) => setNuevaCaja(prev => ({ ...prev, nombre: e.target.value }))}
-                placeholder="Nombre de caja (ej: Caja 1)"
-                className="campo-form text-sm flex-1"
-              />
-              <select
-                value={nuevaCaja.sucursal_id}
-                onChange={(e) => setNuevaCaja(prev => ({ ...prev, sucursal_id: e.target.value }))}
+                value={planillaId}
+                onChange={(e) => setPlanillaId(e.target.value)}
+                placeholder="Ej: 12345"
                 className="campo-form text-sm"
-              >
-                <option value="">Sucursal</option>
-                {sucursales.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre}</option>
-                ))}
-              </select>
-              <button type="submit" disabled={creandoCaja} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
-                {creandoCaja ? '...' : 'Crear'}
-              </button>
-            </form>
-            {mensajeCaja && <p className="text-sm text-red-600">{mensajeCaja}</p>}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Cambio inicial</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={fondoFijo}
+                onChange={(e) => setFondoFijo(e.target.value)}
+                placeholder="$0.00"
+                className="campo-form text-sm"
+              />
+            </div>
+            {errorAbrir && <p className="text-sm text-red-600">{errorAbrir}</p>}
+            <button
+              type="submit"
+              disabled={abriendo}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2.5 rounded-xl font-medium transition-colors text-sm"
+            >
+              {abriendo ? 'Abriendo...' : 'Confirmar apertura'}
+            </button>
+          </form>
+        )}
 
-            <div className="divide-y divide-gray-100">
-              {cajas.map(caja => (
-                <div key={caja.id} className="flex items-center justify-between py-2">
-                  <div>
-                    <span className="text-sm font-medium text-gray-800">{caja.nombre}</span>
-                    <span className="text-xs text-gray-400 ml-2">{caja.sucursales?.nombre}</span>
+        {/* Cajas abiertas (operario/admin) */}
+        {cajasAbiertas.length > 0 && (usuario?.rol === 'operario' || esAdmin) && (
+          <div>
+            <h3 className="font-semibold text-gray-700 text-sm mb-3">Cajas abiertas</h3>
+            <div className="space-y-2">
+              {cajasAbiertas.map(cierre => (
+                <Link
+                  key={cierre.id}
+                  to={`/cajas/cierre/${cierre.id}/cerrar`}
+                  className="block bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 hover:border-emerald-300 hover:shadow-sm transition-all"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-semibold text-gray-800">
+                      Planilla #{cierre.planilla_id}
+                    </span>
+                    <BadgeEstado estado={cierre.estado} />
                   </div>
-                  <button
-                    onClick={() => toggleActivoCaja(caja)}
-                    className={`text-xs px-3 py-1 rounded-lg transition-colors ${
-                      caja.activo
-                        ? 'bg-green-50 text-green-600 hover:bg-green-100'
-                        : 'bg-red-50 text-red-600 hover:bg-red-100'
-                    }`}
-                  >
-                    {caja.activo ? 'Activa' : 'Inactiva'}
-                  </button>
-                </div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-gray-500">
+                      {formatFecha(cierre.fecha)} · {cierre.cajero?.nombre}
+                      {cierre.fondo_fijo > 0 && (
+                        <span> · Cambio: {formatMonto(cierre.fondo_fijo)}</span>
+                      )}
+                    </div>
+                    <span className="text-xs font-medium text-emerald-600">Cerrar</span>
+                  </div>
+                </Link>
               ))}
-              {cajas.length === 0 && (
-                <p className="text-sm text-gray-400 py-3 text-center">No hay cajas creadas</p>
-              )}
             </div>
           </div>
         )}
@@ -207,33 +196,29 @@ const CajasHome = () => {
             <div className="flex justify-center py-10">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
             </div>
-          ) : cierres.length === 0 ? (
+          ) : cierresCerrados.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-gray-400 text-sm">No hay cierres</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {cierres.map(cierre => (
+              {cierresCerrados.map(cierre => (
                 <Link
                   key={cierre.id}
-                  to={
-                    esGestor && cierre.estado === 'pendiente_gestor'
-                      ? `/cajas/verificar/${cierre.id}`
-                      : `/cajas/cierre/${cierre.id}`
-                  }
+                  to={getLinkCierre(cierre)}
                   className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-semibold text-gray-800">
-                      {cierre.cajas?.nombre}
+                      Planilla #{cierre.planilla_id}
                     </span>
                     <BadgeEstado estado={cierre.estado} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="text-xs text-gray-400">
                       {formatFecha(cierre.fecha)} · {cierre.cajero?.nombre}
-                      {cierre.cajas?.sucursales?.nombre && (
-                        <span> · {cierre.cajas.sucursales.nombre}</span>
+                      {cierre.cajero?.sucursales?.nombre && (
+                        <span> · {cierre.cajero.sucursales.nombre}</span>
                       )}
                     </div>
                     {cierre.total_general !== undefined && !esGestor && (
