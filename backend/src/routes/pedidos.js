@@ -3,6 +3,48 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const webpush = require('web-push')
+
+// Configurar web-push con VAPID keys
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@padanosrl.com',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  )
+}
+
+// Envía push notification a todos los admins suscriptos (fire-and-forget)
+async function notificarAdmins(titulo, cuerpo) {
+  try {
+    // Buscar suscripciones de usuarios con rol admin
+    const { data: subs, error } = await supabase
+      .from('push_subscriptions')
+      .select('id, endpoint, p256dh, auth, perfil_id, perfiles(rol)')
+      .eq('perfiles.rol', 'admin')
+
+    if (error || !subs) return
+
+    const adminSubs = subs.filter(s => s.perfiles?.rol === 'admin')
+
+    const payload = JSON.stringify({ title: titulo, body: cuerpo })
+
+    for (const sub of adminSubs) {
+      const pushSub = {
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.p256dh, auth: sub.auth },
+      }
+      webpush.sendNotification(pushSub, payload).catch(async (err) => {
+        // Si la suscripción expiró o es inválida, la eliminamos
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          await supabase.from('push_subscriptions').delete().eq('id', sub.id)
+        }
+      })
+    }
+  } catch (err) {
+    console.error('Error al notificar admins:', err)
+  }
+}
 
 // GET /api/pedidos
 // Todos los usuarios ven todos los pedidos, con filtros opcionales
@@ -40,6 +82,32 @@ router.get('/', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('Error al obtener pedidos:', err)
     res.status(500).json({ error: 'Error al obtener pedidos' })
+  }
+})
+
+// GET /api/pedidos/check-pendiente
+// Verifica si el usuario ya tiene un pedido pendiente para una sucursal
+router.get('/check-pendiente', verificarAuth, async (req, res) => {
+  try {
+    const { sucursal_id } = req.query
+    if (!sucursal_id) {
+      return res.status(400).json({ error: 'sucursal_id es requerido' })
+    }
+
+    const { data, error } = await supabase
+      .from('pedidos')
+      .select('id')
+      .eq('sucursal_id', sucursal_id)
+      .eq('usuario_id', req.perfil.id)
+      .eq('estado', 'pendiente')
+      .limit(1)
+
+    if (error) throw error
+
+    res.json({ tiene_pendiente: data.length > 0 })
+  } catch (err) {
+    console.error('Error al verificar pedido pendiente:', err)
+    res.status(500).json({ error: 'Error al verificar pedido pendiente' })
   }
 })
 
@@ -97,6 +165,21 @@ router.post('/', verificarAuth, async (req, res) => {
       }
     }
 
+    // Verificar que no exista pedido pendiente para esta sucursal/usuario
+    const { data: pendientes, error: errPend } = await supabase
+      .from('pedidos')
+      .select('id')
+      .eq('sucursal_id', sucursal_id)
+      .eq('usuario_id', req.perfil.id)
+      .eq('estado', 'pendiente')
+      .limit(1)
+
+    if (errPend) throw errPend
+
+    if (pendientes.length > 0) {
+      return res.status(409).json({ error: 'Ya tenés un pedido pendiente para esta sucursal. Esperá a que se procese antes de crear otro.' })
+    }
+
     // Creamos el pedido
     const pedidoData = {
       sucursal_id,
@@ -127,6 +210,14 @@ router.post('/', verificarAuth, async (req, res) => {
       .insert(itemsConPedidoId)
 
     if (errorItems) throw errorItems
+
+    // Notificar admins vía push (fire-and-forget)
+    const sucNombre = await supabase.from('sucursales').select('nombre').eq('id', sucursal_id).single()
+    const nombreSuc = sucNombre.data?.nombre || 'una sucursal'
+    notificarAdmins(
+      'Nuevo pedido recibido',
+      `${req.perfil.nombre || 'Un operario'} creó un pedido desde ${nombreSuc}`
+    )
 
     res.status(201).json({ mensaje: 'Pedido creado correctamente', pedido_id: pedido.id })
   } catch (err) {

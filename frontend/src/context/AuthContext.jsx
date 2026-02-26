@@ -28,7 +28,13 @@ export const AuthProvider = ({ children }) => {
         try {
           // Verificamos que el token siga siendo válido
           await api.get('/api/auth/me')
-          setUsuario(JSON.parse(usuarioGuardado))
+          const usr = JSON.parse(usuarioGuardado)
+          setUsuario(usr)
+
+          // Registrar push para admins al restaurar sesión
+          if (usr.rol === 'admin') {
+            import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
+          }
         } catch {
           // Token inválido: limpiamos el storage
           localStorage.removeItem('token')
@@ -49,6 +55,11 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', data.token)
     localStorage.setItem('usuario', JSON.stringify(data.usuario))
     setUsuario(data.usuario)
+
+    // Registrar push para admins después del login
+    if (data.usuario.rol === 'admin') {
+      import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
+    }
 
     return data.usuario
   }
