@@ -425,6 +425,7 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
         IdCliente: parseInt(clientId),
         FechaDocumento: hoy,
         Habilitado: true,
+        EsCombo: false,
       }),
     })
 
