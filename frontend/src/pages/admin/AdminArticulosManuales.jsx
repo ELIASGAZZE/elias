@@ -50,11 +50,16 @@ const AdminArticulosManuales = () => {
   const articulosFiltrados = useMemo(() => {
     let lista = articulos
 
+    // Búsqueda tolerante con ceros a la izquierda
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
-      lista = lista.filter(a =>
-        a.nombre?.toLowerCase().includes(q) || a.codigo?.toLowerCase().includes(q)
-      )
+      const qSinCeros = q.replace(/^0+/, '')
+      lista = lista.filter(a => {
+        const nombre = a.nombre?.toLowerCase() || ''
+        const codigo = a.codigo?.toLowerCase() || ''
+        const codigoSinCeros = codigo.replace(/^0+/, '')
+        return nombre.includes(q) || codigo.includes(q) || codigoSinCeros.includes(qSinCeros) || qSinCeros && codigo.includes(qSinCeros)
+      })
     }
 
     if (filtro === 'habilitados') {

@@ -245,8 +245,9 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
     }
 
     // Mapear campos del ERP a nuestro schema
+    // Preservamos el código original tal cual viene del ERP (con ceros a la izquierda si los tiene)
     const articulosMapeados = articulosERP.map(art => ({
-      codigo: String(art.Codigo),
+      codigo: art.Codigo != null ? String(art.Codigo).trim() : '',
       nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
       rubro: art.Rubro?.Nombre || null,
       marca: art.MarcaArticulo?.Nombre || null,
