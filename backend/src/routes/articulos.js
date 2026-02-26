@@ -13,21 +13,33 @@ router.get('/', verificarAuth, async (req, res) => {
 
     if (esAdmin) {
       // Admin ve todos los artículos con estado por sucursal
-      let query = supabase
-        .from('articulos')
-        .select('*, articulos_por_sucursal(sucursal_id, habilitado, stock_ideal)')
-        .order('nombre')
-
-      // Filtro opcional por tipo (automatico/manual)
+      // Supabase tiene un límite de 1000 filas por defecto, paginamos para traer todo
       const tipo = req.query.tipo
-      if (tipo) {
-        query = query.eq('tipo', tipo)
+      const PAGE_SIZE = 1000
+      let allData = []
+      let from = 0
+
+      while (true) {
+        let query = supabase
+          .from('articulos')
+          .select('*, articulos_por_sucursal(sucursal_id, habilitado, stock_ideal)')
+          .order('nombre')
+          .range(from, from + PAGE_SIZE - 1)
+
+        if (tipo) {
+          query = query.eq('tipo', tipo)
+        }
+
+        const { data, error } = await query
+        if (error) throw error
+
+        allData = allData.concat(data)
+
+        if (data.length < PAGE_SIZE) break
+        from += PAGE_SIZE
       }
 
-      const { data, error } = await query
-
-      if (error) throw error
-      return res.json(data)
+      return res.json(allData)
     }
 
     // Operario ve solo los habilitados para la sucursal indicada
