@@ -112,15 +112,11 @@ const AdminArticulosManuales = () => {
     }
   }
 
-  // Callback del modal
+  // Callback cuando el modal guarda — solo recargamos la lista
   const handleModalUpdate = async () => {
     try {
       const { data } = await api.get('/api/articulos?tipo=manual')
       setArticulos(data)
-      if (articuloModal) {
-        const actualizado = data.find(a => a.id === articuloModal.id)
-        if (actualizado) setArticuloModal(actualizado)
-      }
     } catch (err) {
       console.error('Error al recargar:', err)
     }
