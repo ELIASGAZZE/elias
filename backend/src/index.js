@@ -8,6 +8,7 @@ const articulosRoutes = require('./routes/articulos')
 const pedidosRoutes = require('./routes/pedidos')
 const sucursalesRoutes = require('./routes/sucursales')
 const rubrosRoutes = require('./routes/rubros')
+const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -38,4 +39,5 @@ app.get('/health', (req, res) => {
 // ── Inicio del servidor ───────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`)
+  iniciarCronJobs()
 })
