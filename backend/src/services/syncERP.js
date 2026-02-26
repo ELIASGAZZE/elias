@@ -140,20 +140,38 @@ async function sincronizarERP() {
  * Fase 1: descarga existencias paginando.
  * Fase 2: batch upsert contra la BD matcheando por id_centum.
  */
-async function sincronizarStock() {
+async function sincronizarStock(fullSync = false) {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+  const syncInicio = new Date().toISOString()
+
+  // Leer última fecha de sync para filtro incremental
+  let fechaDesde = null
+  if (!fullSync) {
+    const { data: configRow } = await supabase
+      .from('config')
+      .select('valor')
+      .eq('clave', 'ultima_sync_stock')
+      .single()
+    if (configRow?.valor) {
+      fechaDesde = configRow.valor
+    }
+  }
 
   // Fase 1: descargar existencias del depósito (sucursal 6087)
   const PAGE_SIZE = 500
   let pagina = 1
   const stockPorIdCentum = {}
 
-  console.log('[Stock] Fase 1: descargando existencias del depósito...')
+  console.log(`[Stock] Fase 1: descargando existencias del depósito (${fullSync ? 'full sync' : fechaDesde ? `incremental desde ${fechaDesde}` : 'primera sync completa'})...`)
   while (true) {
     const accessToken = generateAccessToken(apiKey)
-    const url = `${baseUrl}/ArticulosExistencias?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
+    let url = `${baseUrl}/ArticulosExistencias?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
+    if (fechaDesde) {
+      url += `&fechaTrazaArticuloDesde=${encodeURIComponent(fechaDesde)}`
+    }
 
     const response = await fetch(url, {
       method: 'GET',
@@ -242,8 +260,16 @@ async function sincronizarStock() {
     }
   }
 
+  // Guardar fecha de inicio de esta sync para la próxima incremental
+  const { error: configError } = await supabase
+    .from('config')
+    .upsert({ clave: 'ultima_sync_stock', valor: syncInicio, updated_at: new Date().toISOString() }, { onConflict: 'clave' })
+  if (configError) {
+    console.error('[Stock] Error guardando fecha de sync:', configError.message)
+  }
+
   return {
-    mensaje: `Stock sincronizado: ${totalActualizados} artículos actualizados (${totalProcesados} procesados del ERP)`,
+    mensaje: `Stock sincronizado: ${totalActualizados} artículos actualizados (${totalProcesados} procesados del ERP, ${fullSync ? 'full' : fechaDesde ? 'incremental' : 'primera sync'})`,
     actualizados: totalActualizados,
     procesados: totalProcesados,
   }

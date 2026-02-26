@@ -408,8 +408,8 @@ router.post('/sincronizar-stock', verificarAuth, soloAdmin, async (req, res) => 
   res.json({ mensaje: 'Sincronización de stock iniciada en background' })
 
   try {
-    const resultado = await sincronizarStock()
-    console.log('[Stock] Sync completada:', resultado.mensaje)
+    const resultado = await sincronizarStock(true)
+    console.log('[Stock] Sync manual completada:', resultado.mensaje)
   } catch (err) {
     console.error('[Stock] Error al sincronizar stock:', err.message)
   }
