@@ -389,6 +389,49 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/articulos/diagnostico-stock
+// Admin: consulta la API de stock de Centum y devuelve estructura de respuesta
+router.get('/diagnostico-stock', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+    const accessToken = generateAccessToken(apiKey)
+
+    const url = `${baseUrl}/ArticulosSucursalesFisicas?idsSucursalesFisicas=6087&numeroPagina=1&cantidadItemsPorPagina=5`
+    console.log('[Diagnostico Stock] URL:', url)
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+    })
+
+    if (!response.ok) {
+      const texto = await response.text()
+      return res.status(502).json({ error: `ERP respondió ${response.status}`, detalle: texto })
+    }
+
+    const data = await response.json()
+
+    res.json({
+      mensaje: 'Respuesta cruda de ArticulosSucursalesFisicas',
+      keys_raiz: Object.keys(data),
+      total: data.CantidadTotalItems || data.TotalItems || null,
+      pagina: data.Pagina || data.NumeroPagina || null,
+      muestra: (data.Items || []).slice(0, 3),
+      data_cruda_parcial: JSON.stringify(data).slice(0, 3000),
+    })
+  } catch (err) {
+    console.error('Error en diagnóstico stock:', err)
+    res.status(500).json({ error: 'Error al consultar stock ERP', detalle: err.message })
+  }
+})
+
 // POST /api/articulos/sincronizar-erp
 // Admin: sincroniza artículos desde ERP Centum
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
