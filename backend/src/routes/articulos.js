@@ -107,7 +107,15 @@ router.get('/erp', verificarAuth, async (req, res) => {
       .range(from, to)
 
     if (buscar) {
-      query = query.or(`nombre.ilike.%${buscar}%,codigo.ilike.%${buscar}%`)
+      const tokens = buscar.split(/\s+/).filter(Boolean)
+      if (tokens.length === 1) {
+        query = query.or(`nombre.ilike.%${tokens[0]}%,codigo.ilike.%${tokens[0]}%`)
+      } else {
+        // Cada token debe aparecer en el nombre
+        for (const token of tokens) {
+          query = query.ilike('nombre', `%${token}%`)
+        }
+      }
     }
 
     const { data, error, count } = await query
