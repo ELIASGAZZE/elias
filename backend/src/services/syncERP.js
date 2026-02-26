@@ -83,6 +83,7 @@ async function sincronizarERP() {
     marca: art.MarcaArticulo?.Nombre || null,
     tipo: 'automatico',
     es_pesable: art.EsPesable === true,
+    id_centum: art.IdArticulo || null,
   }))
 
   // Upsert en lotes de 500
@@ -170,46 +171,30 @@ async function sincronizarStock() {
 
     if (items.length === 0) break
 
-    // Mapear: extraer código y existencias de cada item
-    const stockPorCodigo = {}
+    // Mapear: extraer IdArticulo y Existencias de cada item
+    const stockPorIdCentum = {}
     for (const item of items) {
-      const codigo = item.Articulo?.Codigo != null ? String(item.Articulo.Codigo).trim() : null
-      if (!codigo) continue
-
-      // Sumar existencias de todas las secciones del artículo en esta sucursal
-      let existencia = 0
-      if (Array.isArray(item.Existencias)) {
-        for (const ex of item.Existencias) {
-          existencia += (ex.Cantidad || ex.Existencia || 0)
-        }
-      } else if (typeof item.Existencia === 'number') {
-        existencia = item.Existencia
-      } else if (typeof item.Existencias === 'number') {
-        existencia = item.Existencias
-      } else if (typeof item.Stock === 'number') {
-        existencia = item.Stock
-      }
-
-      stockPorCodigo[codigo] = Math.floor(existencia)
+      const idCentum = item.IdArticulo
+      if (!idCentum) continue
+      stockPorIdCentum[idCentum] = Math.floor(item.Existencias || 0)
     }
 
     totalProcesados += items.length
 
-    // Actualizar en lotes: buscar artículos por código y actualizar stock_deposito
-    const codigos = Object.keys(stockPorCodigo)
+    // Actualizar en lotes: buscar artículos por id_centum y actualizar stock_deposito
+    const idsCentum = Object.keys(stockPorIdCentum).map(Number)
     const BATCH = 500
-    for (let i = 0; i < codigos.length; i += BATCH) {
-      const lote = codigos.slice(i, i + BATCH)
+    for (let i = 0; i < idsCentum.length; i += BATCH) {
+      const lote = idsCentum.slice(i, i + BATCH)
 
-      // Obtener IDs de artículos por código
       const { data: articulosDB } = await supabase
         .from('articulos')
-        .select('id, codigo')
-        .in('codigo', lote)
+        .select('id, id_centum')
+        .in('id_centum', lote)
 
       if (articulosDB && articulosDB.length > 0) {
         for (const art of articulosDB) {
-          const stock = stockPorCodigo[art.codigo] || 0
+          const stock = stockPorIdCentum[art.id_centum] || 0
           await supabase
             .from('articulos')
             .update({ stock_deposito: stock })

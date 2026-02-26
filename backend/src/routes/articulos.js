@@ -373,10 +373,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
       sin_campo_habilitado: sinCampo,
       busqueda: buscar || null,
       resultados_busqueda: resultado.length,
-      muestra: resultado.slice(0, 5).map(a => ({
-        _todas_las_keys: Object.keys(a),
-        Id: a.Id,
-        IdArticulo: a.IdArticulo,
+      muestra: resultado.slice(0, 20).map(a => ({
         Codigo: a.Codigo,
         Nombre: a.Nombre,
         NombreFantasia: a.NombreFantasia,
@@ -389,49 +386,6 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error en diagnóstico ERP:', err)
     res.status(500).json({ error: 'Error al consultar ERP', detalle: err.message })
-  }
-})
-
-// GET /api/articulos/diagnostico-stock
-// Admin: consulta la API de stock de Centum y devuelve estructura de respuesta
-router.get('/diagnostico-stock', verificarAuth, soloAdmin, async (req, res) => {
-  try {
-    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-    const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
-    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
-
-    const accessToken = generateAccessToken(apiKey)
-
-    const url = `${baseUrl}/ArticulosSucursalesFisicas?idsSucursalesFisicas=6087&numeroPagina=1&cantidadItemsPorPagina=5`
-    console.log('[Diagnostico Stock] URL:', url)
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'CentumSuiteConsumidorApiPublicaId': consumerId,
-        'CentumSuiteAccessToken': accessToken,
-      },
-    })
-
-    if (!response.ok) {
-      const texto = await response.text()
-      return res.status(502).json({ error: `ERP respondió ${response.status}`, detalle: texto })
-    }
-
-    const data = await response.json()
-
-    res.json({
-      mensaje: 'Respuesta cruda de ArticulosSucursalesFisicas',
-      keys_raiz: Object.keys(data),
-      total: data.CantidadTotalItems || data.TotalItems || null,
-      pagina: data.Pagina || data.NumeroPagina || null,
-      muestra: (data.Items || []).slice(0, 3),
-      data_cruda_parcial: JSON.stringify(data).slice(0, 3000),
-    })
-  } catch (err) {
-    console.error('Error en diagnóstico stock:', err)
-    res.status(500).json({ error: 'Error al consultar stock ERP', detalle: err.message })
   }
 })
 

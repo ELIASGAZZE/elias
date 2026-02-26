@@ -33,6 +33,8 @@ CREATE TABLE articulos (
   rubro TEXT,
   marca TEXT,
   es_pesable BOOLEAN NOT NULL DEFAULT false,
+  -- ID interno del artículo en ERP Centum (para mapeo con stock)
+  id_centum INTEGER,
   -- Stock disponible en depósito central (sincronizado desde ERP cada 1h)
   stock_deposito INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
