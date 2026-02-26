@@ -57,18 +57,24 @@ const DetallePedido = () => {
     }
   }
 
-  const descargarTXT = () => {
+  const descargarArchivo = (ext) => {
     const token = localStorage.getItem('token')
-    const url = `${import.meta.env.VITE_API_URL}/api/pedidos/${id}/txt`
+    const url = `${import.meta.env.VITE_API_URL}/api/pedidos/${id}/${ext}`
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.blob())
+      .then(res => {
+        if (!res.ok) throw new Error()
+        return res.blob()
+      })
       .then(blob => {
         const objectUrl = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = objectUrl
-        a.setAttribute('download', `pedido-${id}.txt`)
+        a.setAttribute('download', `pedido-${id}.${ext}`)
         a.click()
         URL.revokeObjectURL(objectUrl)
+      })
+      .catch(() => {
+        if (ext === 'pdf') alert('Este pedido no tiene artículos manuales')
       })
   }
 
@@ -145,10 +151,17 @@ const DetallePedido = () => {
               </select>
 
               <button
-                onClick={descargarTXT}
+                onClick={() => descargarArchivo('txt')}
                 className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
               >
-                Descargar TXT
+                TXT (ERP)
+              </button>
+
+              <button
+                onClick={() => descargarArchivo('pdf')}
+                className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                PDF (Manuales)
               </button>
 
               <button

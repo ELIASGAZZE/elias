@@ -221,19 +221,20 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
 })
 
 // GET /api/pedidos/:id/txt
-// Admin: descarga un pedido como TXT con "codigo cantidad" por línea
+// Admin: descarga solo artículos ERP (automatico) como TXT "codigo cantidad"
 router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
 
     const { data, error } = await supabase
       .from('items_pedido')
-      .select('cantidad, articulos(codigo)')
+      .select('cantidad, articulos(codigo, tipo)')
       .eq('pedido_id', id)
 
     if (error) throw error
 
-    const lineas = data.map(item => `${item.articulos.codigo} ${item.cantidad}`)
+    const erp = data.filter(item => item.articulos.tipo === 'automatico')
+    const lineas = erp.map(item => `${item.articulos.codigo} ${item.cantidad}`)
     const txt = lineas.join('\n')
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8')
@@ -242,6 +243,86 @@ router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al generar TXT:', err)
     res.status(500).json({ error: 'Error al generar TXT' })
+  }
+})
+
+// GET /api/pedidos/:id/pdf
+// Admin: descarga PDF solo con artículos manuales del pedido
+const PDFDocument = require('pdfkit')
+
+router.get('/:id/pdf', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const { data: pedido, error: errPedido } = await supabase
+      .from('pedidos')
+      .select('id, nombre, fecha, sucursales(nombre), perfiles(nombre)')
+      .eq('id', id)
+      .single()
+
+    if (errPedido) throw errPedido
+
+    const { data: items, error: errItems } = await supabase
+      .from('items_pedido')
+      .select('cantidad, articulos(codigo, nombre, tipo)')
+      .eq('pedido_id', id)
+
+    if (errItems) throw errItems
+
+    const manuales = items.filter(item => item.articulos.tipo === 'manual')
+
+    if (manuales.length === 0) {
+      return res.status(404).json({ error: 'Este pedido no tiene artículos manuales' })
+    }
+
+    const doc = new PDFDocument({ size: 'A4', margin: 40 })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="pedido-manual-${id}.pdf"`)
+    doc.pipe(res)
+
+    // Encabezado
+    doc.fontSize(18).text('Pedido - Artículos Manuales', { align: 'center' })
+    doc.moveDown(0.5)
+
+    if (pedido.nombre) {
+      doc.fontSize(14).text(pedido.nombre, { align: 'center' })
+      doc.moveDown(0.3)
+    }
+
+    doc.fontSize(10).fillColor('#666')
+    doc.text(`Sucursal: ${pedido.sucursales?.nombre || '—'}    Fecha: ${pedido.fecha}    Creado por: ${pedido.perfiles?.nombre || '—'}`, { align: 'center' })
+    doc.moveDown(1)
+
+    // Tabla
+    const colCodigo = 40
+    const colNombre = 120
+    const colCant = 480
+
+    doc.fillColor('#333').fontSize(10).font('Helvetica-Bold')
+    doc.text('Código', colCodigo, doc.y)
+    doc.text('Artículo', colNombre, doc.y - 12)
+    doc.text('Cant.', colCant, doc.y - 12)
+    doc.moveDown(0.3)
+
+    doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#ccc').stroke()
+    doc.moveDown(0.3)
+
+    doc.font('Helvetica').fontSize(10).fillColor('#000')
+    manuales.forEach(item => {
+      const y = doc.y
+      doc.text(item.articulos.codigo, colCodigo, y)
+      doc.text(item.articulos.nombre, colNombre, y, { width: 340 })
+      doc.text(String(item.cantidad), colCant, y)
+      doc.moveDown(0.2)
+    })
+
+    doc.end()
+  } catch (err) {
+    console.error('Error al generar PDF:', err)
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Error al generar PDF' })
+    }
   }
 })
 
