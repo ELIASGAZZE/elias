@@ -465,12 +465,12 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
 
       {/* Fila: Stock ideal */}
       <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-        <span className="text-sm text-blue-600 font-medium">Stock ideal</span>
+        <span className="text-sm text-gray-600 font-medium">Stock ideal</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => cambiarStock(stockIdeal - 1)}
-            className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 text-xl font-bold
-                       flex items-center justify-center hover:bg-blue-100 active:bg-blue-200
+            className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 text-xl font-bold
+                       flex items-center justify-center hover:bg-gray-300 active:bg-gray-400
                        disabled:opacity-30"
             disabled={stockIdeal <= 0}
           >
@@ -482,13 +482,13 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
             onChange={(e) => cambiarStock(e.target.value)}
             placeholder="0"
             min="0"
-            className="w-12 text-center text-lg font-semibold border border-blue-300 rounded-lg py-1
+            className="w-12 text-center text-lg font-semibold border border-gray-300 rounded-lg py-1
                        focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button
             onClick={() => cambiarStock(stockIdeal + 1)}
-            className="w-10 h-10 rounded-full bg-blue-500 text-white text-xl font-bold
-                       flex items-center justify-center hover:bg-blue-600 active:bg-blue-700"
+            className="w-10 h-10 rounded-full bg-blue-600 text-white text-xl font-bold
+                       flex items-center justify-center hover:bg-blue-700 active:bg-blue-800"
           >
             +
           </button>
