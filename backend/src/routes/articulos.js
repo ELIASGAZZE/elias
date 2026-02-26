@@ -394,7 +394,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 router.get('/diagnostico-stock', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-    const apiKey = process.env.CENTUM_API_KEY
+    const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
     const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
 
     const accessToken = generateAccessToken(apiKey)
