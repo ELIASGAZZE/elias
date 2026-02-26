@@ -11,6 +11,7 @@ import Hub from './pages/Hub'
 // Páginas de la app Pedidos
 import NuevoPedido from './pages/operario/NuevoPedido'
 import Pedidos from './pages/admin/AdminPedidos'
+import DetallePedido from './pages/DetallePedido'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
@@ -55,6 +56,11 @@ const App = () => {
           <Route path="/pedidos" element={
             <RutaProtegida>
               <Pedidos />
+            </RutaProtegida>
+          } />
+          <Route path="/pedidos/:id" element={
+            <RutaProtegida>
+              <DetallePedido />
             </RutaProtegida>
           } />
 

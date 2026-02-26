@@ -8,7 +8,7 @@ import api from '../../services/api'
 
 const BORRADOR_KEY = 'pedido_borrador'
 
-const guardarBorrador = (sucursalId, cantidades) => {
+const guardarBorrador = (sucursalId, cantidades, nombre) => {
   const hayItems = Object.values(cantidades).some(c => c > 0)
   if (!sucursalId || !hayItems) {
     localStorage.removeItem(BORRADOR_KEY)
@@ -17,6 +17,7 @@ const guardarBorrador = (sucursalId, cantidades) => {
   localStorage.setItem(BORRADOR_KEY, JSON.stringify({
     sucursal_id: sucursalId,
     cantidades,
+    nombre: nombre || '',
     timestamp: Date.now(),
   }))
 }
@@ -45,6 +46,7 @@ const NuevoPedido = () => {
   const [sucursalSeleccionada, setSucursalSeleccionada] = useState('')
   const [articulos, setArticulos] = useState([])
   const [cantidades, setCantidades] = useState({}) // { articulo_id: cantidad }
+  const [nombrePedido, setNombrePedido] = useState('')
   const [cargando, setCargando] = useState(false)
   const [cargandoSucursales, setCargandoSucursales] = useState(true)
   const [enviando, setEnviando] = useState(false)
@@ -67,6 +69,7 @@ const NuevoPedido = () => {
           const borrador = leerBorrador()
           if (borrador) {
             setSucursalSeleccionada(borrador.sucursal_id)
+            if (borrador.nombre) setNombrePedido(borrador.nombre)
             // Las cantidades se aplican después de que carguen los artículos
             borradorAplicado.current = borrador
           } else {
@@ -167,8 +170,8 @@ const NuevoPedido = () => {
   // No ejecutar hasta que la restauración del borrador previo haya terminado
   useEffect(() => {
     if (!restauracionLista.current) return
-    guardarBorrador(sucursalSeleccionada, cantidades)
-  }, [sucursalSeleccionada, cantidades])
+    guardarBorrador(sucursalSeleccionada, cantidades, nombrePedido)
+  }, [sucursalSeleccionada, cantidades, nombrePedido])
 
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
@@ -182,6 +185,7 @@ const NuevoPedido = () => {
   const descartarBorrador = useCallback(() => {
     limpiarBorrador()
     setCantidades({})
+    setNombrePedido('')
     setBorradorRecuperado(false)
   }, [])
 
@@ -203,10 +207,13 @@ const NuevoPedido = () => {
     setError('')
 
     try {
-      await api.post('/api/pedidos', { items, sucursal_id: sucursalSeleccionada })
+      const body = { items, sucursal_id: sucursalSeleccionada }
+      if (nombrePedido.trim()) body.nombre = nombrePedido.trim()
+      await api.post('/api/pedidos', body)
       limpiarBorrador()
       setExito(true)
       setCantidades({})
+      setNombrePedido('')
       setBorradorRecuperado(false)
     } catch (err) {
       setError('Error al enviar el pedido. Intentá nuevamente.')
@@ -272,6 +279,23 @@ const NuevoPedido = () => {
             ))}
           </select>
         </div>
+
+        {/* Nombre del pedido (opcional) */}
+        {sucursalSeleccionada && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nombre del pedido <span className="text-gray-400 font-normal">(opcional)</span>
+            </label>
+            <input
+              type="text"
+              value={nombrePedido}
+              onChange={(e) => setNombrePedido(e.target.value)}
+              placeholder="Ej: Pedido picadas"
+              className="campo-form"
+              maxLength={100}
+            />
+          </div>
+        )}
 
         {/* Banner de borrador recuperado */}
         {borradorRecuperado && (

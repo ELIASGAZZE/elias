@@ -10,15 +10,21 @@ router.get('/', verificarAuth, async (req, res) => {
   try {
     const { sucursal_id, estado, fecha_desde, fecha_hasta, usuario_id } = req.query
 
+    const page = parseInt(req.query.page) || 1
+    const limit = parseInt(req.query.limit) || 15
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+
     let query = supabase
       .from('pedidos')
       .select(`
-        id, fecha, estado, created_at,
+        id, nombre, fecha, estado, created_at,
         sucursales(id, nombre),
         perfiles(id, nombre),
         items_pedido(cantidad, articulos(id, codigo, nombre))
-      `)
+      `, { count: 'exact' })
       .order('created_at', { ascending: false })
+      .range(from, to)
 
     // Filtros opcionales
     if (sucursal_id) query = query.eq('sucursal_id', sucursal_id)
@@ -27,10 +33,10 @@ router.get('/', verificarAuth, async (req, res) => {
     if (fecha_desde) query = query.gte('fecha', fecha_desde)
     if (fecha_hasta) query = query.lte('fecha', fecha_hasta)
 
-    const { data, error } = await query
+    const { data, error, count } = await query
     if (error) throw error
 
-    res.json(data)
+    res.json({ pedidos: data, total: count })
   } catch (err) {
     console.error('Error al obtener pedidos:', err)
     res.status(500).json({ error: 'Error al obtener pedidos' })
@@ -46,7 +52,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
     const { data, error } = await supabase
       .from('pedidos')
       .select(`
-        id, fecha, estado, created_at, usuario_id,
+        id, nombre, fecha, estado, created_at, usuario_id,
         sucursales(id, nombre),
         perfiles(id, nombre),
         items_pedido(cantidad, articulos(id, codigo, nombre))
@@ -74,7 +80,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
 // Operario crea un nuevo pedido
 router.post('/', verificarAuth, async (req, res) => {
   try {
-    const { items, sucursal_id } = req.body // items: [{ articulo_id, cantidad }]
+    const { items, sucursal_id, nombre } = req.body // items: [{ articulo_id, cantidad }]
 
     if (!sucursal_id) {
       return res.status(400).json({ error: 'La sucursal es requerida' })
@@ -92,14 +98,17 @@ router.post('/', verificarAuth, async (req, res) => {
     }
 
     // Creamos el pedido
+    const pedidoData = {
+      sucursal_id,
+      usuario_id: req.perfil.id,
+      fecha: new Date().toISOString().split('T')[0], // solo la fecha YYYY-MM-DD
+      estado: 'pendiente',
+    }
+    if (nombre && nombre.trim()) pedidoData.nombre = nombre.trim()
+
     const { data: pedido, error: errorPedido } = await supabase
       .from('pedidos')
-      .insert({
-        sucursal_id,
-        usuario_id: req.perfil.id,
-        fecha: new Date().toISOString().split('T')[0], // solo la fecha YYYY-MM-DD
-        estado: 'pendiente',
-      })
+      .insert(pedidoData)
       .select()
       .single()
 

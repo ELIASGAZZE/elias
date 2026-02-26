@@ -54,6 +54,8 @@ CREATE TABLE pedidos (
   sucursal_id UUID REFERENCES sucursales(id) NOT NULL,
   -- usuario_id referencia al id del perfil (no al auth.users)
   usuario_id UUID REFERENCES perfiles(id) NOT NULL,
+  -- Nombre opcional del pedido (ej: "Pedido picadas")
+  nombre TEXT,
   fecha DATE NOT NULL,
   estado TEXT NOT NULL DEFAULT 'pendiente'
     CHECK (estado IN ('pendiente', 'confirmado', 'entregado', 'cancelado')),
