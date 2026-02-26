@@ -509,6 +509,30 @@ const NuevoPedido = () => {
                   </div>
                 )}
 
+                {/* Resumen de artículos en el pedido */}
+                {totalArticulos > 0 && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold text-blue-700 bg-blue-50 px-3 py-2 rounded-t-lg uppercase tracking-wide border border-blue-200 border-b-0">
+                      En el pedido ({totalArticulos})
+                    </h2>
+                    <div className="space-y-3 py-2 px-1 bg-blue-50/30 border border-blue-200 border-t-0 rounded-b-lg">
+                      {articulos
+                        .filter(a => cantidades[a.id] > 0)
+                        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                        .map(articulo => (
+                          <ArticuloCard
+                            key={'resumen-' + articulo.id}
+                            articulo={articulo}
+                            cantidad={cantidades[articulo.id] || 0}
+                            onChange={(val) => actualizarCantidad(articulo.id, val)}
+                            sucursalId={sucursalSeleccionada}
+                            mostrarStockIdeal={false}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-gray-500 text-sm mb-4">
                   Tocá un artículo para agregar cantidad
                 </p>
