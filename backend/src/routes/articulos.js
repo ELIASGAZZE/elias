@@ -5,65 +5,62 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
 // GET /api/articulos
-// Operario: devuelve artículos habilitados para su sucursal
-// Admin: devuelve todos los artículos
+// Con sucursal_id: devuelve artículos habilitados para esa sucursal (rápido, cualquier rol)
+// Sin sucursal_id (admin): devuelve todos los artículos con relaciones por sucursal
 router.get('/', verificarAuth, async (req, res) => {
   try {
-    const esAdmin = req.perfil.rol === 'admin'
+    const sucursalId = req.query.sucursal_id
 
-    if (esAdmin) {
-      // Admin ve todos los artículos con estado por sucursal
-      // Supabase tiene un límite de 1000 filas por defecto, paginamos para traer todo
-      const tipo = req.query.tipo
-      const PAGE_SIZE = 1000
-      let allData = []
-      let from = 0
+    // Path rápido: artículos habilitados para una sucursal específica
+    if (sucursalId) {
+      const { data, error } = await supabase
+        .from('articulos_por_sucursal')
+        .select('articulos(id, codigo, nombre, tipo, rubro, marca), habilitado, stock_ideal')
+        .eq('sucursal_id', sucursalId)
+        .eq('habilitado', true)
 
-      while (true) {
-        let query = supabase
-          .from('articulos')
-          .select('*, articulos_por_sucursal(sucursal_id, habilitado, stock_ideal)')
-          .order('nombre')
-          .range(from, from + PAGE_SIZE - 1)
+      if (error) throw error
 
-        if (tipo) {
-          query = query.eq('tipo', tipo)
-        }
+      const articulosHabilitados = data.map(item => ({
+        ...item.articulos,
+        habilitado: item.habilitado,
+        stock_ideal: item.stock_ideal,
+      }))
 
-        const { data, error } = await query
-        if (error) throw error
-
-        allData = allData.concat(data)
-
-        if (data.length < PAGE_SIZE) break
-        from += PAGE_SIZE
-      }
-
-      return res.json(allData)
+      return res.json(articulosHabilitados)
     }
 
-    // Operario ve solo los habilitados para la sucursal indicada
-    const sucursalId = req.query.sucursal_id
-    if (!sucursalId) {
+    // Path admin: todos los artículos con estado por sucursal
+    if (req.perfil.rol !== 'admin') {
       return res.status(400).json({ error: 'Se requiere sucursal_id' })
     }
 
-    const { data, error } = await supabase
-      .from('articulos_por_sucursal')
-      .select('articulos(id, codigo, nombre, tipo, rubro, marca), habilitado, stock_ideal')
-      .eq('sucursal_id', sucursalId)
-      .eq('habilitado', true)
+    const tipo = req.query.tipo
+    const PAGE_SIZE = 1000
+    let allData = []
+    let from = 0
 
-    if (error) throw error
+    while (true) {
+      let query = supabase
+        .from('articulos')
+        .select('*, articulos_por_sucursal(sucursal_id, habilitado, stock_ideal)')
+        .order('nombre')
+        .range(from, from + PAGE_SIZE - 1)
 
-    // Aplanamos la respuesta para que sea más simple
-    const articulosHabilitados = data.map(item => ({
-      ...item.articulos,
-      habilitado: item.habilitado,
-      stock_ideal: item.stock_ideal,
-    }))
+      if (tipo) {
+        query = query.eq('tipo', tipo)
+      }
 
-    res.json(articulosHabilitados)
+      const { data, error } = await query
+      if (error) throw error
+
+      allData = allData.concat(data)
+
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+
+    res.json(allData)
   } catch (err) {
     console.error('Error al obtener artículos:', err)
     res.status(500).json({ error: 'Error al obtener artículos' })
