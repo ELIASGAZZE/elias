@@ -309,7 +309,7 @@ const AdminConfiguracion = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Configuración" />
+      <Navbar titulo="Configuración" sinTabs />
 
       <div className="px-4 py-4 space-y-3">
 

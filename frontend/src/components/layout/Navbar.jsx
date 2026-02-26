@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { getTabsParaRol } from './navTabs'
 
-const Navbar = ({ titulo }) => {
+const Navbar = ({ titulo, sinTabs }) => {
   const { usuario, logout, esAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -55,7 +55,7 @@ const Navbar = ({ titulo }) => {
       </nav>
 
       {/* Fila de tabs de navegación */}
-      {tabs.length > 0 && (
+      {!sinTabs && tabs.length > 0 && (
         <div className="bg-white border-b border-gray-200 flex overflow-x-auto">
           {tabs.map(tab => {
             const activo = location.pathname === tab.path

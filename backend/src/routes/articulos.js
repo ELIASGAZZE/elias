@@ -3,6 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const { sincronizarERP, generateAccessToken } = require('../services/syncERP')
 
 // GET /api/articulos
 // Con sucursal_id: devuelve artículos habilitados para esa sucursal (rápido, cualquier rol)
@@ -77,6 +78,22 @@ router.get('/erp', verificarAuth, async (req, res) => {
     const buscar = req.query.buscar?.trim() || ''
     const from = (page - 1) * limit
     const to = from + limit - 1
+
+    // Si vienen IDs específicos, devolver solo esos (sin paginación)
+    const ids = req.query.ids
+    if (ids) {
+      const idsArray = ids.split(',').filter(Boolean)
+      if (idsArray.length > 0) {
+        const { data, error } = await supabase
+          .from('articulos')
+          .select('id, codigo, nombre, rubro, marca')
+          .eq('tipo', 'automatico')
+          .in('id', idsArray)
+          .order('nombre')
+        if (error) throw error
+        return res.json({ articulos: data, total: data.length })
+      }
+    }
 
     let query = supabase
       .from('articulos')
@@ -295,33 +312,6 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// Genera el access token para la API de Centum
-// Algoritmo: fechaUTC + " " + uuid + " " + SHA1(fechaUTC + " " + uuid + " " + clavePublica)
-const crypto = require('crypto')
-
-function generateAccessToken(clavePublica) {
-  // 1. Fecha UTC: yyyy-MM-dd'T'HH:mm:ss
-  const now = new Date()
-  const fechaUTC = now.getUTCFullYear() + '-' +
-    String(now.getUTCMonth() + 1).padStart(2, '0') + '-' +
-    String(now.getUTCDate()).padStart(2, '0') + 'T' +
-    String(now.getUTCHours()).padStart(2, '0') + ':' +
-    String(now.getUTCMinutes()).padStart(2, '0') + ':' +
-    String(now.getUTCSeconds()).padStart(2, '0')
-
-  // 2. UUID sin guiones en minúsculas
-  const uuid = crypto.randomUUID().replace(/-/g, '').toLowerCase()
-
-  // 3. Concatenar
-  const textoParaHash = fechaUTC + ' ' + uuid + ' ' + clavePublica
-
-  // 4-5. SHA-1 en hex mayúsculas
-  const hashHex = crypto.createHash('sha1').update(textoParaHash, 'utf8').digest('hex').toUpperCase()
-
-  // 6. Token final
-  return fechaUTC + ' ' + uuid + ' ' + hashHex
-}
-
 // GET /api/articulos/diagnostico-erp
 // Admin: consulta la API de Centum y devuelve info de diagnóstico sin importar/filtrar nada
 router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
@@ -401,113 +391,8 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 // Admin: sincroniza artículos desde ERP Centum
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-    const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
-    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
-    const clientId = process.env.CENTUM_CLIENT_ID || '2'
-
-    if (!baseUrl || !apiKey) {
-      return res.status(500).json({ error: 'Faltan credenciales del ERP Centum en las variables de entorno' })
-    }
-
-    const accessToken = generateAccessToken(apiKey)
-
-    // Llamar al ERP Centum
-    const hoy = new Date().toISOString().split('T')[0]
-    const response = await fetch(`${baseUrl}/Articulos/Venta`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'CentumSuiteConsumidorApiPublicaId': consumerId,
-        'CentumSuiteAccessToken': accessToken,
-      },
-      body: JSON.stringify({
-        IdCliente: parseInt(clientId),
-        FechaDocumento: hoy,
-        Habilitado: true,
-        EsCombo: false,
-      }),
-    })
-
-    if (!response.ok) {
-      const texto = await response.text()
-      console.error('Error del ERP Centum:', response.status, texto)
-      return res.status(502).json({ error: `Error al conectar con ERP Centum (${response.status})` })
-    }
-
-    const erpData = await response.json()
-
-    // Los artículos están en Articulos.Items[]
-    const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
-    const articulosERP = items.filter(art => {
-      if (art.Habilitado === false) return false
-      if (art.EsCombo === true) return false
-      const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
-      if (nombre.startsWith('COMBO ') || nombre.startsWith('COMBO\t')) return false
-      return true
-    })
-
-    if (articulosERP.length === 0) {
-      return res.json({ mensaje: 'No se encontraron artículos habilitados en el ERP', cantidad: 0 })
-    }
-
-    // Mapear campos del ERP a nuestro schema
-    // Preservamos el código original tal cual viene del ERP (con ceros a la izquierda si los tiene)
-    const articulosMapeados = articulosERP.map(art => ({
-      codigo: art.Codigo != null ? String(art.Codigo).trim() : '',
-      nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
-      rubro: art.Rubro?.Nombre || null,
-      marca: art.MarcaArticulo?.Nombre || null,
-      tipo: 'automatico',
-    }))
-
-    // Upsert en lotes de 500 para no superar el límite de Supabase
-    const BATCH_SIZE = 500
-    let totalInsertados = 0
-    let todosLosArticulos = []
-
-    for (let i = 0; i < articulosMapeados.length; i += BATCH_SIZE) {
-      const lote = articulosMapeados.slice(i, i + BATCH_SIZE)
-      const { data, error } = await supabase
-        .from('articulos')
-        .upsert(lote, { onConflict: 'codigo' })
-        .select('id')
-
-      if (error) throw error
-      todosLosArticulos = todosLosArticulos.concat(data)
-      totalInsertados += data.length
-    }
-
-    // Obtener todas las sucursales para crear filas en articulos_por_sucursal
-    const { data: sucursales } = await supabase
-      .from('sucursales')
-      .select('id')
-
-    if (sucursales && sucursales.length > 0 && todosLosArticulos.length > 0) {
-      const filasRelacion = []
-      for (const art of todosLosArticulos) {
-        for (const suc of sucursales) {
-          filasRelacion.push({
-            articulo_id: art.id,
-            sucursal_id: suc.id,
-            habilitado: false,
-          })
-        }
-      }
-
-      // Upsert en lotes para las relaciones también
-      for (let i = 0; i < filasRelacion.length; i += BATCH_SIZE) {
-        const lote = filasRelacion.slice(i, i + BATCH_SIZE)
-        await supabase
-          .from('articulos_por_sucursal')
-          .upsert(lote, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
-      }
-    }
-
-    res.json({
-      mensaje: `${totalInsertados} artículos sincronizados desde el ERP`,
-      cantidad: totalInsertados,
-    })
+    const resultado = await sincronizarERP()
+    res.json(resultado)
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
     res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })

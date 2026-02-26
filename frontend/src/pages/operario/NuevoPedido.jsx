@@ -65,6 +65,7 @@ const NuevoPedido = () => {
   const [paginaErp, setPaginaErp] = useState(1)
   const [busquedaErp, setBusquedaErp] = useState('')
   const [buscandoErp, setBuscandoErp] = useState(false)
+  const [articulosSeleccionados, setArticulosSeleccionados] = useState([]) // artículos con cantidad > 0 (datos completos)
   const busquedaTimerRef = useRef(null)
   const ERP_LIMIT = 20
 
@@ -222,6 +223,42 @@ const NuevoPedido = () => {
           })),
       }))
   }, [articulos, esExtraordinario])
+
+  // Cargar datos completos de artículos seleccionados (con cantidad > 0) en flujo extraordinario
+  useEffect(() => {
+    if (!esExtraordinario) {
+      setArticulosSeleccionados([])
+      return
+    }
+    const idsConCantidad = Object.entries(cantidades).filter(([, c]) => c > 0).map(([id]) => id)
+    if (idsConCantidad.length === 0) {
+      setArticulosSeleccionados([])
+      return
+    }
+    // Solo fetch IDs que no tenemos ya cargados
+    const idsYaCargados = new Set(articulosSeleccionados.map(a => a.id))
+    const idsFaltantes = idsConCantidad.filter(id => !idsYaCargados.has(id))
+    // Limpiar artículos que ya no tienen cantidad
+    const seleccionadosFiltrados = articulosSeleccionados.filter(a => cantidades[a.id] > 0)
+
+    if (idsFaltantes.length === 0) {
+      // Solo necesitamos filtrar los que ya no tienen cantidad
+      if (seleccionadosFiltrados.length !== articulosSeleccionados.length) {
+        setArticulosSeleccionados(seleccionadosFiltrados)
+      }
+      return
+    }
+
+    const fetchFaltantes = async () => {
+      try {
+        const { data } = await api.get('/api/articulos/erp', { params: { ids: idsFaltantes.join(',') } })
+        setArticulosSeleccionados([...seleccionadosFiltrados, ...(data.articulos || [])])
+      } catch {
+        // Si falla, al menos mantenemos los que ya teníamos
+      }
+    }
+    fetchFaltantes()
+  }, [cantidades, esExtraordinario])
 
   // Autoguardar borrador cada vez que cambian cantidades o sucursal
   // No ejecutar hasta que la restauración del borrador previo haya terminado
@@ -514,6 +551,28 @@ const NuevoPedido = () => {
                     <span className="text-purple-600 font-medium"> · {totalArticulos} seleccionado{totalArticulos !== 1 ? 's' : ''}</span>
                   )}
                 </p>
+
+                {/* Sección: artículos ya seleccionados (solo sin búsqueda) */}
+                {!busquedaErp && articulosSeleccionados.length > 0 && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold text-purple-700 bg-purple-50 px-3 py-2 rounded-t-lg uppercase tracking-wide border border-purple-200 border-b-0">
+                      En el pedido ({articulosSeleccionados.length})
+                    </h2>
+                    <div className="space-y-3 py-2 px-1 bg-purple-50/30 border border-purple-200 border-t-0 rounded-b-lg">
+                      {articulosSeleccionados
+                        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                        .map(articulo => (
+                          <ArticuloCard
+                            key={'sel-' + articulo.id}
+                            articulo={articulo}
+                            cantidad={cantidades[articulo.id] || 0}
+                            onChange={(val) => actualizarCantidad(articulo.id, val)}
+                            mostrarStockIdeal={false}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Lista plana de artículos ERP */}
                 <div className="space-y-3">
