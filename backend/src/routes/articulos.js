@@ -340,22 +340,31 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
       tipo: 'automatico',
     }))
 
-    // Upsert en articulos por codigo
-    const { data: articulosInsertados, error: errorUpsert } = await supabase
-      .from('articulos')
-      .upsert(articulosMapeados, { onConflict: 'codigo' })
-      .select()
+    // Upsert en lotes de 500 para no superar el límite de Supabase
+    const BATCH_SIZE = 500
+    let totalInsertados = 0
+    let todosLosArticulos = []
 
-    if (errorUpsert) throw errorUpsert
+    for (let i = 0; i < articulosMapeados.length; i += BATCH_SIZE) {
+      const lote = articulosMapeados.slice(i, i + BATCH_SIZE)
+      const { data, error } = await supabase
+        .from('articulos')
+        .upsert(lote, { onConflict: 'codigo' })
+        .select('id')
+
+      if (error) throw error
+      todosLosArticulos = todosLosArticulos.concat(data)
+      totalInsertados += data.length
+    }
 
     // Obtener todas las sucursales para crear filas en articulos_por_sucursal
     const { data: sucursales } = await supabase
       .from('sucursales')
       .select('id')
 
-    if (sucursales && sucursales.length > 0 && articulosInsertados && articulosInsertados.length > 0) {
+    if (sucursales && sucursales.length > 0 && todosLosArticulos.length > 0) {
       const filasRelacion = []
-      for (const art of articulosInsertados) {
+      for (const art of todosLosArticulos) {
         for (const suc of sucursales) {
           filasRelacion.push({
             articulo_id: art.id,
@@ -365,15 +374,18 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
         }
       }
 
-      // Upsert para no duplicar si ya existen
-      await supabase
-        .from('articulos_por_sucursal')
-        .upsert(filasRelacion, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+      // Upsert en lotes para las relaciones también
+      for (let i = 0; i < filasRelacion.length; i += BATCH_SIZE) {
+        const lote = filasRelacion.slice(i, i + BATCH_SIZE)
+        await supabase
+          .from('articulos_por_sucursal')
+          .upsert(lote, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+      }
     }
 
     res.json({
-      mensaje: `${articulosInsertados.length} artículos sincronizados desde el ERP`,
-      cantidad: articulosInsertados.length,
+      mensaje: `${totalInsertados} artículos sincronizados desde el ERP`,
+      cantidad: totalInsertados,
     })
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
