@@ -13,9 +13,11 @@ const AdminArticulos = () => {
   const [sincronizando, setSincronizando] = useState(false)
   const [mensajeSync, setMensajeSync] = useState('')
 
-  // Búsqueda, filtro y paginación
+  // Búsqueda, filtros y paginación
   const [busqueda, setBusqueda] = useState('')
   const [filtro, setFiltro] = useState('todos') // todos | habilitados | deshabilitados
+  const [filtroMarca, setFiltroMarca] = useState('')
+  const [filtroSucursal, setFiltroSucursal] = useState('')
   const [pagina, setPagina] = useState(1)
 
   // Modal
@@ -41,6 +43,13 @@ const AdminArticulos = () => {
     }
   }
 
+  // Marcas únicas para el filtro
+  const marcas = useMemo(() => {
+    const set = new Set()
+    articulos.forEach(a => { if (a.marca) set.add(a.marca) })
+    return [...set].sort()
+  }, [articulos])
+
   // Filtrado client-side
   const articulosFiltrados = useMemo(() => {
     let lista = articulos
@@ -57,26 +66,42 @@ const AdminArticulos = () => {
       })
     }
 
-    // Filtro habilitados/deshabilitados
+    // Filtro por marca
+    if (filtroMarca) {
+      lista = lista.filter(a => a.marca === filtroMarca)
+    }
+
+    // Filtro habilitados/deshabilitados (general o por sucursal)
     if (filtro === 'habilitados') {
       lista = lista.filter(a =>
-        a.articulos_por_sucursal?.some(r => r.habilitado)
+        a.articulos_por_sucursal?.some(r => r.habilitado && (!filtroSucursal || r.sucursal_id === filtroSucursal))
       )
     } else if (filtro === 'deshabilitados') {
+      if (filtroSucursal) {
+        lista = lista.filter(a =>
+          !a.articulos_por_sucursal?.some(r => r.habilitado && r.sucursal_id === filtroSucursal)
+        )
+      } else {
+        lista = lista.filter(a =>
+          !a.articulos_por_sucursal?.some(r => r.habilitado)
+        )
+      }
+    } else if (filtroSucursal) {
+      // "Todos" pero filtrado por sucursal: solo mostrar los que tienen relación con esa sucursal
       lista = lista.filter(a =>
-        !a.articulos_por_sucursal?.some(r => r.habilitado)
+        a.articulos_por_sucursal?.some(r => r.sucursal_id === filtroSucursal)
       )
     }
 
     return lista
-  }, [articulos, busqueda, filtro])
+  }, [articulos, busqueda, filtro, filtroMarca, filtroSucursal])
 
   // Paginación
   const totalPaginas = Math.max(1, Math.ceil(articulosFiltrados.length / POR_PAGINA))
   const articulosPagina = articulosFiltrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
 
-  // Resetear página al cambiar búsqueda o filtro
-  useEffect(() => { setPagina(1) }, [busqueda, filtro])
+  // Resetear página al cambiar búsqueda o filtros
+  useEffect(() => { setPagina(1) }, [busqueda, filtro, filtroMarca, filtroSucursal])
 
   // Indicador de sucursales habilitadas
   const contarHabilitadas = (articulo) => {
@@ -133,23 +158,45 @@ const AdminArticulos = () => {
 
         {/* Búsqueda + Filtro */}
         <div className="tarjeta">
-          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="flex flex-col gap-3 mb-4">
             <input
               type="text"
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
               placeholder="Buscar por nombre o código..."
-              className="campo-form text-sm flex-1"
+              className="campo-form text-sm"
             />
-            <select
-              value={filtro}
-              onChange={e => setFiltro(e.target.value)}
-              className="campo-form text-sm sm:w-44"
-            >
-              <option value="todos">Todos</option>
-              <option value="habilitados">Habilitados</option>
-              <option value="deshabilitados">Deshabilitados</option>
-            </select>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                value={filtro}
+                onChange={e => setFiltro(e.target.value)}
+                className="campo-form text-sm flex-1"
+              >
+                <option value="todos">Todos</option>
+                <option value="habilitados">Habilitados</option>
+                <option value="deshabilitados">Deshabilitados</option>
+              </select>
+              <select
+                value={filtroSucursal}
+                onChange={e => setFiltroSucursal(e.target.value)}
+                className="campo-form text-sm flex-1"
+              >
+                <option value="">Todas las sucursales</option>
+                {sucursales.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre}</option>
+                ))}
+              </select>
+              <select
+                value={filtroMarca}
+                onChange={e => setFiltroMarca(e.target.value)}
+                className="campo-form text-sm flex-1"
+              >
+                <option value="">Todas las marcas</option>
+                {marcas.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {cargando ? (
