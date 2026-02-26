@@ -88,6 +88,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
           .from('articulos')
           .select('id, codigo, nombre, rubro, marca')
           .eq('tipo', 'automatico')
+          .eq('es_pesable', false)
           .in('id', idsArray)
           .order('nombre')
         if (error) throw error
@@ -99,6 +100,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
       .from('articulos')
       .select('id, codigo, nombre, rubro, marca', { count: 'exact' })
       .eq('tipo', 'automatico')
+      .eq('es_pesable', false)
       .order('nombre')
       .range(from, to)
 

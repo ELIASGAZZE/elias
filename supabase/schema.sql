@@ -32,6 +32,7 @@ CREATE TABLE articulos (
   tipo TEXT NOT NULL DEFAULT 'manual' CHECK (tipo IN ('manual', 'automatico')),
   rubro TEXT,
   marca TEXT,
+  es_pesable BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

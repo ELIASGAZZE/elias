@@ -82,6 +82,7 @@ async function sincronizarERP() {
     rubro: art.Rubro?.Nombre || null,
     marca: art.MarcaArticulo?.Nombre || null,
     tipo: 'automatico',
+    es_pesable: art.EsPesable === true,
   }))
 
   // Upsert en lotes de 500
