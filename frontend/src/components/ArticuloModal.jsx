@@ -52,7 +52,14 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
           })
         )
         await Promise.all(promesas)
-        onUpdate()
+
+        // Pasar el estado actualizado para update local inmediato
+        const nuevasRelaciones = sucursales.map(s => ({
+          sucursal_id: s.id,
+          habilitado: estadoPorSucursal[s.id].habilitado,
+          stock_ideal: estadoPorSucursal[s.id].stock_ideal,
+        }))
+        onUpdate(articulo.id, nuevasRelaciones)
       }
       onClose()
     } catch (err) {
