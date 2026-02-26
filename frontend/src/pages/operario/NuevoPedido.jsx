@@ -53,6 +53,7 @@ const NuevoPedido = () => {
   const [borradorRecuperado, setBorradorRecuperado] = useState(false)
   const navigate = useNavigate()
   const borradorAplicado = useRef(false)
+  const restauracionLista = useRef(false)
 
   // Cargamos las sucursales al iniciar
   useEffect(() => {
@@ -68,6 +69,9 @@ const NuevoPedido = () => {
             setSucursalSeleccionada(borrador.sucursal_id)
             // Las cantidades se aplican después de que carguen los artículos
             borradorAplicado.current = borrador
+          } else {
+            // No hay borrador, autoguardado puede arrancar ya
+            restauracionLista.current = true
           }
         }
       } catch (err) {
@@ -110,6 +114,7 @@ const NuevoPedido = () => {
             setBorradorRecuperado(true)
           }
           borradorAplicado.current = false
+          restauracionLista.current = true
         } else {
           // Limpiamos cantidades al cambiar de sucursal manualmente
           setCantidades({})
@@ -159,7 +164,9 @@ const NuevoPedido = () => {
   }, [articulos])
 
   // Autoguardar borrador cada vez que cambian cantidades o sucursal
+  // No ejecutar hasta que la restauración del borrador previo haya terminado
   useEffect(() => {
+    if (!restauracionLista.current) return
     guardarBorrador(sucursalSeleccionada, cantidades)
   }, [sucursalSeleccionada, cantidades])
 
