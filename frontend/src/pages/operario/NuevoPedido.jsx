@@ -69,6 +69,8 @@ const NuevoPedido = () => {
   const busquedaTimerRef = useRef(null)
   const ERP_LIMIT = 20
 
+  const [filtroRubro, setFiltroRubro] = useState('')
+
   const esExtraordinario = tipoPedido === 'extraordinario'
 
   // Cargamos las sucursales al iniciar
@@ -188,12 +190,25 @@ const NuevoPedido = () => {
     cargarErp()
   }, [sucursalSeleccionada, esExtraordinario, paginaErp, busquedaErp])
 
+  // Rubros únicos para el filtro (solo flujo regular)
+  const rubrosDisponibles = useMemo(() => {
+    if (esExtraordinario) return []
+    const set = new Set()
+    articulos.forEach(a => set.add(a.rubro || 'Sin rubro'))
+    return [...set].sort((a, b) => {
+      if (a === 'Sin rubro') return 1
+      if (b === 'Sin rubro') return -1
+      return a.localeCompare(b)
+    })
+  }, [articulos, esExtraordinario])
+
   // Agrupar artículos por rubro -> marca (solo flujo regular)
   const articulosAgrupados = useMemo(() => {
     if (esExtraordinario) return []
+    const lista = filtroRubro ? articulos.filter(a => (a.rubro || 'Sin rubro') === filtroRubro) : articulos
     const grupos = {}
 
-    articulos.forEach(art => {
+    lista.forEach(art => {
       const rubro = art.rubro || 'Sin rubro'
       const marca = art.marca || 'Sin marca'
 
@@ -222,7 +237,7 @@ const NuevoPedido = () => {
             articulos: grupos[rubro][marca].sort((a, b) => a.nombre.localeCompare(b.nombre)),
           })),
       }))
-  }, [articulos, esExtraordinario])
+  }, [articulos, esExtraordinario, filtroRubro])
 
   // Cargar datos completos de artículos seleccionados (con cantidad > 0) en flujo extraordinario
   useEffect(() => {
@@ -291,6 +306,7 @@ const NuevoPedido = () => {
     setBorradorRecuperado(false)
     setBusquedaErp('')
     setPaginaErp(1)
+    setFiltroRubro('')
   }
 
   // Búsqueda con debounce para flujo extraordinario
@@ -477,6 +493,22 @@ const NuevoPedido = () => {
 
             {!cargando && (
               <>
+                {/* Filtro por rubro */}
+                {rubrosDisponibles.length > 1 && (
+                  <div className="mb-4">
+                    <select
+                      value={filtroRubro}
+                      onChange={e => setFiltroRubro(e.target.value)}
+                      className="campo-form text-sm"
+                    >
+                      <option value="">Todos los rubros</option>
+                      {rubrosDisponibles.map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <p className="text-gray-500 text-sm mb-4">
                   Tocá un artículo para agregar cantidad
                 </p>
