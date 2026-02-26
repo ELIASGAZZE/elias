@@ -142,7 +142,7 @@ router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
     const { id } = req.params
     const { estado } = req.body
 
-    const estadosValidos = ['pendiente', 'confirmado', 'entregado', 'cancelado']
+    const estadosValidos = ['pendiente', 'cargado_en_centum', 'cancelado']
     if (!estadosValidos.includes(estado)) {
       return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` })
     }
@@ -171,7 +171,7 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     // Actualizamos el estado si viene
     if (estado) {
-      const estadosValidos = ['pendiente', 'confirmado', 'entregado', 'cancelado']
+      const estadosValidos = ['pendiente', 'cargado_en_centum', 'cancelado']
       if (!estadosValidos.includes(estado)) {
         return res.status(400).json({ error: 'Estado inválido' })
       }
@@ -238,6 +238,9 @@ router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
     const lineas = erp.map(item => `${item.articulos.codigo}\t${item.cantidad}`)
     const txt = lineas.join('\n')
 
+    // Auto-cambiar estado a cargado_en_centum si está pendiente
+    await supabase.from('pedidos').update({ estado: 'cargado_en_centum' }).eq('id', id).eq('estado', 'pendiente')
+
     res.setHeader('Content-Type', 'text/plain; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="pedido-${id}.txt"`)
     res.send(txt)
@@ -275,6 +278,9 @@ router.get('/:id/pdf', verificarAuth, soloAdmin, async (req, res) => {
     if (manuales.length === 0) {
       return res.status(404).json({ error: 'Este pedido no tiene artículos manuales' })
     }
+
+    // Auto-cambiar estado a cargado_en_centum si está pendiente
+    await supabase.from('pedidos').update({ estado: 'cargado_en_centum' }).eq('id', id).eq('estado', 'pendiente')
 
     const doc = new PDFDocument({ size: 'A4', margin: 40 })
 

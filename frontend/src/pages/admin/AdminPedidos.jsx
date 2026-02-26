@@ -6,13 +6,18 @@ import Navbar from '../../components/layout/Navbar'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../services/api'
 
-const ESTADOS = ['pendiente', 'confirmado', 'entregado', 'cancelado']
+const ESTADOS = ['pendiente', 'cargado_en_centum', 'cancelado']
+
+const LABELS_ESTADO = {
+  pendiente:        'Pendiente',
+  cargado_en_centum: 'Cargado en Centum',
+  cancelado:        'Cancelado',
+}
 
 const COLORES_ESTADO = {
-  pendiente:  'bg-yellow-100 text-yellow-800',
-  confirmado: 'bg-blue-100 text-blue-800',
-  entregado:  'bg-green-100 text-green-800',
-  cancelado:  'bg-red-100 text-red-800',
+  pendiente:        'bg-yellow-100 text-yellow-800',
+  cargado_en_centum: 'bg-green-100 text-green-800',
+  cancelado:        'bg-red-100 text-red-800',
 }
 
 const LIMIT = 15
@@ -114,7 +119,7 @@ const AdminPedidos = () => {
               >
                 <option value="">Todos</option>
                 {ESTADOS.map(e => (
-                  <option key={e} value={e}>{e}</option>
+                  <option key={e} value={e}>{LABELS_ESTADO[e]}</option>
                 ))}
               </select>
             </div>
@@ -189,8 +194,8 @@ const AdminPedidos = () => {
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado]}`}>
-                        {pedido.estado}
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado] || 'bg-gray-100 text-gray-800'}`}>
+                        {LABELS_ESTADO[pedido.estado] || pedido.estado}
                       </span>
                       {pedido.tipo === 'extraordinario' && (
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">

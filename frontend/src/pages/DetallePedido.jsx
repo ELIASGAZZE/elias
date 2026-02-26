@@ -6,13 +6,18 @@ import Navbar from '../components/layout/Navbar'
 import { useAuth } from '../context/AuthContext'
 import api from '../services/api'
 
-const ESTADOS = ['pendiente', 'confirmado', 'entregado', 'cancelado']
+const ESTADOS = ['pendiente', 'cargado_en_centum', 'cancelado']
+
+const LABELS_ESTADO = {
+  pendiente:        'Pendiente',
+  cargado_en_centum: 'Cargado en Centum',
+  cancelado:        'Cancelado',
+}
 
 const COLORES_ESTADO = {
-  pendiente:  'bg-yellow-100 text-yellow-800',
-  confirmado: 'bg-blue-100 text-blue-800',
-  entregado:  'bg-green-100 text-green-800',
-  cancelado:  'bg-red-100 text-red-800',
+  pendiente:        'bg-yellow-100 text-yellow-800',
+  cargado_en_centum: 'bg-green-100 text-green-800',
+  cancelado:        'bg-red-100 text-red-800',
 }
 
 const DetallePedido = () => {
@@ -72,6 +77,10 @@ const DetallePedido = () => {
         a.setAttribute('download', `pedido-${id}.${ext}`)
         a.click()
         URL.revokeObjectURL(objectUrl)
+        // El backend auto-cambia de pendiente a cargado_en_centum al descargar
+        if (pedido.estado === 'pendiente') {
+          setPedido(prev => ({ ...prev, estado: 'cargado_en_centum' }))
+        }
       })
       .catch(() => {
         if (ext === 'pdf') alert('Este pedido no tiene artículos manuales')
@@ -130,8 +139,8 @@ const DetallePedido = () => {
               </p>
             </div>
             <div className="flex flex-col items-end gap-1 flex-shrink-0">
-              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado]}`}>
-                {pedido.estado}
+              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${COLORES_ESTADO[pedido.estado] || 'bg-gray-100 text-gray-800'}`}>
+                {LABELS_ESTADO[pedido.estado] || pedido.estado}
               </span>
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                 pedido.tipo === 'extraordinario'
@@ -155,7 +164,7 @@ const DetallePedido = () => {
                 className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 {ESTADOS.map(e => (
-                  <option key={e} value={e}>{e}</option>
+                  <option key={e} value={e}>{LABELS_ESTADO[e]}</option>
                 ))}
               </select>
 
