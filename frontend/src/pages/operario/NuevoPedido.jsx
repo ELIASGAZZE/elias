@@ -353,6 +353,7 @@ const NuevoPedido = () => {
                           articulo={articulo}
                           cantidad={cantidades[articulo.id] || 0}
                           onChange={(val) => actualizarCantidad(articulo.id, val)}
+                          sucursalId={sucursalSeleccionada}
                         />
                       ))}
                     </div>
@@ -397,52 +398,94 @@ const NuevoPedido = () => {
   )
 }
 
-// Componente de tarjeta de artículo con selector de cantidad
-const ArticuloCard = ({ articulo, cantidad, onChange }) => {
+// Componente de tarjeta de artículo con selector de cantidad y stock ideal editable
+const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId }) => {
   const tieneUnidades = cantidad > 0
+  const [stockIdeal, setStockIdeal] = useState(articulo.stock_ideal || 0)
+  const [editandoStock, setEditandoStock] = useState(false)
+  const stockRef = useRef(null)
+
+  const guardarStockIdeal = async (valor) => {
+    const nuevoStock = Math.max(0, parseInt(valor) || 0)
+    setStockIdeal(nuevoStock)
+    setEditandoStock(false)
+    if (nuevoStock === (articulo.stock_ideal || 0)) return
+    try {
+      await api.put(`/api/articulos/${articulo.id}/sucursal/${sucursalId}/stock-ideal`, {
+        stock_ideal: nuevoStock,
+      })
+      articulo.stock_ideal = nuevoStock
+    } catch {
+      setStockIdeal(articulo.stock_ideal || 0)
+    }
+  }
 
   return (
-    <div className={`tarjeta flex items-center justify-between transition-all ${
+    <div className={`tarjeta transition-all ${
       tieneUnidades ? 'border-blue-400 bg-blue-50' : ''
     }`}>
-      {/* Info del artículo */}
-      <div className="flex-1 min-w-0 mr-3">
-        <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
-        <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
-        {articulo.stock_ideal > 0 && (
-          <p className="text-xs text-blue-500 mt-0.5">Stock ideal: {articulo.stock_ideal}</p>
-        )}
+      <div className="flex items-center justify-between">
+        {/* Info del artículo */}
+        <div className="flex-1 min-w-0 mr-3">
+          <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
+          <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
+        </div>
+
+        {/* Selector de cantidad con botones +/- grandes (fáciles de tocar) */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onChange(cantidad - 1)}
+            className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 text-xl font-bold
+                       flex items-center justify-center hover:bg-gray-300 active:bg-gray-400
+                       disabled:opacity-30"
+            disabled={cantidad <= 0}
+          >
+            −
+          </button>
+
+          <input
+            type="number"
+            value={cantidad || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="0"
+            min="0"
+            className="w-12 text-center text-lg font-semibold border border-gray-300 rounded-lg py-1
+                       focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+
+          <button
+            onClick={() => onChange(cantidad + 1)}
+            className="w-10 h-10 rounded-full bg-blue-600 text-white text-xl font-bold
+                       flex items-center justify-center hover:bg-blue-700 active:bg-blue-800"
+          >
+            +
+          </button>
+        </div>
       </div>
 
-      {/* Selector de cantidad con botones +/- grandes (fáciles de tocar) */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => onChange(cantidad - 1)}
-          className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 text-xl font-bold
-                     flex items-center justify-center hover:bg-gray-300 active:bg-gray-400
-                     disabled:opacity-30"
-          disabled={cantidad <= 0}
-        >
-          −
-        </button>
-
-        <input
-          type="number"
-          value={cantidad || ''}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="0"
-          min="0"
-          className="w-12 text-center text-lg font-semibold border border-gray-300 rounded-lg py-1
-                     focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-
-        <button
-          onClick={() => onChange(cantidad + 1)}
-          className="w-10 h-10 rounded-full bg-blue-600 text-white text-xl font-bold
-                     flex items-center justify-center hover:bg-blue-700 active:bg-blue-800"
-        >
-          +
-        </button>
+      {/* Stock ideal editable */}
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <span className="text-xs text-blue-500">Stock ideal:</span>
+        {editandoStock ? (
+          <input
+            ref={stockRef}
+            type="number"
+            defaultValue={stockIdeal}
+            min="0"
+            autoFocus
+            onBlur={(e) => guardarStockIdeal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+            className="w-14 text-xs text-center border border-blue-300 rounded px-1 py-0.5
+                       focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        ) : (
+          <button
+            onClick={() => setEditandoStock(true)}
+            className="text-xs text-blue-600 font-medium underline-offset-2 hover:underline min-w-[2rem] text-left"
+          >
+            {stockIdeal > 0 ? stockIdeal : '—'}
+          </button>
+        )}
       </div>
     </div>
   )

@@ -124,6 +124,36 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
   }
 })
 
+// PUT /api/articulos/:articuloId/sucursal/:sucursalId/stock-ideal
+// Cualquier usuario autenticado puede actualizar el stock ideal
+router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, async (req, res) => {
+  try {
+    const { articuloId, sucursalId } = req.params
+    const { stock_ideal } = req.body
+
+    if (typeof stock_ideal !== 'number' || stock_ideal < 0) {
+      return res.status(400).json({ error: 'stock_ideal debe ser un número >= 0' })
+    }
+
+    const { data, error } = await supabase
+      .from('articulos_por_sucursal')
+      .update({ stock_ideal })
+      .eq('articulo_id', articuloId)
+      .eq('sucursal_id', sucursalId)
+      .select()
+
+    if (error) throw error
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Relación artículo-sucursal no encontrada' })
+    }
+
+    res.json(data[0])
+  } catch (err) {
+    console.error('Error al actualizar stock ideal:', err)
+    res.status(500).json({ error: 'Error al actualizar stock ideal' })
+  }
+})
+
 // PUT /api/articulos/:id
 // Admin: edita nombre y/o rubro de un artículo manual
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
