@@ -1,10 +1,44 @@
 // Vista principal del operario: crear un nuevo pedido
 // Diseño mobile-first con tarjetas táctiles grandes
 // Artículos agrupados por rubro y marca
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
+
+const BORRADOR_KEY = 'pedido_borrador'
+
+const guardarBorrador = (sucursalId, cantidades) => {
+  const hayItems = Object.values(cantidades).some(c => c > 0)
+  if (!sucursalId || !hayItems) {
+    localStorage.removeItem(BORRADOR_KEY)
+    return
+  }
+  localStorage.setItem(BORRADOR_KEY, JSON.stringify({
+    sucursal_id: sucursalId,
+    cantidades,
+    timestamp: Date.now(),
+  }))
+}
+
+const leerBorrador = () => {
+  try {
+    const raw = localStorage.getItem(BORRADOR_KEY)
+    if (!raw) return null
+    const borrador = JSON.parse(raw)
+    // Descartar borradores de más de 24hs
+    if (Date.now() - borrador.timestamp > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(BORRADOR_KEY)
+      return null
+    }
+    return borrador
+  } catch {
+    localStorage.removeItem(BORRADOR_KEY)
+    return null
+  }
+}
+
+const limpiarBorrador = () => localStorage.removeItem(BORRADOR_KEY)
 
 const NuevoPedido = () => {
   const [sucursales, setSucursales] = useState([])
@@ -16,7 +50,9 @@ const NuevoPedido = () => {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState(false)
+  const [borradorRecuperado, setBorradorRecuperado] = useState(false)
   const navigate = useNavigate()
+  const borradorAplicado = useRef(false)
 
   // Cargamos las sucursales al iniciar
   useEffect(() => {
@@ -24,6 +60,16 @@ const NuevoPedido = () => {
       try {
         const { data } = await api.get('/api/sucursales')
         setSucursales(data)
+
+        // Restaurar borrador si existe (solo una vez)
+        if (!borradorAplicado.current) {
+          const borrador = leerBorrador()
+          if (borrador) {
+            setSucursalSeleccionada(borrador.sucursal_id)
+            // Las cantidades se aplican después de que carguen los artículos
+            borradorAplicado.current = borrador
+          }
+        }
       } catch (err) {
         setError('Error al cargar sucursales')
       } finally {
@@ -48,6 +94,26 @@ const NuevoPedido = () => {
           params: { sucursal_id: sucursalSeleccionada }
         })
         setArticulos(data)
+
+        // Si hay borrador pendiente para esta sucursal, restaurar cantidades
+        const borrador = borradorAplicado.current
+        if (borrador && borrador.sucursal_id === sucursalSeleccionada) {
+          const idsValidos = new Set(data.map(a => a.id))
+          const cantidadesRestauradas = {}
+          Object.entries(borrador.cantidades).forEach(([id, cant]) => {
+            if (idsValidos.has(id) && cant > 0) {
+              cantidadesRestauradas[id] = cant
+            }
+          })
+          if (Object.keys(cantidadesRestauradas).length > 0) {
+            setCantidades(cantidadesRestauradas)
+            setBorradorRecuperado(true)
+          }
+          borradorAplicado.current = false
+        } else {
+          // Limpiamos cantidades al cambiar de sucursal manualmente
+          setCantidades({})
+        }
       } catch (err) {
         setError('Error al cargar artículos')
       } finally {
@@ -55,8 +121,6 @@ const NuevoPedido = () => {
       }
     }
     cargarArticulos()
-    // Limpiamos cantidades al cambiar de sucursal
-    setCantidades({})
   }, [sucursalSeleccionada])
 
   // Agrupar artículos por rubro → marca
@@ -94,6 +158,11 @@ const NuevoPedido = () => {
       }))
   }, [articulos])
 
+  // Autoguardar borrador cada vez que cambian cantidades o sucursal
+  useEffect(() => {
+    guardarBorrador(sucursalSeleccionada, cantidades)
+  }, [sucursalSeleccionada, cantidades])
+
   // Actualiza la cantidad de un artículo específico
   const actualizarCantidad = (articuloId, valor) => {
     const cantidad = Math.max(0, parseInt(valor) || 0)
@@ -102,6 +171,12 @@ const NuevoPedido = () => {
       [articuloId]: cantidad,
     }))
   }
+
+  const descartarBorrador = useCallback(() => {
+    limpiarBorrador()
+    setCantidades({})
+    setBorradorRecuperado(false)
+  }, [])
 
   // Cuenta cuántos artículos tienen cantidad > 0
   const totalArticulos = Object.values(cantidades).filter(c => c > 0).length
@@ -122,8 +197,10 @@ const NuevoPedido = () => {
 
     try {
       await api.post('/api/pedidos', { items, sucursal_id: sucursalSeleccionada })
+      limpiarBorrador()
       setExito(true)
       setCantidades({})
+      setBorradorRecuperado(false)
     } catch (err) {
       setError('Error al enviar el pedido. Intentá nuevamente.')
     } finally {
@@ -152,7 +229,7 @@ const NuevoPedido = () => {
           <h2 className="text-2xl font-bold text-gray-800 mb-2">¡Pedido enviado!</h2>
           <p className="text-gray-500 mb-6">Tu pedido fue registrado correctamente</p>
           <button
-            onClick={() => setExito(false)}
+            onClick={() => { limpiarBorrador(); setExito(false) }}
             className="btn-primario max-w-xs"
           >
             Hacer otro pedido
@@ -188,6 +265,22 @@ const NuevoPedido = () => {
             ))}
           </select>
         </div>
+
+        {/* Banner de borrador recuperado */}
+        {borradorRecuperado && (
+          <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-amber-800">Pedido en curso recuperado</p>
+              <p className="text-xs text-amber-600">Se restauraron las cantidades que tenías cargadas</p>
+            </div>
+            <button
+              onClick={descartarBorrador}
+              className="text-xs text-amber-700 underline ml-3 whitespace-nowrap"
+            >
+              Descartar
+            </button>
+          </div>
+        )}
 
         {!sucursalSeleccionada && (
           <p className="text-center text-gray-400 mt-10">
