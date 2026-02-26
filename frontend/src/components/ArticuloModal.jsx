@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import api from '../services/api'
 
 const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
-  // Mapa local del estado por sucursal — cambios se acumulan hasta guardar
-  const [estadoPorSucursal, setEstadoPorSucursal] = useState(() => {
+  // Estado original para detectar qué cambió
+  const buildEstado = () => {
     const mapa = {}
     sucursales.forEach(s => {
       const rel = articulo.articulos_por_sucursal?.find(r => r.sucursal_id === s.id)
@@ -13,7 +13,10 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
       }
     })
     return mapa
-  })
+  }
+
+  const [estadoOriginal] = useState(buildEstado)
+  const [estadoPorSucursal, setEstadoPorSucursal] = useState(buildEstado)
   const [guardando, setGuardando] = useState(false)
 
   const toggleHabilitado = (sucursalId) => {
@@ -34,18 +37,28 @@ const ArticuloModal = ({ articulo, sucursales, onClose, onUpdate }) => {
   const guardar = async () => {
     setGuardando(true)
     try {
-      const promesas = sucursales.map(s =>
-        api.put(`/api/articulos/${articulo.id}/sucursal/${s.id}`, {
-          habilitado: estadoPorSucursal[s.id].habilitado,
-          stock_ideal: estadoPorSucursal[s.id].stock_ideal,
-        })
-      )
-      await Promise.all(promesas)
-      onUpdate()
+      // Solo guardar sucursales que cambiaron
+      const cambios = sucursales.filter(s => {
+        const original = estadoOriginal[s.id]
+        const actual = estadoPorSucursal[s.id]
+        return original.habilitado !== actual.habilitado || original.stock_ideal !== actual.stock_ideal
+      })
+
+      if (cambios.length > 0) {
+        const promesas = cambios.map(s =>
+          api.put(`/api/articulos/${articulo.id}/sucursal/${s.id}`, {
+            habilitado: estadoPorSucursal[s.id].habilitado,
+            stock_ideal: estadoPorSucursal[s.id].stock_ideal,
+          })
+        )
+        await Promise.all(promesas)
+        onUpdate()
+      }
       onClose()
     } catch (err) {
       console.error('Error al guardar:', err)
-      alert('Error al guardar los cambios')
+      const detalle = err.response?.data?.error || err.message
+      alert('Error al guardar: ' + detalle)
     } finally {
       setGuardando(false)
     }

@@ -118,10 +118,9 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
       .from('articulos_por_sucursal')
       .upsert(upsertData, { onConflict: 'articulo_id,sucursal_id' })
       .select()
-      .single()
 
     if (error) throw error
-    res.json(data)
+    res.json(data?.[0] || upsertData)
   } catch (err) {
     console.error('Error al actualizar estado del artículo:', err)
     res.status(500).json({ error: 'Error al actualizar artículo' })
