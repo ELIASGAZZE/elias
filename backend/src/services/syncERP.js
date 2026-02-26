@@ -136,17 +136,18 @@ async function sincronizarERP() {
 
 /**
  * Sincroniza stock del depósito central (sucursal física Centum ID 6087) desde ERP.
- * Pagina de 500 en 500, matchea por código de artículo, y actualiza stock_deposito.
+ * Fase 1: descarga todo el stock del ERP (paginado).
+ * Fase 2: batch upsert contra la BD matcheando por id_centum.
  */
 async function sincronizarStock() {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
 
+  // Fase 1: descargar todo el stock del ERP
   const PAGE_SIZE = 500
   let pagina = 1
-  let totalProcesados = 0
-  let totalActualizados = 0
+  const stockPorIdCentum = {}
 
   while (true) {
     const accessToken = generateAccessToken(apiKey)
@@ -171,42 +172,51 @@ async function sincronizarStock() {
 
     if (items.length === 0) break
 
-    // Mapear: extraer IdArticulo y Existencias de cada item
-    const stockPorIdCentum = {}
     for (const item of items) {
-      const idCentum = item.IdArticulo
-      if (!idCentum) continue
-      stockPorIdCentum[idCentum] = Math.floor(item.Existencias || 0)
-    }
-
-    totalProcesados += items.length
-
-    // Actualizar en lotes: buscar artículos por id_centum y actualizar stock_deposito
-    const idsCentum = Object.keys(stockPorIdCentum).map(Number)
-    const BATCH = 500
-    for (let i = 0; i < idsCentum.length; i += BATCH) {
-      const lote = idsCentum.slice(i, i + BATCH)
-
-      const { data: articulosDB } = await supabase
-        .from('articulos')
-        .select('id, id_centum')
-        .in('id_centum', lote)
-
-      if (articulosDB && articulosDB.length > 0) {
-        for (const art of articulosDB) {
-          const stock = stockPorIdCentum[art.id_centum] || 0
-          await supabase
-            .from('articulos')
-            .update({ stock_deposito: stock })
-            .eq('id', art.id)
-          totalActualizados++
-        }
+      if (item.IdArticulo) {
+        stockPorIdCentum[item.IdArticulo] = Math.floor(item.Existencias || 0)
       }
     }
 
-    // Si recibimos menos que PAGE_SIZE, terminamos
     if (items.length < PAGE_SIZE) break
     pagina++
+  }
+
+  const totalProcesados = Object.keys(stockPorIdCentum).length
+  if (totalProcesados === 0) {
+    return { mensaje: 'No se encontraron datos de stock en el ERP', actualizados: 0, procesados: 0 }
+  }
+
+  // Fase 2: leer artículos de BD que tienen id_centum y hacer batch upsert
+  const BATCH = 500
+  let totalActualizados = 0
+  const allIdsCentum = Object.keys(stockPorIdCentum).map(Number)
+
+  for (let i = 0; i < allIdsCentum.length; i += BATCH) {
+    const lote = allIdsCentum.slice(i, i + BATCH)
+
+    const { data: articulosDB } = await supabase
+      .from('articulos')
+      .select('id, id_centum')
+      .in('id_centum', lote)
+
+    if (!articulosDB || articulosDB.length === 0) continue
+
+    // Preparar lote de upsert con id + stock_deposito
+    const upsertLote = articulosDB.map(art => ({
+      id: art.id,
+      stock_deposito: stockPorIdCentum[art.id_centum] || 0,
+    }))
+
+    const { error } = await supabase
+      .from('articulos')
+      .upsert(upsertLote, { onConflict: 'id' })
+
+    if (error) {
+      console.error('[Stock] Error en batch upsert:', error.message)
+    } else {
+      totalActualizados += upsertLote.length
+    }
   }
 
   return {
