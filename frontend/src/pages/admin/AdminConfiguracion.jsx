@@ -76,7 +76,7 @@ const AdminConfiguracion = () => {
   const [creandoUsuario, setCreandoUsuario] = useState(false)
   const [mensajeUsuario, setMensajeUsuario] = useState('')
   const [usuarioEditando, setUsuarioEditando] = useState(null)
-  const [editUsuarioData, setEditUsuarioData] = useState({ nombre: '', rol: '', sucursal_id: '' })
+  const [editUsuarioData, setEditUsuarioData] = useState({ nombre: '', rol: '', sucursal_id: '', username: '', password: '' })
   const [guardandoUsuario, setGuardandoUsuario] = useState(false)
   const [mensajeEditUsuario, setMensajeEditUsuario] = useState('')
 
@@ -272,13 +272,15 @@ const AdminConfiguracion = () => {
       nombre: usuario.nombre,
       rol: usuario.rol,
       sucursal_id: usuario.sucursal_id || '',
+      username: usuario.username,
+      password: '',
     })
     setMensajeEditUsuario('')
   }
 
   const cerrarEditarUsuario = () => {
     setUsuarioEditando(null)
-    setEditUsuarioData({ nombre: '', rol: '', sucursal_id: '' })
+    setEditUsuarioData({ nombre: '', rol: '', sucursal_id: '', username: '', password: '' })
     setMensajeEditUsuario('')
   }
 
@@ -287,8 +289,16 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('El nombre es requerido')
       return
     }
+    if (!editUsuarioData.username.trim()) {
+      setMensajeEditUsuario('El usuario es requerido')
+      return
+    }
     if (editUsuarioData.rol === 'operario' && !editUsuarioData.sucursal_id) {
       setMensajeEditUsuario('Seleccioná una sucursal para el operario')
+      return
+    }
+    if (editUsuarioData.password && editUsuarioData.password.length < 6) {
+      setMensajeEditUsuario('La contraseña debe tener al menos 6 caracteres')
       return
     }
 
@@ -296,7 +306,9 @@ const AdminConfiguracion = () => {
     setMensajeEditUsuario('')
 
     try {
-      await api.put(`/api/auth/usuarios/${usuarioEditando.id}`, editUsuarioData)
+      const payload = { ...editUsuarioData }
+      if (!payload.password) delete payload.password
+      await api.put(`/api/auth/usuarios/${usuarioEditando.id}`, payload)
       cerrarEditarUsuario()
       await cargarUsuarios()
     } catch (err) {
@@ -606,7 +618,26 @@ const AdminConfiguracion = () => {
             </div>
 
             <div className="p-4 space-y-3">
-              <p className="text-xs text-gray-400">@{usuarioEditando.username} (no editable)</p>
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Usuario</label>
+                <input
+                  type="text"
+                  value={editUsuarioData.username}
+                  onChange={(e) => setEditUsuarioData(prev => ({ ...prev, username: e.target.value }))}
+                  className="campo-form text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Nueva contraseña</label>
+                <input
+                  type="password"
+                  value={editUsuarioData.password}
+                  onChange={(e) => setEditUsuarioData(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="Dejar vacío para no cambiar"
+                  className="campo-form text-sm"
+                />
+              </div>
 
               <div>
                 <label className="text-xs font-medium text-gray-500 mb-1 block">Nombre</label>

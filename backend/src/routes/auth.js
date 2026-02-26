@@ -186,10 +186,10 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
 })
 
 // PUT /api/auth/usuarios/:id
-// Admin: edita perfil de un usuario (nombre, rol, sucursal_id)
+// Admin: edita perfil de un usuario (nombre, rol, sucursal_id, username, password)
 router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
   const { id } = req.params
-  const { nombre, rol, sucursal_id } = req.body
+  const { nombre, rol, sucursal_id, username, password } = req.body
 
   if (!nombre || !nombre.trim()) {
     return res.status(400).json({ error: 'El nombre es requerido' })
@@ -203,11 +203,64 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Los operarios deben tener una sucursal asignada' })
   }
 
+  if (password && password.length < 6) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+  }
+
   try {
+    // Obtener perfil actual para el user_id
+    const { data: perfil, error: errorPerfil } = await supabase
+      .from('perfiles')
+      .select('user_id, username')
+      .eq('id', id)
+      .single()
+
+    if (errorPerfil || !perfil) {
+      return res.status(404).json({ error: 'Usuario no encontrado' })
+    }
+
+    // Si cambia el username, verificar que no exista otro
+    const usernameLimpio = username ? username.toLowerCase().trim() : perfil.username
+    if (username && usernameLimpio !== perfil.username) {
+      if (!/^[a-z0-9.]+$/.test(usernameLimpio)) {
+        return res.status(400).json({ error: 'El usuario solo puede contener letras, números y puntos' })
+      }
+
+      const { data: existente } = await supabase
+        .from('perfiles')
+        .select('id')
+        .eq('username', usernameLimpio)
+        .neq('id', id)
+        .single()
+
+      if (existente) {
+        return res.status(409).json({ error: `Ya existe un usuario con el nombre "${usernameLimpio}"` })
+      }
+    }
+
+    // Actualizar en Supabase Auth si cambia username o password
+    const authUpdate = {}
+    if (username && usernameLimpio !== perfil.username) {
+      authUpdate.email = usernameToEmail(usernameLimpio)
+      authUpdate.email_confirm = true
+    }
+    if (password) {
+      authUpdate.password = password
+    }
+    if (Object.keys(authUpdate).length > 0) {
+      const { error: authError } = await supabase.auth.admin.updateUserById(perfil.user_id, authUpdate)
+      if (authError) {
+        console.error('Error actualizando Auth:', authError.message)
+        return res.status(500).json({ error: 'Error al actualizar credenciales' })
+      }
+    }
+
+    // Actualizar perfil
     const updateData = {
       nombre: nombre.trim(),
       rol,
       sucursal_id: rol === 'operario' ? sucursal_id : null,
+      username: usernameLimpio,
     }
 
     const { data, error } = await supabase
