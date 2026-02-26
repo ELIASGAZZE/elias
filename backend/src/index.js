@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth')
 const articulosRoutes = require('./routes/articulos')
 const pedidosRoutes = require('./routes/pedidos')
 const sucursalesRoutes = require('./routes/sucursales')
+const rubrosRoutes = require('./routes/rubros')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -27,6 +28,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/articulos', articulosRoutes)
 app.use('/api/pedidos', pedidosRoutes)
 app.use('/api/sucursales', sucursalesRoutes)
+app.use('/api/rubros', rubrosRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

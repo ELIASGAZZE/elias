@@ -12,6 +12,13 @@ const AdminConfiguracion = () => {
   const [creandoSucursal, setCreandoSucursal] = useState(false)
   const [mensajeSucursal, setMensajeSucursal] = useState('')
 
+  // Rubros
+  const [rubros, setRubros] = useState([])
+  const [cargandoRubros, setCargandoRubros] = useState(true)
+  const [nuevoNombreRubro, setNuevoNombreRubro] = useState('')
+  const [creandoRubro, setCreandoRubro] = useState(false)
+  const [mensajeRubro, setMensajeRubro] = useState('')
+
   // Usuarios
   const [usuarios, setUsuarios] = useState([])
   const [cargandoUsuarios, setCargandoUsuarios] = useState(true)
@@ -30,6 +37,17 @@ const AdminConfiguracion = () => {
     }
   }
 
+  const cargarRubros = async () => {
+    try {
+      const { data } = await api.get('/api/rubros')
+      setRubros(data)
+    } catch (err) {
+      console.error('Error al cargar rubros:', err)
+    } finally {
+      setCargandoRubros(false)
+    }
+  }
+
   const cargarUsuarios = async () => {
     try {
       const { data } = await api.get('/api/auth/usuarios')
@@ -43,6 +61,7 @@ const AdminConfiguracion = () => {
 
   useEffect(() => {
     cargarSucursales()
+    cargarRubros()
     cargarUsuarios()
   }, [])
 
@@ -67,6 +86,41 @@ const AdminConfiguracion = () => {
       setMensajeSucursal(msg)
     } finally {
       setCreandoSucursal(false)
+    }
+  }
+
+  // --- Rubros ---
+  const crearRubro = async (e) => {
+    e.preventDefault()
+    if (!nuevoNombreRubro.trim()) {
+      setMensajeRubro('Ingresá el nombre del rubro')
+      return
+    }
+
+    setCreandoRubro(true)
+    setMensajeRubro('')
+
+    try {
+      await api.post('/api/rubros', { nombre: nuevoNombreRubro.trim() })
+      setMensajeRubro('ok:Rubro creado correctamente')
+      setNuevoNombreRubro('')
+      await cargarRubros()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear rubro'
+      setMensajeRubro(msg)
+    } finally {
+      setCreandoRubro(false)
+    }
+  }
+
+  const eliminarRubro = async (id, nombre) => {
+    if (!confirm(`¿Eliminar el rubro "${nombre}"?`)) return
+
+    try {
+      await api.delete(`/api/rubros/${id}`)
+      await cargarRubros()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar rubro')
     }
   }
 
@@ -200,6 +254,61 @@ const AdminConfiguracion = () => {
                   </div>
                   <button
                     onClick={() => eliminarUsuario(usuario.id, usuario.nombre)}
+                    className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ===== SECCIÓN RUBROS ===== */}
+        <div className="tarjeta">
+          <h2 className="font-semibold text-gray-700 mb-3">Nuevo rubro</h2>
+          <form onSubmit={crearRubro} className="space-y-3">
+            <input
+              type="text"
+              value={nuevoNombreRubro}
+              onChange={(e) => setNuevoNombreRubro(e.target.value)}
+              placeholder="Nombre del rubro"
+              className="campo-form text-sm"
+            />
+            <button
+              type="submit"
+              disabled={creandoRubro}
+              className="btn-primario"
+            >
+              {creandoRubro ? 'Creando...' : 'Crear rubro'}
+            </button>
+            {mensajeRubro && (
+              <p className={`text-sm ${mensajeRubro.startsWith('ok:') ? 'text-green-600' : 'text-red-600'}`}>
+                {mensajeRubro.startsWith('ok:') ? mensajeRubro.slice(3) : mensajeRubro}
+              </p>
+            )}
+          </form>
+        </div>
+
+        <div className="tarjeta">
+          <h2 className="font-semibold text-gray-700 mb-3">Rubros existentes</h2>
+
+          {cargandoRubros ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {rubros.length === 0 && (
+                <p className="text-gray-400 text-sm text-center py-4">
+                  No hay rubros creados
+                </p>
+              )}
+              {rubros.map(rubro => (
+                <div key={rubro.id} className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                  <p className="text-sm font-medium text-gray-800">{rubro.nombre}</p>
+                  <button
+                    onClick={() => eliminarRubro(rubro.id, rubro.nombre)}
                     className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
                   >
                     Eliminar

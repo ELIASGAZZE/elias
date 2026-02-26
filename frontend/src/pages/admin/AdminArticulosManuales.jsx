@@ -12,8 +12,12 @@ const AdminArticulosManuales = () => {
   const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(false)
 
+  // Rubros
+  const [rubros, setRubros] = useState([])
+
   // Creación manual
   const [nuevoNombre, setNuevoNombre] = useState('')
+  const [nuevoRubro, setNuevoRubro] = useState('')
   const [creando, setCreando] = useState(false)
   const [mensajeCrear, setMensajeCrear] = useState('')
 
@@ -32,12 +36,14 @@ const AdminArticulosManuales = () => {
   const cargarDatos = async () => {
     setCargando(true)
     try {
-      const [artRes, sucRes] = await Promise.all([
+      const [artRes, sucRes, rubRes] = await Promise.all([
         api.get('/api/articulos?tipo=manual'),
         api.get('/api/sucursales'),
+        api.get('/api/rubros'),
       ])
       setArticulos(artRes.data)
       setSucursales(sucRes.data)
+      setRubros(rubRes.data)
     } catch (err) {
       console.error('Error al cargar datos:', err)
     } finally {
@@ -93,6 +99,10 @@ const AdminArticulosManuales = () => {
       setMensajeCrear('Ingresá el nombre del artículo')
       return
     }
+    if (!nuevoRubro) {
+      setMensajeCrear('Seleccioná un rubro')
+      return
+    }
 
     setCreando(true)
     setMensajeCrear('')
@@ -100,9 +110,11 @@ const AdminArticulosManuales = () => {
     try {
       await api.post('/api/articulos', {
         nombre: nuevoNombre.trim(),
+        rubro: nuevoRubro,
       })
       setMensajeCrear('ok:Artículo creado correctamente')
       setNuevoNombre('')
+      setNuevoRubro('')
       await cargarDatos()
     } catch (err) {
       const msg = err.response?.data?.error || 'Error al crear artículo'
@@ -137,6 +149,16 @@ const AdminArticulosManuales = () => {
               placeholder="Nombre del artículo"
               className="campo-form text-sm"
             />
+            <select
+              value={nuevoRubro}
+              onChange={(e) => setNuevoRubro(e.target.value)}
+              className="campo-form text-sm"
+            >
+              <option value="">Seleccioná un rubro</option>
+              {rubros.map(r => (
+                <option key={r.id} value={r.nombre}>{r.nombre}</option>
+              ))}
+            </select>
             <button type="submit" disabled={creando} className="btn-primario">
               {creando ? 'Creando...' : 'Crear artículo'}
             </button>
@@ -193,7 +215,14 @@ const AdminArticulosManuales = () => {
                     >
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{articulo.nombre}</p>
-                        <p className="text-xs text-gray-400">{articulo.codigo}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">{articulo.codigo}</span>
+                          {articulo.rubro && (
+                            <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                              {articulo.rubro}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span className={`text-xs font-medium px-2 py-1 rounded-full flex-shrink-0 ${
                         articulo.articulos_por_sucursal?.some(r => r.habilitado)

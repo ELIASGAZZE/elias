@@ -131,10 +131,14 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async 
 // Admin: crea un artículo individual (manual) con código autogenerado
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { nombre } = req.body
+    const { nombre, rubro } = req.body
 
     if (!nombre) {
       return res.status(400).json({ error: 'Se requiere "nombre"' })
+    }
+
+    if (!rubro) {
+      return res.status(400).json({ error: 'Se requiere "rubro"' })
     }
 
     // Generar código automático: M-0001, M-0002, etc.
@@ -157,7 +161,7 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
     // Crear el artículo (forzamos tipo manual)
     const { data: articulo, error } = await supabase
       .from('articulos')
-      .insert({ codigo, nombre: nombre.trim(), tipo: 'manual' })
+      .insert({ codigo, nombre: nombre.trim(), tipo: 'manual', rubro: rubro.trim() })
       .select()
       .single()
 
