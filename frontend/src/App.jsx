@@ -5,7 +5,10 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import RutaProtegida from './components/auth/RutaProtegida'
 
-// Páginas comunes (todos los roles)
+// Hub
+import Hub from './pages/Hub'
+
+// Páginas de la app Pedidos
 import NuevoPedido from './pages/operario/NuevoPedido'
 import Pedidos from './pages/admin/AdminPedidos'
 
@@ -22,7 +25,7 @@ const RedirigirHome = () => {
 
   if (cargando) return null
   if (!estaLogueado) return <Navigate to="/login" replace />
-  return <Navigate to="/pedidos/nuevo" replace />
+  return <Navigate to="/apps" replace />
 }
 
 const App = () => {
@@ -36,7 +39,14 @@ const App = () => {
           {/* Redirige la raíz */}
           <Route path="/" element={<RedirigirHome />} />
 
-          {/* Rutas comunes — cualquier usuario logueado */}
+          {/* Hub de aplicaciones */}
+          <Route path="/apps" element={
+            <RutaProtegida>
+              <Hub />
+            </RutaProtegida>
+          } />
+
+          {/* App: Pedidos Internos */}
           <Route path="/pedidos/nuevo" element={
             <RutaProtegida>
               <NuevoPedido />
@@ -48,7 +58,7 @@ const App = () => {
             </RutaProtegida>
           } />
 
-          {/* Rutas admin — requieren rol admin */}
+          {/* Rutas admin */}
           <Route path="/admin/articulos" element={
             <RutaProtegida soloAdmin>
               <AdminArticulos />
@@ -65,14 +75,14 @@ const App = () => {
             </RutaProtegida>
           } />
 
-          {/* Redirects de compatibilidad con rutas viejas */}
+          {/* Redirects de compatibilidad */}
           <Route path="/operario" element={<Navigate to="/pedidos/nuevo" replace />} />
           <Route path="/operario/pedidos" element={<Navigate to="/pedidos" replace />} />
           <Route path="/admin" element={<Navigate to="/pedidos" replace />} />
           <Route path="/admin/pedidos" element={<Navigate to="/pedidos" replace />} />
           <Route path="/pedidos/historial" element={<Navigate to="/pedidos" replace />} />
 
-          {/* Cualquier ruta desconocida redirige al inicio */}
+          {/* Cualquier ruta desconocida */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
