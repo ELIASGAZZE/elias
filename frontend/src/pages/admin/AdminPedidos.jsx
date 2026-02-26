@@ -1,6 +1,8 @@
-// Panel de administrador: ver y gestionar todos los pedidos
-import React, { useState, useEffect } from 'react'
+// Vista de pedidos: todos los usuarios ven todos los pedidos
+// Admin tiene acciones extra (cambiar estado, eliminar, CSV)
+import React, { useState, useEffect, useMemo } from 'react'
 import Navbar from '../../components/layout/Navbar'
+import { useAuth } from '../../context/AuthContext'
 import api from '../../services/api'
 
 const ESTADOS = ['pendiente', 'confirmado', 'entregado', 'cancelado']
@@ -13,6 +15,8 @@ const COLORES_ESTADO = {
 }
 
 const AdminPedidos = () => {
+  const { esAdmin } = useAuth()
+
   const [pedidos, setPedidos] = useState([])
   const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -20,6 +24,7 @@ const AdminPedidos = () => {
   // Filtros
   const [filtroSucursal, setFiltroSucursal] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('')
+  const [filtroUsuario, setFiltroUsuario] = useState('')
   const [filtroFechaDesde, setFiltroFechaDesde] = useState('')
   const [filtroFechaHasta, setFiltroFechaHasta] = useState('')
 
@@ -30,6 +35,7 @@ const AdminPedidos = () => {
       const params = {}
       if (filtroSucursal) params.sucursal_id = filtroSucursal
       if (filtroEstado) params.estado = filtroEstado
+      if (filtroUsuario) params.usuario_id = filtroUsuario
       if (filtroFechaDesde) params.fecha_desde = filtroFechaDesde
       if (filtroFechaHasta) params.fecha_hasta = filtroFechaHasta
 
@@ -48,13 +54,23 @@ const AdminPedidos = () => {
 
   useEffect(() => {
     cargarDatos()
-  }, [filtroSucursal, filtroEstado, filtroFechaDesde, filtroFechaHasta])
+  }, [filtroSucursal, filtroEstado, filtroUsuario, filtroFechaDesde, filtroFechaHasta])
 
-  // Cambia el estado de un pedido
+  // Extraer usuarios únicos de los pedidos cargados (para el filtro)
+  const usuariosUnicos = useMemo(() => {
+    const mapa = new Map()
+    pedidos.forEach(p => {
+      if (p.perfiles?.id && !mapa.has(p.perfiles.id)) {
+        mapa.set(p.perfiles.id, p.perfiles.nombre)
+      }
+    })
+    return Array.from(mapa, ([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre))
+  }, [pedidos])
+
+  // Cambia el estado de un pedido (solo admin)
   const cambiarEstado = async (pedidoId, nuevoEstado) => {
     try {
       await api.put(`/api/pedidos/${pedidoId}/estado`, { estado: nuevoEstado })
-      // Actualizamos el estado localmente sin recargar todo
       setPedidos(prev =>
         prev.map(p => p.id === pedidoId ? { ...p, estado: nuevoEstado } : p)
       )
@@ -63,7 +79,7 @@ const AdminPedidos = () => {
     }
   }
 
-  // Elimina un pedido
+  // Elimina un pedido (solo admin)
   const eliminarPedido = async (pedidoId) => {
     if (!confirm('¿Estás seguro de eliminar este pedido?')) return
 
@@ -75,20 +91,17 @@ const AdminPedidos = () => {
     }
   }
 
-  // Descarga el pedido como CSV
+  // Descarga el pedido como CSV (solo admin)
   const descargarCSV = (pedidoId) => {
     const token = localStorage.getItem('token')
     const url = `${import.meta.env.VITE_API_URL}/api/pedidos/${pedidoId}/csv`
-    // Creamos un link invisible y lo clickeamos para descargar
-    const a = document.createElement('a')
-    a.href = url
-    a.setAttribute('download', `pedido-${pedidoId}.csv`)
-    // Para enviar el token en la descarga usamos fetch
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.blob())
       .then(blob => {
         const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
         a.href = objectUrl
+        a.setAttribute('download', `pedido-${pedidoId}.csv`)
         a.click()
         URL.revokeObjectURL(objectUrl)
       })
@@ -96,7 +109,7 @@ const AdminPedidos = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar titulo="Todos los Pedidos" />
+      <Navbar titulo="Pedidos" />
 
       <div className="px-4 py-4">
 
@@ -133,6 +146,20 @@ const AdminPedidos = () => {
             </div>
 
             <div>
+              <label className="text-xs text-gray-500 mb-0.5 block">Creado por</label>
+              <select
+                value={filtroUsuario}
+                onChange={(e) => setFiltroUsuario(e.target.value)}
+                className="campo-form text-xs py-1.5 px-2"
+              >
+                <option value="">Todos</option>
+                {usuariosUnicos.map(u => (
+                  <option key={u.id} value={u.id}>{u.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
               <label className="text-xs text-gray-500 mb-0.5 block">Desde</label>
               <input
                 type="date"
@@ -142,7 +169,7 @@ const AdminPedidos = () => {
               />
             </div>
 
-            <div>
+            <div className="col-span-2 sm:col-span-1">
               <label className="text-xs text-gray-500 mb-0.5 block">Hasta</label>
               <input
                 type="date"
@@ -205,35 +232,37 @@ const AdminPedidos = () => {
                   </div>
                 )}
 
-                {/* Acciones */}
-                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
-                  {/* Selector de estado */}
-                  <select
-                    value={pedido.estado}
-                    onChange={(e) => cambiarEstado(pedido.id, e.target.value)}
-                    className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {ESTADOS.map(e => (
-                      <option key={e} value={e}>{e}</option>
-                    ))}
-                  </select>
+                {/* Acciones admin */}
+                {esAdmin && (
+                  <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+                    {/* Selector de estado */}
+                    <select
+                      value={pedido.estado}
+                      onChange={(e) => cambiarEstado(pedido.id, e.target.value)}
+                      className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {ESTADOS.map(e => (
+                        <option key={e} value={e}>{e}</option>
+                      ))}
+                    </select>
 
-                  {/* Descargar CSV */}
-                  <button
-                    onClick={() => descargarCSV(pedido.id)}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    CSV
-                  </button>
+                    {/* Descargar CSV */}
+                    <button
+                      onClick={() => descargarCSV(pedido.id)}
+                      className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      CSV
+                    </button>
 
-                  {/* Eliminar */}
-                  <button
-                    onClick={() => eliminarPedido(pedido.id)}
-                    className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors ml-auto"
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                    {/* Eliminar */}
+                    <button
+                      onClick={() => eliminarPedido(pedido.id)}
+                      className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors ml-auto"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

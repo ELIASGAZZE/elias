@@ -158,7 +158,7 @@ const NuevoPedido = () => {
             Hacer otro pedido
           </button>
           <button
-            onClick={() => navigate('/pedidos/historial')}
+            onClick={() => navigate('/pedidos')}
             className="btn-secundario max-w-xs mt-3"
           >
             Ver mis pedidos

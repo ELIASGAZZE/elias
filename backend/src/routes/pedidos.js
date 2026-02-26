@@ -5,12 +5,10 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
 // GET /api/pedidos
-// Operario: ve sus propios pedidos de su sucursal
-// Admin: ve todos los pedidos, con filtros opcionales
+// Todos los usuarios ven todos los pedidos, con filtros opcionales
 router.get('/', verificarAuth, async (req, res) => {
   try {
-    const esAdmin = req.perfil.rol === 'admin'
-    const { sucursal_id, estado, fecha_desde, fecha_hasta } = req.query
+    const { sucursal_id, estado, fecha_desde, fecha_hasta, usuario_id } = req.query
 
     let query = supabase
       .from('pedidos')
@@ -22,14 +20,10 @@ router.get('/', verificarAuth, async (req, res) => {
       `)
       .order('created_at', { ascending: false })
 
-    // Si es operario, filtramos solo sus pedidos
-    if (!esAdmin) {
-      query = query.eq('usuario_id', req.perfil.id)
-    }
-
-    // Filtros opcionales para el admin
-    if (esAdmin && sucursal_id) query = query.eq('sucursal_id', sucursal_id)
+    // Filtros opcionales
+    if (sucursal_id) query = query.eq('sucursal_id', sucursal_id)
     if (estado) query = query.eq('estado', estado)
+    if (usuario_id) query = query.eq('usuario_id', usuario_id)
     if (fecha_desde) query = query.gte('fecha', fecha_desde)
     if (fecha_hasta) query = query.lte('fecha', fecha_hasta)
 

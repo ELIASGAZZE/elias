@@ -7,13 +7,14 @@ import RutaProtegida from './components/auth/RutaProtegida'
 
 // Páginas comunes (todos los roles)
 import NuevoPedido from './pages/operario/NuevoPedido'
-import MisPedidos from './pages/operario/MisPedidos'
+import Pedidos from './pages/admin/AdminPedidos'
 
 // Páginas solo admin
-import AdminPedidos from './pages/admin/AdminPedidos'
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
+
+import Login from './pages/Login'
 
 // Redirige al home según si está logueado
 const RedirigirHome = () => {
@@ -23,9 +24,6 @@ const RedirigirHome = () => {
   if (!estaLogueado) return <Navigate to="/login" replace />
   return <Navigate to="/pedidos/nuevo" replace />
 }
-
-// Importar Login
-import Login from './pages/Login'
 
 const App = () => {
   return (
@@ -44,18 +42,13 @@ const App = () => {
               <NuevoPedido />
             </RutaProtegida>
           } />
-          <Route path="/pedidos/historial" element={
+          <Route path="/pedidos" element={
             <RutaProtegida>
-              <MisPedidos />
+              <Pedidos />
             </RutaProtegida>
           } />
 
           {/* Rutas admin — requieren rol admin */}
-          <Route path="/admin/pedidos" element={
-            <RutaProtegida soloAdmin>
-              <AdminPedidos />
-            </RutaProtegida>
-          } />
           <Route path="/admin/articulos" element={
             <RutaProtegida soloAdmin>
               <AdminArticulos />
@@ -74,8 +67,10 @@ const App = () => {
 
           {/* Redirects de compatibilidad con rutas viejas */}
           <Route path="/operario" element={<Navigate to="/pedidos/nuevo" replace />} />
-          <Route path="/operario/pedidos" element={<Navigate to="/pedidos/historial" replace />} />
-          <Route path="/admin" element={<Navigate to="/admin/pedidos" replace />} />
+          <Route path="/operario/pedidos" element={<Navigate to="/pedidos" replace />} />
+          <Route path="/admin" element={<Navigate to="/pedidos" replace />} />
+          <Route path="/admin/pedidos" element={<Navigate to="/pedidos" replace />} />
+          <Route path="/pedidos/historial" element={<Navigate to="/pedidos" replace />} />
 
           {/* Cualquier ruta desconocida redirige al inicio */}
           <Route path="*" element={<Navigate to="/" replace />} />
