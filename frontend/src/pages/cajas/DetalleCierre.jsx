@@ -23,9 +23,6 @@ const formatFecha = (fecha) => {
   return `${d}/${m}/${y}`
 }
 
-const DENOMINACIONES_BILLETES = [20000, 10000, 5000, 2000, 1000, 500, 200, 100]
-const DENOMINACIONES_MONEDAS = [500, 200, 100, 50, 20, 10, 5, 2, 1]
-
 const FilaComparativa = ({ label, valorCajero, valorGestor, esMoneda = true }) => {
   const cajero = esMoneda ? formatMonto(valorCajero) : valorCajero
   const gestor = esMoneda ? formatMonto(valorGestor) : valorGestor
@@ -44,16 +41,24 @@ const DetalleCierre = () => {
   const { usuario, esAdmin, esGestor } = useAuth()
   const [cierre, setCierre] = useState(null)
   const [verificacion, setVerificacion] = useState(null)
+  const [denominaciones, setDenominaciones] = useState([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     const cargar = async () => {
       try {
-        const { data: cierreData } = await api.get(`/api/cierres/${id}`)
-        setCierre(cierreData)
+        // Fetch cierre and denominaciones in parallel
+        const [cierreRes, denomRes] = await Promise.all([
+          api.get(`/api/cierres/${id}`),
+          api.get('/api/denominaciones'),
+        ])
 
-        // Intentar cargar verificación si no es operario y no es blind
+        const cierreData = cierreRes.data
+        setCierre(cierreData)
+        setDenominaciones(denomRes.data || [])
+
+        // Fetch verificacion if not operario and not blind
         if (usuario?.rol !== 'operario' && !cierreData._blind) {
           try {
             const { data: verifData } = await api.get(`/api/cierres/${id}/verificacion`)
@@ -74,7 +79,7 @@ const DetalleCierre = () => {
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Detalle Cierre" sinTabs />
+        <Navbar titulo="Detalle Cierre" sinTabs volverA="/cajas" />
         <div className="flex justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
         </div>
@@ -85,7 +90,7 @@ const DetalleCierre = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Detalle Cierre" sinTabs />
+        <Navbar titulo="Detalle Cierre" sinTabs volverA="/cajas" />
         <div className="px-4 py-10 text-center">
           <p className="text-red-600 text-sm">{error}</p>
           <Link to="/cajas" className="text-sm text-emerald-600 mt-4 inline-block">Volver</Link>
@@ -97,9 +102,55 @@ const DetalleCierre = () => {
   const estadoCfg = ESTADOS[cierre.estado] || { label: cierre.estado, color: 'bg-gray-100 text-gray-700' }
   const esBlind = cierre._blind
 
+  // Separate denominaciones into billetes and monedas
+  const denomBilletes = denominaciones
+    .filter(d => d.tipo === 'billete')
+    .sort((a, b) => b.valor - a.valor)
+  const denomMonedas = denominaciones
+    .filter(d => d.tipo === 'moneda')
+    .sort((a, b) => b.valor - a.valor)
+
+  // Filter to only those with count > 0 in cierre
+  const billetesActivos = denomBilletes.filter(d => cierre.billetes && cierre.billetes[String(d.valor)] > 0)
+  const monedasActivas = denomMonedas.filter(d => cierre.monedas && cierre.monedas[String(d.valor)] > 0)
+
+  // Collect all unique forma_cobro_ids from cierre and verificacion medios_pago
+  const buildMediosPagoMap = (medios) => {
+    const map = {}
+    if (Array.isArray(medios)) {
+      medios.forEach(mp => {
+        map[mp.forma_cobro_id] = mp
+      })
+    }
+    return map
+  }
+
+  const cierreMediosMap = buildMediosPagoMap(cierre.medios_pago)
+  const verifMediosMap = verificacion ? buildMediosPagoMap(verificacion.medios_pago) : {}
+
+  // All unique forma_cobro_ids for comparison, preserving cierre order first
+  const allFormaCobroIds = []
+  const seenIds = new Set()
+  if (Array.isArray(cierre.medios_pago)) {
+    cierre.medios_pago.forEach(mp => {
+      if (!seenIds.has(mp.forma_cobro_id)) {
+        seenIds.add(mp.forma_cobro_id)
+        allFormaCobroIds.push(mp.forma_cobro_id)
+      }
+    })
+  }
+  if (verificacion && Array.isArray(verificacion.medios_pago)) {
+    verificacion.medios_pago.forEach(mp => {
+      if (!seenIds.has(mp.forma_cobro_id)) {
+        seenIds.add(mp.forma_cobro_id)
+        allFormaCobroIds.push(mp.forma_cobro_id)
+      }
+    })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
-      <Navbar titulo="Detalle Cierre" sinTabs />
+      <Navbar titulo="Detalle Cierre" sinTabs volverA="/cajas" />
 
       <div className="px-4 py-4 max-w-lg mx-auto space-y-4">
 
@@ -112,16 +163,61 @@ const DetalleCierre = () => {
             </span>
           </div>
           <div className="text-sm text-gray-500 space-y-0.5">
-            <p>Fecha: {formatFecha(cierre.fecha)}</p>
-            <p>Cajero: {cierre.cajero?.nombre}</p>
-            {cierre.cajero?.sucursales?.nombre && (
-              <p>Sucursal: {cierre.cajero.sucursales.nombre}</p>
+            {cierre.caja && (
+              <p>Caja: {cierre.caja.nombre}</p>
             )}
+            {cierre.caja?.sucursales?.nombre && (
+              <p>Sucursal: {cierre.caja.sucursales.nombre}</p>
+            )}
+            {cierre.empleado && (
+              <p>Abrió: {cierre.empleado.nombre}</p>
+            )}
+            {cierre.cerrado_por && (
+              <p>Cerró: {cierre.cerrado_por.nombre}</p>
+            )}
+            <p>Fecha: {formatFecha(cierre.fecha)}</p>
             {cierre.fondo_fijo > 0 && (
               <p>Cambio inicial: {formatMonto(cierre.fondo_fijo)}</p>
             )}
           </div>
         </div>
+
+        {/* Diferencias de apertura (si hay) */}
+        {cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
+          <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
+            <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
+            <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
+            <div className="space-y-1">
+              {Object.entries(cierre.diferencias_apertura).map(([denom, diff]) => (
+                <div key={denom} className="flex justify-between text-sm">
+                  <span className="text-red-700">
+                    ${Number(denom).toLocaleString('es-AR')} ({diff.tipo === 'billete' ? 'billete' : 'moneda'})
+                  </span>
+                  <span className="text-red-800 font-medium">
+                    Anterior: {diff.anterior} → Actual: {diff.actual}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Retiro y cambio que queda (solo si hay datos y no está abierta) */}
+        {cierre.estado !== 'abierta' && (parseFloat(cierre.cambio_que_queda) > 0 || parseFloat(cierre.efectivo_retirado) > 0) && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-amber-800 mb-2">Retiro y cambio</h3>
+            <div className="flex gap-4 text-sm">
+              <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
+                <span className="text-xs text-gray-500 block">Cambio que queda</span>
+                <span className="font-bold text-amber-700">{formatMonto(cierre.cambio_que_queda)}</span>
+              </div>
+              <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
+                <span className="text-xs text-gray-500 block">Efectivo retirado</span>
+                <span className="font-bold text-emerald-700">{formatMonto(cierre.efectivo_retirado)}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Si está abierta, botón para cerrar */}
         {cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin) && (
@@ -148,34 +244,40 @@ const DetalleCierre = () => {
           </div>
         )}
 
-        {/* Montos del cajero (si no es blind) */}
+        {/* Detalle del cierre (si no es blind y no hay verificación) */}
         {!esBlind && !verificacion && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <h3 className="text-sm font-semibold text-gray-700">Detalle del cierre</h3>
 
             {/* Billetes */}
-            {cierre.billetes && Object.keys(cierre.billetes).length > 0 && (
+            {billetesActivos.length > 0 && (
               <div>
                 <p className="text-xs text-gray-400 mb-1">Billetes</p>
-                {DENOMINACIONES_BILLETES.filter(d => cierre.billetes[d] > 0).map(d => (
-                  <div key={d} className="flex justify-between text-sm py-0.5">
-                    <span className="text-gray-600">${d.toLocaleString('es-AR')} x {cierre.billetes[d]}</span>
-                    <span className="text-gray-800 font-medium">{formatMonto(d * cierre.billetes[d])}</span>
-                  </div>
-                ))}
+                {billetesActivos.map(d => {
+                  const cantidad = cierre.billetes[String(d.valor)]
+                  return (
+                    <div key={d.valor} className="flex justify-between text-sm py-0.5">
+                      <span className="text-gray-600">${Number(d.valor).toLocaleString('es-AR')} x {cantidad}</span>
+                      <span className="text-gray-800 font-medium">{formatMonto(d.valor * cantidad)}</span>
+                    </div>
+                  )
+                })}
               </div>
             )}
 
             {/* Monedas */}
-            {cierre.monedas && Object.keys(cierre.monedas).length > 0 && (
+            {monedasActivas.length > 0 && (
               <div>
                 <p className="text-xs text-gray-400 mb-1">Monedas</p>
-                {DENOMINACIONES_MONEDAS.filter(d => cierre.monedas[d] > 0).map(d => (
-                  <div key={d} className="flex justify-between text-sm py-0.5">
-                    <span className="text-gray-600">${d.toLocaleString('es-AR')} x {cierre.monedas[d]}</span>
-                    <span className="text-gray-800 font-medium">{formatMonto(d * cierre.monedas[d])}</span>
-                  </div>
-                ))}
+                {monedasActivas.map(d => {
+                  const cantidad = cierre.monedas[String(d.valor)]
+                  return (
+                    <div key={d.valor} className="flex justify-between text-sm py-0.5">
+                      <span className="text-gray-600">${Number(d.valor).toLocaleString('es-AR')} x {cantidad}</span>
+                      <span className="text-gray-800 font-medium">{formatMonto(d.valor * cantidad)}</span>
+                    </div>
+                  )
+                })}
               </div>
             )}
 
@@ -184,42 +286,31 @@ const DetalleCierre = () => {
                 <span className="text-gray-600">Total efectivo</span>
                 <span className="font-medium">{formatMonto(cierre.total_efectivo)}</span>
               </div>
-              {cierre.cheques > 0 && (
+
+              {parseFloat(cierre.cambio_que_queda) > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Cheques ({cierre.cheques_cantidad})</span>
-                  <span className="font-medium">{formatMonto(cierre.cheques)}</span>
+                  <span className="text-amber-700">Cambio que queda</span>
+                  <span className="font-medium text-amber-700">{formatMonto(cierre.cambio_que_queda)}</span>
                 </div>
               )}
-              {cierre.vouchers_tc > 0 && (
+
+              {parseFloat(cierre.efectivo_retirado) > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Vouchers TC ({cierre.vouchers_tc_cantidad})</span>
-                  <span className="font-medium">{formatMonto(cierre.vouchers_tc)}</span>
+                  <span className="text-gray-600">Efectivo retirado</span>
+                  <span className="font-medium">{formatMonto(cierre.efectivo_retirado)}</span>
                 </div>
               )}
-              {cierre.vouchers_td > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Vouchers TD ({cierre.vouchers_td_cantidad})</span>
-                  <span className="font-medium">{formatMonto(cierre.vouchers_td)}</span>
+
+              {/* Dynamic medios de pago */}
+              {Array.isArray(cierre.medios_pago) && cierre.medios_pago.map(mp => (
+                <div key={mp.forma_cobro_id} className="flex justify-between">
+                  <span className="text-gray-600">
+                    {mp.nombre}{mp.cantidad > 0 ? ` (${mp.cantidad})` : ''}
+                  </span>
+                  <span className="font-medium">{formatMonto(mp.monto)}</span>
                 </div>
-              )}
-              {cierre.transferencias > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Transferencias ({cierre.transferencias_cantidad})</span>
-                  <span className="font-medium">{formatMonto(cierre.transferencias)}</span>
-                </div>
-              )}
-              {cierre.pagos_digitales > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pagos digitales ({cierre.pagos_digitales_cantidad})</span>
-                  <span className="font-medium">{formatMonto(cierre.pagos_digitales)}</span>
-                </div>
-              )}
-              {cierre.otros > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Otros{cierre.otros_detalle ? ` (${cierre.otros_detalle})` : ''}</span>
-                  <span className="font-medium">{formatMonto(cierre.otros)}</span>
-                </div>
-              )}
+              ))}
+
               <div className="flex justify-between font-bold pt-1 border-t border-gray-200">
                 <span>Total general</span>
                 <span className="text-emerald-700">{formatMonto(cierre.total_general)}</span>
@@ -248,16 +339,35 @@ const DetalleCierre = () => {
               <span className="w-28 text-right">Gestor</span>
             </div>
 
-            <FilaComparativa label="Total efectivo" valorCajero={parseFloat(cierre.total_efectivo)} valorGestor={parseFloat(verificacion.total_efectivo)} />
-            <FilaComparativa label="Cheques" valorCajero={parseFloat(cierre.cheques)} valorGestor={parseFloat(verificacion.cheques)} />
-            <FilaComparativa label="Vouchers TC" valorCajero={parseFloat(cierre.vouchers_tc)} valorGestor={parseFloat(verificacion.vouchers_tc)} />
-            <FilaComparativa label="Vouchers TD" valorCajero={parseFloat(cierre.vouchers_td)} valorGestor={parseFloat(verificacion.vouchers_td)} />
-            <FilaComparativa label="Transferencias" valorCajero={parseFloat(cierre.transferencias)} valorGestor={parseFloat(verificacion.transferencias)} />
-            <FilaComparativa label="Pagos digitales" valorCajero={parseFloat(cierre.pagos_digitales)} valorGestor={parseFloat(verificacion.pagos_digitales)} />
-            <FilaComparativa label="Otros" valorCajero={parseFloat(cierre.otros)} valorGestor={parseFloat(verificacion.otros)} />
+            <FilaComparativa
+              label="Total efectivo"
+              valorCajero={parseFloat(cierre.total_efectivo) || 0}
+              valorGestor={parseFloat(verificacion.total_efectivo) || 0}
+            />
+
+            {/* Dynamic medios de pago comparison */}
+            {allFormaCobroIds.map(fcId => {
+              const cierreMp = cierreMediosMap[fcId]
+              const verifMp = verifMediosMap[fcId]
+              const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
+              const montoCajero = parseFloat(cierreMp?.monto) || 0
+              const montoGestor = parseFloat(verifMp?.monto) || 0
+              return (
+                <FilaComparativa
+                  key={fcId}
+                  label={nombre}
+                  valorCajero={montoCajero}
+                  valorGestor={montoGestor}
+                />
+              )
+            })}
 
             <div className="border-t border-gray-200 pt-2">
-              <FilaComparativa label="TOTAL GENERAL" valorCajero={parseFloat(cierre.total_general)} valorGestor={parseFloat(verificacion.total_general)} />
+              <FilaComparativa
+                label="TOTAL GENERAL"
+                valorCajero={parseFloat(cierre.total_general) || 0}
+                valorGestor={parseFloat(verificacion.total_general) || 0}
+              />
             </div>
 
             {/* Diferencia */}

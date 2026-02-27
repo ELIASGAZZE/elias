@@ -4,41 +4,40 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
 
+const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
+
 // GET /api/cierres — lista cierres con filtros
 router.get('/', verificarAuth, async (req, res) => {
   try {
     let query = supabase
       .from('cierres')
-      .select('*, cajero:perfiles!cajero_id(id, nombre, username, sucursal_id, sucursales(id, nombre))')
+      .select(SELECT_CIERRE)
       .order('created_at', { ascending: false })
 
     const { rol, sucursal_id } = req.perfil
 
     if (rol === 'operario') {
-      // Operario solo ve sus propios cierres
       query = query.eq('cajero_id', req.perfil.id)
-    } else if (rol === 'gestor') {
-      // Gestor ve cierres de cajeros de su misma sucursal
-      if (!sucursal_id) return res.json([])
-      // Filtramos en JS después porque no se puede filtrar por relación anidada fácilmente
     }
-    // Admin ve todo
+    // Gestor y admin: filtramos después por sucursal de la caja
 
-    // Filtros opcionales
     if (req.query.fecha) {
       query = query.eq('fecha', req.query.fecha)
     }
     if (req.query.estado) {
       query = query.eq('estado', req.query.estado)
     }
+    if (req.query.caja_id) {
+      query = query.eq('caja_id', req.query.caja_id)
+    }
 
     const { data, error } = await query
     if (error) throw error
 
-    // Para gestor: filtrar solo cierres de cajeros de su sucursal
+    // Gestor: filtrar solo cierres de cajas de su sucursal
     let filtered = data
     if (rol === 'gestor') {
-      filtered = data.filter(c => c.cajero?.sucursal_id === sucursal_id)
+      filtered = data.filter(c => c.caja?.sucursal_id === sucursal_id)
     }
 
     res.json(filtered)
@@ -48,12 +47,43 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/cierres/ultimo-cambio?caja_id=X — último cambio dejado en caja
+router.get('/ultimo-cambio', verificarAuth, async (req, res) => {
+  const { caja_id } = req.query
+  if (!caja_id) {
+    return res.status(400).json({ error: 'caja_id es requerido' })
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('cierres')
+      .select('cambio_billetes, cambio_monedas')
+      .eq('caja_id', caja_id)
+      .neq('estado', 'abierta')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (error || !data) {
+      return res.json({ cambio_billetes: {}, cambio_monedas: {} })
+    }
+
+    res.json({
+      cambio_billetes: data.cambio_billetes || {},
+      cambio_monedas: data.cambio_monedas || {},
+    })
+  } catch (err) {
+    console.error('Error al obtener último cambio:', err)
+    res.json({ cambio_billetes: {}, cambio_monedas: {} })
+  }
+})
+
 // GET /api/cierres/:id — detalle de un cierre (CIEGO para gestor)
 router.get('/:id', verificarAuth, async (req, res) => {
   try {
     const { data: cierre, error } = await supabase
       .from('cierres')
-      .select('*, cajero:perfiles!cajero_id(id, nombre, username, sucursal_id, sucursales(id, nombre))')
+      .select(SELECT_CIERRE)
       .eq('id', req.params.id)
       .single()
 
@@ -68,8 +98,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
       return res.status(403).json({ error: 'No tenés acceso a este cierre' })
     }
 
-    // Gestor solo puede ver cierres de su sucursal
-    if (rol === 'gestor' && cierre.cajero?.sucursal_id !== sucursal_id) {
+    // Gestor solo puede ver cierres de cajas de su sucursal
+    if (rol === 'gestor' && cierre.caja?.sucursal_id !== sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a este cierre' })
     }
 
@@ -87,8 +117,13 @@ router.get('/:id', verificarAuth, async (req, res) => {
           id: cierre.id,
           planilla_id: cierre.planilla_id,
           cajero_id: cierre.cajero_id,
+          caja_id: cierre.caja_id,
+          empleado_id: cierre.empleado_id,
           fecha: cierre.fecha,
           estado: cierre.estado,
+          caja: cierre.caja,
+          empleado: cierre.empleado,
+          cerrado_por: cierre.cerrado_por,
           cajero: cierre.cajero,
           fondo_fijo: cierre.fondo_fijo,
           created_at: cierre.created_at,
@@ -104,7 +139,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
   }
 })
 
-// POST /api/cierres/abrir — operario/admin abre una caja con planilla de Centum
+// POST /api/cierres/abrir — operario/admin abre una caja
 router.post('/abrir', verificarAuth, async (req, res) => {
   const { rol } = req.perfil
 
@@ -112,26 +147,65 @@ router.post('/abrir', verificarAuth, async (req, res) => {
     return res.status(403).json({ error: 'Los gestores no pueden abrir cajas' })
   }
 
-  const { planilla_id, fondo_fijo } = req.body
+  const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura } = req.body
 
+  if (!caja_id) {
+    return res.status(400).json({ error: 'Seleccioná una caja' })
+  }
+  if (!codigo_empleado && !empleado_id) {
+    return res.status(400).json({ error: 'Ingresá el código del empleado' })
+  }
   if (!planilla_id || !planilla_id.toString().trim()) {
     return res.status(400).json({ error: 'El ID de planilla de caja es requerido' })
   }
 
   try {
+    // Resolver empleado por código si se envió codigo_empleado
+    let resolvedEmpleadoId = empleado_id
+    if (codigo_empleado) {
+      const { data: emp, error: empError } = await supabase
+        .from('empleados')
+        .select('id')
+        .eq('codigo', codigo_empleado)
+        .eq('activo', true)
+        .single()
+
+      if (empError || !emp) {
+        return res.status(404).json({ error: 'Empleado no encontrado o inactivo' })
+      }
+      resolvedEmpleadoId = emp.id
+    }
+    // Validar que la caja no esté ya abierta
+    const { data: cajaAbierta } = await supabase
+      .from('cierres')
+      .select('id')
+      .eq('caja_id', caja_id)
+      .eq('estado', 'abierta')
+      .limit(1)
+
+    if (cajaAbierta && cajaAbierta.length > 0) {
+      return res.status(409).json({ error: 'Esta caja ya está abierta. Cerrala antes de abrir una nueva.' })
+    }
+
     const { data, error } = await supabase
       .from('cierres')
       .insert({
+        caja_id,
+        empleado_id: resolvedEmpleadoId,
         planilla_id: planilla_id.toString().trim(),
         cajero_id: req.perfil.id,
         fondo_fijo: fondo_fijo || 0,
+        fondo_fijo_billetes: fondo_fijo_billetes || {},
+        fondo_fijo_monedas: fondo_fijo_monedas || {},
+        diferencias_apertura: diferencias_apertura || null,
         estado: 'abierta',
         billetes: {},
         monedas: {},
         total_efectivo: 0,
         total_general: 0,
+        medios_pago: [],
       })
-      .select('*, cajero:perfiles!cajero_id(id, nombre, username)')
+      .select(SELECT_CIERRE)
       .single()
 
     if (error) {
@@ -165,21 +239,32 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'Esta caja ya fue cerrada' })
     }
 
-    // Solo el cajero que abrió o un admin puede cerrar
     if (req.perfil.rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'Solo podés cerrar tu propia caja' })
     }
 
     const {
       billetes, monedas, total_efectivo,
-      cheques, cheques_cantidad,
-      vouchers_tc, vouchers_tc_cantidad,
-      vouchers_td, vouchers_td_cantidad,
-      transferencias, transferencias_cantidad,
-      pagos_digitales, pagos_digitales_cantidad,
-      otros, otros_detalle,
-      total_general, observaciones,
+      medios_pago, total_general, observaciones,
+      cambio_billetes, cambio_monedas, cambio_que_queda, efectivo_retirado,
+      codigo_empleado,
     } = req.body
+
+    // Resolver empleado que cierra por código
+    let cerradoPorEmpleadoId = null
+    if (codigo_empleado) {
+      const { data: emp, error: empError } = await supabase
+        .from('empleados')
+        .select('id')
+        .eq('codigo', codigo_empleado)
+        .eq('activo', true)
+        .single()
+
+      if (empError || !emp) {
+        return res.status(404).json({ error: 'Empleado no encontrado o inactivo' })
+      }
+      cerradoPorEmpleadoId = emp.id
+    }
 
     const { data, error } = await supabase
       .from('cierres')
@@ -187,24 +272,18 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
         billetes: billetes || {},
         monedas: monedas || {},
         total_efectivo: total_efectivo || 0,
-        cheques: cheques || 0,
-        cheques_cantidad: cheques_cantidad || 0,
-        vouchers_tc: vouchers_tc || 0,
-        vouchers_tc_cantidad: vouchers_tc_cantidad || 0,
-        vouchers_td: vouchers_td || 0,
-        vouchers_td_cantidad: vouchers_td_cantidad || 0,
-        transferencias: transferencias || 0,
-        transferencias_cantidad: transferencias_cantidad || 0,
-        pagos_digitales: pagos_digitales || 0,
-        pagos_digitales_cantidad: pagos_digitales_cantidad || 0,
-        otros: otros || 0,
-        otros_detalle: otros_detalle || '',
+        medios_pago: medios_pago || [],
         total_general: total_general || 0,
         observaciones: observaciones || '',
+        cambio_billetes: cambio_billetes || {},
+        cambio_monedas: cambio_monedas || {},
+        cambio_que_queda: cambio_que_queda || 0,
+        efectivo_retirado: efectivo_retirado || 0,
+        cerrado_por_empleado_id: cerradoPorEmpleadoId,
         estado: 'pendiente_gestor',
       })
       .eq('id', req.params.id)
-      .select('*, cajero:perfiles!cajero_id(id, nombre, username)')
+      .select(SELECT_CIERRE)
       .single()
 
     if (error) throw error
@@ -254,7 +333,7 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
-      .select('*, cajero:perfiles!cajero_id(id, sucursal_id)')
+      .select('*, caja:cajas(id, sucursal_id)')
       .eq('id', req.params.id)
       .single()
 
@@ -270,20 +349,14 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
       return res.status(403).json({ error: 'No podés verificar tu propio cierre' })
     }
 
-    // Gestor: verificar misma sucursal
-    if (req.perfil.rol === 'gestor' && cierre.cajero?.sucursal_id !== req.perfil.sucursal_id) {
+    // Gestor: verificar misma sucursal (via caja)
+    if (req.perfil.rol === 'gestor' && cierre.caja?.sucursal_id !== req.perfil.sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a esta sucursal' })
     }
 
     const {
       billetes, monedas, total_efectivo,
-      cheques, cheques_cantidad,
-      vouchers_tc, vouchers_tc_cantidad,
-      vouchers_td, vouchers_td_cantidad,
-      transferencias, transferencias_cantidad,
-      pagos_digitales, pagos_digitales_cantidad,
-      otros, otros_detalle,
-      total_general, observaciones,
+      medios_pago, total_general, observaciones,
     } = req.body
 
     const { data: verificacion, error: errorVerif } = await supabase
@@ -294,18 +367,7 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
         billetes: billetes || {},
         monedas: monedas || {},
         total_efectivo: total_efectivo || 0,
-        cheques: cheques || 0,
-        cheques_cantidad: cheques_cantidad || 0,
-        vouchers_tc: vouchers_tc || 0,
-        vouchers_tc_cantidad: vouchers_tc_cantidad || 0,
-        vouchers_td: vouchers_td || 0,
-        vouchers_td_cantidad: vouchers_td_cantidad || 0,
-        transferencias: transferencias || 0,
-        transferencias_cantidad: transferencias_cantidad || 0,
-        pagos_digitales: pagos_digitales || 0,
-        pagos_digitales_cantidad: pagos_digitales_cantidad || 0,
-        otros: otros || 0,
-        otros_detalle: otros_detalle || '',
+        medios_pago: medios_pago || [],
         total_general: total_general || 0,
         observaciones: observaciones || '',
       })

@@ -1,4 +1,4 @@
-// Panel de administrador: configuración general (usuarios, rubros y sucursales)
+// Panel de administrador: configuración general (usuarios, empleados, cajas, denominaciones, formas de cobro, rubros y sucursales)
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
@@ -47,6 +47,19 @@ const MensajeForm = ({ mensaje }) => {
   )
 }
 
+const BotonActivo = ({ activo, onClick }) => (
+  <button
+    onClick={onClick}
+    className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
+      activo
+        ? 'bg-green-50 text-green-600 hover:bg-green-100'
+        : 'bg-red-50 text-red-600 hover:bg-red-100'
+    }`}
+  >
+    {activo ? 'Activo' : 'Inactivo'}
+  </button>
+)
+
 const AdminConfiguracion = () => {
   // Acordeón
   const [seccionAbierta, setSeccionAbierta] = useState(null)
@@ -79,6 +92,42 @@ const AdminConfiguracion = () => {
   const [editUsuarioData, setEditUsuarioData] = useState({ nombre: '', rol: '', sucursal_id: '', username: '', password: '' })
   const [guardandoUsuario, setGuardandoUsuario] = useState(false)
   const [mensajeEditUsuario, setMensajeEditUsuario] = useState('')
+
+  // Empleados
+  const [empleados, setEmpleados] = useState([])
+  const [cargandoEmpleados, setCargandoEmpleados] = useState(true)
+  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', sucursal_id: '', codigo: '' })
+  const [creandoEmpleado, setCreandoEmpleado] = useState(false)
+  const [mensajeEmpleado, setMensajeEmpleado] = useState('')
+  const [editandoEmpleadoId, setEditandoEmpleadoId] = useState(null)
+  const [editandoEmpleadoData, setEditandoEmpleadoData] = useState({ nombre: '', sucursal_id: '', codigo: '' })
+
+  // Cajas
+  const [cajas, setCajas] = useState([])
+  const [cargandoCajas, setCargandoCajas] = useState(true)
+  const [nuevaCaja, setNuevaCaja] = useState({ nombre: '', sucursal_id: '' })
+  const [creandoCaja, setCreandoCaja] = useState(false)
+  const [mensajeCaja, setMensajeCaja] = useState('')
+  const [editandoCajaId, setEditandoCajaId] = useState(null)
+  const [editandoCajaData, setEditandoCajaData] = useState({ nombre: '' })
+
+  // Denominaciones
+  const [denominaciones, setDenominaciones] = useState([])
+  const [cargandoDenominaciones, setCargandoDenominaciones] = useState(true)
+  const [nuevaDenominacion, setNuevaDenominacion] = useState({ valor: '', tipo: 'billete', orden: '' })
+  const [creandoDenominacion, setCreandoDenominacion] = useState(false)
+  const [mensajeDenominacion, setMensajeDenominacion] = useState('')
+  const [editandoDenominacionId, setEditandoDenominacionId] = useState(null)
+  const [editandoDenominacionData, setEditandoDenominacionData] = useState({ valor: '', tipo: '', orden: '' })
+
+  // Formas de Cobro
+  const [formasCobro, setFormasCobro] = useState([])
+  const [cargandoFormasCobro, setCargandoFormasCobro] = useState(true)
+  const [nuevaFormaCobro, setNuevaFormaCobro] = useState({ nombre: '', orden: '' })
+  const [creandoFormaCobro, setCreandoFormaCobro] = useState(false)
+  const [mensajeFormaCobro, setMensajeFormaCobro] = useState('')
+  const [editandoFormaCobroId, setEditandoFormaCobroId] = useState(null)
+  const [editandoFormaCobroData, setEditandoFormaCobroData] = useState({ nombre: '', orden: '' })
 
   const cargarSucursales = async () => {
     try {
@@ -113,10 +162,58 @@ const AdminConfiguracion = () => {
     }
   }
 
+  const cargarEmpleados = async () => {
+    try {
+      const { data } = await api.get('/api/empleados?todas=true')
+      setEmpleados(data)
+    } catch (err) {
+      console.error('Error al cargar empleados:', err)
+    } finally {
+      setCargandoEmpleados(false)
+    }
+  }
+
+  const cargarCajas = async () => {
+    try {
+      const { data } = await api.get('/api/cajas?todas=true')
+      setCajas(data)
+    } catch (err) {
+      console.error('Error al cargar cajas:', err)
+    } finally {
+      setCargandoCajas(false)
+    }
+  }
+
+  const cargarDenominaciones = async () => {
+    try {
+      const { data } = await api.get('/api/denominaciones')
+      setDenominaciones(data)
+    } catch (err) {
+      console.error('Error al cargar denominaciones:', err)
+    } finally {
+      setCargandoDenominaciones(false)
+    }
+  }
+
+  const cargarFormasCobro = async () => {
+    try {
+      const { data } = await api.get('/api/formas-cobro')
+      setFormasCobro(data)
+    } catch (err) {
+      console.error('Error al cargar formas de cobro:', err)
+    } finally {
+      setCargandoFormasCobro(false)
+    }
+  }
+
   useEffect(() => {
     cargarSucursales()
     cargarRubros()
     cargarUsuarios()
+    cargarEmpleados()
+    cargarCajas()
+    cargarDenominaciones()
+    cargarFormasCobro()
   }, [])
 
   const toggleSeccion = (id) => {
@@ -319,6 +416,296 @@ const AdminConfiguracion = () => {
     }
   }
 
+  // --- Empleados ---
+  const crearEmpleado = async (e) => {
+    e.preventDefault()
+    if (!nuevoEmpleado.nombre.trim()) {
+      setMensajeEmpleado('Ingresá el nombre del empleado')
+      return
+    }
+    if (!nuevoEmpleado.codigo.trim()) {
+      setMensajeEmpleado('Ingresá el código del empleado')
+      return
+    }
+    if (!nuevoEmpleado.sucursal_id) {
+      setMensajeEmpleado('Seleccioná una sucursal')
+      return
+    }
+
+    setCreandoEmpleado(true)
+    setMensajeEmpleado('')
+
+    try {
+      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), sucursal_id: nuevoEmpleado.sucursal_id, codigo: nuevoEmpleado.codigo.trim() })
+      setMensajeEmpleado('ok:Empleado creado correctamente')
+      setNuevoEmpleado({ nombre: '', sucursal_id: '', codigo: '' })
+      await cargarEmpleados()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear empleado'
+      setMensajeEmpleado(msg)
+    } finally {
+      setCreandoEmpleado(false)
+    }
+  }
+
+  const iniciarEdicionEmpleado = (empleado) => {
+    setEditandoEmpleadoId(empleado.id)
+    setEditandoEmpleadoData({ nombre: empleado.nombre, sucursal_id: empleado.sucursal_id, codigo: empleado.codigo || '' })
+  }
+
+  const cancelarEdicionEmpleado = () => {
+    setEditandoEmpleadoId(null)
+    setEditandoEmpleadoData({ nombre: '', sucursal_id: '', codigo: '' })
+  }
+
+  const guardarEdicionEmpleado = async (id) => {
+    if (!editandoEmpleadoData.nombre.trim()) return
+    try {
+      await api.put(`/api/empleados/${id}`, {
+        nombre: editandoEmpleadoData.nombre.trim(),
+        sucursal_id: editandoEmpleadoData.sucursal_id,
+        codigo: editandoEmpleadoData.codigo.trim(),
+      })
+      setEditandoEmpleadoId(null)
+      setEditandoEmpleadoData({ nombre: '', sucursal_id: '', codigo: '' })
+      await cargarEmpleados()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al editar empleado')
+    }
+  }
+
+  const toggleActivoEmpleado = async (empleado) => {
+    try {
+      await api.put(`/api/empleados/${empleado.id}`, { activo: !empleado.activo })
+      await cargarEmpleados()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cambiar estado del empleado')
+    }
+  }
+
+  const eliminarEmpleado = async (empleado) => {
+    if (!confirm(`¿Eliminar al empleado "${empleado.nombre}"?`)) return
+    try {
+      await api.delete(`/api/empleados/${empleado.id}`)
+      await cargarEmpleados()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar empleado')
+    }
+  }
+
+  // --- Cajas ---
+  const crearCaja = async (e) => {
+    e.preventDefault()
+    if (!nuevaCaja.nombre.trim()) {
+      setMensajeCaja('Ingresá el nombre de la caja')
+      return
+    }
+    if (!nuevaCaja.sucursal_id) {
+      setMensajeCaja('Seleccioná una sucursal')
+      return
+    }
+
+    setCreandoCaja(true)
+    setMensajeCaja('')
+
+    try {
+      await api.post('/api/cajas', { nombre: nuevaCaja.nombre.trim(), sucursal_id: nuevaCaja.sucursal_id })
+      setMensajeCaja('ok:Caja creada correctamente')
+      setNuevaCaja({ nombre: '', sucursal_id: '' })
+      await cargarCajas()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear caja'
+      setMensajeCaja(msg)
+    } finally {
+      setCreandoCaja(false)
+    }
+  }
+
+  const iniciarEdicionCaja = (caja) => {
+    setEditandoCajaId(caja.id)
+    setEditandoCajaData({ nombre: caja.nombre })
+  }
+
+  const cancelarEdicionCaja = () => {
+    setEditandoCajaId(null)
+    setEditandoCajaData({ nombre: '' })
+  }
+
+  const guardarEdicionCaja = async (id) => {
+    if (!editandoCajaData.nombre.trim()) return
+    try {
+      await api.put(`/api/cajas/${id}`, { nombre: editandoCajaData.nombre.trim() })
+      setEditandoCajaId(null)
+      setEditandoCajaData({ nombre: '' })
+      await cargarCajas()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al editar caja')
+    }
+  }
+
+  const toggleActivoCaja = async (caja) => {
+    try {
+      await api.put(`/api/cajas/${caja.id}`, { activo: !caja.activo })
+      await cargarCajas()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cambiar estado de la caja')
+    }
+  }
+
+  const eliminarCaja = async (caja) => {
+    if (!confirm(`¿Eliminar la caja "${caja.nombre}"?`)) return
+    try {
+      await api.delete(`/api/cajas/${caja.id}`)
+      await cargarCajas()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar caja')
+    }
+  }
+
+  // --- Denominaciones ---
+  const crearDenominacion = async (e) => {
+    e.preventDefault()
+    if (!nuevaDenominacion.valor) {
+      setMensajeDenominacion('Ingresá el valor de la denominación')
+      return
+    }
+
+    setCreandoDenominacion(true)
+    setMensajeDenominacion('')
+
+    try {
+      const payload = {
+        valor: Number(nuevaDenominacion.valor),
+        tipo: nuevaDenominacion.tipo,
+      }
+      if (nuevaDenominacion.orden !== '') payload.orden = Number(nuevaDenominacion.orden)
+      await api.post('/api/denominaciones', payload)
+      setMensajeDenominacion('ok:Denominación creada correctamente')
+      setNuevaDenominacion({ valor: '', tipo: 'billete', orden: '' })
+      await cargarDenominaciones()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear denominación'
+      setMensajeDenominacion(msg)
+    } finally {
+      setCreandoDenominacion(false)
+    }
+  }
+
+  const iniciarEdicionDenominacion = (den) => {
+    setEditandoDenominacionId(den.id)
+    setEditandoDenominacionData({ valor: String(den.valor), tipo: den.tipo, orden: den.orden != null ? String(den.orden) : '' })
+  }
+
+  const cancelarEdicionDenominacion = () => {
+    setEditandoDenominacionId(null)
+    setEditandoDenominacionData({ valor: '', tipo: '', orden: '' })
+  }
+
+  const guardarEdicionDenominacion = async (id) => {
+    if (!editandoDenominacionData.valor) return
+    try {
+      const payload = {
+        valor: Number(editandoDenominacionData.valor),
+        tipo: editandoDenominacionData.tipo,
+      }
+      if (editandoDenominacionData.orden !== '') payload.orden = Number(editandoDenominacionData.orden)
+      await api.put(`/api/denominaciones/${id}`, payload)
+      setEditandoDenominacionId(null)
+      setEditandoDenominacionData({ valor: '', tipo: '', orden: '' })
+      await cargarDenominaciones()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al editar denominación')
+    }
+  }
+
+  const toggleActivoDenominacion = async (den) => {
+    try {
+      await api.put(`/api/denominaciones/${den.id}`, { activo: !den.activo })
+      await cargarDenominaciones()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cambiar estado de la denominación')
+    }
+  }
+
+  const eliminarDenominacion = async (den) => {
+    if (!confirm(`¿Eliminar la denominación $${den.valor} (${den.tipo})?`)) return
+    try {
+      await api.delete(`/api/denominaciones/${den.id}`)
+      await cargarDenominaciones()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar denominación')
+    }
+  }
+
+  // --- Formas de Cobro ---
+  const crearFormaCobro = async (e) => {
+    e.preventDefault()
+    if (!nuevaFormaCobro.nombre.trim()) {
+      setMensajeFormaCobro('Ingresá el nombre de la forma de cobro')
+      return
+    }
+
+    setCreandoFormaCobro(true)
+    setMensajeFormaCobro('')
+
+    try {
+      const payload = { nombre: nuevaFormaCobro.nombre.trim() }
+      if (nuevaFormaCobro.orden !== '') payload.orden = Number(nuevaFormaCobro.orden)
+      await api.post('/api/formas-cobro', payload)
+      setMensajeFormaCobro('ok:Forma de cobro creada correctamente')
+      setNuevaFormaCobro({ nombre: '', orden: '' })
+      await cargarFormasCobro()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al crear forma de cobro'
+      setMensajeFormaCobro(msg)
+    } finally {
+      setCreandoFormaCobro(false)
+    }
+  }
+
+  const iniciarEdicionFormaCobro = (forma) => {
+    setEditandoFormaCobroId(forma.id)
+    setEditandoFormaCobroData({ nombre: forma.nombre, orden: forma.orden != null ? String(forma.orden) : '' })
+  }
+
+  const cancelarEdicionFormaCobro = () => {
+    setEditandoFormaCobroId(null)
+    setEditandoFormaCobroData({ nombre: '', orden: '' })
+  }
+
+  const guardarEdicionFormaCobro = async (id) => {
+    if (!editandoFormaCobroData.nombre.trim()) return
+    try {
+      const payload = { nombre: editandoFormaCobroData.nombre.trim() }
+      if (editandoFormaCobroData.orden !== '') payload.orden = Number(editandoFormaCobroData.orden)
+      await api.put(`/api/formas-cobro/${id}`, payload)
+      setEditandoFormaCobroId(null)
+      setEditandoFormaCobroData({ nombre: '', orden: '' })
+      await cargarFormasCobro()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al editar forma de cobro')
+    }
+  }
+
+  const toggleActivoFormaCobro = async (forma) => {
+    try {
+      await api.put(`/api/formas-cobro/${forma.id}`, { activo: !forma.activo })
+      await cargarFormasCobro()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cambiar estado de la forma de cobro')
+    }
+  }
+
+  const eliminarFormaCobro = async (forma) => {
+    if (!confirm(`¿Eliminar la forma de cobro "${forma.nombre}"?`)) return
+    try {
+      await api.delete(`/api/formas-cobro/${forma.id}`)
+      await cargarFormasCobro()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar forma de cobro')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
       <Navbar titulo="Configuración" sinTabs />
@@ -413,6 +800,495 @@ const AdminConfiguracion = () => {
                           Eliminar
                         </button>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </SeccionAcordeon>
+
+        {/* ===== EMPLEADOS ===== */}
+        <SeccionAcordeon
+          id="empleados"
+          titulo="Empleados"
+          count={empleados.length}
+          abierta={seccionAbierta === 'empleados'}
+          onToggle={toggleSeccion}
+          cargando={cargandoEmpleados}
+        >
+          <form onSubmit={crearEmpleado} className="space-y-3 pt-4">
+            <input
+              type="text"
+              value={nuevoEmpleado.nombre}
+              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, nombre: e.target.value }))}
+              placeholder="Nombre del empleado"
+              className="campo-form text-sm"
+            />
+            <input
+              type="text"
+              value={nuevoEmpleado.codigo}
+              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, codigo: e.target.value }))}
+              placeholder="Código único del empleado"
+              className="campo-form text-sm"
+            />
+            <select
+              value={nuevoEmpleado.sucursal_id}
+              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, sucursal_id: e.target.value }))}
+              className="campo-form text-sm"
+            >
+              <option value="">Seleccioná una sucursal</option>
+              {sucursales.map(s => (
+                <option key={s.id} value={s.id}>{s.nombre}</option>
+              ))}
+            </select>
+            <button type="submit" disabled={creandoEmpleado} className="btn-primario">
+              {creandoEmpleado ? 'Creando...' : 'Crear empleado'}
+            </button>
+            <MensajeForm mensaje={mensajeEmpleado} />
+          </form>
+
+          {cargandoEmpleados ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <div className="mt-4">
+              {empleados.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-4">No hay empleados creados</p>
+              ) : (
+                <div className="space-y-0 divide-y divide-gray-100">
+                  {empleados.map(empleado => (
+                    <div key={empleado.id} className="flex items-center justify-between gap-2 py-2.5">
+                      {editandoEmpleadoId === empleado.id ? (
+                        <div className="flex items-center gap-2 flex-1 flex-wrap">
+                          <input
+                            type="text"
+                            value={editandoEmpleadoData.nombre}
+                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, nombre: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionEmpleado(empleado.id)
+                              if (e.key === 'Escape') cancelarEdicionEmpleado()
+                            }}
+                            autoFocus
+                            placeholder="Nombre"
+                            className="campo-form text-sm flex-1 min-w-[120px]"
+                          />
+                          <input
+                            type="text"
+                            value={editandoEmpleadoData.codigo}
+                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, codigo: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionEmpleado(empleado.id)
+                              if (e.key === 'Escape') cancelarEdicionEmpleado()
+                            }}
+                            placeholder="Código"
+                            className="campo-form text-sm w-28"
+                          />
+                          <select
+                            value={editandoEmpleadoData.sucursal_id}
+                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, sucursal_id: e.target.value }))}
+                            className="campo-form text-sm"
+                          >
+                            {sucursales.map(s => (
+                              <option key={s.id} value={s.id}>{s.nombre}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => guardarEdicionEmpleado(empleado.id)}
+                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            OK
+                          </button>
+                          <button
+                            onClick={cancelarEdicionEmpleado}
+                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            X
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => iniciarEdicionEmpleado(empleado)}
+                          >
+                            <p className="text-sm font-medium text-gray-800 truncate">
+                              {empleado.nombre}
+                              {empleado.codigo && <span className="text-xs text-gray-400 ml-2">[{empleado.codigo}]</span>}
+                            </p>
+                            <p className="text-xs text-gray-400 truncate">{empleado.sucursales?.nombre || 'Sin sucursal'}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <BotonActivo activo={empleado.activo} onClick={() => toggleActivoEmpleado(empleado)} />
+                            <button
+                              onClick={() => iniciarEdicionEmpleado(empleado)}
+                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarEmpleado(empleado)}
+                              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </SeccionAcordeon>
+
+        {/* ===== CAJAS ===== */}
+        <SeccionAcordeon
+          id="cajas"
+          titulo="Cajas"
+          count={cajas.length}
+          abierta={seccionAbierta === 'cajas'}
+          onToggle={toggleSeccion}
+          cargando={cargandoCajas}
+        >
+          <form onSubmit={crearCaja} className="space-y-3 pt-4">
+            <input
+              type="text"
+              value={nuevaCaja.nombre}
+              onChange={(e) => setNuevaCaja(prev => ({ ...prev, nombre: e.target.value }))}
+              placeholder="Nombre de la caja (ej: Caja 1)"
+              className="campo-form text-sm"
+            />
+            <select
+              value={nuevaCaja.sucursal_id}
+              onChange={(e) => setNuevaCaja(prev => ({ ...prev, sucursal_id: e.target.value }))}
+              className="campo-form text-sm"
+            >
+              <option value="">Seleccioná una sucursal</option>
+              {sucursales.map(s => (
+                <option key={s.id} value={s.id}>{s.nombre}</option>
+              ))}
+            </select>
+            <button type="submit" disabled={creandoCaja} className="btn-primario">
+              {creandoCaja ? 'Creando...' : 'Crear caja'}
+            </button>
+            <MensajeForm mensaje={mensajeCaja} />
+          </form>
+
+          {cargandoCajas ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <div className="mt-4">
+              {cajas.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-4">No hay cajas creadas</p>
+              ) : (
+                <div className="space-y-0 divide-y divide-gray-100">
+                  {cajas.map(caja => (
+                    <div key={caja.id} className="flex items-center justify-between gap-2 py-2.5">
+                      {editandoCajaId === caja.id ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input
+                            type="text"
+                            value={editandoCajaData.nombre}
+                            onChange={(e) => setEditandoCajaData(prev => ({ ...prev, nombre: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionCaja(caja.id)
+                              if (e.key === 'Escape') cancelarEdicionCaja()
+                            }}
+                            autoFocus
+                            className="campo-form text-sm flex-1"
+                          />
+                          <button
+                            onClick={() => guardarEdicionCaja(caja.id)}
+                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            OK
+                          </button>
+                          <button
+                            onClick={cancelarEdicionCaja}
+                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            X
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => iniciarEdicionCaja(caja)}
+                          >
+                            <p className="text-sm font-medium text-gray-800 truncate">{caja.nombre}</p>
+                            <p className="text-xs text-gray-400 truncate">{caja.sucursales?.nombre || 'Sin sucursal'}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <BotonActivo activo={caja.activo} onClick={() => toggleActivoCaja(caja)} />
+                            <button
+                              onClick={() => iniciarEdicionCaja(caja)}
+                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarCaja(caja)}
+                              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </SeccionAcordeon>
+
+        {/* ===== DENOMINACIONES ===== */}
+        <SeccionAcordeon
+          id="denominaciones"
+          titulo="Denominaciones"
+          count={denominaciones.length}
+          abierta={seccionAbierta === 'denominaciones'}
+          onToggle={toggleSeccion}
+          cargando={cargandoDenominaciones}
+        >
+          <form onSubmit={crearDenominacion} className="space-y-3 pt-4">
+            <input
+              type="number"
+              value={nuevaDenominacion.valor}
+              onChange={(e) => setNuevaDenominacion(prev => ({ ...prev, valor: e.target.value }))}
+              placeholder="Valor (ej: 1000)"
+              className="campo-form text-sm"
+              min="0"
+              step="any"
+            />
+            <select
+              value={nuevaDenominacion.tipo}
+              onChange={(e) => setNuevaDenominacion(prev => ({ ...prev, tipo: e.target.value }))}
+              className="campo-form text-sm"
+            >
+              <option value="billete">Billete</option>
+              <option value="moneda">Moneda</option>
+            </select>
+            <input
+              type="number"
+              value={nuevaDenominacion.orden}
+              onChange={(e) => setNuevaDenominacion(prev => ({ ...prev, orden: e.target.value }))}
+              placeholder="Orden (opcional)"
+              className="campo-form text-sm"
+              min="0"
+            />
+            <button type="submit" disabled={creandoDenominacion} className="btn-primario">
+              {creandoDenominacion ? 'Creando...' : 'Crear denominación'}
+            </button>
+            <MensajeForm mensaje={mensajeDenominacion} />
+          </form>
+
+          {cargandoDenominaciones ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <div className="mt-4">
+              {denominaciones.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-4">No hay denominaciones creadas</p>
+              ) : (
+                <div className="space-y-0 divide-y divide-gray-100">
+                  {denominaciones.map(den => (
+                    <div key={den.id} className="flex items-center justify-between gap-2 py-2.5">
+                      {editandoDenominacionId === den.id ? (
+                        <div className="flex items-center gap-2 flex-1 flex-wrap">
+                          <input
+                            type="number"
+                            value={editandoDenominacionData.valor}
+                            onChange={(e) => setEditandoDenominacionData(prev => ({ ...prev, valor: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionDenominacion(den.id)
+                              if (e.key === 'Escape') cancelarEdicionDenominacion()
+                            }}
+                            autoFocus
+                            className="campo-form text-sm w-24"
+                            min="0"
+                            step="any"
+                          />
+                          <select
+                            value={editandoDenominacionData.tipo}
+                            onChange={(e) => setEditandoDenominacionData(prev => ({ ...prev, tipo: e.target.value }))}
+                            className="campo-form text-sm w-28"
+                          >
+                            <option value="billete">Billete</option>
+                            <option value="moneda">Moneda</option>
+                          </select>
+                          <input
+                            type="number"
+                            value={editandoDenominacionData.orden}
+                            onChange={(e) => setEditandoDenominacionData(prev => ({ ...prev, orden: e.target.value }))}
+                            placeholder="Orden"
+                            className="campo-form text-sm w-20"
+                            min="0"
+                          />
+                          <button
+                            onClick={() => guardarEdicionDenominacion(den.id)}
+                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            OK
+                          </button>
+                          <button
+                            onClick={cancelarEdicionDenominacion}
+                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            X
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => iniciarEdicionDenominacion(den)}
+                          >
+                            <p className="text-sm font-medium text-gray-800 truncate">
+                              ${den.valor} ({den.tipo})
+                            </p>
+                            <p className="text-xs text-gray-400 truncate">
+                              Orden: {den.orden != null ? den.orden : '-'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <BotonActivo activo={den.activo} onClick={() => toggleActivoDenominacion(den)} />
+                            <button
+                              onClick={() => iniciarEdicionDenominacion(den)}
+                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarDenominacion(den)}
+                              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </SeccionAcordeon>
+
+        {/* ===== FORMAS DE COBRO ===== */}
+        <SeccionAcordeon
+          id="formas-cobro"
+          titulo="Formas de Cobro"
+          count={formasCobro.length}
+          abierta={seccionAbierta === 'formas-cobro'}
+          onToggle={toggleSeccion}
+          cargando={cargandoFormasCobro}
+        >
+          <form onSubmit={crearFormaCobro} className="space-y-3 pt-4">
+            <input
+              type="text"
+              value={nuevaFormaCobro.nombre}
+              onChange={(e) => setNuevaFormaCobro(prev => ({ ...prev, nombre: e.target.value }))}
+              placeholder="Nombre (ej: Efectivo, Tarjeta, etc.)"
+              className="campo-form text-sm"
+            />
+            <input
+              type="number"
+              value={nuevaFormaCobro.orden}
+              onChange={(e) => setNuevaFormaCobro(prev => ({ ...prev, orden: e.target.value }))}
+              placeholder="Orden (opcional)"
+              className="campo-form text-sm"
+              min="0"
+            />
+            <button type="submit" disabled={creandoFormaCobro} className="btn-primario">
+              {creandoFormaCobro ? 'Creando...' : 'Crear forma de cobro'}
+            </button>
+            <MensajeForm mensaje={mensajeFormaCobro} />
+          </form>
+
+          {cargandoFormasCobro ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <div className="mt-4">
+              {formasCobro.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-4">No hay formas de cobro creadas</p>
+              ) : (
+                <div className="space-y-0 divide-y divide-gray-100">
+                  {formasCobro.map(forma => (
+                    <div key={forma.id} className="flex items-center justify-between gap-2 py-2.5">
+                      {editandoFormaCobroId === forma.id ? (
+                        <div className="flex items-center gap-2 flex-1 flex-wrap">
+                          <input
+                            type="text"
+                            value={editandoFormaCobroData.nombre}
+                            onChange={(e) => setEditandoFormaCobroData(prev => ({ ...prev, nombre: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionFormaCobro(forma.id)
+                              if (e.key === 'Escape') cancelarEdicionFormaCobro()
+                            }}
+                            autoFocus
+                            className="campo-form text-sm flex-1 min-w-[120px]"
+                          />
+                          <input
+                            type="number"
+                            value={editandoFormaCobroData.orden}
+                            onChange={(e) => setEditandoFormaCobroData(prev => ({ ...prev, orden: e.target.value }))}
+                            placeholder="Orden"
+                            className="campo-form text-sm w-20"
+                            min="0"
+                          />
+                          <button
+                            onClick={() => guardarEdicionFormaCobro(forma.id)}
+                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            OK
+                          </button>
+                          <button
+                            onClick={cancelarEdicionFormaCobro}
+                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                          >
+                            X
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => iniciarEdicionFormaCobro(forma)}
+                          >
+                            <p className="text-sm font-medium text-gray-800 truncate">{forma.nombre}</p>
+                            <p className="text-xs text-gray-400 truncate">
+                              Orden: {forma.orden != null ? forma.orden : '-'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <BotonActivo activo={forma.activo} onClick={() => toggleActivoFormaCobro(forma)} />
+                            <button
+                              onClick={() => iniciarEdicionFormaCobro(forma)}
+                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarFormaCobro(forma)}
+                              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
