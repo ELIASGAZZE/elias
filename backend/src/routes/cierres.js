@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
 
-const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
+const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
 
 // GET /api/cierres — lista cierres con filtros
 router.get('/', verificarAuth, async (req, res) => {
@@ -147,7 +147,7 @@ router.post('/abrir', verificarAuth, async (req, res) => {
     return res.status(403).json({ error: 'Los gestores no pueden abrir cajas' })
   }
 
-  const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura } = req.body
+  const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura, observaciones_apertura } = req.body
 
   if (!caja_id) {
     return res.status(400).json({ error: 'Seleccioná una caja' })
@@ -198,6 +198,7 @@ router.post('/abrir', verificarAuth, async (req, res) => {
         fondo_fijo_billetes: fondo_fijo_billetes || {},
         fondo_fijo_monedas: fondo_fijo_monedas || {},
         diferencias_apertura: diferencias_apertura || null,
+        observaciones_apertura: observaciones_apertura || null,
         estado: 'abierta',
         billetes: {},
         monedas: {},

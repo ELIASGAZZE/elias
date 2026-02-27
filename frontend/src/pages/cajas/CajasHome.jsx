@@ -58,6 +58,9 @@ const CajasHome = () => {
   const [errorEmpleado, setErrorEmpleado] = useState('')
   const [validandoEmpleado, setValidandoEmpleado] = useState(false)
 
+  // Observaciones apertura
+  const [observacionesApertura, setObservacionesApertura] = useState('')
+
   // Denominaciones para cambio inicial (billetes solamente)
   const [denomBilletes, setDenomBilletes] = useState([])
   const [billetesApertura, setBilletesApertura] = useState({})
@@ -255,6 +258,7 @@ const CajasHome = () => {
         fondo_fijo_billetes: ffBilletes,
         fondo_fijo_monedas: {},
         diferencias_apertura: calcularDiferencias(),
+        observaciones_apertura: observacionesApertura.trim() || null,
       })
       // Resetear formulario
       setPlanillaId('')
@@ -266,6 +270,7 @@ const CajasHome = () => {
       setCodigoEmpleado('')
       setEmpleadoResuelto(null)
       setErrorEmpleado('')
+      setObservacionesApertura('')
       setMostrarAbrir(false)
       await cargarDatos()
     } catch (err) {
@@ -287,6 +292,7 @@ const CajasHome = () => {
     setCodigoEmpleado('')
     setEmpleadoResuelto(null)
     setErrorEmpleado('')
+    setObservacionesApertura('')
     setCajas([])
   }
 
@@ -394,6 +400,18 @@ const CajasHome = () => {
                   className="campo-form text-sm"
                 />
               </div>
+            </div>
+
+            {/* Observaciones apertura */}
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Observaciones (opcional)</label>
+              <textarea
+                value={observacionesApertura}
+                onChange={(e) => setObservacionesApertura(e.target.value)}
+                className="campo-form text-sm"
+                rows={2}
+                placeholder="Notas sobre la apertura..."
+              />
             </div>
 
             {/* Cambio inicial — billetes siempre visibles */}
