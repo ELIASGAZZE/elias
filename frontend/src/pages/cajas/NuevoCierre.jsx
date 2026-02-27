@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
+import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import api from '../../services/api'
 
 const DENOMINACIONES_BILLETES = [20000, 10000, 5000, 2000, 1000, 500, 200, 100]
@@ -10,44 +11,6 @@ const DENOMINACIONES_MONEDAS = [500, 200, 100, 50, 20, 10, 5, 2, 1]
 
 const formatMonto = (monto) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
-}
-
-const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$' }) => {
-  const total = valor * cantidad
-  return (
-    <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-3 py-2.5">
-      <div className="min-w-[80px]">
-        <span className="text-sm font-semibold text-gray-800">{prefijo}{valor.toLocaleString('es-AR')}</span>
-        {cantidad > 0 && (
-          <span className="text-xs text-gray-400 ml-1.5">= {formatMonto(total)}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onChange(Math.max(0, cantidad - 1))}
-          className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center transition-colors"
-        >
-          -
-        </button>
-        <input
-          type="number"
-          min="0"
-          value={cantidad || ''}
-          onChange={(e) => onChange(Math.max(0, parseInt(e.target.value) || 0))}
-          className="w-14 text-center text-sm font-medium border border-gray-200 rounded-lg py-1.5 focus:outline-none focus:border-emerald-400"
-          placeholder="0"
-        />
-        <button
-          type="button"
-          onClick={() => onChange(cantidad + 1)}
-          className="w-9 h-9 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 font-bold text-lg flex items-center justify-center transition-colors"
-        >
-          +
-        </button>
-      </div>
-    </div>
-  )
 }
 
 const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange }) => (
@@ -174,7 +137,7 @@ const NuevoCierre = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
-      <Navbar titulo="Nuevo Cierre" sinTabs />
+      <Navbar titulo="Nuevo Cierre" sinTabs volverA="/cajas" />
 
       <div className="px-4 py-4 max-w-lg mx-auto">
 

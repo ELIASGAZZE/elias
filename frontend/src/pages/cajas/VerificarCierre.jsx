@@ -1,11 +1,9 @@
-// Formulario de verificación ciega — gestor cuenta sin ver montos del cajero
-import React, { useState, useEffect } from 'react'
+// Verificación ciega — gestor cuenta sin ver montos del cajero — layout desktop 3 columnas
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import api from '../../services/api'
-
-const DENOMINACIONES_BILLETES = [20000, 10000, 5000, 2000, 1000, 500, 200, 100]
-const DENOMINACIONES_MONEDAS = [500, 200, 100, 50, 20, 10, 5, 2, 1]
 
 const formatMonto = (monto) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
@@ -15,44 +13,6 @@ const formatFecha = (fecha) => {
   if (!fecha) return ''
   const [y, m, d] = fecha.split('-')
   return `${d}/${m}/${y}`
-}
-
-const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$' }) => {
-  const total = valor * cantidad
-  return (
-    <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-3 py-2.5">
-      <div className="min-w-[80px]">
-        <span className="text-sm font-semibold text-gray-800">{prefijo}{valor.toLocaleString('es-AR')}</span>
-        {cantidad > 0 && (
-          <span className="text-xs text-gray-400 ml-1.5">= {formatMonto(total)}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onChange(Math.max(0, cantidad - 1))}
-          className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center transition-colors"
-        >
-          -
-        </button>
-        <input
-          type="number"
-          min="0"
-          value={cantidad || ''}
-          onChange={(e) => onChange(Math.max(0, parseInt(e.target.value) || 0))}
-          className="w-14 text-center text-sm font-medium border border-gray-200 rounded-lg py-1.5 focus:outline-none focus:border-emerald-400"
-          placeholder="0"
-        />
-        <button
-          type="button"
-          onClick={() => onChange(cantidad + 1)}
-          className="w-9 h-9 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 font-bold text-lg flex items-center justify-center transition-colors"
-        >
-          +
-        </button>
-      </div>
-    </div>
-  )
 }
 
 const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange }) => (
@@ -93,37 +53,51 @@ const VerificarCierre = () => {
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
-  const [paso, setPaso] = useState(1)
 
-  // Paso 1: efectivo
+  // Dynamic config from API
+  const [denomBilletes, setDenomBilletes] = useState([])
+  const [denomMonedas, setDenomMonedas] = useState([])
+  const [formasCobro, setFormasCobro] = useState([])
+
+  // Efectivo
   const [billetes, setBilletes] = useState({})
   const [monedas, setMonedas] = useState({})
 
-  // Paso 2: otros medios
-  const [cheques, setCheques] = useState(0)
-  const [chequesCantidad, setChequesCantidad] = useState(0)
-  const [vouchersTc, setVouchersTc] = useState(0)
-  const [vouchersTcCant, setVouchersTcCant] = useState(0)
-  const [vouchersTd, setVouchersTd] = useState(0)
-  const [vouchersTdCant, setVouchersTdCant] = useState(0)
-  const [transferencias, setTransferencias] = useState(0)
-  const [transferenciasCant, setTransferenciasCant] = useState(0)
-  const [pagosDigitales, setPagosDigitales] = useState(0)
-  const [pagosDigitalesCant, setPagosDigitalesCant] = useState(0)
-  const [otros, setOtros] = useState(0)
-  const [otrosDetalle, setOtrosDetalle] = useState('')
+  // Otros medios (dynamic, keyed by forma_cobro_id)
+  const [mediosPago, setMediosPago] = useState({})
   const [observaciones, setObservaciones] = useState('')
 
   useEffect(() => {
     const cargar = async () => {
       try {
-        const { data } = await api.get(`/api/cierres/${id}`)
-        setCierre(data)
-        if (data.estado !== 'pendiente_gestor') {
+        const [cierreRes, denomRes, formasRes] = await Promise.all([
+          api.get(`/api/cierres/${id}`),
+          api.get('/api/denominaciones'),
+          api.get('/api/formas-cobro'),
+        ])
+
+        setCierre(cierreRes.data)
+        if (cierreRes.data.estado !== 'pendiente_gestor') {
           setError('Este cierre ya fue verificado')
         }
+
+        // Filter active, split by tipo, sort by orden
+        const denomActivas = (denomRes.data || []).filter(d => d.activo)
+        setDenomBilletes(denomActivas.filter(d => d.tipo === 'billete').sort((a, b) => a.orden - b.orden))
+        setDenomMonedas(denomActivas.filter(d => d.tipo === 'moneda').sort((a, b) => a.orden - b.orden))
+
+        // Filter active formas_cobro, sort by orden
+        const formasActivas = (formasRes.data || []).filter(f => f.activo).sort((a, b) => a.orden - b.orden)
+        setFormasCobro(formasActivas)
+
+        // Initialize mediosPago state for each forma_cobro
+        const mediosInit = {}
+        formasActivas.forEach(f => {
+          mediosInit[f.id] = { monto: 0, cantidad: 0 }
+        })
+        setMediosPago(mediosInit)
       } catch (err) {
-        setError(err.response?.data?.error || 'Error al cargar cierre')
+        setError(err.response?.data?.error || 'Error al cargar datos')
       } finally {
         setCargando(false)
       }
@@ -131,42 +105,54 @@ const VerificarCierre = () => {
     cargar()
   }, [id])
 
-  const totalBilletes = DENOMINACIONES_BILLETES.reduce(
-    (sum, d) => sum + d * (billetes[d] || 0), 0
+  const totalBilletes = useMemo(() =>
+    denomBilletes.reduce((sum, d) => sum + d.valor * (billetes[d.valor] || 0), 0),
+    [denomBilletes, billetes]
   )
-  const totalMonedas = DENOMINACIONES_MONEDAS.reduce(
-    (sum, d) => sum + d * (monedas[d] || 0), 0
+  const totalMonedas = useMemo(() =>
+    denomMonedas.reduce((sum, d) => sum + d.valor * (monedas[d.valor] || 0), 0),
+    [denomMonedas, monedas]
   )
   const totalEfectivo = totalBilletes + totalMonedas
-  const totalOtrosMedios = cheques + vouchersTc + vouchersTd + transferencias + pagosDigitales + otros
+
+  const totalOtrosMedios = useMemo(() =>
+    Object.values(mediosPago).reduce((sum, m) => sum + (m.monto || 0), 0),
+    [mediosPago]
+  )
   const totalGeneral = totalEfectivo + totalOtrosMedios
+
+  const actualizarMedio = (formaCobroId, campo, valor) => {
+    setMediosPago(prev => ({
+      ...prev,
+      [formaCobroId]: { ...prev[formaCobroId], [campo]: valor },
+    }))
+  }
 
   const enviarVerificacion = async () => {
     setEnviando(true)
     setError('')
     try {
+      // Build medios_pago array — only entries with monto > 0
+      const mediosPagoArray = formasCobro
+        .filter(f => (mediosPago[f.id]?.monto || 0) > 0)
+        .map(f => ({
+          forma_cobro_id: f.id,
+          nombre: f.nombre,
+          monto: mediosPago[f.id].monto,
+          cantidad: mediosPago[f.id].cantidad,
+        }))
+
       await api.post(`/api/cierres/${id}/verificar`, {
         billetes,
         monedas,
         total_efectivo: totalEfectivo,
-        cheques,
-        cheques_cantidad: chequesCantidad,
-        vouchers_tc: vouchersTc,
-        vouchers_tc_cantidad: vouchersTcCant,
-        vouchers_td: vouchersTd,
-        vouchers_td_cantidad: vouchersTdCant,
-        transferencias,
-        transferencias_cantidad: transferenciasCant,
-        pagos_digitales: pagosDigitales,
-        pagos_digitales_cantidad: pagosDigitalesCant,
-        otros,
-        otros_detalle: otrosDetalle,
+        medios_pago: mediosPagoArray,
         total_general: totalGeneral,
         observaciones,
       })
       navigate(`/cajas/cierre/${id}`)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error al enviar verificación')
+      setError(err.response?.data?.error || 'Error al enviar verificacion')
     } finally {
       setEnviando(false)
     }
@@ -175,7 +161,7 @@ const VerificarCierre = () => {
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Verificar Cierre" sinTabs />
+        <Navbar titulo="Verificar Cierre" sinTabs volverA="/cajas" />
         <div className="flex justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
         </div>
@@ -186,7 +172,7 @@ const VerificarCierre = () => {
   if (error && !cierre) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Verificar Cierre" sinTabs />
+        <Navbar titulo="Verificar Cierre" sinTabs volverA="/cajas" />
         <div className="px-4 py-10 text-center">
           <p className="text-red-600 text-sm">{error}</p>
         </div>
@@ -196,115 +182,79 @@ const VerificarCierre = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
-      <Navbar titulo="Verificar Cierre" sinTabs />
+      <Navbar titulo="Verificar Cierre" sinTabs volverA="/cajas" />
 
-      <div className="px-4 py-4 max-w-lg mx-auto">
+      <div className="px-4 py-4 max-w-5xl mx-auto">
 
-        {/* Info del cierre (sin montos) */}
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 text-sm text-yellow-800">
-          <p className="font-semibold">Planilla #{cierre.planilla_id} — {formatFecha(cierre.fecha)}</p>
-          <p>Cajero: {cierre.cajero?.nombre}</p>
-          <p className="text-xs mt-1">Conteo independiente — no verás los montos del cajero hasta enviar.</p>
-        </div>
-
-        {/* Indicador de pasos */}
-        <div className="flex items-center justify-center gap-2 mb-6">
-          {[1, 2].map(p => (
-            <div key={p} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
-                paso === p ? 'bg-emerald-600 text-white' : paso > p ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-200 text-gray-400'
-              }`}>
-                {paso > p ? '✓' : p}
-              </div>
-              {p < 2 && <div className={`w-8 h-0.5 ${paso > p ? 'bg-emerald-400' : 'bg-gray-200'}`} />}
-            </div>
-          ))}
-        </div>
-
-        {/* Paso 1: Conteo de efectivo */}
-        {paso === 1 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-800">Conteo de efectivo</h2>
-              <span className="text-sm font-bold text-emerald-600">{formatMonto(totalEfectivo)}</span>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Billetes</h3>
-              <div className="space-y-1.5">
-                {DENOMINACIONES_BILLETES.map(d => (
-                  <ContadorDenominacion
-                    key={`b-${d}`}
-                    valor={d}
-                    cantidad={billetes[d] || 0}
-                    onChange={(val) => setBilletes(prev => ({ ...prev, [d]: val }))}
-                  />
-                ))}
-              </div>
-              <div className="text-right mt-2">
-                <span className="text-sm font-medium text-gray-600">Subtotal billetes: {formatMonto(totalBilletes)}</span>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
-              <div className="space-y-1.5">
-                {DENOMINACIONES_MONEDAS.map(d => (
-                  <ContadorDenominacion
-                    key={`m-${d}`}
-                    valor={d}
-                    cantidad={monedas[d] || 0}
-                    onChange={(val) => setMonedas(prev => ({ ...prev, [d]: val }))}
-                  />
-                ))}
-              </div>
-              <div className="text-right mt-2">
-                <span className="text-sm font-medium text-gray-600">Subtotal monedas: {formatMonto(totalMonedas)}</span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setPaso(2)}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-medium transition-colors"
-            >
-              Siguiente
-            </button>
+        {/* Header: info del cierre + total efectivo */}
+        <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-3">
+          <div className="text-sm text-emerald-800">
+            <p className="font-semibold">Planilla #{cierre.planilla_id}</p>
+            <p>Caja: {cierre.caja?.nombre || ''} · Empleado: {cierre.empleado?.nombre || ''}</p>
           </div>
-        )}
+          <div className="text-right">
+            <span className="text-xs text-emerald-600">Total efectivo</span>
+            <p className="text-lg font-bold text-emerald-700">{formatMonto(totalEfectivo)}</p>
+          </div>
+        </div>
 
-        {/* Paso 2: Otros medios + Resumen + Confirmar */}
-        {paso === 2 && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-800">Otros medios de pago</h2>
+        {/* Warning banner — blind verification */}
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 text-sm text-yellow-800">
+          <p className="font-medium">Conteo independiente — no veras los montos del cajero hasta enviar.</p>
+        </div>
 
-            <div className="space-y-2">
-              <CampoMedio label="Cheques" monto={cheques} onMontoChange={setCheques} cantidad={chequesCantidad} onCantidadChange={setChequesCantidad} />
-              <CampoMedio label="Vouchers TC (crédito)" monto={vouchersTc} onMontoChange={setVouchersTc} cantidad={vouchersTcCant} onCantidadChange={setVouchersTcCant} />
-              <CampoMedio label="Vouchers TD (débito)" monto={vouchersTd} onMontoChange={setVouchersTd} cantidad={vouchersTdCant} onCantidadChange={setVouchersTdCant} />
-              <CampoMedio label="Transferencias" monto={transferencias} onMontoChange={setTransferencias} cantidad={transferenciasCant} onCantidadChange={setTransferenciasCant} />
-              <CampoMedio label="Pagos digitales" monto={pagosDigitales} onMontoChange={setPagosDigitales} cantidad={pagosDigitalesCant} onCantidadChange={setPagosDigitalesCant} />
+        {/* Grid 3 columnas: Billetes | Monedas | Medios */}
+        <div className="grid grid-cols-3 gap-6 mb-6">
 
-              <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-2">
-                <span className="text-sm font-medium text-gray-700">Otros</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={otros || ''}
-                  onChange={(e) => setOtros(parseFloat(e.target.value) || 0)}
-                  className="campo-form text-sm"
-                  placeholder="Monto $0.00"
+          {/* Col 1: Billetes */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-500 mb-2">Billetes</h3>
+            <div className="space-y-1.5">
+              {denomBilletes.map(d => (
+                <ContadorDenominacion
+                  key={`b-${d.id}`}
+                  valor={d.valor}
+                  cantidad={billetes[d.valor] || 0}
+                  onChange={(val) => setBilletes(prev => ({ ...prev, [d.valor]: val }))}
                 />
-                <input
-                  type="text"
-                  value={otrosDetalle}
-                  onChange={(e) => setOtrosDetalle(e.target.value)}
-                  className="campo-form text-sm"
-                  placeholder="Detalle..."
-                />
-              </div>
+              ))}
             </div>
+            <div className="text-right mt-2">
+              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalBilletes)}</span>
+            </div>
+          </div>
 
+          {/* Col 2: Monedas */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
+            <div className="space-y-1.5">
+              {denomMonedas.map(d => (
+                <ContadorDenominacion
+                  key={`m-${d.id}`}
+                  valor={d.valor}
+                  cantidad={monedas[d.valor] || 0}
+                  onChange={(val) => setMonedas(prev => ({ ...prev, [d.valor]: val }))}
+                />
+              ))}
+            </div>
+            <div className="text-right mt-2">
+              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalMonedas)}</span>
+            </div>
+          </div>
+
+          {/* Col 3: Otros medios + Observaciones */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-gray-500 mb-2">Otros medios de pago</h3>
+            {formasCobro.map(f => (
+              <CampoMedio
+                key={f.id}
+                label={f.nombre}
+                monto={mediosPago[f.id]?.monto || 0}
+                onMontoChange={(val) => actualizarMedio(f.id, 'monto', val)}
+                cantidad={mediosPago[f.id]?.cantidad || 0}
+                onCantidadChange={(val) => actualizarMedio(f.id, 'cantidad', val)}
+              />
+            ))}
             <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
               <textarea
@@ -315,49 +265,41 @@ const VerificarCierre = () => {
                 placeholder="Observaciones opcionales..."
               />
             </div>
+          </div>
+        </div>
 
-            {/* Resumen */}
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-emerald-800">Resumen de tu verificación</h3>
-              <div className="text-sm space-y-1">
-                <div className="flex justify-between text-gray-600">
-                  <span>Total efectivo:</span>
-                  <span className="font-medium">{formatMonto(totalEfectivo)}</span>
-                </div>
-                {totalOtrosMedios > 0 && (
-                  <div className="flex justify-between text-gray-600">
-                    <span>Otros medios:</span>
-                    <span className="font-medium">{formatMonto(totalOtrosMedios)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-emerald-800 font-bold pt-1 border-t border-emerald-200">
-                  <span>Total general:</span>
-                  <span>{formatMonto(totalGeneral)}</span>
-                </div>
-              </div>
+        {/* Resumen + botón confirmar — ancho completo */}
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4">
+          <h3 className="text-sm font-semibold text-emerald-800 mb-2">Resumen de tu verificacion</h3>
+          <div className="flex gap-6 text-sm">
+            <div className="flex gap-2 text-gray-600">
+              <span>Total efectivo:</span>
+              <span className="font-medium">{formatMonto(totalEfectivo)}</span>
             </div>
-
-            {error && (
-              <p className="text-sm text-red-600 bg-red-50 p-3 rounded-xl">{error}</p>
+            {totalOtrosMedios > 0 && (
+              <div className="flex gap-2 text-gray-600">
+                <span>Otros medios:</span>
+                <span className="font-medium">{formatMonto(totalOtrosMedios)}</span>
+              </div>
             )}
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPaso(1)}
-                className="flex-1 border border-gray-300 text-gray-600 py-3 rounded-xl font-medium transition-colors hover:bg-gray-50"
-              >
-                Atrás
-              </button>
-              <button
-                onClick={enviarVerificacion}
-                disabled={enviando}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
-              >
-                {enviando ? 'Enviando...' : 'Enviar verificación'}
-              </button>
+            <div className="flex gap-2 text-emerald-800 font-bold ml-auto">
+              <span>Total general:</span>
+              <span>{formatMonto(totalGeneral)}</span>
             </div>
           </div>
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 p-3 rounded-xl mb-4">{error}</p>
         )}
+
+        <button
+          onClick={enviarVerificacion}
+          disabled={enviando}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
+        >
+          {enviando ? 'Enviando...' : 'Enviar verificacion'}
+        </button>
       </div>
     </div>
   )

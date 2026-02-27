@@ -12,6 +12,9 @@ const cajasRoutes = require('./routes/cajas')
 const cierresRoutes = require('./routes/cierres')
 const apiLogsRoutes = require('./routes/apiLogs')
 const pushRoutes = require('./routes/push')
+const denominacionesRoutes = require('./routes/denominaciones')
+const formasCobroRoutes = require('./routes/formas-cobro')
+const empleadosRoutes = require('./routes/empleados')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -38,6 +41,9 @@ app.use('/api/cajas', cajasRoutes)
 app.use('/api/cierres', cierresRoutes)
 app.use('/api/api-logs', apiLogsRoutes)
 app.use('/api/push', pushRoutes)
+app.use('/api/denominaciones', denominacionesRoutes)
+app.use('/api/formas-cobro', formasCobroRoutes)
+app.use('/api/empleados', empleadosRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {
