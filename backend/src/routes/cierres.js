@@ -3,6 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const { getPlanillaData } = require('../config/centum')
 
 const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
 
@@ -391,6 +392,41 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
   } catch (err) {
     console.error('Error al verificar cierre:', err)
     res.status(500).json({ error: 'Error al verificar cierre' })
+  }
+})
+
+// GET /api/cierres/:id/erp — datos del ERP (Centum) para la planilla de este cierre
+router.get('/:id/erp', verificarAuth, async (req, res) => {
+  try {
+    const { data: cierre, error: errorCierre } = await supabase
+      .from('cierres')
+      .select('id, planilla_id, cajero_id, caja_id, estado')
+      .eq('id', req.params.id)
+      .single()
+
+    if (errorCierre || !cierre) {
+      return res.status(404).json({ error: 'Cierre no encontrado' })
+    }
+
+    if (!cierre.planilla_id) {
+      return res.status(400).json({ error: 'Este cierre no tiene planilla de caja asociada' })
+    }
+
+    const planillaId = parseInt(cierre.planilla_id)
+    if (isNaN(planillaId)) {
+      return res.status(400).json({ error: 'El ID de planilla no es válido' })
+    }
+
+    const erpData = await getPlanillaData(planillaId)
+
+    if (!erpData) {
+      return res.status(404).json({ error: 'Planilla no encontrada en el ERP' })
+    }
+
+    res.json(erpData)
+  } catch (err) {
+    console.error('Error al obtener datos ERP:', err)
+    res.status(500).json({ error: 'Error al conectar con el ERP' })
   }
 })
 

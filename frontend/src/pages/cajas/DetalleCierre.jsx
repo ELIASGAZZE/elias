@@ -23,15 +23,19 @@ const formatFecha = (fecha) => {
   return `${d}/${m}/${y}`
 }
 
-const FilaComparativa = ({ label, valorCajero, valorGestor, esMoneda = true }) => {
+const FilaComparativa = ({ label, valorCajero, valorGestor, valorErp, esMoneda = true, conErp = false }) => {
   const cajero = esMoneda ? formatMonto(valorCajero) : valorCajero
   const gestor = esMoneda ? formatMonto(valorGestor) : valorGestor
-  const hayDiferencia = valorCajero !== valorGestor
+  const erp = esMoneda ? formatMonto(valorErp) : valorErp
+  const hayDiferencia = valorCajero !== valorGestor || (conErp && valorErp != null && valorCajero !== valorErp)
   return (
     <div className={`flex items-center text-sm py-1.5 ${hayDiferencia ? 'bg-red-50 -mx-2 px-2 rounded-lg' : ''}`}>
-      <span className="flex-1 text-gray-600">{label}</span>
-      <span className="w-28 text-right font-medium text-gray-800">{cajero}</span>
-      <span className={`w-28 text-right font-medium ${hayDiferencia ? 'text-red-600 font-bold' : 'text-gray-800'}`}>{gestor}</span>
+      <span className="flex-1 text-gray-600 min-w-0 truncate">{label}</span>
+      <span className="w-24 text-right font-medium text-gray-800 flex-shrink-0">{cajero}</span>
+      <span className={`w-24 text-right font-medium flex-shrink-0 ${valorCajero !== valorGestor ? 'text-red-600 font-bold' : 'text-gray-800'}`}>{gestor}</span>
+      {conErp && (
+        <span className={`w-24 text-right font-medium flex-shrink-0 ${valorErp != null && valorCajero !== valorErp ? 'text-red-600 font-bold' : 'text-indigo-700'}`}>{valorErp != null ? erp : '—'}</span>
+      )}
     </div>
   )
 }
@@ -41,6 +45,7 @@ const DetalleCierre = () => {
   const { usuario, esAdmin, esGestor } = useAuth()
   const [cierre, setCierre] = useState(null)
   const [verificacion, setVerificacion] = useState(null)
+  const [erpData, setErpData] = useState(null)
   const [denominaciones, setDenominaciones] = useState([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -58,15 +63,27 @@ const DetalleCierre = () => {
         setCierre(cierreData)
         setDenominaciones(denomRes.data || [])
 
-        // Fetch verificacion if not operario and not blind
+        // Fetch verificacion and ERP data in parallel
+        const promises = []
+
         if (usuario?.rol !== 'operario' && !cierreData._blind) {
-          try {
-            const { data: verifData } = await api.get(`/api/cierres/${id}/verificacion`)
-            setVerificacion(verifData)
-          } catch {
-            // No hay verificación aún
-          }
+          promises.push(
+            api.get(`/api/cierres/${id}/verificacion`)
+              .then(res => setVerificacion(res.data))
+              .catch(() => {})
+          )
         }
+
+        // Fetch ERP data (for admin/gestor, when cierre is not open)
+        if (usuario?.rol !== 'operario' && cierreData.estado !== 'abierta') {
+          promises.push(
+            api.get(`/api/cierres/${id}/erp`)
+              .then(res => setErpData(res.data))
+              .catch(() => {})
+          )
+        }
+
+        await Promise.all(promises)
       } catch (err) {
         setError(err.response?.data?.error || 'Error al cargar cierre')
       } finally {
@@ -327,63 +344,150 @@ const DetalleCierre = () => {
         )}
 
         {/* Tabla comparativa (si hay verificación) */}
-        {!esBlind && verificacion && (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-gray-700">Comparación cajero vs gestor</h3>
-            <p className="text-xs text-gray-400">Gestor: {verificacion.gestor?.nombre}</p>
+        {!esBlind && verificacion && (() => {
+          const conErp = !!erpData
+          // Build ERP medios map by normalized name
+          const erpMediosMap = {}
+          if (erpData?.medios_pago) {
+            erpData.medios_pago.forEach(mp => {
+              erpMediosMap[mp.nombre.toUpperCase()] = mp
+            })
+          }
+          // Helper to find ERP value for a given medio name
+          const getErpMonto = (nombre) => {
+            if (!conErp) return null
+            const upper = nombre.toUpperCase()
+            for (const [key, mp] of Object.entries(erpMediosMap)) {
+              if (key.includes(upper) || upper.includes(key)) return mp.total
+            }
+            return 0
+          }
 
-            {/* Header */}
-            <div className="flex items-center text-xs font-medium text-gray-400 py-1 border-b border-gray-100">
-              <span className="flex-1">Concepto</span>
-              <span className="w-28 text-right">Cajero</span>
-              <span className="w-28 text-right">Gestor</span>
-            </div>
+          return (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-700">
+                Comparación {conErp ? 'cajero vs gestor vs ERP' : 'cajero vs gestor'}
+              </h3>
+              <div className="text-xs text-gray-400 space-y-0.5">
+                <p>Gestor: {verificacion.gestor?.nombre}</p>
+                {conErp && <p>ERP: Planilla #{erpData.planilla_id} — {erpData.nombre_cajero} {erpData.cerrada ? '(cerrada)' : '(abierta)'}</p>}
+              </div>
 
-            <FilaComparativa
-              label="Total efectivo"
-              valorCajero={parseFloat(cierre.total_efectivo) || 0}
-              valorGestor={parseFloat(verificacion.total_efectivo) || 0}
-            />
+              {/* Header */}
+              <div className="flex items-center text-xs font-medium text-gray-400 py-1 border-b border-gray-100">
+                <span className="flex-1">Concepto</span>
+                <span className="w-24 text-right">Cajero</span>
+                <span className="w-24 text-right">Gestor</span>
+                {conErp && <span className="w-24 text-right">ERP</span>}
+              </div>
 
-            {/* Dynamic medios de pago comparison */}
-            {allFormaCobroIds.map(fcId => {
-              const cierreMp = cierreMediosMap[fcId]
-              const verifMp = verifMediosMap[fcId]
-              const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
-              const montoCajero = parseFloat(cierreMp?.monto) || 0
-              const montoGestor = parseFloat(verifMp?.monto) || 0
-              return (
-                <FilaComparativa
-                  key={fcId}
-                  label={nombre}
-                  valorCajero={montoCajero}
-                  valorGestor={montoGestor}
-                />
-              )
-            })}
-
-            <div className="border-t border-gray-200 pt-2">
               <FilaComparativa
-                label="TOTAL GENERAL"
-                valorCajero={parseFloat(cierre.total_general) || 0}
-                valorGestor={parseFloat(verificacion.total_general) || 0}
+                label="Efectivo"
+                valorCajero={parseFloat(cierre.total_efectivo) || 0}
+                valorGestor={parseFloat(verificacion.total_efectivo) || 0}
+                valorErp={conErp ? erpData.total_efectivo : null}
+                conErp={conErp}
               />
+
+              {/* Dynamic medios de pago comparison */}
+              {allFormaCobroIds.map(fcId => {
+                const cierreMp = cierreMediosMap[fcId]
+                const verifMp = verifMediosMap[fcId]
+                const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
+                const montoCajero = parseFloat(cierreMp?.monto) || 0
+                const montoGestor = parseFloat(verifMp?.monto) || 0
+                const montoErp = getErpMonto(nombre)
+                return (
+                  <FilaComparativa
+                    key={fcId}
+                    label={nombre}
+                    valorCajero={montoCajero}
+                    valorGestor={montoGestor}
+                    valorErp={montoErp}
+                    conErp={conErp}
+                  />
+                )
+              })}
+
+              {/* ERP medios that don't exist in cajero/gestor */}
+              {conErp && erpData.medios_pago.filter(emp => {
+                const upper = emp.nombre.toUpperCase()
+                return !allFormaCobroIds.some(fcId => {
+                  const nombre = (cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || '').toUpperCase()
+                  return nombre.includes(upper) || upper.includes(nombre)
+                }) && upper !== 'EFECTIVO'
+              }).map(emp => (
+                <FilaComparativa
+                  key={`erp-${emp.valor_id}`}
+                  label={emp.nombre}
+                  valorCajero={0}
+                  valorGestor={0}
+                  valorErp={emp.total}
+                  conErp={conErp}
+                />
+              ))}
+
+              <div className="border-t border-gray-200 pt-2">
+                <FilaComparativa
+                  label="TOTAL GENERAL"
+                  valorCajero={parseFloat(cierre.total_general) || 0}
+                  valorGestor={parseFloat(verificacion.total_general) || 0}
+                  valorErp={conErp ? erpData.total_general : null}
+                  conErp={conErp}
+                />
+              </div>
+
+              {/* Diferencias */}
+              {(() => {
+                const totalCajero = parseFloat(cierre.total_general) || 0
+                const totalGestor = parseFloat(verificacion.total_general) || 0
+                const totalErp = conErp ? erpData.total_general : null
+                const diffCG = totalCajero !== totalGestor
+                const diffCE = conErp && totalErp != null && totalCajero !== totalErp
+
+                if (!diffCG && !diffCE) {
+                  return (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-2">
+                      <p className="text-sm font-semibold text-green-700">Sin diferencias</p>
+                    </div>
+                  )
+                }
+                return (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-2 space-y-1">
+                    {diffCG && (
+                      <p className="text-sm font-semibold text-red-700">
+                        Cajero vs Gestor: {formatMonto(totalGestor - totalCajero)}
+                      </p>
+                    )}
+                    {diffCE && (
+                      <p className="text-sm font-semibold text-red-700">
+                        Cajero vs ERP: {formatMonto(totalErp - totalCajero)}
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
+          )
+        })()}
 
-            {/* Diferencia */}
-            {parseFloat(cierre.total_general) !== parseFloat(verificacion.total_general) && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-2">
-                <p className="text-sm font-semibold text-red-700">
-                  Diferencia: {formatMonto(parseFloat(verificacion.total_general) - parseFloat(cierre.total_general))}
-                </p>
+        {/* ERP data standalone (when no verification yet but ERP data exists) */}
+        {!esBlind && !verificacion && erpData && cierre.estado !== 'abierta' && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-indigo-700">Datos del ERP (Centum)</h3>
+            <p className="text-xs text-indigo-400">
+              Planilla #{erpData.planilla_id} — {erpData.nombre_cajero} {erpData.cerrada ? '(cerrada)' : '(abierta)'}
+            </p>
+            {erpData.medios_pago.map(mp => (
+              <div key={mp.valor_id} className="flex justify-between text-sm py-0.5">
+                <span className="text-gray-600">{mp.nombre} ({mp.operaciones} ops)</span>
+                <span className="text-gray-800 font-medium">{formatMonto(mp.total)}</span>
               </div>
-            )}
-
-            {parseFloat(cierre.total_general) === parseFloat(verificacion.total_general) && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-2">
-                <p className="text-sm font-semibold text-green-700">Sin diferencias</p>
-              </div>
-            )}
+            ))}
+            <div className="border-t border-indigo-200 pt-2 flex justify-between font-bold text-sm">
+              <span>Total ERP</span>
+              <span className="text-indigo-700">{formatMonto(erpData.total_general)}</span>
+            </div>
           </div>
         )}
 
