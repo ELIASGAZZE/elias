@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
+import ModalRetiro from '../../components/cajas/ModalRetiro'
 import api from '../../services/api'
 
 const ESTADOS = {
@@ -57,6 +58,11 @@ const CajasHome = () => {
   const [empleadoResuelto, setEmpleadoResuelto] = useState(null) // { id, nombre }
   const [errorEmpleado, setErrorEmpleado] = useState('')
   const [validandoEmpleado, setValidandoEmpleado] = useState(false)
+
+  // Validación planilla Centum
+  const [planillaResuelto, setPlanillaResuelto] = useState(null) // { nombre }
+  const [errorPlanilla, setErrorPlanilla] = useState('')
+  const [validandoPlanilla, setValidandoPlanilla] = useState(false)
 
   // Observaciones apertura
   const [observacionesApertura, setObservacionesApertura] = useState('')
@@ -116,7 +122,7 @@ const CajasHome = () => {
       try {
         const { data } = await api.get('/api/denominaciones')
         const activas = (data || []).filter(d => d.activo)
-        setDenomBilletes(activas.filter(d => d.tipo === 'billete').sort((a, b) => a.orden - b.orden))
+        setDenomBilletes(activas.filter(d => d.tipo === 'billete').sort((a, b) => b.valor - a.valor))
       } catch (err) {
         console.error('Error cargando denominaciones:', err)
       } finally {
@@ -212,6 +218,28 @@ const CajasHome = () => {
     }
   }
 
+  const validarPlanilla = async () => {
+    const id = planillaId.trim()
+    if (!id) {
+      setPlanillaResuelto(null)
+      setErrorPlanilla('')
+      return
+    }
+    setValidandoPlanilla(true)
+    setErrorPlanilla('')
+    try {
+      const params = cajaId ? `?caja_id=${cajaId}` : ''
+      const { data } = await api.get(`/api/cierres/validar-planilla/${encodeURIComponent(id)}${params}`)
+      setPlanillaResuelto(data)
+      setErrorPlanilla('')
+    } catch (err) {
+      setPlanillaResuelto(null)
+      setErrorPlanilla(err.response?.data?.error || 'Error al validar planilla')
+    } finally {
+      setValidandoPlanilla(false)
+    }
+  }
+
   const cargarDatos = async () => {
     setCargando(true)
     try {
@@ -239,6 +267,10 @@ const CajasHome = () => {
       setErrorAbrir('Ingresá el ID de planilla de caja')
       return
     }
+    if (!planillaResuelto) {
+      setErrorAbrir('La planilla debe ser válida y estar cerrada en Centum')
+      return
+    }
 
     setAbriendo(true)
     setErrorAbrir('')
@@ -262,6 +294,8 @@ const CajasHome = () => {
       })
       // Resetear formulario
       setPlanillaId('')
+      setPlanillaResuelto(null)
+      setErrorPlanilla('')
       setBilletesApertura({})
       setUltimoCambio(null)
       setUltimoCambioCajaId(null)
@@ -284,6 +318,8 @@ const CajasHome = () => {
     setMostrarAbrir(false)
     setErrorAbrir('')
     setPlanillaId('')
+    setPlanillaResuelto(null)
+    setErrorPlanilla('')
     setBilletesApertura({})
     setUltimoCambio(null)
     setUltimoCambioCajaId(null)
@@ -294,6 +330,24 @@ const CajasHome = () => {
     setErrorEmpleado('')
     setObservacionesApertura('')
     setCajas([])
+  }
+
+  const [eliminando, setEliminando] = useState(null)
+  const [retiroCierre, setRetiroCierre] = useState(null) // cierre para el modal de retiro
+
+  const eliminarCierre = async (e, cierre) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!confirm(`¿Eliminar cierre de planilla #${cierre.planilla_id}? Se borrarán también retiros y verificaciones.`)) return
+    setEliminando(cierre.id)
+    try {
+      await api.delete(`/api/cierres/${cierre.id}`)
+      setCierres(prev => prev.filter(c => c.id !== cierre.id))
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al eliminar')
+    } finally {
+      setEliminando(null)
+    }
   }
 
   // Separar cajas abiertas del resto
@@ -315,6 +369,17 @@ const CajasHome = () => {
       <Navbar titulo="Control de Cajas" sinTabs />
 
       <div className="px-4 py-4 space-y-4 max-w-4xl mx-auto">
+
+        {/* Botón chat IA para gestor/admin */}
+        {(esGestor || esAdmin) && (
+          <Link
+            to="/cajas/chat"
+            className="flex items-center justify-center gap-2 w-full border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 py-2.5 rounded-xl font-medium transition-colors text-sm"
+          >
+            <span className="text-violet-500">&#10022;</span>
+            Chat Auditoria IA
+          </Link>
+        )}
 
         {/* Botón abrir caja (operario/admin) */}
         {(usuario?.rol === 'operario' || esAdmin) && (
@@ -395,23 +460,20 @@ const CajasHome = () => {
                 <input
                   type="text"
                   value={planillaId}
-                  onChange={(e) => setPlanillaId(e.target.value)}
+                  onChange={(e) => {
+                    setPlanillaId(e.target.value)
+                    setPlanillaResuelto(null)
+                    setErrorPlanilla('')
+                  }}
+                  onBlur={validarPlanilla}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); validarPlanilla() } }}
                   placeholder="Ej: 12345"
-                  className="campo-form text-sm"
+                  className={`campo-form text-sm ${planillaResuelto ? 'border-green-400' : errorPlanilla ? 'border-red-400' : ''}`}
                 />
+                {validandoPlanilla && <p className="text-xs text-gray-400 mt-1">Validando en Centum...</p>}
+                {planillaResuelto && <p className="text-xs text-green-600 mt-1">Planilla válida — {planillaResuelto.nombre}</p>}
+                {errorPlanilla && <p className="text-xs text-red-600 mt-1">{errorPlanilla}</p>}
               </div>
-            </div>
-
-            {/* Observaciones apertura */}
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Observaciones (opcional)</label>
-              <textarea
-                value={observacionesApertura}
-                onChange={(e) => setObservacionesApertura(e.target.value)}
-                className="campo-form text-sm"
-                rows={2}
-                placeholder="Notas sobre la apertura..."
-              />
             </div>
 
             {/* Cambio inicial — billetes siempre visibles */}
@@ -429,7 +491,7 @@ const CajasHome = () => {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     {denomBilletes.map(d => (
                       <ContadorDenominacion
                         key={`ba-${d.id}`}
@@ -462,6 +524,18 @@ const CajasHome = () => {
               )}
             </div>
 
+            {/* Observaciones apertura */}
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Observaciones (opcional)</label>
+              <textarea
+                value={observacionesApertura}
+                onChange={(e) => setObservacionesApertura(e.target.value)}
+                className="campo-form text-sm"
+                rows={2}
+                placeholder="Notas sobre la apertura..."
+              />
+            </div>
+
             {errorAbrir && <p className="text-sm text-red-600">{errorAbrir}</p>}
 
             <button
@@ -483,36 +557,62 @@ const CajasHome = () => {
                 <h3 className="font-semibold text-gray-700 text-sm mb-3">Cajas abiertas</h3>
                 <div className="space-y-2">
                   {cajasAbiertas.map(cierre => (
-                    <Link
-                      key={cierre.id}
-                      to={`/cajas/cierre/${cierre.id}/cerrar`}
-                      className="block bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 hover:border-emerald-300 hover:shadow-sm transition-all"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-semibold text-gray-800">
-                          Planilla #{cierre.planilla_id}
-                        </span>
-                        <BadgeEstado estado={cierre.estado} />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-gray-500">
-                          {formatFecha(cierre.fecha)}
-                          {cierre.caja?.nombre && (
-                            <span> · {cierre.caja.nombre}</span>
-                          )}
-                          {cierre.caja?.sucursales?.nombre && (
-                            <span> · {cierre.caja.sucursales.nombre}</span>
-                          )}
-                          {cierre.empleado?.nombre && (
-                            <span> · {cierre.empleado.nombre}</span>
-                          )}
-                          {cierre.fondo_fijo > 0 && (
-                            <span> · Cambio: {formatMonto(cierre.fondo_fijo)}</span>
-                          )}
+                    <div key={cierre.id} className="flex items-center gap-2">
+                      <Link
+                        to={`/cajas/cierre/${cierre.id}/cerrar`}
+                        className="flex-1 bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 hover:border-emerald-300 hover:shadow-sm transition-all"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-semibold text-gray-800">
+                            Planilla #{cierre.planilla_id}
+                          </span>
+                          <BadgeEstado estado={cierre.estado} />
                         </div>
-                        <span className="text-xs font-medium text-emerald-600">Cerrar</span>
-                      </div>
-                    </Link>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-gray-500">
+                            {formatFecha(cierre.fecha)}
+                            {cierre.caja?.nombre && (
+                              <span> · {cierre.caja.nombre}</span>
+                            )}
+                            {cierre.caja?.sucursales?.nombre && (
+                              <span> · {cierre.caja.sucursales.nombre}</span>
+                            )}
+                            {cierre.empleado?.nombre && (
+                              <span> · {cierre.empleado.nombre}</span>
+                            )}
+                            {cierre.fondo_fijo > 0 && (
+                              <span> · Cambio: {formatMonto(cierre.fondo_fijo)}</span>
+                            )}
+                          </div>
+                          <span className="text-xs font-medium text-emerald-600">Cerrar</span>
+                        </div>
+                      </Link>
+                      <button
+                        onClick={(e) => { e.preventDefault(); setRetiroCierre(cierre) }}
+                        className="flex-shrink-0 p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Retiro de alivio"
+                      >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
+                      {esAdmin && (
+                        <button
+                          onClick={(e) => eliminarCierre(e, cierre)}
+                          disabled={eliminando === cierre.id}
+                          className="flex-shrink-0 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                          title="Eliminar cierre"
+                        >
+                          {eliminando === cierre.id ? (
+                            <div className="w-5 h-5 animate-spin rounded-full border-2 border-red-300 border-t-red-600" />
+                          ) : (
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -535,37 +635,66 @@ const CajasHome = () => {
               ) : (
                 <div className="space-y-2">
                   {cierresCerrados.map(cierre => (
-                    <Link
-                      key={cierre.id}
-                      to={getLinkCierre(cierre)}
-                      className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-semibold text-gray-800">
-                          Planilla #{cierre.planilla_id}
-                        </span>
-                        <BadgeEstado estado={cierre.estado} />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-gray-400">
-                          {formatFecha(cierre.fecha)}
-                          {cierre.caja?.nombre && (
-                            <span> · {cierre.caja.nombre}</span>
-                          )}
-                          {cierre.caja?.sucursales?.nombre && (
-                            <span> · {cierre.caja.sucursales.nombre}</span>
-                          )}
-                          {cierre.empleado?.nombre && (
-                            <span> · {cierre.empleado.nombre}</span>
+                    <div key={cierre.id} className="flex items-center gap-2">
+                      <Link
+                        to={getLinkCierre(cierre)}
+                        className="flex-1 bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-semibold text-gray-800">
+                            Planilla #{cierre.planilla_id}
+                          </span>
+                          <BadgeEstado estado={cierre.estado} />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-gray-400">
+                            {formatFecha(cierre.fecha)}
+                            {cierre.caja?.nombre && (
+                              <span> · {cierre.caja.nombre}</span>
+                            )}
+                            {cierre.caja?.sucursales?.nombre && (
+                              <span> · {cierre.caja.sucursales.nombre}</span>
+                            )}
+                            {cierre.empleado?.nombre && (
+                              <span> · {cierre.empleado.nombre}</span>
+                            )}
+                          </div>
+                          {cierre.total_general !== undefined && !esGestor && (
+                            <span className="text-sm font-medium text-gray-700">
+                              {formatMonto(cierre.total_general)}
+                            </span>
                           )}
                         </div>
-                        {cierre.total_general !== undefined && !esGestor && (
-                          <span className="text-sm font-medium text-gray-700">
-                            {formatMonto(cierre.total_general)}
-                          </span>
-                        )}
-                      </div>
-                    </Link>
+                      </Link>
+                      {esAdmin && cierre.estado === 'pendiente_gestor' && (
+                        <Link
+                          to={`/cajas/cierre/${cierre.id}/editar`}
+                          className="flex-shrink-0 p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                          title="Editar conteo"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </Link>
+                      )}
+                      {esAdmin && (
+                        <button
+                          onClick={(e) => eliminarCierre(e, cierre)}
+                          disabled={eliminando === cierre.id}
+                          className="flex-shrink-0 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                          title="Eliminar cierre"
+                        >
+                          {eliminando === cierre.id ? (
+                            <div className="w-5 h-5 animate-spin rounded-full border-2 border-red-300 border-t-red-600" />
+                          ) : (
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -573,6 +702,16 @@ const CajasHome = () => {
           </>
         )}
       </div>
+
+      {/* Modal retiro */}
+      {retiroCierre && (
+        <ModalRetiro
+          cierreId={retiroCierre.id}
+          cierre={retiroCierre}
+          onClose={() => setRetiroCierre(null)}
+          onRetiroCreado={() => {}}
+        />
+      )}
     </div>
   )
 }

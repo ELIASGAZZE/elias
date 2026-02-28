@@ -18,6 +18,14 @@ import CajasHome from './pages/cajas/CajasHome'
 import CerrarCaja from './pages/cajas/CerrarCaja'
 import DetalleCierre from './pages/cajas/DetalleCierre'
 import VerificarCierre from './pages/cajas/VerificarCierre'
+import NuevoRetiro from './pages/cajas/NuevoRetiro'
+import VerificarRetiro from './pages/cajas/VerificarRetiro'
+import ChatAuditoria from './pages/cajas/ChatAuditoria'
+
+// Páginas de la app Delivery
+import DeliveryHome from './pages/delivery/DeliveryHome'
+import NuevoDelivery from './pages/delivery/NuevoDelivery'
+import DetalleDelivery from './pages/delivery/DetalleDelivery'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
@@ -77,9 +85,29 @@ const App = () => {
               <CajasHome />
             </RutaProtegida>
           } />
+          <Route path="/cajas/chat" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <ChatAuditoria />
+            </RutaProtegida>
+          } />
           <Route path="/cajas/cierre/:id/cerrar" element={
             <RutaProtegida rolesPermitidos={['operario', 'admin']}>
               <CerrarCaja />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/cierre/:id/editar" element={
+            <RutaProtegida>
+              <CerrarCaja />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/cierre/:id/retiro" element={
+            <RutaProtegida rolesPermitidos={['operario', 'admin']}>
+              <NuevoRetiro />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/retiro/:id/verificar" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <VerificarRetiro />
             </RutaProtegida>
           } />
           <Route path="/cajas/cierre/:id" element={
@@ -90,6 +118,23 @@ const App = () => {
           <Route path="/cajas/verificar/:id" element={
             <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
               <VerificarCierre />
+            </RutaProtegida>
+          } />
+
+          {/* App: Delivery */}
+          <Route path="/delivery" element={
+            <RutaProtegida>
+              <DeliveryHome />
+            </RutaProtegida>
+          } />
+          <Route path="/delivery/nuevo" element={
+            <RutaProtegida>
+              <NuevoDelivery />
+            </RutaProtegida>
+          } />
+          <Route path="/delivery/:id" element={
+            <RutaProtegida>
+              <DetalleDelivery />
             </RutaProtegida>
           } />
 

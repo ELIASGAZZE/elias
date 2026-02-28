@@ -1,9 +1,11 @@
-// Cierre de caja — layout desktop 3 columnas (billetes | monedas | medios)
+// Cierre de caja — layout desktop 2 columnas (billetes | medios)
 import React, { useState, useEffect, useMemo } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import api from '../../services/api'
+import { imprimirCierre } from '../../utils/imprimirComprobante'
+import ModalRetiro from '../../components/cajas/ModalRetiro'
 
 const formatMonto = (monto) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
@@ -49,14 +51,20 @@ const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange })
 const CerrarCaja = () => {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const modoEdicion = location.pathname.endsWith('/editar')
   const [cierre, setCierre] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
 
+  // Retiros del turno
+  const [retiros, setRetiros] = useState([])
+  const [mostrarRetiro, setMostrarRetiro] = useState(false)
+
   // API-driven denominations and payment methods
   const [denomBilletes, setDenomBilletes] = useState([])
-  const [denomMonedas, setDenomMonedas] = useState([])
+  const [denomMonedas] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
 
   // Efectivo
@@ -79,15 +87,22 @@ const CerrarCaja = () => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes] = await Promise.all([
+        const [cierreRes, denomRes, formasRes, retirosRes] = await Promise.all([
           api.get(`/api/cierres/${id}`),
           api.get('/api/denominaciones'),
           api.get('/api/formas-cobro'),
+          api.get(`/api/cierres/${id}/retiros`).catch(() => ({ data: [] })),
         ])
+
+        setRetiros(retirosRes.data || [])
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
-        if (cierreData.estado !== 'abierta') {
+        if (modoEdicion) {
+          if (cierreData.estado !== 'pendiente_gestor') {
+            setError('Este cierre ya fue verificado y no se puede editar')
+          }
+        } else if (cierreData.estado !== 'abierta') {
           setError('Esta caja ya fue cerrada')
         }
 
@@ -96,10 +111,6 @@ const CerrarCaja = () => {
         setDenomBilletes(
           denomActivas.filter(d => d.tipo === 'billete').sort((a, b) => a.orden - b.orden)
         )
-        setDenomMonedas(
-          denomActivas.filter(d => d.tipo === 'moneda').sort((a, b) => a.orden - b.orden)
-        )
-
         // Filter active formas de cobro, sorted by orden
         const formasActivas = (formasRes.data || [])
           .filter(f => f.activo)
@@ -112,6 +123,43 @@ const CerrarCaja = () => {
           mediosInit[f.id] = { monto: 0, cantidad: 0 }
         })
         setMediosPago(mediosInit)
+
+        // Pre-cargar datos existentes en modo edición
+        if (modoEdicion && cierreData.estado === 'pendiente_gestor') {
+          if (cierreData.billetes) {
+            const billetesInit = {}
+            Object.entries(cierreData.billetes).forEach(([val, cant]) => {
+              billetesInit[Number(val)] = cant
+            })
+            setBilletes(billetesInit)
+          }
+          if (cierreData.monedas) {
+            const monedasInit = {}
+            Object.entries(cierreData.monedas).forEach(([val, cant]) => {
+              monedasInit[Number(val)] = cant
+            })
+            setMonedas(monedasInit)
+          }
+          if (cierreData.cambio_billetes) {
+            const cambioInit = {}
+            Object.entries(cierreData.cambio_billetes).forEach(([val, cant]) => {
+              cambioInit[Number(val)] = cant
+            })
+            setCambioBilletes(cambioInit)
+          }
+          if (cierreData.observaciones) {
+            setObservaciones(cierreData.observaciones)
+          }
+          if (Array.isArray(cierreData.medios_pago)) {
+            const mediosEdit = { ...mediosInit }
+            cierreData.medios_pago.forEach(mp => {
+              if (mediosEdit[mp.forma_cobro_id] !== undefined) {
+                mediosEdit[mp.forma_cobro_id] = { monto: mp.monto || 0, cantidad: mp.cantidad || 0 }
+              }
+            })
+            setMediosPago(mediosEdit)
+          }
+        }
       } catch (err) {
         setError(err.response?.data?.error || 'Error al cargar datos')
       } finally {
@@ -126,12 +174,7 @@ const CerrarCaja = () => {
     [denomBilletes, billetes]
   )
 
-  const totalMonedas = useMemo(
-    () => denomMonedas.reduce((sum, d) => sum + d.valor * (monedas[d.valor] || 0), 0),
-    [denomMonedas, monedas]
-  )
-
-  const totalEfectivo = totalBilletes + totalMonedas
+  const totalEfectivo = totalBilletes
 
   const cambioQueQueda = useMemo(
     () => denomBilletes.reduce((sum, d) => sum + d.valor * (cambioBilletes[d.valor] || 0), 0),
@@ -213,7 +256,7 @@ const CerrarCaja = () => {
         if (cant > 0) cambioBilletesPayload[String(d.valor)] = cant
       })
 
-      await api.put(`/api/cierres/${id}/cerrar`, {
+      const payload = {
         billetes: billetesPayload,
         monedas: monedasPayload,
         total_efectivo: totalEfectivo,
@@ -225,19 +268,37 @@ const CerrarCaja = () => {
         cambio_que_queda: cambioQueQueda,
         efectivo_retirado: efectivoRetirado,
         codigo_empleado: codigoEmpleado.trim(),
-      })
-      navigate(`/cajas/cierre/${id}`)
+      }
+
+      if (modoEdicion) {
+        await api.put(`/api/cierres/${id}/editar-conteo`, payload)
+        navigate(`/cajas/cierre/${id}`)
+      } else {
+        const { data: cierreActualizado } = await api.put(`/api/cierres/${id}/cerrar`, payload)
+
+        // Fetch retiros actualizados y denominaciones para imprimir
+        const [retirosRes, denomRes] = await Promise.all([
+          api.get(`/api/cierres/${id}/retiros`).catch(() => ({ data: [] })),
+          api.get('/api/denominaciones').catch(() => ({ data: [] })),
+        ])
+        imprimirCierre(cierreActualizado, retirosRes.data || [], denomRes.data || [])
+
+        navigate(`/cajas/cierre/${id}`)
+      }
     } catch (err) {
-      setError(err.response?.data?.error || 'Error al cerrar caja')
+      setError(err.response?.data?.error || (modoEdicion ? 'Error al guardar cambios' : 'Error al cerrar caja'))
     } finally {
       setEnviando(false)
     }
   }
 
+  const titulo = modoEdicion ? 'Editar Cierre' : 'Cerrar Caja'
+  const volverA = modoEdicion ? `/cajas/cierre/${id}` : '/cajas'
+
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Cerrar Caja" sinTabs volverA="/cajas" />
+        <Navbar titulo={titulo} sinTabs volverA={volverA} />
         <div className="flex justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
         </div>
@@ -248,10 +309,10 @@ const CerrarCaja = () => {
   if (error && !cierre) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar titulo="Cerrar Caja" sinTabs volverA="/cajas" />
+        <Navbar titulo={titulo} sinTabs volverA={volverA} />
         <div className="px-4 py-10 text-center">
           <p className="text-red-600 text-sm">{error}</p>
-          <Link to="/cajas" className="text-sm text-emerald-600 mt-4 inline-block">Volver</Link>
+          <Link to={volverA} className="text-sm text-emerald-600 mt-4 inline-block">Volver</Link>
         </div>
       </div>
     )
@@ -259,7 +320,7 @@ const CerrarCaja = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
-      <Navbar titulo="Cerrar Caja" sinTabs volverA="/cajas" />
+      <Navbar titulo={titulo} sinTabs volverA={volverA} />
 
       <div className="px-4 py-4 max-w-5xl mx-auto">
 
@@ -275,48 +336,28 @@ const CerrarCaja = () => {
           </div>
         </div>
 
-        {/* Grid 3 columnas: Billetes | Monedas | Medios */}
-        <div className="grid grid-cols-3 gap-6 mb-6">
-
-          {/* Col 1: Billetes */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Billetes</h3>
-            <div className="space-y-1.5">
-              {denomBilletes.map(d => (
-                <ContadorDenominacion
-                  key={`b-${d.id}`}
-                  valor={d.valor}
-                  cantidad={billetes[d.valor] || 0}
-                  onChange={(val) => setBilletes(prev => ({ ...prev, [d.valor]: val }))}
-                />
-              ))}
-            </div>
-            <div className="text-right mt-2">
-              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalBilletes)}</span>
-            </div>
+        {/* Efectivo (billetes) */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-gray-500 mb-2">Efectivo</h3>
+          <div className="space-y-1.5">
+            {denomBilletes.map(d => (
+              <ContadorDenominacion
+                key={`b-${d.id}`}
+                valor={d.valor}
+                cantidad={billetes[d.valor] || 0}
+                onChange={(val) => setBilletes(prev => ({ ...prev, [d.valor]: val }))}
+              />
+            ))}
           </div>
-
-          {/* Col 2: Monedas */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
-            <div className="space-y-1.5">
-              {denomMonedas.map(d => (
-                <ContadorDenominacion
-                  key={`m-${d.id}`}
-                  valor={d.valor}
-                  cantidad={monedas[d.valor] || 0}
-                  onChange={(val) => setMonedas(prev => ({ ...prev, [d.valor]: val }))}
-                />
-              ))}
-            </div>
-            <div className="text-right mt-2">
-              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalMonedas)}</span>
-            </div>
+          <div className="text-right mt-2">
+            <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalBilletes)}</span>
           </div>
+        </div>
 
-          {/* Col 3: Otros medios + Observaciones */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Otros medios de pago</h3>
+        {/* Otros medios de pago + Observaciones */}
+        <div className="space-y-3 mb-6">
+          <h3 className="text-sm font-medium text-gray-500">Otros medios de pago</h3>
+          <div className="grid grid-cols-3 gap-3">
             {formasCobro.map(f => (
               <CampoMedio
                 key={f.id}
@@ -327,23 +368,60 @@ const CerrarCaja = () => {
                 onCantidadChange={(val) => actualizarMedio(f.id, 'cantidad', val)}
               />
             ))}
-            <div>
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
-              <textarea
-                value={observaciones}
-                onChange={(e) => setObservaciones(e.target.value)}
-                className="campo-form text-sm"
-                rows={2}
-                placeholder="Observaciones opcionales..."
-              />
-            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
+            <textarea
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              className="campo-form text-sm"
+              rows={2}
+              placeholder="Observaciones opcionales..."
+            />
           </div>
         </div>
+
+        {/* Retiro de alivio + retiros existentes */}
+        {!modoEdicion && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-blue-800 font-medium">
+                  Retiros durante el turno: {retiros.length}
+                </span>
+                {retiros.length > 0 && (
+                  <span className="text-blue-800 font-bold ml-2">
+                    ({formatMonto(retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0))})
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setMostrarRetiro(true)}
+                className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+              >
+                Nuevo retiro
+              </button>
+            </div>
+          </div>
+        )}
+
+        {modoEdicion && retiros.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-blue-800 font-medium">
+                Retiros durante el turno: {retiros.length}
+              </span>
+              <span className="text-blue-800 font-bold">
+                Total: {formatMonto(retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0))}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Cambio que queda en caja */}
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
           <h3 className="text-sm font-semibold text-amber-800 mb-3">Cambio que queda en caja</h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {denomBilletes.map(d => (
               <ContadorDenominacion
                 key={`cb-${d.id}`}
@@ -432,9 +510,24 @@ const CerrarCaja = () => {
           disabled={enviando}
           className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
         >
-          {enviando ? 'Cerrando...' : 'Confirmar cierre'}
+          {enviando
+            ? (modoEdicion ? 'Guardando...' : 'Cerrando...')
+            : (modoEdicion ? 'Guardar cambios' : 'Confirmar cierre')
+          }
         </button>
       </div>
+
+      {/* Modal retiro */}
+      {mostrarRetiro && (
+        <ModalRetiro
+          cierreId={id}
+          cierre={cierre}
+          onClose={() => setMostrarRetiro(false)}
+          onRetiroCreado={(nuevoRetiro) => {
+            setRetiros(prev => [...prev, nuevoRetiro])
+          }}
+        />
+      )}
     </div>
   )
 }

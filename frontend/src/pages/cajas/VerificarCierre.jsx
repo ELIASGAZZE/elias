@@ -203,8 +203,8 @@ const VerificarCierre = () => {
           <p className="font-medium">Conteo independiente — no veras los montos del cajero hasta enviar.</p>
         </div>
 
-        {/* Grid 3 columnas: Billetes | Monedas | Medios */}
-        <div className="grid grid-cols-3 gap-6 mb-6">
+        {/* Grid 2 columnas: Billetes | Medios */}
+        <div className="grid grid-cols-2 gap-6 mb-6">
 
           {/* Col 1: Billetes */}
           <div>
@@ -224,25 +224,7 @@ const VerificarCierre = () => {
             </div>
           </div>
 
-          {/* Col 2: Monedas */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
-            <div className="space-y-1.5">
-              {denomMonedas.map(d => (
-                <ContadorDenominacion
-                  key={`m-${d.id}`}
-                  valor={d.valor}
-                  cantidad={monedas[d.valor] || 0}
-                  onChange={(val) => setMonedas(prev => ({ ...prev, [d.valor]: val }))}
-                />
-              ))}
-            </div>
-            <div className="text-right mt-2">
-              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalMonedas)}</span>
-            </div>
-          </div>
-
-          {/* Col 3: Otros medios + Observaciones */}
+          {/* Col 2: Otros medios + Observaciones */}
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Otros medios de pago</h3>
             {formasCobro.map(f => (

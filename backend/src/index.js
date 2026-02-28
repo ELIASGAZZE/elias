@@ -15,6 +15,11 @@ const pushRoutes = require('./routes/push')
 const denominacionesRoutes = require('./routes/denominaciones')
 const formasCobroRoutes = require('./routes/formas-cobro')
 const empleadosRoutes = require('./routes/empleados')
+const retirosRoutes = require('./routes/retiros')
+const clientesRoutes = require('./routes/clientes')
+const deliveryRoutes = require('./routes/delivery')
+const cajerosRoutes = require('./routes/cajeros')
+const reglasIARoutes = require('./routes/reglasIA')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -44,6 +49,11 @@ app.use('/api/push', pushRoutes)
 app.use('/api/denominaciones', denominacionesRoutes)
 app.use('/api/formas-cobro', formasCobroRoutes)
 app.use('/api/empleados', empleadosRoutes)
+app.use('/api', retirosRoutes)
+app.use('/api/clientes', clientesRoutes)
+app.use('/api/delivery', deliveryRoutes)
+app.use('/api/cajeros', cajerosRoutes)
+app.use('/api/reglas-ia', reglasIARoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {
