@@ -104,6 +104,7 @@ async function sincronizarERP(origen = 'cron') {
     tipo: 'automatico',
     es_pesable: art.EsPesable === true,
     id_centum: art.IdArticulo || null,
+    precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : null,
   }))
 
   // Upsert en lotes de 500

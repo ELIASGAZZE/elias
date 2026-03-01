@@ -5,12 +5,21 @@ import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
+const TABS = [
+  { key: 'pendiente_pago', label: 'Pendiente de pago', color: 'amber' },
+  { key: 'pagado', label: 'Pagados', color: 'blue' },
+  { key: 'entregado', label: 'Entregados', color: 'green' },
+]
+
 const ESTADOS = {
+  pendiente_pago: { label: 'Pendiente de pago', color: 'bg-yellow-100 text-yellow-700' },
+  pagado: { label: 'Pagado', color: 'bg-blue-100 text-blue-700' },
+  entregado: { label: 'Entregado', color: 'bg-green-100 text-green-700' },
+  cancelado: { label: 'Cancelado', color: 'bg-red-100 text-red-700' },
+  // Legacy
   pendiente: { label: 'Pendiente', color: 'bg-yellow-100 text-yellow-700' },
   en_preparacion: { label: 'En preparación', color: 'bg-blue-100 text-blue-700' },
   en_camino: { label: 'En camino', color: 'bg-purple-100 text-purple-700' },
-  entregado: { label: 'Entregado', color: 'bg-green-100 text-green-700' },
-  cancelado: { label: 'Cancelado', color: 'bg-red-100 text-red-700' },
 }
 
 const BadgeEstado = ({ estado }) => {
@@ -31,10 +40,10 @@ const formatFechaHora = (fecha) => {
 
 const DeliveryHome = () => {
   const { esAdmin } = useAuth()
+  const [tabActivo, setTabActivo] = useState('pendiente_pago')
   const [pedidos, setPedidos] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [filtroEstado, setFiltroEstado] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [busquedaActiva, setBusquedaActiva] = useState('')
   const [cargando, setCargando] = useState(true)
@@ -43,7 +52,7 @@ const DeliveryHome = () => {
 
   useEffect(() => {
     cargarPedidos()
-  }, [page, filtroEstado, busquedaActiva])
+  }, [page, tabActivo, busquedaActiva])
 
   // Debounce de búsqueda
   useEffect(() => {
@@ -58,8 +67,7 @@ const DeliveryHome = () => {
   const cargarPedidos = async () => {
     setCargando(true)
     try {
-      const params = { page, limit: LIMIT }
-      if (filtroEstado) params.estado = filtroEstado
+      const params = { page, limit: LIMIT, estado: tabActivo }
       if (busquedaActiva.trim()) params.busqueda = busquedaActiva.trim()
 
       const { data } = await api.get('/api/delivery', { params })
@@ -72,6 +80,11 @@ const DeliveryHome = () => {
     }
   }
 
+  const cambiarTab = (key) => {
+    setTabActivo(key)
+    setPage(1)
+  }
+
   const totalPaginas = Math.max(1, Math.ceil(total / LIMIT))
 
   return (
@@ -80,7 +93,26 @@ const DeliveryHome = () => {
 
       <div className="px-4 py-4 space-y-3 max-w-4xl mx-auto">
 
-        {/* Barra de búsqueda + filtro estado + botón nuevo */}
+        {/* Tabs */}
+        <div className="flex bg-white border border-gray-200 rounded-xl overflow-hidden">
+          {TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => cambiarTab(tab.key)}
+              className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                tabActivo === tab.key
+                  ? tab.color === 'amber' ? 'bg-amber-600 text-white'
+                    : tab.color === 'blue' ? 'bg-blue-600 text-white'
+                    : 'bg-green-600 text-white'
+                  : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Barra de búsqueda + botón nuevo */}
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -89,16 +121,6 @@ const DeliveryHome = () => {
             placeholder="Buscar por cliente, dirección, sucursal..."
             className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-400"
           />
-          <select
-            value={filtroEstado}
-            onChange={(e) => { setFiltroEstado(e.target.value); setPage(1) }}
-            className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-400 bg-white"
-          >
-            <option value="">Todos</option>
-            {Object.entries(ESTADOS).map(([key, { label }]) => (
-              <option key={key} value={key}>{label}</option>
-            ))}
-          </select>
           <Link
             to="/delivery/nuevo"
             className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 text-white p-2.5 rounded-xl transition-colors"
@@ -126,7 +148,7 @@ const DeliveryHome = () => {
         ) : pedidos.length === 0 ? (
           <div className="text-center py-10">
             <p className="text-gray-400 text-sm">
-              {busquedaActiva ? 'No se encontraron pedidos' : 'No hay pedidos delivery'}
+              {busquedaActiva ? 'No se encontraron pedidos' : 'No hay pedidos en esta categoría'}
             </p>
           </div>
         ) : (

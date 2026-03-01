@@ -5,6 +5,9 @@ import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
+const formatMonto = (monto) =>
+  new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
+
 const NuevoDelivery = () => {
   const navigate = useNavigate()
   const { usuario, esAdmin } = useAuth()
@@ -47,6 +50,10 @@ const NuevoDelivery = () => {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState(false)
+
+  // Descuentos Centum
+  const [descuentosInfo, setDescuentosInfo] = useState(null) // { subtotal, descuentos[], total_descuentos, total }
+  const [calculandoDesc, setCalculandoDesc] = useState(false)
 
   // Sucursal
   const [sucursales, setSucursales] = useState([])
@@ -213,6 +220,60 @@ const NuevoDelivery = () => {
   const totalArticulos = Object.values(cantidades).filter(c => c > 0).length
   const totalPaginasClientes = Math.max(1, Math.ceil(totalClientes / LIMIT_CLIENTES))
   const totalPaginasArt = Math.max(1, Math.ceil(totalArt / ERP_LIMIT))
+
+  // Calcular subtotal del pedido (sin descuentos)
+  const subtotalPedido = articulosSeleccionados.reduce((sum, art) => {
+    const cant = cantidades[art.id] || 0
+    return sum + (art.precio || 0) * cant
+  }, 0)
+
+  // Total final (con descuentos si los hay)
+  const totalPedido = descuentosInfo ? descuentosInfo.total : subtotalPedido
+
+  const [mostrarTicket, setMostrarTicket] = useState(false)
+  const descuentosTimerRef = useRef(null)
+
+  // Calcular descuentos con debounce cuando cambian las cantidades
+  useEffect(() => {
+    if (paso !== 2 || totalArticulos === 0 || !clienteSeleccionado) {
+      setDescuentosInfo(null)
+      return
+    }
+
+    if (descuentosTimerRef.current) clearTimeout(descuentosTimerRef.current)
+    descuentosTimerRef.current = setTimeout(() => {
+      calcularDescuentos()
+    }, 800)
+
+    return () => {
+      if (descuentosTimerRef.current) clearTimeout(descuentosTimerRef.current)
+    }
+  }, [cantidades, totalArticulos, clienteSeleccionado])
+
+  const calcularDescuentos = async () => {
+    const items = Object.entries(cantidades)
+      .filter(([, cant]) => cant > 0)
+      .map(([articulo_id, cantidad]) => ({ articulo_id, cantidad }))
+
+    if (items.length === 0) {
+      setDescuentosInfo(null)
+      return
+    }
+
+    setCalculandoDesc(true)
+    try {
+      const { data } = await api.post('/api/delivery/calcular-descuentos', {
+        cliente_id: clienteSeleccionado.id,
+        items,
+      })
+      setDescuentosInfo(data)
+    } catch (err) {
+      console.warn('No se pudieron calcular descuentos:', err.response?.data?.error || err.message)
+      setDescuentosInfo(null)
+    } finally {
+      setCalculandoDesc(false)
+    }
+  }
 
   // Enviar pedido
   const handleEnviar = async () => {
@@ -640,21 +701,96 @@ const NuevoDelivery = () => {
         )}
       </div>
 
-      {/* Barra inferior fija — solo en paso 2 */}
+      {/* Barra inferior fija con ticket — solo en paso 2 */}
       {paso === 2 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-500">
-              {totalArticulos} artículo{totalArticulos !== 1 ? 's' : ''} seleccionado{totalArticulos !== 1 ? 's' : ''}
-            </span>
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-40">
+          {/* Ticket desplegable */}
+          {mostrarTicket && totalArticulos > 0 && (
+            <div className="max-h-[50vh] overflow-y-auto border-b border-gray-100 px-4 py-3">
+              <div className="max-w-4xl mx-auto">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Detalle del pedido</h4>
+                <div className="space-y-1">
+                  {articulosSeleccionados
+                    .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                    .map(art => {
+                      const cant = cantidades[art.id] || 0
+                      const lineaSubtotal = (art.precio || 0) * cant
+                      return (
+                        <div key={art.id} className="flex items-center justify-between text-sm py-1 border-b border-gray-50 last:border-0">
+                          <div className="flex-1 truncate mr-2">
+                            <span className="text-gray-700">{art.nombre}</span>
+                            <span className="text-gray-400 ml-1">x{cant}</span>
+                          </div>
+                          <span className="text-gray-700 font-medium whitespace-nowrap">
+                            {art.precio ? formatMonto(lineaSubtotal) : '-'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                </div>
+
+                {/* Subtotal */}
+                <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between text-sm">
+                  <span className="text-gray-500">Subtotal</span>
+                  <span className="font-medium text-gray-700">{formatMonto(subtotalPedido)}</span>
+                </div>
+
+                {/* Descuentos */}
+                {calculandoDesc && (
+                  <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
+                    <div className="animate-spin rounded-full h-3 w-3 border-b border-gray-400" />
+                    Calculando descuentos...
+                  </div>
+                )}
+                {descuentosInfo && descuentosInfo.descuentos.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    {descuentosInfo.descuentos.map((d, i) => (
+                      <div key={i} className="flex justify-between text-sm">
+                        <span className="text-green-600">{d.nombre}</span>
+                        <span className="text-green-600 font-medium">-{formatMonto(d.importe)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Total */}
+                {descuentosInfo && descuentosInfo.total_descuentos > 0 && (
+                  <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-800">Total</span>
+                    <span className="font-bold text-gray-800">{formatMonto(descuentosInfo.total)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Resumen + botón */}
+          <div className="px-4 py-3 max-w-4xl mx-auto">
+            <button
+              onClick={() => setMostrarTicket(!mostrarTicket)}
+              disabled={totalArticulos === 0}
+              className="w-full flex items-center justify-between mb-2 disabled:opacity-40"
+            >
+              <span className="text-sm text-gray-500">
+                {totalArticulos} artículo{totalArticulos !== 1 ? 's' : ''}
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-gray-800">
+                  {formatMonto(totalPedido)}
+                </span>
+                <svg className={`w-4 h-4 text-gray-400 transition-transform ${mostrarTicket ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+                </svg>
+              </div>
+            </button>
+            <button
+              onClick={handleEnviar}
+              disabled={enviando || totalArticulos === 0}
+              className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors text-sm"
+            >
+              {enviando ? 'Creando pedido...' : 'Confirmar pedido delivery'}
+            </button>
           </div>
-          <button
-            onClick={handleEnviar}
-            disabled={enviando || totalArticulos === 0}
-            className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors text-sm"
-          >
-            {enviando ? 'Creando pedido...' : 'Confirmar pedido delivery'}
-          </button>
         </div>
       )}
     </div>
@@ -664,21 +800,32 @@ const NuevoDelivery = () => {
 // Componente de tarjeta de artículo simplificado para delivery
 const ArticuloCardDelivery = ({ articulo, cantidad, onChange }) => {
   const tieneUnidades = cantidad > 0
+  const subtotal = (articulo.precio || 0) * cantidad
 
   return (
     <div className={`tarjeta transition-all ${
       tieneUnidades ? 'border-amber-400 bg-amber-50' : ''
     }`}>
-      <div className="mb-2">
-        <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
-        <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
-        {articulo.stock_deposito != null && (
-          <p className={`text-xs mt-0.5 font-medium ${
-            articulo.stock_deposito > 0 ? 'text-green-600' : 'text-gray-400'
-          }`}>
-            Stock depósito: {articulo.stock_deposito}
-          </p>
-        )}
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex-1 min-w-0 mr-2">
+          <p className="font-medium text-gray-800 truncate">{articulo.nombre}</p>
+          <p className="text-xs text-gray-400 mt-0.5">Código: {articulo.codigo}</p>
+          {articulo.stock_deposito != null && (
+            <p className={`text-xs mt-0.5 font-medium ${
+              articulo.stock_deposito > 0 ? 'text-green-600' : 'text-gray-400'
+            }`}>
+              Stock: {articulo.stock_deposito}
+            </p>
+          )}
+        </div>
+        <div className="text-right flex-shrink-0">
+          {articulo.precio != null && (
+            <p className="text-sm font-semibold text-gray-700">{formatMonto(articulo.precio)}</p>
+          )}
+          {tieneUnidades && articulo.precio != null && (
+            <p className="text-xs text-amber-600 font-medium">{formatMonto(subtotal)}</p>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between">

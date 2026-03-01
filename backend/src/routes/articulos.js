@@ -86,7 +86,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
       if (idsArray.length > 0) {
         const { data, error } = await supabase
           .from('articulos')
-          .select('id, codigo, nombre, rubro, marca, stock_deposito')
+          .select('id, codigo, nombre, rubro, marca, stock_deposito, precio, id_centum')
           .eq('tipo', 'automatico')
           .eq('es_pesable', false)
           .in('id', idsArray)
@@ -99,7 +99,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('articulos')
-      .select('id, codigo, nombre, rubro, marca, stock_deposito', { count: 'exact' })
+      .select('id, codigo, nombre, rubro, marca, stock_deposito, precio, id_centum', { count: 'exact' })
       .eq('tipo', 'automatico')
       .eq('es_pesable', false)
       .order('stock_deposito', { ascending: false, nullsFirst: false })

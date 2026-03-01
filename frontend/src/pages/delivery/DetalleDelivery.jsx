@@ -6,14 +6,17 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADOS = {
+  pendiente_pago: { label: 'Pendiente de pago', color: 'bg-yellow-100 text-yellow-700' },
+  pagado: { label: 'Pagado', color: 'bg-blue-100 text-blue-700' },
+  entregado: { label: 'Entregado', color: 'bg-green-100 text-green-700' },
+  cancelado: { label: 'Cancelado', color: 'bg-red-100 text-red-700' },
+  // Legacy
   pendiente: { label: 'Pendiente', color: 'bg-yellow-100 text-yellow-700' },
   en_preparacion: { label: 'En preparación', color: 'bg-blue-100 text-blue-700' },
   en_camino: { label: 'En camino', color: 'bg-purple-100 text-purple-700' },
-  entregado: { label: 'Entregado', color: 'bg-green-100 text-green-700' },
-  cancelado: { label: 'Cancelado', color: 'bg-red-100 text-red-700' },
 }
 
-const ORDEN_ESTADOS = ['pendiente', 'en_preparacion', 'en_camino', 'entregado', 'cancelado']
+const ORDEN_ESTADOS = ['pendiente_pago', 'pagado', 'entregado', 'cancelado']
 
 const BadgeEstado = ({ estado }) => {
   const cfg = ESTADOS[estado] || { label: estado, color: 'bg-gray-100 text-gray-700' }
