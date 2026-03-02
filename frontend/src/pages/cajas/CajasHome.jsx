@@ -233,8 +233,16 @@ const CajasHome = () => {
       setPlanillaResuelto(data)
       setErrorPlanilla('')
     } catch (err) {
-      setPlanillaResuelto(null)
-      setErrorPlanilla(err.response?.data?.error || 'Error al validar planilla')
+      const status = err.response?.status
+      const msg = err.response?.data?.error || 'Error al validar planilla'
+      if (status === 503) {
+        // ERP no disponible — permitir continuar sin validación
+        setPlanillaResuelto({ valida: false, sin_validar: true, nombre: 'Sin validar (ERP no disponible)' })
+        setErrorPlanilla('')
+      } else {
+        setPlanillaResuelto(null)
+        setErrorPlanilla(msg)
+      }
     } finally {
       setValidandoPlanilla(false)
     }
@@ -271,6 +279,9 @@ const CajasHome = () => {
       setErrorAbrir('La planilla debe ser válida y estar cerrada en Centum')
       return
     }
+    if (planillaResuelto.sin_validar) {
+      if (!confirm('No se pudo validar la planilla contra el ERP. ¿Deseás continuar igualmente?')) return
+    }
 
     setAbriendo(true)
     setErrorAbrir('')
@@ -291,6 +302,7 @@ const CajasHome = () => {
         fondo_fijo_monedas: {},
         diferencias_apertura: calcularDiferencias(),
         observaciones_apertura: observacionesApertura.trim() || null,
+        skip_validacion: planillaResuelto?.sin_validar || false,
       })
       // Resetear formulario
       setPlanillaId('')
@@ -468,10 +480,11 @@ const CajasHome = () => {
                   onBlur={validarPlanilla}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); validarPlanilla() } }}
                   placeholder="Ej: 12345"
-                  className={`campo-form text-sm ${planillaResuelto ? 'border-green-400' : errorPlanilla ? 'border-red-400' : ''}`}
+                  className={`campo-form text-sm ${planillaResuelto ? (planillaResuelto.sin_validar ? 'border-amber-400' : 'border-green-400') : errorPlanilla ? 'border-red-400' : ''}`}
                 />
                 {validandoPlanilla && <p className="text-xs text-gray-400 mt-1">Validando en Centum...</p>}
-                {planillaResuelto && <p className="text-xs text-green-600 mt-1">Planilla válida — {planillaResuelto.nombre}</p>}
+                {planillaResuelto && !planillaResuelto.sin_validar && <p className="text-xs text-green-600 mt-1">Planilla válida — {planillaResuelto.nombre}</p>}
+                {planillaResuelto?.sin_validar && <p className="text-xs text-amber-600 mt-1">No se pudo validar contra el ERP — podés continuar igualmente</p>}
                 {errorPlanilla && <p className="text-xs text-red-600 mt-1">{errorPlanilla}</p>}
               </div>
             </div>

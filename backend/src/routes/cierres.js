@@ -689,7 +689,7 @@ router.post('/abrir', verificarAuth, async (req, res) => {
     return res.status(403).json({ error: 'Los gestores no pueden abrir cajas' })
   }
 
-  const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura, observaciones_apertura } = req.body
+  const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura, observaciones_apertura, skip_validacion } = req.body
 
   if (!caja_id) {
     return res.status(400).json({ error: 'Seleccioná una caja' })
@@ -750,7 +750,10 @@ router.post('/abrir', verificarAuth, async (req, res) => {
       }
     } catch (centumErr) {
       console.error('Error al validar planilla en Centum:', centumErr)
-      return res.status(503).json({ error: 'No se pudo conectar con el ERP para validar la planilla' })
+      if (!skip_validacion) {
+        return res.status(503).json({ error: 'No se pudo conectar con el ERP para validar la planilla' })
+      }
+      console.warn(`[Cierres] Planilla ${planillaNum} abierta SIN validación Centum (ERP no disponible)`)
     }
 
     // Validar que la caja no esté ya abierta
