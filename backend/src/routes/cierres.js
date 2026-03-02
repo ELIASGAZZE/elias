@@ -218,7 +218,7 @@ router.get('/validar-planilla/:planillaId', verificarAuth, async (req, res) => {
     })
   } catch (err) {
     console.error('Error al validar planilla en Centum:', err)
-    res.status(503).json({ error: 'No se pudo conectar con el ERP' })
+    res.status(503).json({ error: 'No se pudo conectar con el ERP', detalle: err.message })
   }
 })
 
