@@ -2,6 +2,7 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
+const helmet = require('helmet')
 
 const authRoutes = require('./routes/auth')
 const articulosRoutes = require('./routes/articulos')
@@ -26,6 +27,9 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 // ── Middlewares globales ──────────────────────────────────────────────────────
+
+// Headers de seguridad
+app.use(helmet())
 
 // Permitimos requests desde el frontend
 app.use(cors({

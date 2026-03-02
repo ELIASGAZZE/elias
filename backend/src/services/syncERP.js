@@ -3,6 +3,9 @@ const crypto = require('crypto')
 const supabase = require('../config/supabase')
 const { registrarLlamada } = require('./apiLogger')
 
+// Guard de concurrencia: evita que dos syncs de stock corran a la vez
+let stockSyncRunning = false
+
 // Genera el access token para la API de Centum
 // Algoritmo: fechaUTC + " " + uuid + " " + SHA1(fechaUTC + " " + uuid + " " + clavePublica)
 function generateAccessToken(clavePublica) {
@@ -27,12 +30,12 @@ function generateAccessToken(clavePublica) {
  */
 async function sincronizarERP(origen = 'cron') {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-  const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+  const apiKey = process.env.CENTUM_API_KEY
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
   const clientId = process.env.CENTUM_CLIENT_ID || '2'
 
-  if (!baseUrl || !apiKey) {
-    throw new Error('Faltan credenciales del ERP Centum en las variables de entorno')
+  if (!apiKey) {
+    throw new Error('Falta CENTUM_API_KEY en las variables de entorno')
   }
 
   const accessToken = generateAccessToken(apiKey)
@@ -76,7 +79,7 @@ async function sincronizarERP(origen = 'cron') {
       estado: 'error', status_code: response.status, duracion_ms: duracion,
       error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen,
     })
-    throw new Error(`Error al conectar con ERP Centum (${response.status})`)
+    throw new Error(`Error al conectar con ERP Centum (HTTP ${response.status})`)
   }
 
   const erpData = await response.json()
@@ -169,9 +172,26 @@ async function sincronizarERP(origen = 'cron') {
  * Fase 2: batch upsert contra la BD matcheando por id_centum.
  */
 async function sincronizarStock(fullSync = false, origen = 'cron') {
+  if (stockSyncRunning) {
+    return { mensaje: 'Sincronización de stock ya en curso, omitiendo', actualizados: 0, procesados: 0 }
+  }
+  stockSyncRunning = true
+
+  try {
+    return await _sincronizarStockInternal(fullSync, origen)
+  } finally {
+    stockSyncRunning = false
+  }
+}
+
+async function _sincronizarStockInternal(fullSync, origen) {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-  const apiKey = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+  const apiKey = process.env.CENTUM_API_KEY
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+  if (!apiKey) {
+    throw new Error('Falta CENTUM_API_KEY en las variables de entorno')
+  }
 
   const syncInicio = new Date().toISOString()
   const inicioTotal = Date.now()
@@ -220,7 +240,7 @@ async function sincronizarStock(fullSync = false, origen = 'cron') {
         estado: 'error', status_code: response.status, duracion_ms: duracion,
         error_mensaje: `Página ${pagina} - HTTP ${response.status}: ${texto.slice(0, 500)}`, origen,
       })
-      throw new Error(`Error al consultar existencias ERP página ${pagina} (${response.status}): ${texto}`)
+      throw new Error(`Error al consultar existencias ERP página ${pagina} (HTTP ${response.status})`)
     }
 
     const data = await response.json()

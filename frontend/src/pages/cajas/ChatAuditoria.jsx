@@ -65,9 +65,9 @@ const ChatAuditoria = () => {
                   'Resumen de los ultimos cierres',
                   'Que cajero tiene mas diferencias?',
                   'Hay algun patron sospechoso?',
-                ].map((sugerencia, i) => (
+                ].map((sugerencia) => (
                   <button
-                    key={i}
+                    key={sugerencia}
                     onClick={() => { setInput(sugerencia) }}
                     className="text-xs border border-violet-200 text-violet-700 px-3 py-1.5 rounded-full hover:bg-violet-50 transition-colors"
                   >
@@ -78,8 +78,8 @@ const ChatAuditoria = () => {
             </div>
           )}
 
-          {mensajes.map((msg, i) => (
-            <div key={i} className={`flex ${msg.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
+          {mensajes.map((msg, idx) => (
+            <div key={`msg-${idx}`} className={`flex ${msg.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className="max-w-[85%]">
                 <div className={`text-sm px-4 py-2.5 rounded-2xl whitespace-pre-wrap ${
                   msg.rol === 'user'

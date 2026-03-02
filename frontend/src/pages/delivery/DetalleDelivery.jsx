@@ -34,6 +34,11 @@ const formatFechaHora = (fecha) => {
     ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
+const formatPrecio = (precio) => {
+  if (precio == null) return null
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(precio)
+}
+
 const DetalleDelivery = () => {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -42,9 +47,7 @@ const DetalleDelivery = () => {
   const [pedido, setPedido] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [actualizando, setActualizando] = useState(false)
-  const [eliminando, setEliminando] = useState(false)
   const [error, setError] = useState('')
-  const [confirmarEliminar, setConfirmarEliminar] = useState(false)
 
   useEffect(() => {
     cargarPedido()
@@ -75,18 +78,6 @@ const DetalleDelivery = () => {
     }
   }
 
-  const handleEliminar = async () => {
-    setEliminando(true)
-    setError('')
-    try {
-      await api.delete(`/api/delivery/${id}`)
-      navigate('/delivery')
-    } catch (err) {
-      setError(err.response?.data?.error || 'Error al eliminar pedido')
-      setEliminando(false)
-    }
-  }
-
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -109,23 +100,47 @@ const DetalleDelivery = () => {
     )
   }
 
+  // Calcular total del pedido si hay precios
+  const tienePrecios = pedido.items_delivery?.some(i => i.precio != null)
+  const totalPedido = tienePrecios
+    ? pedido.items_delivery.reduce((sum, i) => sum + (i.precio || 0) * (i.cantidad || 0), 0)
+    : null
+
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
       <Navbar titulo="Detalle Delivery" sinTabs volverA="/delivery" />
 
       <div className="px-4 py-4 space-y-4 max-w-4xl mx-auto">
 
-        {/* Estado + fecha */}
+        {/* Estado + fecha + documento */}
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
-            <BadgeEstado estado={pedido.estado} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <BadgeEstado estado={pedido.estado} />
+              {pedido.estado_centum && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                  Centum: {pedido.estado_centum}
+                </span>
+              )}
+            </div>
             <span className="text-xs text-gray-400">{formatFechaHora(pedido.created_at)}</span>
           </div>
+          {pedido.numero_documento && (
+            <p className="text-sm font-mono font-semibold text-gray-700 mb-1">{pedido.numero_documento}</p>
+          )}
           {pedido.sucursales?.nombre && (
             <p className="text-xs text-gray-400">Sucursal: {pedido.sucursales.nombre}</p>
           )}
           {pedido.perfiles?.nombre && (
             <p className="text-xs text-gray-400">Creado por: {pedido.perfiles.nombre}</p>
+          )}
+          {pedido.fecha_entrega && (
+            <p className="text-xs text-gray-400">Entrega: {formatFechaHora(pedido.fecha_entrega)}</p>
+          )}
+          {pedido.id_pedido_centum && !pedido.numero_documento && (
+            <p className="text-xs text-gray-400 mt-1">
+              Centum: <span className="font-mono font-medium text-gray-600">Pedido #{pedido.id_pedido_centum}</span>
+            </p>
           )}
         </div>
 
@@ -175,12 +190,23 @@ const DetalleDelivery = () => {
                     <p className="text-xs text-gray-500 italic mt-0.5">{item.observaciones}</p>
                   )}
                 </div>
-                <span className="text-sm font-semibold text-gray-700 bg-gray-100 px-3 py-1 rounded-lg">
-                  x{item.cantidad}
-                </span>
+                <div className="flex items-center gap-3">
+                  {item.precio != null && (
+                    <span className="text-xs text-gray-500">{formatPrecio(item.precio)}</span>
+                  )}
+                  <span className="text-sm font-semibold text-gray-700 bg-gray-100 px-3 py-1 rounded-lg">
+                    x{item.cantidad}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
+          {totalPedido != null && (
+            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-700">Total</span>
+              <span className="text-sm font-bold text-gray-800">{formatPrecio(totalPedido)}</span>
+            </div>
+          )}
         </div>
 
         {/* Acciones admin */}
@@ -204,35 +230,6 @@ const DetalleDelivery = () => {
                 ))}
               </div>
             </div>
-
-            {/* Eliminar */}
-            {!confirmarEliminar ? (
-              <button
-                onClick={() => setConfirmarEliminar(true)}
-                className="w-full text-sm text-red-600 border border-red-200 py-2 rounded-xl hover:bg-red-50 transition-colors"
-              >
-                Eliminar pedido
-              </button>
-            ) : (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-                <p className="text-sm text-red-700 mb-2">¿Estás seguro? Esta acción no se puede deshacer.</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleEliminar}
-                    disabled={eliminando}
-                    className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    {eliminando ? 'Eliminando...' : 'Sí, eliminar'}
-                  </button>
-                  <button
-                    onClick={() => setConfirmarEliminar(false)}
-                    className="flex-1 bg-white border border-gray-300 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
 

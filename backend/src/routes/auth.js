@@ -118,8 +118,8 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
   }
 
   const usernameLimpio = username.toLowerCase().trim()
@@ -203,8 +203,8 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
-  if (password && password.length < 6) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+  if (password && password.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
   }
 
   try {

@@ -1,5 +1,5 @@
 // Página principal de la app Delivery
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
@@ -47,7 +47,8 @@ const DeliveryHome = () => {
   const [busqueda, setBusqueda] = useState('')
   const [busquedaActiva, setBusquedaActiva] = useState('')
   const [cargando, setCargando] = useState(true)
-  const debounceRef = useRef(null)
+  const [sincronizando, setSincronizando] = useState(false)
+  const [mensajeSync, setMensajeSync] = useState(null)
   const LIMIT = 15
 
   useEffect(() => {
@@ -56,12 +57,11 @@ const DeliveryHome = () => {
 
   // Debounce de búsqueda
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       setBusquedaActiva(busqueda)
       setPage(1)
     }, 400)
-    return () => clearTimeout(debounceRef.current)
+    return () => clearTimeout(timeoutId)
   }, [busqueda])
 
   const cargarPedidos = async () => {
@@ -77,6 +77,23 @@ const DeliveryHome = () => {
       console.error('Error cargando pedidos delivery:', err)
     } finally {
       setCargando(false)
+    }
+  }
+
+  const sincronizar = async () => {
+    setSincronizando(true)
+    setMensajeSync(null)
+    try {
+      const { data } = await api.post('/api/delivery/sincronizar')
+      setMensajeSync({ tipo: 'ok', texto: data.mensaje })
+      // Recargar lista después de sincronizar
+      cargarPedidos()
+    } catch (err) {
+      setMensajeSync({ tipo: 'error', texto: err.response?.data?.error || 'Error al sincronizar' })
+    } finally {
+      setSincronizando(false)
+      // Ocultar mensaje después de 5s
+      setTimeout(() => setMensajeSync(null), 5000)
     }
   }
 
@@ -112,7 +129,7 @@ const DeliveryHome = () => {
           ))}
         </div>
 
-        {/* Barra de búsqueda + botón nuevo */}
+        {/* Barra de búsqueda + botón sincronizar */}
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -121,16 +138,30 @@ const DeliveryHome = () => {
             placeholder="Buscar por cliente, dirección, sucursal..."
             className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-400"
           />
-          <Link
-            to="/delivery/nuevo"
-            className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 text-white p-2.5 rounded-xl transition-colors"
-            title="Nuevo pedido"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-          </Link>
+          {esAdmin && (
+            <button
+              onClick={sincronizar}
+              disabled={sincronizando}
+              className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-colors"
+              title="Sincronizar pedidos desde Centum"
+            >
+              <svg className={`w-5 h-5 ${sincronizando ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          )}
         </div>
+
+        {/* Mensaje de sincronización */}
+        {mensajeSync && (
+          <div className={`text-sm px-4 py-2.5 rounded-xl border ${
+            mensajeSync.tipo === 'ok'
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-red-50 text-red-600 border-red-200'
+          }`}>
+            {mensajeSync.texto}
+          </div>
+        )}
 
         {/* Contador de resultados */}
         {!cargando && (
@@ -160,9 +191,14 @@ const DeliveryHome = () => {
                 className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-semibold text-gray-800 truncate mr-2">
-                    {pedido.clientes?.razon_social || 'Sin cliente'}
-                  </span>
+                  <div className="flex items-center gap-2 truncate mr-2">
+                    <span className="text-sm font-semibold text-gray-800 truncate">
+                      {pedido.clientes?.razon_social || 'Sin cliente'}
+                    </span>
+                    {pedido.numero_documento && (
+                      <span className="text-xs font-mono text-gray-400">{pedido.numero_documento}</span>
+                    )}
+                  </div>
                   <BadgeEstado estado={pedido.estado} />
                 </div>
                 <div className="flex items-center justify-between">

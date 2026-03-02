@@ -198,11 +198,11 @@ const DetallePedido = () => {
             Artículos ({pedido.items_pedido?.length || 0})
           </h3>
           <div className="space-y-2">
-            {pedido.items_pedido?.map((item, i) => (
-              <div key={i} className="flex justify-between text-sm gap-2 py-1.5 border-b border-gray-50 last:border-0">
+            {pedido.items_pedido?.map((item) => (
+              <div key={item.articulo_id || item.articulos?.id} className="flex justify-between text-sm gap-2 py-1.5 border-b border-gray-50 last:border-0">
                 <span className="text-gray-600 min-w-0 truncate">
-                  <span className="text-gray-400 mr-1">{item.articulos.codigo}</span>
-                  {item.articulos.nombre}
+                  <span className="text-gray-400 mr-1">{item.articulos?.codigo}</span>
+                  {item.articulos?.nombre}
                 </span>
                 <span className="font-medium flex-shrink-0">{item.cantidad}</span>
               </div>

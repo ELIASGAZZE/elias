@@ -1,4 +1,9 @@
 node_modules/
 dist/
 .env
-.vercel
+.env.*
+!.env.example
+.vercel/
+*.log
+npm-debug.log*
+.DS_Store

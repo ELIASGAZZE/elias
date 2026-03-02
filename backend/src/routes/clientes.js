@@ -10,8 +10,8 @@ const { registrarLlamada } = require('../services/apiLogger')
 // Lista clientes con búsqueda y paginación
 router.get('/', verificarAuth, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1
-    const limit = parseInt(req.query.limit) || 20
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 20), 100)
     const from = (page - 1) * limit
     const to = from + limit - 1
     const { buscar } = req.query

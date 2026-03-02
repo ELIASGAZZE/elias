@@ -1,4 +1,11 @@
 node_modules/
 .env
+.env.*
+!.env.example
 dist/
 .DS_Store
+*.log
+npm-debug.log*
+.vercel/
+.idea/
+.vscode/

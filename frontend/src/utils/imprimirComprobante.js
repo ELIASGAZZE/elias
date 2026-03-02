@@ -1,5 +1,15 @@
 // Utilidad de impresión de comprobantes 80mm (comandera)
 
+// Escapa HTML para prevenir XSS al inyectar datos en document.write
+const escapeHtml = (str) => {
+  if (str == null) return ''
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 const formatMonto = (monto) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
 
@@ -88,12 +98,12 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
 
   html += '<div class="center bold">CIERRE DE CAJA</div>'
   html += '<div class="line-double"></div>'
-  html += `<div>Planilla: #${cierre.planilla_id}</div>`
-  if (cierre.caja?.nombre) html += `<div>Caja: ${cierre.caja.nombre}</div>`
-  if (cierre.caja?.sucursales?.nombre) html += `<div>Sucursal: ${cierre.caja.sucursales.nombre}</div>`
-  if (cierre.empleado?.nombre) html += `<div>Abrio: ${cierre.empleado.nombre}</div>`
-  if (cierre.cerrado_por?.nombre) html += `<div>Cerro: ${cierre.cerrado_por.nombre}</div>`
-  html += `<div>Fecha: ${formatFecha(cierre.fecha)}</div>`
+  html += `<div>Planilla: #${escapeHtml(cierre.planilla_id)}</div>`
+  if (cierre.caja?.nombre) html += `<div>Caja: ${escapeHtml(cierre.caja.nombre)}</div>`
+  if (cierre.caja?.sucursales?.nombre) html += `<div>Sucursal: ${escapeHtml(cierre.caja.sucursales.nombre)}</div>`
+  if (cierre.empleado?.nombre) html += `<div>Abrio: ${escapeHtml(cierre.empleado.nombre)}</div>`
+  if (cierre.cerrado_por?.nombre) html += `<div>Cerro: ${escapeHtml(cierre.cerrado_por.nombre)}</div>`
+  html += `<div>Fecha: ${escapeHtml(formatFecha(cierre.fecha))}</div>`
   if (cierre.fondo_fijo > 0) html += `<div>Cambio inicial: ${formatMonto(cierre.fondo_fijo)}</div>`
   html += '<div class="line-double"></div>'
 
@@ -108,7 +118,7 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
   if (Array.isArray(cierre.medios_pago) && cierre.medios_pago.length > 0) {
     html += '<div class="bold">MEDIOS DE PAGO</div>'
     cierre.medios_pago.forEach(mp => {
-      const label = mp.cantidad > 0 ? `${mp.nombre} (${mp.cantidad})` : mp.nombre
+      const label = mp.cantidad > 0 ? `${escapeHtml(mp.nombre)} (${mp.cantidad})` : escapeHtml(mp.nombre)
       html += `<div class="row"><span>${label}</span><span>${formatMonto(mp.monto)}</span></div>`
     })
     html += '<div class="line-double"></div>'
@@ -143,12 +153,12 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
 export function imprimirRetiro(retiro, cierre) {
   let html = ''
 
-  html += `<div class="center bold">RETIRO DE EFECTIVO #${retiro.numero}</div>`
+  html += `<div class="center bold">RETIRO DE EFECTIVO #${escapeHtml(retiro.numero)}</div>`
   html += '<div class="line-double"></div>'
-  if (cierre?.caja?.nombre) html += `<div>Caja: ${cierre.caja.nombre}</div>`
-  if (cierre?.caja?.sucursales?.nombre) html += `<div>Sucursal: ${cierre.caja.sucursales.nombre}</div>`
-  if (retiro.empleado?.nombre) html += `<div>Empleado: ${retiro.empleado.nombre}</div>`
-  html += `<div>Fecha: ${formatFechaHora(retiro.created_at)}</div>`
+  if (cierre?.caja?.nombre) html += `<div>Caja: ${escapeHtml(cierre.caja.nombre)}</div>`
+  if (cierre?.caja?.sucursales?.nombre) html += `<div>Sucursal: ${escapeHtml(cierre.caja.sucursales.nombre)}</div>`
+  if (retiro.empleado?.nombre) html += `<div>Empleado: ${escapeHtml(retiro.empleado.nombre)}</div>`
+  html += `<div>Fecha: ${escapeHtml(formatFechaHora(retiro.created_at))}</div>`
   html += '<div class="line-double"></div>'
 
   // Billetes del retiro
@@ -178,7 +188,7 @@ export function imprimirRetiro(retiro, cierre) {
   html += '<div class="line-double"></div>'
 
   if (retiro.observaciones) {
-    html += `<div>Obs: ${retiro.observaciones}</div>`
+    html += `<div>Obs: ${escapeHtml(retiro.observaciones)}</div>`
     html += '<div class="line"></div>'
   }
 

@@ -68,9 +68,9 @@ const MisPedidos = () => {
 
             {/* Lista resumida de artículos */}
             <div className="space-y-1 mt-3 border-t border-gray-100 pt-3">
-              {pedido.items_pedido?.slice(0, 3).map((item, i) => (
-                <div key={i} className="flex justify-between text-sm">
-                  <span className="text-gray-600">{item.articulos.nombre}</span>
+              {pedido.items_pedido?.slice(0, 3).map((item) => (
+                <div key={item.articulo_id || item.articulos?.id} className="flex justify-between text-sm">
+                  <span className="text-gray-600">{item.articulos?.nombre}</span>
                   <span className="font-medium">{item.cantidad}</span>
                 </div>
               ))}

@@ -35,9 +35,11 @@ async function notificarAdmins(titulo, cuerpo) {
         keys: { p256dh: sub.p256dh, auth: sub.auth },
       }
       webpush.sendNotification(pushSub, payload).catch(async (err) => {
-        // Si la suscripción expiró o es inválida, la eliminamos
         if (err.statusCode === 404 || err.statusCode === 410) {
+          // Suscripción expiró o es inválida, la eliminamos
           await supabase.from('push_subscriptions').delete().eq('id', sub.id)
+        } else {
+          console.error(`[Push] Error enviando notificación (${err.statusCode}):`, err.message)
         }
       })
     }
@@ -52,8 +54,8 @@ router.get('/', verificarAuth, async (req, res) => {
   try {
     const { sucursal_id, estado, fecha_desde, fecha_hasta, usuario_id } = req.query
 
-    const page = parseInt(req.query.page) || 1
-    const limit = parseInt(req.query.limit) || 15
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 15), 100)
     const from = (page - 1) * limit
     const to = from + limit - 1
 

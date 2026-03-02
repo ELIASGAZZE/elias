@@ -720,8 +720,8 @@ const DetalleCierre = () => {
                         </div>
                         {nc.articulos.length > 0 && (
                           <div className="text-xs text-gray-500 space-y-0.5 pt-1 border-t border-gray-100">
-                            {nc.articulos.map((art, i) => (
-                              <div key={i} className="flex justify-between">
+                            {nc.articulos.map((art, idx) => (
+                              <div key={art.codigo || `art-${idx}`} className="flex justify-between">
                                 <span className="truncate flex-1">
                                   {art.codigo ? `${art.codigo} — ` : ''}{art.nombre || 'Sin nombre'}
                                   {' x '}{art.cantidad}
@@ -775,8 +775,8 @@ const DetalleCierre = () => {
                     {venta.articulos && venta.articulos.length > 0 && (
                       <div className="text-xs text-gray-500 space-y-0.5">
                         <p className="font-medium text-gray-600">Artículos:</p>
-                        {venta.articulos.map((art, i) => (
-                          <p key={i}>
+                        {venta.articulos.map((art, idx) => (
+                          <p key={art.codigo || `vart-${idx}`}>
                             {art.codigo ? `${art.codigo} — ${art.nombre} x ${art.cantidad}` : art.descripcion}
                           </p>
                         ))}
@@ -922,8 +922,8 @@ const DetalleCierre = () => {
                 {analisisIA.alertas && analisisIA.alertas.length > 0 && (
                   <div className="space-y-1.5">
                     <h4 className="text-xs font-semibold text-violet-700">Alertas</h4>
-                    {analisisIA.alertas.map((alerta, i) => (
-                      <div key={i} className={`flex items-start gap-2 text-sm p-2 rounded-lg ${
+                    {analisisIA.alertas.map((alerta, idx) => (
+                      <div key={`alerta-${idx}`} className={`flex items-start gap-2 text-sm p-2 rounded-lg ${
                         alerta.severidad === 'critico' ? 'bg-red-50 text-red-700' :
                         alerta.severidad === 'advertencia' ? 'bg-yellow-50 text-yellow-700' :
                         'bg-blue-50 text-blue-700'
@@ -943,8 +943,8 @@ const DetalleCierre = () => {
                   <div className="space-y-1">
                     <h4 className="text-xs font-semibold text-violet-700">Recomendaciones</h4>
                     <ul className="text-sm text-gray-600 space-y-0.5">
-                      {analisisIA.recomendaciones.map((rec, i) => (
-                        <li key={i} className="flex items-start gap-1.5">
+                      {analisisIA.recomendaciones.map((rec, idx) => (
+                        <li key={`rec-${idx}`} className="flex items-start gap-1.5">
                           <span className="text-violet-400 mt-1 flex-shrink-0">-</span>
                           <span>{rec}</span>
                         </li>
@@ -962,8 +962,8 @@ const DetalleCierre = () => {
 
                 {chatMensajes.length > 0 && (
                   <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                    {chatMensajes.map((msg, i) => (
-                      <div key={i} className={`flex ${msg.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {chatMensajes.map((msg, idx) => (
+                      <div key={`chat-${idx}`} className={`flex ${msg.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className="max-w-[85%]">
                           <div className={`text-sm px-3 py-2 rounded-xl ${
                             msg.rol === 'user'
@@ -975,11 +975,11 @@ const DetalleCierre = () => {
                           {msg.rol === 'user' && (
                             <div className="flex justify-end mt-0.5">
                               <button
-                                onClick={() => guardarComoRegla(msg.contenido, i)}
-                                disabled={guardandoRegla === i || reglaGuardada === i}
+                                onClick={() => guardarComoRegla(msg.contenido, idx)}
+                                disabled={guardandoRegla === idx || reglaGuardada === idx}
                                 className="text-[10px] text-violet-400 hover:text-violet-600 disabled:text-green-500 transition-colors"
                               >
-                                {reglaGuardada === i ? 'Guardada' : guardandoRegla === i ? 'Guardando...' : 'Guardar como regla'}
+                                {reglaGuardada === idx ? 'Guardada' : guardandoRegla === idx ? 'Guardando...' : 'Guardar como regla'}
                               </button>
                             </div>
                           )}

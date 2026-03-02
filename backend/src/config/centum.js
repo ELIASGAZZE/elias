@@ -2,14 +2,22 @@
 const sql = require('mssql')
 const { registrarLlamada } = require('../services/apiLogger')
 
+// Validar que las variables de entorno requeridas existan
+const requiredEnvVars = ['CENTUM_BI_SERVER', 'CENTUM_BI_PORT', 'CENTUM_BI_DATABASE', 'CENTUM_BI_USER', 'CENTUM_BI_PASSWORD']
+for (const varName of requiredEnvVars) {
+  if (!process.env[varName]) {
+    console.warn(`[Centum BI] Variable de entorno ${varName} no configurada`)
+  }
+}
+
 const centumConfig = {
-  server: process.env.CENTUM_BI_SERVER || '119.8.79.133',
+  server: process.env.CENTUM_BI_SERVER,
   port: parseInt(process.env.CENTUM_BI_PORT || '22455'),
-  database: process.env.CENTUM_BI_DATABASE || 'CentumSuiteBL7GazzeJorge',
-  user: process.env.CENTUM_BI_USER || 'centum_bi_GazzeJorge',
-  password: process.env.CENTUM_BI_PASSWORD || '8601',
+  database: process.env.CENTUM_BI_DATABASE,
+  user: process.env.CENTUM_BI_USER,
+  password: process.env.CENTUM_BI_PASSWORD,
   options: {
-    encrypt: false,
+    encrypt: process.env.CENTUM_BI_ENCRYPT !== 'false',
     trustServerCertificate: true,
   },
   connectionTimeout: 15000,
@@ -295,9 +303,9 @@ async function fetchNotificacionesSheet() {
     const cols = parseCSVRow(lines[i])
     if (cols.length < header.length) continue
     rows.push({
-      notificacion_id: parseInt(cols[idxId]?.replace(/"/g, '')) || 0,
+      notificacion_id: Number(cols[idxId]?.replace(/"/g, '')) || 0,
       descripcion: cols[idxDesc]?.replace(/^"|"$/g, '') || '',
-      usuario_id_alta: parseInt(cols[idxUser]?.replace(/"/g, '')) || 0,
+      usuario_id_alta: Number(cols[idxUser]?.replace(/"/g, '')) || 0,
       fecha_creacion: cols[idxFecha]?.replace(/^"|"$/g, '') || '',
     })
   }

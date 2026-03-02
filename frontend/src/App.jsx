@@ -24,7 +24,6 @@ import ChatAuditoria from './pages/cajas/ChatAuditoria'
 
 // Páginas de la app Delivery
 import DeliveryHome from './pages/delivery/DeliveryHome'
-import NuevoDelivery from './pages/delivery/NuevoDelivery'
 import DetalleDelivery from './pages/delivery/DetalleDelivery'
 
 // Páginas solo admin
@@ -125,11 +124,6 @@ const App = () => {
           <Route path="/delivery" element={
             <RutaProtegida>
               <DeliveryHome />
-            </RutaProtegida>
-          } />
-          <Route path="/delivery/nuevo" element={
-            <RutaProtegida>
-              <NuevoDelivery />
             </RutaProtegida>
           } />
           <Route path="/delivery/:id" element={
