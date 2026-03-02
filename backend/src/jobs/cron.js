@@ -3,6 +3,7 @@ const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
 const { sincronizarPedidosVenta } = require('../services/syncPedidosVenta')
+const { syncClientesRecientes, retrySyncCentum } = require('../services/centumClientes')
 
 function iniciarCronJobs() {
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
@@ -41,6 +42,30 @@ function iniciarCronJobs() {
     })
   })
 
+  // Sync incremental de clientes: cada 5 minutos, últimas 2 horas
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const resultado = await syncClientesRecientes(2)
+      if (resultado.nuevos > 0 || resultado.actualizados > 0) {
+        console.log(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
+      }
+    } catch (err) {
+      console.error('[SyncClientes] Error:', err.message)
+    }
+  })
+
+  // Retry clientes sin id_centum: cada 5 minutos (offset 2 min para no chocar con sync)
+  cron.schedule('2-57/5 * * * *', async () => {
+    try {
+      const resultado = await retrySyncCentum()
+      if (resultado.reintentados > 0) {
+        console.log(`[RetryCentum] ${resultado.exitosos}/${resultado.reintentados} clientes sincronizados a Centum (${resultado.fallidos} fallidos)`)
+      }
+    } catch (err) {
+      console.error('[RetryCentum] Error:', err.message)
+    }
+  })
+
   // Sync continuo de pedidos de venta desde Centum (loop con 15s de pausa)
   async function loopSyncPedidos() {
     // Esperar 30s antes de la primera sync para que el servidor termine de arrancar
@@ -64,6 +89,8 @@ function iniciarCronJobs() {
   console.log('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
   console.log('[CRON] Sincronización stock depósito programada: cada hora en punto')
   console.log('[CRON] Keep-alive programado: cada 14 minutos')
+  console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
+  console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Sync pedidos de venta: loop continuo (cada 15s)')
 }
 

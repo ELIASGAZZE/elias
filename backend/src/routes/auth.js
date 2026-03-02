@@ -178,6 +178,7 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
       throw perfilError
     }
 
+    console.log(`[AUDIT] Usuario creado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
     res.status(201).json(perfil)
   } catch (err) {
     console.error('Error al crear usuario:', err)
@@ -271,6 +272,7 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
       .single()
 
     if (error) throw error
+    console.log(`[AUDIT] Usuario editado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
     res.json(data)
   } catch (err) {
     console.error('Error al editar usuario:', err)
@@ -317,6 +319,7 @@ router.delete('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     // Si no hay cascade, eliminar perfil manualmente
     await supabase.from('perfiles').delete().eq('id', id)
 
+    console.log(`[AUDIT] Usuario eliminado: "${perfil.nombre}" por admin "${req.perfil.username}"`)
     res.json({ mensaje: 'Usuario eliminado correctamente' })
   } catch (err) {
     console.error('Error al eliminar usuario:', err)

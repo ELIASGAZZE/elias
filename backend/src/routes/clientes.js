@@ -3,8 +3,11 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
-const { fetchClientesCentum, crearClienteEnCentum } = require('../services/centumClientes')
+const { fetchClientesCentum, crearClienteEnCentum, agregarContactoEnvioCentum } = require('../services/centumClientes')
 const { registrarLlamada } = require('../services/apiLogger')
+const { getPool } = require('../config/centum')
+const sql = require('mssql')
+const { consultarCUIT } = require('../services/afip')
 
 // GET /api/clientes
 // Lista clientes con búsqueda y paginación
@@ -68,6 +71,134 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/clientes/buscar-afip?cuit=XXX
+// Consulta datos de un CUIT en AFIP/ARCA
+router.get('/buscar-afip', verificarAuth, async (req, res) => {
+  try {
+    const { cuit } = req.query
+    const soloDigitos = cuit?.replace(/\D/g, '') || ''
+    if (soloDigitos.length < 7) {
+      return res.status(400).json({ error: 'Ingrese al menos 7 dígitos (DNI o CUIT)' })
+    }
+
+    const datos = await consultarCUIT(soloDigitos)
+    if (!datos) {
+      return res.json({ encontrado: false })
+    }
+
+    res.json({ encontrado: true, datos })
+  } catch (err) {
+    console.error('Error al consultar AFIP:', err.message)
+    // Si AFIP no responde, no romper el flujo
+    const msg = err.response?.data?.message || err.message
+    if (msg.includes('No existe persona')) {
+      return res.json({ encontrado: false })
+    }
+    res.status(500).json({ error: 'Error al consultar AFIP' })
+  }
+})
+
+// GET /api/clientes/buscar-centum?cuit=XXX
+// Busca clientes en Centum BI por CUIT/DNI
+router.get('/buscar-centum', verificarAuth, async (req, res) => {
+  try {
+    const { cuit } = req.query
+    if (!cuit || cuit.trim().length < 3) {
+      return res.json({ resultados: [] })
+    }
+
+    const termino = cuit.trim().replace(/\D/g, '')
+    if (termino.length < 3) {
+      return res.json({ resultados: [] })
+    }
+
+    const db = await getPool()
+    const result = await db.request()
+      .input('cuit', sql.NVarChar, `%${termino}%`)
+      .query(`
+        SELECT TOP 10 ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, Telefono1Cliente
+        FROM Clientes_VIEW
+        WHERE REPLACE(REPLACE(ISNULL(CUITCliente,''), '-', ''), ' ', '') LIKE @cuit
+        AND ActivoCliente = 1
+        ORDER BY RazonSocialCliente
+      `)
+
+    const resultados = result.recordset.map(r => ({
+      id_centum: r.ClienteID,
+      razon_social: r.RazonSocialCliente?.trim() || '',
+      cuit: r.CUITCliente?.trim() || '',
+      direccion: r.DireccionCliente?.trim() || '',
+      localidad: r.LocalidadCliente?.trim() || '',
+      telefono: r.Telefono1Cliente?.trim() || '',
+    }))
+
+    res.json({ resultados })
+  } catch (err) {
+    console.error('Error al buscar cliente en Centum:', err)
+    res.status(500).json({ error: 'Error al buscar en Centum' })
+  }
+})
+
+// POST /api/clientes/importar-centum
+// Importa un cliente existente de Centum a la BD local
+router.post('/importar-centum', verificarAuth, async (req, res) => {
+  try {
+    const { id_centum, razon_social, cuit, direccion, localidad, telefono } = req.body
+
+    if (!id_centum) {
+      return res.status(400).json({ error: 'id_centum es requerido' })
+    }
+
+    // Verificar si ya existe localmente
+    const { data: existente } = await supabase
+      .from('clientes')
+      .select('*')
+      .eq('id_centum', id_centum)
+      .maybeSingle()
+
+    if (existente) {
+      return res.json(existente)
+    }
+
+    // Generar código CLI-XXXX
+    const { data: ultimo } = await supabase
+      .from('clientes')
+      .select('codigo')
+      .like('codigo', 'CLI-%')
+      .order('codigo', { ascending: false })
+      .limit(1)
+
+    let siguiente = 1
+    if (ultimo && ultimo.length > 0) {
+      const match = ultimo[0].codigo.match(/CLI-(\d+)/)
+      if (match) siguiente = parseInt(match[1]) + 1
+    }
+    const codigo = `CLI-${String(siguiente).padStart(4, '0')}`
+
+    const { data, error } = await supabase
+      .from('clientes')
+      .insert({
+        codigo,
+        razon_social: razon_social?.trim() || 'Sin nombre',
+        cuit: cuit?.trim() || null,
+        direccion: direccion?.trim() || null,
+        localidad: localidad?.trim() || null,
+        telefono: telefono?.trim() || null,
+        id_centum,
+        activo: true,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    res.status(201).json(data)
+  } catch (err) {
+    console.error('Error al importar cliente de Centum:', err)
+    res.status(500).json({ error: 'Error al importar cliente' })
+  }
+})
+
 // GET /api/clientes/:id
 // Detalle de un cliente
 router.get('/:id', verificarAuth, async (req, res) => {
@@ -90,10 +221,11 @@ router.get('/:id', verificarAuth, async (req, res) => {
 })
 
 // POST /api/clientes
-// Crear cliente local (código auto-generado CLI-0001)
+// Crear cliente local (código auto-generado CLI-0001) + exportar a Centum
 router.post('/', verificarAuth, async (req, res) => {
   try {
-    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono } = req.body
+    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono,
+            email, celular, condicion_iva, direcciones_entrega } = req.body
 
     if (!razon_social || !razon_social.trim()) {
       return res.status(400).json({ error: 'La razón social es requerida' })
@@ -125,6 +257,9 @@ router.post('/', verificarAuth, async (req, res) => {
         codigo_postal: codigo_postal?.trim() || null,
         provincia: provincia?.trim() || null,
         telefono: telefono?.trim() || null,
+        email: email?.trim() || null,
+        celular: celular?.trim() || null,
+        condicion_iva: condicion_iva || 'CF',
         activo: true,
       })
       .select()
@@ -133,8 +268,16 @@ router.post('/', verificarAuth, async (req, res) => {
     if (error) throw error
 
     // Auto-exportar a Centum ERP
+    let clienteResponse = data
+    let warningCentum = null
+
+    // Extraer dirección de entrega principal para Centum
+    const dirPrincipal = Array.isArray(direcciones_entrega)
+      ? direcciones_entrega.find(d => d.direccion?.trim())
+      : null
+
     try {
-      const resultado = await crearClienteEnCentum(data)
+      const resultado = await crearClienteEnCentum(data, condicion_iva || 'CF', dirPrincipal)
       const idCentum = resultado.IdCliente || resultado.Id || null
       if (idCentum) {
         const { data: actualizado } = await supabase
@@ -143,13 +286,42 @@ router.post('/', verificarAuth, async (req, res) => {
           .eq('id', data.id)
           .select()
           .single()
-        return res.status(201).json(actualizado || data)
+        clienteResponse = actualizado || data
+
+        // Agregar contacto de envío en Centum (email/celular)
+        if (email || celular) {
+          try {
+            await agregarContactoEnvioCentum(idCentum, { email, celular })
+          } catch (errContacto) {
+            console.warn('No se pudo agregar contacto envío en Centum:', errContacto.message)
+          }
+        }
       }
     } catch (errCentum) {
       console.warn('No se pudo exportar cliente a Centum (se creó solo local):', errCentum.message)
+      warningCentum = 'No se pudo cargar el cliente en Centum. Se reintentará automáticamente, o cargarlo de forma manual en Centum.'
     }
 
-    res.status(201).json(data)
+    // Insertar direcciones de entrega locales
+    if (Array.isArray(direcciones_entrega) && direcciones_entrega.length > 0) {
+      const dirs = direcciones_entrega
+        .filter(d => d.direccion?.trim())
+        .map((d, i) => ({
+          cliente_id: clienteResponse.id,
+          direccion: d.direccion.trim(),
+          localidad: d.localidad?.trim() || null,
+          referencia: d.referencia?.trim() || null,
+          es_principal: i === 0,
+        }))
+
+      if (dirs.length > 0) {
+        await supabase.from('direcciones_entrega').insert(dirs)
+      }
+    }
+
+    const respuesta = { ...clienteResponse }
+    if (warningCentum) respuesta.warning_centum = warningCentum
+    res.status(201).json(respuesta)
   } catch (err) {
     console.error('Error al crear cliente:', err)
     res.status(500).json({ error: 'Error al crear cliente' })
@@ -291,6 +463,63 @@ router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) =
   } catch (err) {
     console.error('Error al exportar cliente a Centum:', err)
     res.status(500).json({ error: 'Error al exportar cliente a Centum' })
+  }
+})
+
+// GET /api/clientes/:id/direcciones
+// Listar direcciones de entrega de un cliente
+router.get('/:id/direcciones', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('direcciones_entrega')
+      .select('*')
+      .eq('cliente_id', req.params.id)
+      .order('es_principal', { ascending: false })
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al obtener direcciones:', err)
+    res.status(500).json({ error: 'Error al obtener direcciones' })
+  }
+})
+
+// POST /api/clientes/:id/direcciones
+// Agregar dirección de entrega a un cliente
+router.post('/:id/direcciones', verificarAuth, async (req, res) => {
+  try {
+    const { direccion, localidad, referencia, es_principal } = req.body
+
+    if (!direccion || !direccion.trim()) {
+      return res.status(400).json({ error: 'La dirección es requerida' })
+    }
+
+    // Si es principal, quitar flag de las demás
+    if (es_principal) {
+      await supabase
+        .from('direcciones_entrega')
+        .update({ es_principal: false })
+        .eq('cliente_id', req.params.id)
+    }
+
+    const { data, error } = await supabase
+      .from('direcciones_entrega')
+      .insert({
+        cliente_id: req.params.id,
+        direccion: direccion.trim(),
+        localidad: localidad?.trim() || null,
+        referencia: referencia?.trim() || null,
+        es_principal: es_principal || false,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    res.status(201).json(data)
+  } catch (err) {
+    console.error('Error al agregar dirección:', err)
+    res.status(500).json({ error: 'Error al agregar dirección' })
   }
 })
 

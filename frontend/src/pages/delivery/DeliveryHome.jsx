@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
+import NuevoClienteModal from '../../components/NuevoClienteModal'
 import api from '../../services/api'
 
 const TABS = [
@@ -49,6 +50,7 @@ const DeliveryHome = () => {
   const [cargando, setCargando] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
   const [mensajeSync, setMensajeSync] = useState(null)
+  const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false)
   const LIMIT = 15
 
   useEffect(() => {
@@ -139,16 +141,27 @@ const DeliveryHome = () => {
             className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-amber-400"
           />
           {esAdmin && (
-            <button
-              onClick={sincronizar}
-              disabled={sincronizando}
-              className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-colors"
-              title="Sincronizar pedidos desde Centum"
-            >
-              <svg className={`w-5 h-5 ${sincronizando ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
+            <>
+              <button
+                onClick={() => setMostrarNuevoCliente(true)}
+                className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 text-white p-2.5 rounded-xl transition-colors"
+                title="Nuevo cliente"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+              </button>
+              <button
+                onClick={sincronizar}
+                disabled={sincronizando}
+                className="flex-shrink-0 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-colors"
+                title="Sincronizar pedidos desde Centum"
+              >
+                <svg className={`w-5 h-5 ${sincronizando ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </>
           )}
         </div>
 
@@ -245,6 +258,14 @@ const DeliveryHome = () => {
           </div>
         )}
       </div>
+
+      {/* Modal nuevo cliente */}
+      {mostrarNuevoCliente && (
+        <NuevoClienteModal
+          onClose={() => setMostrarNuevoCliente(false)}
+          onCreado={() => setMostrarNuevoCliente(false)}
+        />
+      )}
     </div>
   )
 }
