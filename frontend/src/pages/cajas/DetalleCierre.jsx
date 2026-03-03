@@ -278,11 +278,17 @@ const DetalleCierre = () => {
       erpMediosMap[mp.nombre.toUpperCase()] = mp
     })
   }
+  // Normaliza nombre: saca separadores y ordena palabras para comparar
+  const normalizarMedio = (n) => n.toUpperCase().replace(/[\/\-,]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ')
+  const mediosSonIguales = (a, b) => {
+    const na = a.toUpperCase(), nb = b.toUpperCase()
+    if (na.includes(nb) || nb.includes(na)) return true
+    return normalizarMedio(a) === normalizarMedio(b)
+  }
   const getErpMonto = (nombre) => {
     if (!erpData) return null
-    const upper = nombre.toUpperCase()
     for (const [key, mp] of Object.entries(erpMediosMap)) {
-      if (key.includes(upper) || upper.includes(key)) return mp.total
+      if (mediosSonIguales(nombre, key)) return mp.total
     }
     return 0
   }
@@ -626,8 +632,8 @@ const DetalleCierre = () => {
             {erpData && erpData.medios_pago.filter(emp => {
               const upper = emp.nombre.toUpperCase()
               return !allFormaCobroIds.some(fcId => {
-                const nombre = (cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || '').toUpperCase()
-                return nombre.includes(upper) || upper.includes(nombre)
+                const nombre = cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || ''
+                return mediosSonIguales(nombre, emp.nombre)
               }) && upper !== 'EFECTIVO'
             }).map(emp => (
               <FilaComparativa
