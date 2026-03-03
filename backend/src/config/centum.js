@@ -522,6 +522,7 @@ async function getTransaccionesDetalle(planillaId, { limit = 100 } = {}) {
           tc.NombreComprobante AS tipo_comprobante,
           ven.NumeroDocumento AS numero_documento,
           ven.FechaDocumento AS fecha_documento,
+          ven.FechaCreacion AS hora_creacion,
           ven.Total AS total_documento
         FROM PlanillaCaja_Items_VIEW pci
         JOIN Cobro_Items_VIEW ci ON pci.MovimientoValorIDPlanillaCajaItem = ci.CobroItemID
@@ -548,6 +549,7 @@ async function getTransaccionesDetalle(planillaId, { limit = 100 } = {}) {
       codigo_comprobante: r.codigo_comprobante?.trim() || null,
       numero_documento: r.numero_documento?.trim() || null,
       fecha_documento: r.fecha_documento || null,
+      hora_creacion: r.hora_creacion || null,
       total_documento: r.total_documento ? parseFloat(r.total_documento.toFixed(2)) : null,
     }))
 

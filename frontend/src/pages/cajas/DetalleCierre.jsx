@@ -801,6 +801,7 @@ const DetalleCierre = () => {
                       codigo_comprobante: t.codigo_comprobante,
                       tipo_comprobante: t.tipo_comprobante,
                       fecha_documento: t.fecha_documento,
+                      hora_creacion: t.hora_creacion,
                       total_documento: t.total_documento,
                       pagos: [],
                     }
@@ -823,9 +824,11 @@ const DetalleCierre = () => {
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-x-3 text-xs text-gray-500">
-                        {doc.fecha_documento && (
+                        {doc.hora_creacion ? (
+                          <span>{new Date(doc.hora_creacion).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        ) : doc.fecha_documento ? (
                           <span>{new Date(doc.fecha_documento).toLocaleDateString('es-AR')}</span>
-                        )}
+                        ) : null}
                         {doc.pagos.map((p, i) => (
                           <span key={i}>{p.forma_pago}: {formatMonto(p.importe)}</span>
                         ))}
