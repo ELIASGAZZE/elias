@@ -27,6 +27,9 @@ const { iniciarCronJobs } = require('./jobs/cron')
 const app = express()
 const PORT = process.env.PORT || 3001
 
+// Confiar en el proxy de Render (para que req.protocol devuelva https)
+app.set('trust proxy', 1)
+
 // ── Middlewares globales ──────────────────────────────────────────────────────
 
 // Headers de seguridad

@@ -599,8 +599,8 @@ const DetalleCierre = () => {
 
             <FilaComparativa
               label="Efectivo"
-              valorCajero={(parseFloat(cierre.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0)}
-              valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) : null}
+              valorCajero={(parseFloat(cierre.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
+              valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
               valorErp={erpData ? erpData.total_efectivo : null}
             />
 
