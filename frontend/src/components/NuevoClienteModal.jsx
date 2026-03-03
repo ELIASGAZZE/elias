@@ -92,7 +92,7 @@ const NuevoClienteModal = ({ onClose, onCreado }) => {
             ...prev,
             cuit: d.cuit || prev.cuit,
             razon_social: d.razon_social || prev.razon_social,
-            condicion_iva: (d.condicion_iva === 'RI' || d.condicion_iva === 'CF') ? d.condicion_iva : prev.condicion_iva,
+            condicion_iva: d.condicion_iva || prev.condicion_iva,
           }))
           // Prellenar dirección fiscal si no hay direcciones cargadas
           if (d.domicilio && (!direcciones[0]?.direccion)) {
@@ -335,6 +335,8 @@ const NuevoClienteModal = ({ onClose, onCreado }) => {
                 >
                   <option value="CF">Consumidor Final</option>
                   <option value="RI">Responsable Inscripto</option>
+                  <option value="MT">Monotributista</option>
+                  <option value="EX">IVA Exento</option>
                 </select>
               </div>
 
