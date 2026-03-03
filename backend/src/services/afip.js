@@ -11,6 +11,7 @@ function getAfip() {
     afipInstance = new Afip({
       access_token: AFIP_ACCESS_TOKEN,
       CUIT: parseInt(AFIP_CUIT),
+      production: true,
     })
   }
   return afipInstance
@@ -100,13 +101,16 @@ async function consultarCUIT(cuit) {
   let cuitEncontrado = null
   for (const c of cuitsAProbar) {
     try {
+      console.log(`[AFIP] Consultando CUIT ${c}...`)
       const resultado = await afip.RegisterInscriptionProof.getTaxpayerDetails(parseInt(c))
+      console.log(`[AFIP] Resultado para ${c}:`, JSON.stringify(resultado)?.substring(0, 200))
       if (resultado && resultado.datosGenerales) {
         data = resultado
         cuitEncontrado = c
         break
       }
     } catch (err) {
+      console.log(`[AFIP] Error para ${c}: ${err.message}`)
       // CUIT no existe, probar siguiente
       continue
     }

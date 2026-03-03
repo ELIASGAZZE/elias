@@ -6,6 +6,7 @@ import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import api from '../../services/api'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
 import ModalRetiro from '../../components/cajas/ModalRetiro'
+import ModalGasto from '../../components/cajas/ModalGasto'
 
 const formatMonto = (monto) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
@@ -62,6 +63,10 @@ const CerrarCaja = () => {
   const [retiros, setRetiros] = useState([])
   const [mostrarRetiro, setMostrarRetiro] = useState(false)
 
+  // Gastos del turno
+  const [gastos, setGastos] = useState([])
+  const [mostrarGasto, setMostrarGasto] = useState(false)
+
   // API-driven denominations and payment methods
   const [denomBilletes, setDenomBilletes] = useState([])
   const [denomMonedas] = useState([])
@@ -87,14 +92,16 @@ const CerrarCaja = () => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes, retirosRes] = await Promise.all([
+        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes] = await Promise.all([
           api.get(`/api/cierres/${id}`),
           api.get('/api/denominaciones'),
           api.get('/api/formas-cobro'),
           api.get(`/api/cierres/${id}/retiros`).catch(() => ({ data: [] })),
+          api.get(`/api/cierres/${id}/gastos`).catch(() => ({ data: [] })),
         ])
 
         setRetiros(retirosRes.data || [])
+        setGastos(gastosRes.data || [])
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
@@ -418,6 +425,61 @@ const CerrarCaja = () => {
           </div>
         )}
 
+        {/* Gastos del turno */}
+        {!modoEdicion && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-orange-800 font-medium">
+                  Gastos durante el turno: {gastos.length}
+                </span>
+                {gastos.length > 0 && (
+                  <span className="text-orange-800 font-bold ml-2">
+                    ({formatMonto(gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0))})
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setMostrarGasto(true)}
+                className="text-sm bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+              >
+                Nuevo gasto
+              </button>
+            </div>
+            {gastos.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {gastos.map(g => (
+                  <div key={g.id} className="flex items-center justify-between text-xs text-orange-700 bg-white/60 rounded-lg px-2 py-1">
+                    <span className="truncate flex-1">{g.descripcion}</span>
+                    <span className="font-medium ml-2">{formatMonto(g.importe)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {modoEdicion && gastos.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-orange-800 font-medium">
+                Gastos durante el turno: {gastos.length}
+              </span>
+              <span className="text-orange-800 font-bold">
+                Total: {formatMonto(gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0))}
+              </span>
+            </div>
+            <div className="mt-2 space-y-1">
+              {gastos.map(g => (
+                <div key={g.id} className="flex items-center justify-between text-xs text-orange-700 bg-white/60 rounded-lg px-2 py-1">
+                  <span className="truncate flex-1">{g.descripcion}</span>
+                  <span className="font-medium ml-2">{formatMonto(g.importe)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Cambio que queda en caja */}
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
           <h3 className="text-sm font-semibold text-amber-800 mb-3">Cambio que queda en caja</h3>
@@ -525,6 +587,18 @@ const CerrarCaja = () => {
           onClose={() => setMostrarRetiro(false)}
           onRetiroCreado={(nuevoRetiro) => {
             setRetiros(prev => [...prev, nuevoRetiro])
+          }}
+        />
+      )}
+
+      {/* Modal gasto */}
+      {mostrarGasto && (
+        <ModalGasto
+          cierreId={id}
+          cierre={cierre}
+          onClose={() => setMostrarGasto(false)}
+          onGastoCreado={(nuevoGasto) => {
+            setGastos(prev => [...prev, nuevoGasto])
           }}
         />
       )}

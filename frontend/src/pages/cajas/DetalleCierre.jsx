@@ -67,6 +67,8 @@ const DetalleCierre = () => {
   const [ventasExpanded, setVentasExpanded] = useState(false)
   const [denominaciones, setDenominaciones] = useState([])
   const [retiros, setRetiros] = useState([])
+  const [gastos, setGastos] = useState([])
+  const [controlandoGasto, setControlandoGasto] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
@@ -101,6 +103,13 @@ const DetalleCierre = () => {
         promises.push(
           api.get(`/api/cierres/${id}/retiros`)
             .then(res => setRetiros(res.data || []))
+            .catch(() => {})
+        )
+
+        // Gastos
+        promises.push(
+          api.get(`/api/cierres/${id}/gastos`)
+            .then(res => setGastos(res.data || []))
             .catch(() => {})
         )
 
@@ -181,6 +190,18 @@ const DetalleCierre = () => {
       alert('Error al guardar regla')
     } finally {
       setGuardandoRegla(null)
+    }
+  }
+
+  const toggleControlarGasto = async (gastoId, controlado) => {
+    setControlandoGasto(gastoId)
+    try {
+      const { data } = await api.put(`/api/gastos/${gastoId}/controlar`, { controlado: !controlado })
+      setGastos(prev => prev.map(g => g.id === gastoId ? { ...g, ...data } : g))
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al controlar gasto')
+    } finally {
+      setControlandoGasto(null)
     }
   }
 
@@ -856,6 +877,70 @@ const DetalleCierre = () => {
               <div className="border-t border-gray-100 pt-2 flex justify-between text-sm font-medium">
                 <span className="text-gray-600">Total retiros</span>
                 <span className="text-emerald-700">{formatMonto(retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0))}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Gastos durante el turno */}
+        {gastos.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-gray-700">
+              Gastos durante el turno ({gastos.length})
+            </h3>
+            <div className="space-y-2">
+              {gastos.map(g => {
+                const formatGastoFecha = (iso) => {
+                  if (!iso) return ''
+                  const d = new Date(iso)
+                  return d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+                }
+
+                return (
+                  <div key={g.id} className="border border-gray-100 rounded-lg p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        {/* Checkbox de control para gestor/admin */}
+                        {(esGestor || esAdmin) && cierre.estado !== 'abierta' && (
+                          <button
+                            onClick={() => toggleControlarGasto(g.id, g.controlado)}
+                            disabled={controlandoGasto === g.id}
+                            className={`flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                              g.controlado
+                                ? 'bg-green-500 border-green-500 text-white'
+                                : 'border-gray-300 hover:border-orange-400'
+                            } ${controlandoGasto === g.id ? 'opacity-50' : ''}`}
+                          >
+                            {g.controlado && (
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                        <span className="text-sm font-medium text-gray-800 truncate">{g.descripcion}</span>
+                      </div>
+                      <span className="text-sm font-bold text-orange-700 flex-shrink-0 ml-2">{formatMonto(g.importe)}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {g.created_at && <span>{formatGastoFecha(g.created_at)}</span>}
+                      {g.controlado && g.controlado_por_perfil && (
+                        <span className="ml-2 text-green-600">Controlado por {g.controlado_por_perfil.nombre}</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {/* Total gastos */}
+            <div className="border-t border-gray-100 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-gray-600">Total gastos</span>
+              <span className="text-orange-700">{formatMonto(gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0))}</span>
+            </div>
+            {/* Alerta si hay gastos sin controlar */}
+            {(esGestor || esAdmin) && cierre.estado !== 'abierta' && gastos.some(g => !g.controlado) && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-2 text-xs text-orange-700 font-medium">
+                Hay {gastos.filter(g => !g.controlado).length} gasto(s) sin controlar
               </div>
             )}
           </div>

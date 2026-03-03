@@ -59,6 +59,10 @@ const VerificarCierre = () => {
   const [denomMonedas, setDenomMonedas] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
 
+  // Gastos
+  const [gastos, setGastos] = useState([])
+  const [controlandoGasto, setControlandoGasto] = useState(null)
+
   // Efectivo
   const [billetes, setBilletes] = useState({})
   const [monedas, setMonedas] = useState({})
@@ -70,11 +74,14 @@ const VerificarCierre = () => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes] = await Promise.all([
+        const [cierreRes, denomRes, formasRes, gastosRes] = await Promise.all([
           api.get(`/api/cierres/${id}`),
           api.get('/api/denominaciones'),
           api.get('/api/formas-cobro'),
+          api.get(`/api/cierres/${id}/gastos`).catch(() => ({ data: [] })),
         ])
+
+        setGastos(gastosRes.data || [])
 
         setCierre(cierreRes.data)
         if (cierreRes.data.estado !== 'pendiente_gestor') {
@@ -120,6 +127,18 @@ const VerificarCierre = () => {
     [mediosPago]
   )
   const totalGeneral = totalEfectivo + totalOtrosMedios
+
+  const toggleControlarGasto = async (gastoId, controlado) => {
+    setControlandoGasto(gastoId)
+    try {
+      const { data } = await api.put(`/api/gastos/${gastoId}/controlar`, { controlado: !controlado })
+      setGastos(prev => prev.map(g => g.id === gastoId ? { ...g, ...data } : g))
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al controlar gasto')
+    } finally {
+      setControlandoGasto(null)
+    }
+  }
 
   const actualizarMedio = (formaCobroId, campo, valor) => {
     setMediosPago(prev => ({
@@ -249,6 +268,50 @@ const VerificarCierre = () => {
             </div>
           </div>
         </div>
+
+        {/* Gastos — checkboxes de control */}
+        {gastos.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 space-y-3">
+            <h3 className="text-sm font-semibold text-orange-800">
+              Gastos a controlar ({gastos.length})
+            </h3>
+            <p className="text-xs text-orange-600">Marcá cada gasto como controlado para confirmar que fue verificado.</p>
+            <div className="space-y-2">
+              {gastos.map(g => (
+                <div key={g.id} className="flex items-center gap-3 bg-white border border-orange-100 rounded-lg p-3">
+                  <button
+                    onClick={() => toggleControlarGasto(g.id, g.controlado)}
+                    disabled={controlandoGasto === g.id}
+                    className={`flex-shrink-0 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                      g.controlado
+                        ? 'bg-green-500 border-green-500 text-white'
+                        : 'border-orange-300 hover:border-orange-500'
+                    } ${controlandoGasto === g.id ? 'opacity-50' : ''}`}
+                  >
+                    {g.controlado && (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-800">{g.descripcion}</span>
+                  </div>
+                  <span className="text-sm font-bold text-orange-700 flex-shrink-0">{formatMonto(g.importe)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-orange-200 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-orange-800">Total gastos</span>
+              <span className="text-orange-700 font-bold">{formatMonto(gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0))}</span>
+            </div>
+            {gastos.some(g => !g.controlado) && (
+              <div className="bg-orange-100 border border-orange-300 rounded-lg p-2 text-xs text-orange-800 font-medium text-center">
+                {gastos.filter(g => !g.controlado).length} gasto(s) pendiente(s) de control
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Resumen + botón confirmar — ancho completo */}
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4">

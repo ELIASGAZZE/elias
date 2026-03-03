@@ -38,17 +38,20 @@ function abrirVentanaImpresion(html) {
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Courier New', Courier, monospace;
-    font-size: 12px;
+    font-size: 16px;
     width: 302px;
     padding: 8px;
-    line-height: 1.4;
+    line-height: 1.5;
   }
   .center { text-align: center; }
   .bold { font-weight: bold; }
-  .line { border-top: 1px dashed #000; margin: 4px 0; }
-  .line-double { border-top: 2px solid #000; margin: 4px 0; }
+  .titulo { font-size: 20px; font-weight: bold; }
+  .total { font-size: 18px; font-weight: bold; }
+  .seccion { font-size: 14px; font-weight: bold; margin-top: 4px; }
+  .line { border-top: 1px dashed #000; margin: 6px 0; }
+  .line-double { border-top: 2px solid #000; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; }
-  .firma { margin-top: 20px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 2px; text-align: center; font-size: 10px; }
+  .firma { margin-top: 24px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 14px; }
 </style>
 </head>
 <body>${html}</body>
@@ -73,7 +76,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
   const monedasActivas = denomMonedas.filter(d => monedas && monedas[String(d.valor)] > 0)
 
   if (billetesActivos.length > 0) {
-    html += '<div class="bold">BILLETES</div>'
+    html += '<div class="seccion">BILLETES</div>'
     billetesActivos.forEach(d => {
       const cant = billetes[String(d.valor)]
       const total = d.valor * cant
@@ -82,7 +85,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
   }
 
   if (monedasActivas.length > 0) {
-    html += '<div class="bold">MONEDAS</div>'
+    html += '<div class="seccion">MONEDAS</div>'
     monedasActivas.forEach(d => {
       const cant = monedas[String(d.valor)]
       const total = d.valor * cant
@@ -96,7 +99,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
 export function imprimirCierre(cierre, retiros, denominaciones) {
   let html = ''
 
-  html += '<div class="center bold">CIERRE DE CAJA</div>'
+  html += '<div class="center titulo">CIERRE DE CAJA</div>'
   html += '<div class="line-double"></div>'
   html += `<div>Planilla: #${escapeHtml(cierre.planilla_id)}</div>`
   if (cierre.caja?.nombre) html += `<div>Caja: ${escapeHtml(cierre.caja.nombre)}</div>`
@@ -111,12 +114,12 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
   html += buildDenominacionesHtml(cierre.billetes, cierre.monedas, denominaciones)
 
   html += '<div class="line"></div>'
-  html += `<div class="row bold"><span>Total efectivo</span><span>${formatMonto(cierre.total_efectivo)}</span></div>`
+  html += `<div class="row total"><span>Total efectivo</span><span>${formatMonto(cierre.total_efectivo)}</span></div>`
   html += '<div class="line-double"></div>'
 
   // Medios de pago
   if (Array.isArray(cierre.medios_pago) && cierre.medios_pago.length > 0) {
-    html += '<div class="bold">MEDIOS DE PAGO</div>'
+    html += '<div class="seccion">MEDIOS DE PAGO</div>'
     cierre.medios_pago.forEach(mp => {
       const label = mp.cantidad > 0 ? `${escapeHtml(mp.nombre)} (${mp.cantidad})` : escapeHtml(mp.nombre)
       html += `<div class="row"><span>${label}</span><span>${formatMonto(mp.monto)}</span></div>`
@@ -124,7 +127,7 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
     html += '<div class="line-double"></div>'
   }
 
-  html += `<div class="row bold"><span>TOTAL GENERAL</span><span>${formatMonto(cierre.total_general)}</span></div>`
+  html += `<div class="row total"><span>TOTAL GENERAL</span><span>${formatMonto(cierre.total_general)}</span></div>`
   html += '<div class="line-double"></div>'
 
   // Cambio y retiros
@@ -136,12 +139,12 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
   // Retiros durante el turno
   if (retiros && retiros.length > 0) {
     html += '<div class="line"></div>'
-    html += '<div class="bold">Retiros turno:</div>'
+    html += '<div class="seccion">Retiros turno:</div>'
     retiros.forEach(r => {
       html += `<div class="row"><span>  #${r.numero}</span><span>${formatMonto(r.total)}</span></div>`
     })
     const totalRetiros = retiros.reduce((sum, r) => sum + parseFloat(r.total || 0), 0)
-    html += `<div class="row bold"><span>Total retiros</span><span>${formatMonto(totalRetiros)}</span></div>`
+    html += `<div class="row total"><span>Total retiros</span><span>${formatMonto(totalRetiros)}</span></div>`
   }
 
   html += '<div class="line-double"></div>'
@@ -153,7 +156,7 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
 export function imprimirRetiro(retiro, cierre) {
   let html = ''
 
-  html += `<div class="center bold">RETIRO DE EFECTIVO #${escapeHtml(retiro.numero)}</div>`
+  html += `<div class="center titulo">RETIRO DE EFECTIVO #${escapeHtml(retiro.numero)}</div>`
   html += '<div class="line-double"></div>'
   if (cierre?.caja?.nombre) html += `<div>Caja: ${escapeHtml(cierre.caja.nombre)}</div>`
   if (cierre?.caja?.sucursales?.nombre) html += `<div>Sucursal: ${escapeHtml(cierre.caja.sucursales.nombre)}</div>`
@@ -184,7 +187,7 @@ export function imprimirRetiro(retiro, cierre) {
   }
 
   html += '<div class="line-double"></div>'
-  html += `<div class="row bold"><span>TOTAL RETIRO</span><span>${formatMonto(retiro.total)}</span></div>`
+  html += `<div class="row total"><span>TOTAL RETIRO</span><span>${formatMonto(retiro.total)}</span></div>`
   html += '<div class="line-double"></div>'
 
   if (retiro.observaciones) {
