@@ -36,22 +36,48 @@ function calcularDiferenciasDenominacion(a, b) {
   return Object.keys(resultado).length > 0 ? resultado : null
 }
 
+// Normaliza nombre de medio de pago: saca separadores, ordena palabras
+function normalizarMedio(n) {
+  return n.toUpperCase().replace(/[\/\-,]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ')
+}
+
+function mediosSonIguales(a, b) {
+  const na = a.toUpperCase(), nb = b.toUpperCase()
+  if (na.includes(nb) || nb.includes(na)) return true
+  return normalizarMedio(a) === normalizarMedio(b)
+}
+
 function calcularDiferenciasMediosPago(cajeroMedios, otroMedios) {
   if (!cajeroMedios || !otroMedios) return []
-  const cajeroMap = {}
-  ;(cajeroMedios || []).forEach(mp => { cajeroMap[mp.nombre || mp.forma_cobro] = mp.total || mp.monto || 0 })
-  const otroMap = {}
-  ;(otroMedios || []).forEach(mp => { otroMap[mp.nombre || mp.forma_cobro] = mp.total || mp.monto || 0 })
-  const todas = new Set([...Object.keys(cajeroMap), ...Object.keys(otroMap)])
-  const diffs = []
-  for (const nombre of todas) {
-    const a = cajeroMap[nombre] || 0
-    const b = otroMap[nombre] || 0
-    if (Math.abs(a - b) > 0.01) {
-      diffs.push({ nombre, cajero: a, otro: b, diferencia: parseFloat((a - b).toFixed(2)) })
+
+  // Construir arrays con nombre original y monto
+  const cajeroItems = (cajeroMedios || []).map(mp => ({ nombre: mp.nombre || mp.forma_cobro, monto: mp.total || mp.monto || 0 }))
+  const otroItems = (otroMedios || []).map(mp => ({ nombre: mp.nombre || mp.forma_cobro, monto: mp.total || mp.monto || 0 }))
+
+  // Matchear cajero → otro (por nombre normalizado)
+  const usadosOtro = new Set()
+  const pares = []
+
+  for (const c of cajeroItems) {
+    const match = otroItems.findIndex((o, i) => !usadosOtro.has(i) && mediosSonIguales(c.nombre, o.nombre))
+    if (match >= 0) {
+      usadosOtro.add(match)
+      pares.push({ nombre: c.nombre, cajero: c.monto, otro: otroItems[match].monto })
+    } else {
+      pares.push({ nombre: c.nombre, cajero: c.monto, otro: 0 })
     }
   }
-  return diffs
+
+  // Agregar los del otro que no matchearon (excluyendo EFECTIVO que se compara aparte)
+  otroItems.forEach((o, i) => {
+    if (!usadosOtro.has(i) && o.nombre.toUpperCase() !== 'EFECTIVO') {
+      pares.push({ nombre: o.nombre, cajero: 0, otro: o.monto })
+    }
+  })
+
+  return pares
+    .filter(p => Math.abs(p.cajero - p.otro) > 0.01)
+    .map(p => ({ nombre: p.nombre, cajero: p.cajero, otro: p.otro, diferencia: parseFloat((p.cajero - p.otro).toFixed(2)) }))
 }
 
 function construirContinuidadCambio(cierre, cierreAnterior, aperturaSiguiente) {
