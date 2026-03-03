@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
-const { getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData } = require('../config/centum')
+const { getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData, getTransaccionesDetalle } = require('../config/centum')
 const { analizarCierreIA, chatCajas } = require('../services/claude')
 
 const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
@@ -270,8 +270,14 @@ router.get('/:id/comprobantes', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'El ID de planilla no es válido' })
     }
 
-    const data = await getComprobantesData(planillaId)
-    res.json(data)
+    const [data, transData] = await Promise.all([
+      getComprobantesData(planillaId),
+      getTransaccionesDetalle(planillaId, { limit: 0 }),
+    ])
+    res.json({
+      ...data,
+      transacciones: transData.transacciones,
+    })
   } catch (err) {
     console.error('Error al obtener comprobantes:', err)
     res.status(500).json({ error: 'Error al conectar con el ERP' })
@@ -302,6 +308,7 @@ async function obtenerDatosAuditoria(cierreId) {
     const [
       verificacionResult,
       retirosResult,
+      gastosResult,
       continuidadResult,
       erpResult,
       comprobantesResult,
@@ -357,6 +364,16 @@ async function obtenerDatosAuditoria(cierreId) {
         })
       })(),
 
+      // Gastos durante el turno
+      (async () => {
+        const { data: gastos } = await supabase
+          .from('gastos')
+          .select('id, descripcion, importe, controlado, created_at')
+          .eq('cierre_id', cierre.id)
+          .order('created_at', { ascending: true })
+        return gastos || []
+      })(),
+
       // Cierre anterior + apertura siguiente
       (async () => {
         if (!cierre.caja_id) return { anterior: null, siguiente: null }
@@ -396,34 +413,30 @@ async function obtenerDatosAuditoria(cierreId) {
     // 3. Extraer resultados (tolerando fallos)
     const verificacionData = verificacionResult.status === 'fulfilled' ? verificacionResult.value?.data : null
     const retirosData = retirosResult.status === 'fulfilled' ? retirosResult.value : []
+    const gastosData = gastosResult.status === 'fulfilled' ? gastosResult.value : []
     const continuidadData = continuidadResult.status === 'fulfilled' ? continuidadResult.value : { anterior: null, siguiente: null }
     const erpData = erpResult.status === 'fulfilled' ? erpResult.value : null
     const comprobantesData = comprobantesResult.status === 'fulfilled' ? comprobantesResult.value : null
     const ventasSCData = ventasSinConfirmarResult.status === 'fulfilled' ? ventasSinConfirmarResult.value : { cantidad: 0, ventas: [] }
 
     // 4. Construir secciones de respuesta
+    const totalGastos = gastosData.reduce((sum, g) => sum + (parseFloat(g.importe) || 0), 0)
+
+    const cajeroEfectivoContado = calcularEfectivoNeto(cierre, cierre)
     const cajeroSection = {
-      billetes: cierre.billetes || {},
-      monedas: cierre.monedas || {},
-      total_efectivo: cierre.total_efectivo || 0,
       medios_pago: cierre.medios_pago || [],
       total_general: cierre.total_general || 0,
-      fondo_fijo: cierre.fondo_fijo || 0,
-      cambio_que_queda: cierre.cambio_que_queda || 0,
-      efectivo_retirado: cierre.efectivo_retirado || 0,
-      efectivo_neto: calcularEfectivoNeto(cierre, cierre),
+      efectivo_neto: parseFloat((cajeroEfectivoContado + totalGastos).toFixed(2)),
       observaciones: cierre.observaciones || null,
     }
 
+    const gestorEfectivoContado = verificacionData ? calcularEfectivoNeto(verificacionData, cierre) : 0
     const verificacionSection = verificacionData ? {
       existe: true,
       gestor: verificacionData.gestor?.nombre || null,
-      billetes: verificacionData.billetes || {},
-      monedas: verificacionData.monedas || {},
-      total_efectivo: verificacionData.total_efectivo || 0,
       medios_pago: verificacionData.medios_pago || [],
       total_general: verificacionData.total_general || 0,
-      efectivo_neto: calcularEfectivoNeto(verificacionData, cierre),
+      efectivo_neto: parseFloat((gestorEfectivoContado + totalGastos).toFixed(2)),
       observaciones: verificacionData.observaciones || null,
       created_at: verificacionData.created_at,
     } : { existe: false }
@@ -465,19 +478,19 @@ async function obtenerDatosAuditoria(cierreId) {
     }
 
     if (erpData) {
-      const cajeroEfectivoNeto = cajeroSection.efectivo_neto
+      // cajeroSection.efectivo_neto ya incluye gastos
       diferencias.cajero_vs_erp = {
-        efectivo: parseFloat((cajeroEfectivoNeto - (erpData.total_efectivo || 0)).toFixed(2)),
+        efectivo: parseFloat((cajeroSection.efectivo_neto - (erpData.total_efectivo || 0)).toFixed(2)),
         medios_pago: calcularDiferenciasMediosPago(cierre.medios_pago, erpData.medios_pago),
-        total_general: parseFloat(((cierre.total_general || 0) - (erpData.total_general || 0)).toFixed(2)),
+        total_general: parseFloat((((cierre.total_general || 0) + totalGastos) - (erpData.total_general || 0)).toFixed(2)),
       }
 
       if (verificacionData) {
-        const gestorEfectivoNeto = verificacionSection.efectivo_neto
+        // verificacionSection.efectivo_neto ya incluye gastos
         diferencias.gestor_vs_erp = {
-          efectivo: parseFloat((gestorEfectivoNeto - (erpData.total_efectivo || 0)).toFixed(2)),
+          efectivo: parseFloat((verificacionSection.efectivo_neto - (erpData.total_efectivo || 0)).toFixed(2)),
           medios_pago: calcularDiferenciasMediosPago(verificacionData.medios_pago, erpData.medios_pago),
-          total_general: parseFloat(((verificacionData.total_general || 0) - (erpData.total_general || 0)).toFixed(2)),
+          total_general: parseFloat((((verificacionData.total_general || 0) + totalGastos) - (erpData.total_general || 0)).toFixed(2)),
         }
       }
     }
@@ -522,6 +535,15 @@ async function obtenerDatosAuditoria(cierreId) {
         comprobantes: comprobantesSection,
         ventas_sin_confirmar: ventasSCData,
         retiros: retirosData,
+        gastos: gastosData.length > 0 ? {
+          cantidad: gastosData.length,
+          total: parseFloat(gastosData.reduce((sum, g) => sum + (parseFloat(g.importe) || 0), 0).toFixed(2)),
+          detalle: gastosData.map(g => ({
+            descripcion: g.descripcion,
+            importe: parseFloat(g.importe) || 0,
+            controlado: g.controlado || false,
+          })),
+        } : { cantidad: 0, total: 0, detalle: [] },
         diferencias,
         continuidad_cambio: continuidad,
       },

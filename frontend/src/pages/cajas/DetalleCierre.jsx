@@ -88,6 +88,7 @@ const DetalleCierre = () => {
   const [erpNoEncontrado, setErpNoEncontrado] = useState(false)
   const [comprobantes, setComprobantes] = useState(null)
   const [ncExpanded, setNcExpanded] = useState(false)
+  const [compExpanded, setCompExpanded] = useState(false)
   const [ventasSinConfirmar, setVentasSinConfirmar] = useState(null)
   const [ventasExpanded, setVentasExpanded] = useState(false)
   const [denominaciones, setDenominaciones] = useState([])
@@ -758,9 +759,17 @@ const DetalleCierre = () => {
         {/* Comprobantes del ERP */}
         {!esBlind && comprobantes && cierre.estado !== 'abierta' && usuario?.rol !== 'operario' && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-indigo-700">
-              Comprobantes ({comprobantes.total_comprobantes} total)
-            </h3>
+            <button
+              onClick={() => setCompExpanded(!compExpanded)}
+              className="flex items-center justify-between w-full text-left"
+            >
+              <h3 className="text-sm font-semibold text-indigo-700">
+                Comprobantes ({comprobantes.total_comprobantes} total)
+              </h3>
+              <span className="text-xs text-indigo-600 font-medium">
+                {compExpanded ? 'Ocultar' : 'Ver detalle'}
+              </span>
+            </button>
 
             {/* Tabla resumen por tipo */}
             <div className="space-y-0.5">
@@ -779,6 +788,53 @@ const DetalleCierre = () => {
                 </div>
               ))}
             </div>
+
+            {/* Detalle de transacciones expandible */}
+            {compExpanded && comprobantes.transacciones && (() => {
+              const porDocumento = Object.values(
+                comprobantes.transacciones.reduce((acc, t) => {
+                  const key = t.documento_id || t.transaccion_id
+                  if (!acc[key]) {
+                    acc[key] = {
+                      documento_id: t.documento_id,
+                      numero_documento: t.numero_documento,
+                      codigo_comprobante: t.codigo_comprobante,
+                      tipo_comprobante: t.tipo_comprobante,
+                      fecha_documento: t.fecha_documento,
+                      total_documento: t.total_documento,
+                      pagos: [],
+                    }
+                  }
+                  acc[key].pagos.push({ forma_pago: t.forma_pago, importe: t.importe })
+                  return acc
+                }, {})
+              )
+              return (
+                <div className="space-y-1.5 pt-2 border-t border-indigo-200">
+                  {porDocumento.map((doc, idx) => (
+                    <div key={doc.documento_id || idx} className="bg-white border border-indigo-200 rounded-lg p-2.5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-800">
+                          <span className="text-indigo-600">{doc.codigo_comprobante || '—'}</span>
+                          {' '}{doc.numero_documento || `#${doc.documento_id || idx + 1}`}
+                        </span>
+                        <span className="text-sm font-bold text-indigo-700">
+                          {doc.total_documento != null ? formatMonto(doc.total_documento) : formatMonto(doc.pagos.reduce((s, p) => s + p.importe, 0))}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 text-xs text-gray-500">
+                        {doc.fecha_documento && (
+                          <span>{new Date(doc.fecha_documento).toLocaleDateString('es-AR')}</span>
+                        )}
+                        {doc.pagos.map((p, i) => (
+                          <span key={i}>{p.forma_pago}: {formatMonto(p.importe)}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
 
             {/* Notas de Crédito expandible */}
             {comprobantes.notas_credito.length > 0 && (

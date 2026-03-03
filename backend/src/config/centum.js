@@ -500,7 +500,7 @@ async function getComprobantesData(planillaId) {
  * @param {number} planillaId - ID de planilla en Centum
  * @returns {Array} Lista de transacciones con detalles
  */
-async function getTransaccionesDetalle(planillaId) {
+async function getTransaccionesDetalle(planillaId, { limit = 100 } = {}) {
   const inicio = Date.now()
   try {
     const db = await getPool()
@@ -579,7 +579,7 @@ async function getTransaccionesDetalle(planillaId) {
 
     return {
       total: transacciones.length,
-      transacciones: transacciones.slice(0, 100), // Limitar para no abrumar a la IA
+      transacciones: limit ? transacciones.slice(0, limit) : transacciones,
       duplicados_sospechosos: duplicadosSospechosos,
       resumen_por_forma_pago: Object.values(
         transacciones.reduce((acc, t) => {
