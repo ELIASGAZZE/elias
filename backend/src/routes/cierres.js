@@ -253,21 +253,21 @@ router.get('/:id/comprobantes', verificarAuth, async (req, res) => {
 })
 
 // GET /api/cierres/:id/auditoria — datos consolidados de auditoría para IA
-router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, async (req, res) => {
-  try {
+// ── Función reutilizable de auditoría (evita fetch interno) ─────────────────
+async function obtenerDatosAuditoria(cierreId) {
     // 1. Fetch cierre completo
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
       .select(SELECT_CIERRE)
-      .eq('id', req.params.id)
+      .eq('id', cierreId)
       .single()
 
     if (errorCierre || !cierre) {
-      return res.status(404).json({ error: 'Cierre no encontrado' })
+      return { error: 'Cierre no encontrado', status: 404 }
     }
 
     if (cierre.estado === 'abierta') {
-      return res.status(400).json({ error: 'No se puede auditar un cierre abierto' })
+      return { error: 'No se puede auditar un cierre abierto', status: 400 }
     }
 
     const planillaId = cierre.planilla_id ? parseInt(cierre.planilla_id) : null
@@ -470,34 +470,43 @@ router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, async (req, res) =
     const continuidad = construirContinuidadCambio(cierre, continuidadData.anterior, continuidadData.siguiente)
 
     // 7. Respuesta consolidada
-    res.json({
-      cierre_id: cierre.id,
-      planilla_id: cierre.planilla_id,
-      fecha: cierre.fecha,
-      estado: cierre.estado,
+    return {
+      data: {
+        cierre_id: cierre.id,
+        planilla_id: cierre.planilla_id,
+        fecha: cierre.fecha,
+        estado: cierre.estado,
 
-      contexto: {
-        caja: cierre.caja ? { id: cierre.caja.id, nombre: cierre.caja.nombre } : null,
-        sucursal: cierre.caja?.sucursales || null,
-        empleado: cierre.empleado?.nombre || null,
-        cajero_perfil: cierre.cajero ? { id: cierre.cajero.id, nombre: cierre.cajero.nombre, username: cierre.cajero.username } : null,
-        cerrado_por: cierre.cerrado_por?.nombre || null,
+        contexto: {
+          caja: cierre.caja ? { id: cierre.caja.id, nombre: cierre.caja.nombre } : null,
+          sucursal: cierre.caja?.sucursales || null,
+          empleado: cierre.empleado?.nombre || null,
+          cajero_perfil: cierre.cajero ? { id: cierre.cajero.id, nombre: cierre.cajero.nombre, username: cierre.cajero.username } : null,
+          cerrado_por: cierre.cerrado_por?.nombre || null,
+        },
+
+        timing: {
+          hora_apertura: cierre.created_at,
+          duracion_estimada_minutos: null,
+        },
+
+        cajero: cajeroSection,
+        verificacion: verificacionSection,
+        erp: erpSection,
+        comprobantes: comprobantesSection,
+        ventas_sin_confirmar: ventasSCData,
+        retiros: retirosData,
+        diferencias,
+        continuidad_cambio: continuidad,
       },
+    }
+}
 
-      timing: {
-        hora_apertura: cierre.created_at,
-        duracion_estimada_minutos: null,
-      },
-
-      cajero: cajeroSection,
-      verificacion: verificacionSection,
-      erp: erpSection,
-      comprobantes: comprobantesSection,
-      ventas_sin_confirmar: ventasSCData,
-      retiros: retirosData,
-      diferencias,
-      continuidad_cambio: continuidad,
-    })
+router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const resultado = await obtenerDatosAuditoria(req.params.id)
+    if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
+    res.json(resultado.data)
   } catch (err) {
     console.error('Error en auditoría de cierre:', err)
     res.status(500).json({ error: 'Error al generar auditoría' })
@@ -507,19 +516,10 @@ router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, async (req, res) =
 // GET /api/cierres/:id/analisis-ia — análisis automático de un cierre con IA
 router.get('/:id/analisis-ia', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    // Reusar lógica de auditoría haciendo fetch interno
-    const auditoriaUrl = `${req.protocol}://${req.get('host')}/api/cierres/${req.params.id}/auditoria`
-    const auditoriaRes = await fetch(auditoriaUrl, {
-      headers: { authorization: req.headers.authorization },
-    })
+    const resultado = await obtenerDatosAuditoria(req.params.id)
+    if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
-    if (!auditoriaRes.ok) {
-      const err = await auditoriaRes.json().catch(() => ({}))
-      return res.status(auditoriaRes.status).json({ error: err.error || 'Error al obtener datos de auditoría' })
-    }
-
-    const auditoriaData = await auditoriaRes.json()
-    const analisis = await analizarCierreIA(auditoriaData)
+    const analisis = await analizarCierreIA(resultado.data)
     res.json(analisis)
   } catch (err) {
     console.error('Error en análisis IA:', err)
@@ -535,16 +535,9 @@ router.post('/:id/chat-ia', verificarAuth, soloGestorOAdmin, async (req, res) =>
       return res.status(400).json({ error: 'El mensaje es requerido' })
     }
 
-    // Obtener datos de auditoría como contexto
-    const auditoriaUrl = `${req.protocol}://${req.get('host')}/api/cierres/${req.params.id}/auditoria`
-    const auditoriaRes = await fetch(auditoriaUrl, {
-      headers: { authorization: req.headers.authorization },
-    })
-
     let contexto = null
-    if (auditoriaRes.ok) {
-      contexto = await auditoriaRes.json()
-    }
+    const resultado = await obtenerDatosAuditoria(req.params.id)
+    if (!resultado.error) contexto = resultado.data
 
     const respuesta = await chatCajas(mensaje.trim(), historial || [], contexto)
     res.json({ respuesta })
