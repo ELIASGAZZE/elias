@@ -71,6 +71,25 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/clientes/afip-status — diagnóstico de configuración AFIP
+router.get('/afip-status', verificarAuth, async (req, res) => {
+  const certEnv = !!process.env.AFIP_CERT
+  const keyEnv = !!process.env.AFIP_KEY
+  const certLen = process.env.AFIP_CERT?.length || 0
+  const keyLen = process.env.AFIP_KEY?.length || 0
+  const certStart = process.env.AFIP_CERT?.substring(0, 30) || 'N/A'
+  const keyStart = process.env.AFIP_KEY?.substring(0, 30) || 'N/A'
+
+  const fs = require('fs')
+  const path = require('path')
+  const certPath = path.join(__dirname, '../../certs/COMERCIAL PADANO_7627c4ab3209aadb.crt')
+  const keyPath = path.join(__dirname, '../../certs/afip.key')
+  const certFile = fs.existsSync(certPath)
+  const keyFile = fs.existsSync(keyPath)
+
+  res.json({ certEnv, keyEnv, certLen, keyLen, certStart, keyStart, certFile, keyFile })
+})
+
 // GET /api/clientes/buscar-afip?cuit=XXX
 // Consulta datos de un CUIT en AFIP/ARCA
 router.get('/buscar-afip', verificarAuth, async (req, res) => {
@@ -88,7 +107,7 @@ router.get('/buscar-afip', verificarAuth, async (req, res) => {
 
     res.json({ encontrado: true, datos })
   } catch (err) {
-    console.error('Error al consultar AFIP:', err.message)
+    console.error('Error al consultar AFIP:', err.message, err.stack?.substring(0, 300))
     // Si AFIP no responde, no romper el flujo
     const msg = err.response?.data?.message || err.message
     if (msg.includes('No existe persona')) {
