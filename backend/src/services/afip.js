@@ -1,8 +1,8 @@
 // Servicio de consulta al padrón de ARCA (ex-AFIP) — conexión directa SOAP
-// No usa SDK intermedio, se conecta directo al WSAA + WS Padrón A5
+// Usa node-forge para firma PKCS#7 (sin depender de openssl CLI)
 const fs = require('fs')
 const path = require('path')
-const { execSync } = require('child_process')
+const forge = require('node-forge')
 const axios = require('axios')
 const { parseStringPromise } = require('xml2js')
 
@@ -32,18 +32,43 @@ function certsDisponibles() {
 }
 
 /**
+ * Firma contenido con PKCS#7/CMS usando node-forge.
+ */
+function signCMS(content, certPem, keyPem) {
+  const cert = forge.pki.certificateFromPem(certPem)
+  const key = forge.pki.privateKeyFromPem(keyPem)
+
+  const p7 = forge.pkcs7.createSignedData()
+  p7.content = forge.util.createBuffer(content, 'utf8')
+  p7.addCertificate(cert)
+  p7.addSigner({
+    key,
+    certificate: cert,
+    digestAlgorithm: forge.pki.oids.sha256,
+    authenticatedAttributes: [
+      { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+      { type: forge.pki.oids.messageDigest },
+      { type: forge.pki.oids.signingTime, value: new Date() },
+    ],
+  })
+  p7.sign()
+
+  const der = forge.asn1.toDer(p7.toAsn1()).getBytes()
+  return forge.util.encode64(der)
+}
+
+/**
  * Obtiene token y sign del WSAA de ARCA.
  * Cachea el resultado hasta que expire.
  */
 async function getWSAAToken() {
-  // Si ya tenemos token vigente, reusar
   if (tokenCache && tokenCache.expiration > new Date()) {
     return tokenCache
   }
 
-  if (!certsDisponibles()) {
-    throw new Error('Certificados AFIP no encontrados')
-  }
+  const certPem = getCert()
+  const keyPem = getKey()
+  if (!certPem || !keyPem) throw new Error('Certificados AFIP no encontrados')
 
   const now = new Date()
   const gen = new Date(now.getTime() - 600000).toISOString()
@@ -60,27 +85,7 @@ async function getWSAAToken() {
   <service>ws_sr_constancia_inscripcion</service>
 </loginTicketRequest>`
 
-  // Escribir TRA, cert y key a temp, firmar con OpenSSL CMS
-  const tmpDir = require('os').tmpdir()
-  const tmpTra = path.join(tmpDir, `tra_${uid}.xml`)
-  const tmpCert = path.join(tmpDir, `afip_cert_${uid}.crt`)
-  const tmpKey = path.join(tmpDir, `afip_key_${uid}.key`)
-
-  fs.writeFileSync(tmpTra, tra)
-  fs.writeFileSync(tmpCert, getCert())
-  fs.writeFileSync(tmpKey, getKey(), { mode: 0o600 })
-
-  let signed
-  try {
-    signed = execSync(
-      `openssl cms -sign -in "${tmpTra}" -signer "${tmpCert}" -inkey "${tmpKey}" -nodetach -outform DER | base64 -w 0`,
-      { encoding: 'utf8', timeout: 15000 }
-    )
-  } finally {
-    try { fs.unlinkSync(tmpTra) } catch {}
-    try { fs.unlinkSync(tmpCert) } catch {}
-    try { fs.unlinkSync(tmpKey) } catch {}
-  }
+  const signed = signCMS(tra, certPem, keyPem)
 
   const soapEnv = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:wsaa="http://wsaa.view.sua.dvadac.desein.afip.gov">
@@ -103,7 +108,7 @@ async function getWSAAToken() {
   tokenCache = {
     token: creds.loginTicketResponse.credentials.token,
     sign: creds.loginTicketResponse.credentials.sign,
-    expiration: new Date(now.getTime() + 11 * 60 * 60 * 1000), // ~11 horas
+    expiration: new Date(now.getTime() + 11 * 60 * 60 * 1000),
   }
 
   console.log('[AFIP] Token WSAA obtenido, expira:', tokenCache.expiration.toISOString())
@@ -111,7 +116,7 @@ async function getWSAAToken() {
 }
 
 /**
- * Consulta persona en el padrón A5 de ARCA.
+ * Consulta persona en el padrón A5 de ARCA via SOAP.
  */
 async function consultarPersonaSOAP(idPersona) {
   const { token, sign } = await getWSAAToken()
@@ -133,10 +138,10 @@ async function consultarPersonaSOAP(idPersona) {
     soapReq,
     { headers: { 'Content-Type': 'text/xml', 'SOAPAction': '' }, timeout: 15000, responseType: 'arraybuffer' }
   )
-  // AFIP devuelve ISO-8859-1, decodificar correctamente
-  res.data = new TextDecoder('iso-8859-1').decode(res.data)
+  // AFIP devuelve ISO-8859-1
+  const decoded = new TextDecoder('iso-8859-1').decode(res.data)
 
-  const parsed = await parseStringPromise(res.data, { explicitArray: false })
+  const parsed = await parseStringPromise(decoded, { explicitArray: false })
   return parsed['soap:Envelope']['soap:Body']['ns2:getPersona_v2Response']?.personaReturn
 }
 
@@ -191,7 +196,6 @@ function dniAPosiblesCuits(dni) {
 
 /**
  * Consulta datos de un contribuyente por CUIT o DNI en ARCA.
- * Si recibe un DNI (7-8 dígitos), genera posibles CUITs y prueba cada uno.
  */
 async function consultarCUIT(cuit) {
   if (!certsDisponibles()) {
@@ -241,13 +245,14 @@ async function consultarCUIT(cuit) {
           : null,
       }
     } catch (err) {
-      const faultMsg = err.response?.data?.match?.(/<faultstring>(.*?)<\/faultstring>/)?.[1]
+      const faultMsg = typeof err.response?.data === 'string'
+        ? err.response.data.match(/<faultstring>(.*?)<\/faultstring>/)?.[1]
+        : null
       console.log(`[AFIP] Error para ${c}: ${faultMsg || err.message}`)
 
-      // Si es "No existe persona", probar siguiente CUIT
       if (faultMsg?.includes('No existe persona')) continue
 
-      // Si es error de token, invalidar cache y reintentar una vez
+      // Si es error de token, invalidar cache y reintentar
       if (faultMsg?.includes('token') || faultMsg?.includes('Token')) {
         tokenCache = null
         try {
