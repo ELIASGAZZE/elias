@@ -1,4 +1,4 @@
-// Punto de entrada del servidor Express
+// Punto de entrada del servidor Express — v2.1
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
