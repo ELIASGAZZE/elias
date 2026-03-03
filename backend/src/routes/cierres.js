@@ -270,14 +270,21 @@ router.get('/:id/comprobantes', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'El ID de planilla no es válido' })
     }
 
-    const [data, transData] = await Promise.all([
+    const [data, transData] = await Promise.allSettled([
       getComprobantesData(planillaId),
       getTransaccionesDetalle(planillaId, { limit: 0 }),
     ])
-    res.json({
-      ...data,
-      transacciones: transData.transacciones,
-    })
+
+    if (data.status === 'rejected') throw data.reason
+
+    const resultado = { ...data.value }
+    if (transData.status === 'fulfilled') {
+      resultado.transacciones = transData.value.transacciones
+    } else {
+      console.error('Error al obtener transacciones:', transData.reason?.message)
+      resultado.transacciones = []
+    }
+    res.json(resultado)
   } catch (err) {
     console.error('Error al obtener comprobantes:', err)
     res.status(500).json({ error: 'Error al conectar con el ERP' })
