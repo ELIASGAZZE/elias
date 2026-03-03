@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData } = require('../config/centum')
-const { analizarCierre: analizarCierreIA, chatCajas } = require('../services/claude')
+const { analizarCierreIA, chatCajas } = require('../services/claude')
 
 const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
 
@@ -545,7 +545,8 @@ router.get('/:id/analisis-ia', verificarAuth, soloGestorOAdmin, async (req, res)
     const resultado = await obtenerDatosAuditoria(req.params.id)
     if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
-    const analisis = await analizarCierreIA(resultado.data)
+    const forceRefresh = req.query.refresh === '1'
+    const analisis = await analizarCierreIA(resultado.data, { forceRefresh })
     res.json(analisis)
   } catch (err) {
     console.error('Error en análisis IA:', err)

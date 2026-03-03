@@ -91,11 +91,11 @@ const ChatAuditoria = () => {
                 {msg.rol === 'user' && (
                   <div className="flex justify-end mt-0.5">
                     <button
-                      onClick={() => guardarComoRegla(msg.contenido, i)}
-                      disabled={guardandoRegla === i || reglaGuardada === i}
+                      onClick={() => guardarComoRegla(msg.contenido, idx)}
+                      disabled={guardandoRegla === idx || reglaGuardada === idx}
                       className="text-[10px] text-violet-400 hover:text-violet-600 disabled:text-green-500 transition-colors"
                     >
-                      {reglaGuardada === i ? 'Guardada' : guardandoRegla === i ? 'Guardando...' : 'Guardar como regla'}
+                      {reglaGuardada === idx ? 'Guardada' : guardandoRegla === idx ? 'Guardando...' : 'Guardar como regla'}
                     </button>
                   </div>
                 )}

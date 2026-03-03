@@ -21,6 +21,7 @@ import VerificarCierre from './pages/cajas/VerificarCierre'
 import NuevoRetiro from './pages/cajas/NuevoRetiro'
 import VerificarRetiro from './pages/cajas/VerificarRetiro'
 import ChatAuditoria from './pages/cajas/ChatAuditoria'
+import BatchAnalisis from './pages/cajas/BatchAnalisis'
 
 // Páginas de la app Delivery
 import DeliveryHome from './pages/delivery/DeliveryHome'
@@ -87,6 +88,11 @@ const App = () => {
           <Route path="/cajas/chat" element={
             <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
               <ChatAuditoria />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas/batch" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <BatchAnalisis />
             </RutaProtegida>
           } />
           <Route path="/cajas/cierre/:id/cerrar" element={

@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
+import ResolverDiferenciaModal, { CAUSAS } from '../../components/cajas/ResolverDiferenciaModal'
 
 const ESTADOS = {
   abierta: { label: 'Abierta', color: 'bg-emerald-100 text-emerald-700' },
@@ -24,7 +25,7 @@ const formatFecha = (fecha) => {
   return `${d}/${m}/${y}`
 }
 
-const FilaComparativa = ({ label, valorCajero, valorGestor, valorErp, esMoneda = true }) => {
+const FilaComparativa = ({ label, valorCajero, valorGestor, valorErp, esMoneda = true, resolucion, onResolver, puedeResolver }) => {
   const formatVal = (val) => {
     if (val == null) return '—'
     return esMoneda ? formatMonto(val) : val
@@ -34,22 +35,46 @@ const FilaComparativa = ({ label, valorCajero, valorGestor, valorErp, esMoneda =
   const diff = valorErp != null ? base - valorErp : null
   const hayDiferencia = (valorGestor != null && valorCajero !== valorGestor) ||
                         (valorErp != null && base !== valorErp)
+  const causaLabel = resolucion ? (CAUSAS.find(c => c.value === resolucion.causa)?.label || resolucion.causa) : null
+
   return (
-    <div className={`flex items-center text-sm py-1.5 ${hayDiferencia ? 'bg-red-50 -mx-2 px-2 rounded-lg' : ''}`}>
-      <span className="flex-1 text-gray-600 min-w-0 truncate">{label}</span>
-      <span className="w-28 text-right font-medium text-gray-800 flex-shrink-0 border-r border-gray-100 pr-3">{formatVal(valorCajero)}</span>
-      <span className={`w-28 text-right font-medium flex-shrink-0 border-r border-gray-100 pr-3 ${
-        valorGestor == null ? 'text-gray-400' :
-        valorCajero !== valorGestor ? 'text-red-600 font-bold' : 'text-gray-800'
-      }`}>{formatVal(valorGestor)}</span>
-      <span className={`w-28 text-right font-medium flex-shrink-0 border-r border-gray-100 pr-3 ${
-        valorErp == null ? 'text-gray-400' :
-        base !== valorErp ? 'text-red-600 font-bold' : 'text-indigo-700'
-      }`}>{formatVal(valorErp)}</span>
-      <span className={`w-28 text-right font-medium flex-shrink-0 ${
-        diff == null ? 'text-gray-400' :
-        diff === 0 ? 'text-green-600' : 'text-red-600 font-bold'
-      }`}>{diff == null ? '—' : formatMonto(diff)}</span>
+    <div className={`text-sm py-1.5 ${hayDiferencia ? 'bg-red-50 -mx-2 px-2 rounded-lg' : ''}`}>
+      <div className="flex items-center">
+        <span className="flex-1 text-gray-600 min-w-0 truncate">{label}</span>
+        <span className="w-28 text-right font-medium text-gray-800 flex-shrink-0 border-r border-gray-100 pr-3">{formatVal(valorCajero)}</span>
+        <span className={`w-28 text-right font-medium flex-shrink-0 border-r border-gray-100 pr-3 ${
+          valorGestor == null ? 'text-gray-400' :
+          valorCajero !== valorGestor ? 'text-red-600 font-bold' : 'text-gray-800'
+        }`}>{formatVal(valorGestor)}</span>
+        <span className={`w-28 text-right font-medium flex-shrink-0 border-r border-gray-100 pr-3 ${
+          valorErp == null ? 'text-gray-400' :
+          base !== valorErp ? 'text-red-600 font-bold' : 'text-indigo-700'
+        }`}>{formatVal(valorErp)}</span>
+        <span className={`w-28 text-right font-medium flex-shrink-0 ${
+          diff == null ? 'text-gray-400' :
+          diff === 0 ? 'text-green-600' : 'text-red-600 font-bold'
+        }`}>{diff == null ? '—' : formatMonto(diff)}</span>
+      </div>
+      {/* Resolución o botón resolver */}
+      {hayDiferencia && diff !== 0 && diff != null && (
+        <div className="flex items-center mt-1 ml-0">
+          {resolucion ? (
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              {causaLabel}{resolucion.descripcion ? `: ${resolucion.descripcion}` : ''}
+            </span>
+          ) : puedeResolver && onResolver ? (
+            <button
+              onClick={() => onResolver(diff)}
+              className="text-xs text-violet-500 hover:text-violet-700 font-medium transition-colors"
+            >
+              Resolver diferencia
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
@@ -83,6 +108,10 @@ const DetalleCierre = () => {
   const [reglaGuardada, setReglaGuardada] = useState(null)
   const chatEndRef = useRef(null)
 
+  // Estado resoluciones
+  const [resoluciones, setResoluciones] = useState([])
+  const [modalResolucion, setModalResolucion] = useState(null) // { tipo, monto } o null
+
   useEffect(() => {
     const cargar = async () => {
       try {
@@ -112,6 +141,15 @@ const DetalleCierre = () => {
             .then(res => setGastos(res.data || []))
             .catch(() => {})
         )
+
+        // Resoluciones (gestor/admin only)
+        if (usuario?.rol !== 'operario') {
+          promises.push(
+            api.get(`/api/resoluciones?cierre_id=${id}`)
+              .then(res => setResoluciones(res.data || []))
+              .catch(() => {})
+          )
+        }
 
         if (usuario?.rol !== 'operario' && !cierreData._blind) {
           promises.push(
@@ -150,11 +188,12 @@ const DetalleCierre = () => {
     cargar()
   }, [id, usuario?.rol])
 
-  const analizarConIA = async () => {
+  const analizarConIA = async (forceRefresh = false) => {
     setCargandoIA(true)
     setErrorIA('')
     try {
-      const { data } = await api.get(`/api/cierres/${id}/analisis-ia`)
+      const url = forceRefresh ? `/api/cierres/${id}/analisis-ia?refresh=1` : `/api/cierres/${id}/analisis-ia`
+      const { data } = await api.get(url)
       setAnalisisIA(data)
     } catch (err) {
       setErrorIA(err.response?.data?.error || 'Error al generar análisis')
@@ -192,6 +231,19 @@ const DetalleCierre = () => {
       setGuardandoRegla(null)
     }
   }
+
+  const guardarResolucion = async (datos) => {
+    const { data } = await api.post('/api/resoluciones', datos)
+    setResoluciones(prev => [data, ...prev])
+  }
+
+  const eliminarResolucion = async (resId) => {
+    await api.delete(`/api/resoluciones/${resId}`)
+    setResoluciones(prev => prev.filter(r => r.id !== resId))
+  }
+
+  // Buscar si hay resolución para un tipo de diferencia
+  const getResolucion = (tipo) => resoluciones.find(r => r.tipo_diferencia === tipo)
 
   const toggleControlarGasto = async (gastoId, controlado) => {
     setControlandoGasto(gastoId)
@@ -608,6 +660,9 @@ const DetalleCierre = () => {
               valorCajero={(parseFloat(cierre.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
               valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
               valorErp={erpData ? erpData.total_efectivo : null}
+              resolucion={getResolucion('efectivo')}
+              puedeResolver={esGestor || esAdmin}
+              onResolver={(diff) => setModalResolucion({ tipo: 'efectivo', monto: diff })}
             />
 
 
@@ -617,6 +672,10 @@ const DetalleCierre = () => {
               const cierreMp = cierreMediosMap[fcId]
               const verifMp = verifMediosMap[fcId]
               const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
+              const tipoRes = nombre.toLowerCase().includes('payway') ? 'payway'
+                : nombre.toLowerCase().includes('transfer') ? 'transferencia'
+                : nombre.toLowerCase().includes('mercado') || nombre.toLowerCase().includes('qr') ? 'mercadopago'
+                : 'otro_medio'
               return (
                 <FilaComparativa
                   key={fcId}
@@ -624,6 +683,9 @@ const DetalleCierre = () => {
                   valorCajero={parseFloat(cierreMp?.monto) || 0}
                   valorGestor={verificacion ? (parseFloat(verifMp?.monto) || 0) : null}
                   valorErp={getErpMonto(nombre)}
+                  resolucion={getResolucion(tipoRes)}
+                  puedeResolver={esGestor || esAdmin}
+                  onResolver={(diff) => setModalResolucion({ tipo: tipoRes, monto: diff })}
                 />
               )
             })}
@@ -970,9 +1032,10 @@ const DetalleCierre = () => {
             </div>
 
             {cargandoIA && (
-              <div className="flex items-center justify-center py-6 gap-2">
+              <div className="flex flex-col items-center justify-center py-6 gap-2">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-violet-600" />
                 <span className="text-sm text-violet-600">Analizando cierre...</span>
+                <span className="text-xs text-violet-400">El agente puede investigar diferencias significativas</span>
               </div>
             )}
 
@@ -1043,6 +1106,71 @@ const DetalleCierre = () => {
                     </ul>
                   </div>
                 )}
+
+                {/* Posibles causas (Fase 2) — clickeables para pre-llenar resolución */}
+                {analisisIA.posibles_causas && analisisIA.posibles_causas.length > 0 && (
+                  <div className="space-y-1.5">
+                    <h4 className="text-xs font-semibold text-violet-700">Posibles causas</h4>
+                    <div className="space-y-1">
+                      {analisisIA.posibles_causas.map((pc, idx) => (
+                        <button
+                          key={`pc-${idx}`}
+                          onClick={() => setModalResolucion({ tipo: pc.tipo, monto: 0, sugerencia: pc })}
+                          className="w-full text-left text-sm p-2 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors border border-violet-100"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-violet-800">{pc.label || pc.causa}</span>
+                            <span className="text-xs text-violet-500">{Math.round((pc.confianza || 0) * 100)}% confianza</span>
+                          </div>
+                          {pc.descripcion && <p className="text-xs text-gray-500 mt-0.5">{pc.descripcion}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Investigación del agente (Fase 3) */}
+                {analisisIA.investigacion && (
+                  <div className="space-y-1.5 border-t border-violet-200 pt-2">
+                    <h4 className="text-xs font-semibold text-violet-700">Investigación</h4>
+                    {analisisIA.investigacion.herramientas_usadas?.length > 0 && (
+                      <div className="text-xs text-gray-500 space-y-0.5">
+                        {analisisIA.investigacion.herramientas_usadas.map((h, idx) => (
+                          <p key={`tool-${idx}`} className="flex items-center gap-1">
+                            <span className="text-violet-400">&#8226;</span>
+                            <span className="font-medium">{h.nombre.replace(/_/g, ' ')}</span>
+                            <span className="text-gray-400">— {h.resultado_resumen}</span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {analisisIA.investigacion.hallazgos?.length > 0 && (
+                      <div className="bg-white border border-violet-100 rounded-lg p-2 space-y-1">
+                        {analisisIA.investigacion.hallazgos.map((h, idx) => (
+                          <p key={`hallazgo-${idx}`} className="text-sm text-gray-700 flex items-start gap-1.5">
+                            <span className="text-violet-500 mt-0.5 flex-shrink-0">&#10148;</span>
+                            <span>{h}</span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {analisisIA.investigacion.conclusion && (
+                      <p className="text-sm text-gray-600 italic">{analisisIA.investigacion.conclusion}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Cached indicator + refresh */}
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  {analisisIA._cached && <span className="text-[10px] text-gray-400">cacheado</span>}
+                  <button
+                    onClick={() => analizarConIA(true)}
+                    disabled={cargandoIA}
+                    className="text-[10px] text-violet-400 hover:text-violet-600 transition-colors"
+                  >
+                    Re-analizar
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1151,6 +1279,17 @@ const DetalleCierre = () => {
           Volver a Control de Cajas
         </Link>
       </div>
+
+      {/* Modal de resolución de diferencias */}
+      <ResolverDiferenciaModal
+        isOpen={!!modalResolucion}
+        onClose={() => setModalResolucion(null)}
+        onGuardar={guardarResolucion}
+        tipoDiferencia={modalResolucion?.tipo}
+        montoDiferencia={modalResolucion?.monto}
+        cierreId={id}
+        sugerenciasIA={analisisIA?.posibles_causas?.filter(s => s.tipo === modalResolucion?.tipo) || []}
+      />
     </div>
   )
 }

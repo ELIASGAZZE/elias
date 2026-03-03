@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 
-const NuevoClienteModal = ({ onClose, onCreado }) => {
+const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
   // Paso 1: búsqueda, Paso 2: formulario
-  const [paso, setPaso] = useState(1)
-  const [busqueda, setBusqueda] = useState('')
+  // Si viene cuitInicial, saltar directo al formulario
+  const [paso, setPaso] = useState(cuitInicial ? 2 : 1)
+  const [busqueda, setBusqueda] = useState(cuitInicial || '')
   const [resultados, setResultados] = useState([])
   const [buscando, setBuscando] = useState(false)
   const [importando, setImportando] = useState(null)
@@ -22,11 +23,46 @@ const NuevoClienteModal = ({ onClose, onCreado }) => {
   const [direcciones, setDirecciones] = useState([{ direccion: '', localidad: '', referencia: '' }])
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState(null)
+  const [consultandoAfip, setConsultandoAfip] = useState(false)
+  const [datosAfip, setDatosAfip] = useState(null)
 
   // Focus en input al abrir
   useEffect(() => {
     if (paso === 1) inputRef.current?.focus()
   }, [paso])
+
+  // Si viene cuitInicial, pre-cargar form y consultar AFIP
+  const yaInicio = useRef(false)
+  useEffect(() => {
+    if (cuitInicial && !yaInicio.current) {
+      yaInicio.current = true
+      const cuitLimpio = cuitInicial.replace(/\D/g, '')
+      setForm(prev => ({ ...prev, cuit: cuitLimpio }))
+      if (cuitLimpio.length >= 7) {
+        setConsultandoAfip(true)
+        api.get('/api/clientes/buscar-afip', { params: { cuit: cuitLimpio } })
+          .then(({ data }) => {
+            if (data.encontrado && data.datos) {
+              const d = data.datos
+              setDatosAfip(d)
+              setForm(prev => ({
+                ...prev,
+                cuit: d.cuit || prev.cuit,
+                razon_social: d.razon_social || prev.razon_social,
+                condicion_iva: d.condicion_iva || prev.condicion_iva,
+              }))
+              if (d.domicilio && (!direcciones[0]?.direccion)) {
+                setDirecciones([{ direccion: d.domicilio, localidad: d.localidad || '', referencia: '' }])
+              }
+            } else {
+              setDatosAfip('no_encontrado')
+            }
+          })
+          .catch(() => setDatosAfip('error'))
+          .finally(() => setConsultandoAfip(false))
+      }
+    }
+  }, [])
 
   // Debounce búsqueda CUIT
   useEffect(() => {
@@ -69,9 +105,6 @@ const NuevoClienteModal = ({ onClose, onCreado }) => {
       setImportando(null)
     }
   }
-
-  const [consultandoAfip, setConsultandoAfip] = useState(false)
-  const [datosAfip, setDatosAfip] = useState(null)
 
   const irACrear = async () => {
     const cuitLimpio = busqueda.replace(/\D/g, '')

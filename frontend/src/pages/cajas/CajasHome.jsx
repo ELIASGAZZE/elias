@@ -384,15 +384,24 @@ const CajasHome = () => {
 
       <div className="px-4 py-4 space-y-4 max-w-4xl mx-auto">
 
-        {/* Botón chat IA para gestor/admin */}
+        {/* Botones IA para gestor/admin */}
         {(esGestor || esAdmin) && (
-          <Link
-            to="/cajas/chat"
-            className="flex items-center justify-center gap-2 w-full border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 py-2.5 rounded-xl font-medium transition-colors text-sm"
-          >
-            <span className="text-violet-500">&#10022;</span>
-            Chat Auditoria IA
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              to="/cajas/chat"
+              className="flex-1 flex items-center justify-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 py-2.5 rounded-xl font-medium transition-colors text-sm"
+            >
+              <span className="text-violet-500">&#10022;</span>
+              Chat IA
+            </Link>
+            <Link
+              to="/cajas/batch"
+              className="flex-1 flex items-center justify-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 py-2.5 rounded-xl font-medium transition-colors text-sm"
+            >
+              <span className="text-violet-500">&#9776;</span>
+              Análisis diario
+            </Link>
+          </div>
         )}
 
         {/* Botón abrir caja (operario/admin) */}

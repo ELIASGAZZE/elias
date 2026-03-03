@@ -22,6 +22,8 @@ const clientesRoutes = require('./routes/clientes')
 const deliveryRoutes = require('./routes/delivery')
 const cajerosRoutes = require('./routes/cajeros')
 const reglasIARoutes = require('./routes/reglasIA')
+const resolucionesRoutes = require('./routes/resoluciones')
+const batchAnalisisRoutes = require('./routes/batchAnalisis')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -63,6 +65,8 @@ app.use('/api/clientes', clientesRoutes)
 app.use('/api/delivery', deliveryRoutes)
 app.use('/api/cajeros', cajerosRoutes)
 app.use('/api/reglas-ia', reglasIARoutes)
+app.use('/api/resoluciones', resolucionesRoutes)
+app.use('/api/batch-analisis', batchAnalisisRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

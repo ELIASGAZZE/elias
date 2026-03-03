@@ -415,4 +415,89 @@ async function agregarContactoEnvioCentum(idCliente, { email, celular }) {
   return data
 }
 
-module.exports = { fetchClientesCentum, crearClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum }
+/**
+ * Crea un Pedido de Venta en Centum ERP.
+ * Artículo fijo: 08136 "PEDIDO APP PADANO GESTION"
+ * @param {Object} params
+ * @param {number} params.idCliente - ID del cliente en Centum
+ * @param {string} params.fechaEntrega - Fecha ISO (YYYY-MM-DD)
+ * @param {string} params.tipo - "delivery" o "retiro"
+ * @param {string} [params.observaciones] - Observaciones libres
+ * @param {number} [params.sucursalFisicaId] - ID de SucursalFisica Centum (solo para retiro)
+ * @returns {Promise<Object>} - Respuesta del ERP con el pedido creado
+ */
+async function crearPedidoVentaCentum({ idCliente, fechaEntrega, tipo, observaciones, sucursalFisicaId }) {
+  const accessToken = generateAccessToken(API_KEY)
+  const url = `${BASE_URL}/PedidosVenta`
+  const inicio = Date.now()
+
+  const obs = observaciones
+    ? `Pedido desde App Padano (${tipo === 'delivery' ? 'Delivery' : 'Retiro por Sucursal'}) - ${observaciones}`
+    : `Pedido desde App Padano (${tipo === 'delivery' ? 'Delivery' : 'Retiro por Sucursal'})`
+
+  const body = {
+    Bonificacion: { IdBonificacion: 6235 },
+    Cliente: { IdCliente: idCliente },
+    FechaEntrega: `${fechaEntrega}T00:00:00`,
+    Observaciones: obs,
+    PedidoVentaArticulos: [
+      {
+        IdArticulo: 8135,
+        Codigo: '08136',
+        Nombre: 'PEDIDO APP PADANO GESTION',
+        Cantidad: 1.0,
+        Precio: 1.0,
+        CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21.0 },
+      },
+    ],
+    Vendedor: { IdVendedor: 2 },
+    TurnoEntrega: { IdTurnoEntrega: 8782 },
+  }
+
+  // Agregar sucursal física (delivery → Fisherton, retiro → la elegida)
+  if (sucursalFisicaId) {
+    body.SucursalFisica = { IdSucursalFisica: sucursalFisicaId }
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'manual',
+    })
+    throw err
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'manual',
+    })
+    throw new Error(`Error al crear pedido de venta en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json()
+
+  registrarLlamada({
+    servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'manual',
+  })
+
+  return data
+}
+
+module.exports = { fetchClientesCentum, crearClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, crearPedidoVentaCentum }

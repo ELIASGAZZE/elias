@@ -4,6 +4,7 @@ const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
 const { sincronizarPedidosVenta } = require('../services/syncPedidosVenta')
 const { syncClientesRecientes, retrySyncCentum } = require('../services/centumClientes')
+const { analizarBatch } = require('../services/patronesIA')
 
 function iniciarCronJobs() {
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
@@ -86,12 +87,29 @@ function iniciarCronJobs() {
   }
   loopSyncPedidos()
 
+  // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
+  // Analiza los cierres del día anterior
+  cron.schedule('0 8 * * *', async () => {
+    const ayer = new Date()
+    ayer.setDate(ayer.getDate() - 1)
+    const fechaAyer = ayer.toISOString().split('T')[0]
+    console.log(`[CRON ${new Date().toISOString()}] Iniciando análisis batch para ${fechaAyer}...`)
+
+    try {
+      const resultado = await analizarBatch(fechaAyer)
+      console.log(`[CRON] Batch completado: ${resultado.total} cierres, ${resultado.con_diferencia} con diferencia, puntaje promedio: ${resultado.puntaje_promedio || 'N/A'}`)
+    } catch (err) {
+      console.error('[CRON] Error en análisis batch:', err.message)
+    }
+  })
+
   console.log('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
   console.log('[CRON] Sincronización stock depósito programada: cada hora en punto')
   console.log('[CRON] Keep-alive programado: cada 14 minutos')
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Sync pedidos de venta: loop continuo (cada 15s)')
+  console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 
 module.exports = { iniciarCronJobs }

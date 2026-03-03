@@ -490,4 +490,192 @@ async function getComprobantesData(planillaId) {
   }
 }
 
-module.exports = { getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData }
+// ═══════════════════════════════════════════════════════════════
+// FASE 3: Funciones para el agente investigador de IA
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Obtiene detalle de todas las transacciones de una planilla con timestamps
+ * Útil para detectar duplicados o transacciones sospechosas
+ * @param {number} planillaId - ID de planilla en Centum
+ * @returns {Array} Lista de transacciones con detalles
+ */
+async function getTransaccionesDetalle(planillaId) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+
+    const result = await db.request()
+      .input('planillaId', sql.Int, planillaId)
+      .query(`
+        SELECT
+          pci.PlanillaCajaItemID AS transaccion_id,
+          pci.ImportePlanillaCajaItemID AS importe,
+          pci.MovimientoValorIDPlanillaCajaItem AS cobro_item_id,
+          ci.CobroID AS cobro_id,
+          v.ValorID AS valor_id,
+          v.DetalleValor AS forma_pago,
+          ci_cancel.CobroItemID AS cancelacion_item_id,
+          cc.CanceladoID AS documento_id,
+          cc.CanceladoTipoComprobanteID AS tipo_comprobante_id,
+          tc.CodigoComprobante AS codigo_comprobante,
+          tc.NombreComprobante AS tipo_comprobante,
+          ven.NumeroDocumento AS numero_documento,
+          ven.FechaDocumento AS fecha_documento,
+          ven.Total AS total_documento
+        FROM PlanillaCaja_Items_VIEW pci
+        JOIN Cobro_Items_VIEW ci ON pci.MovimientoValorIDPlanillaCajaItem = ci.CobroItemID
+        JOIN Valores_VIEW v ON ci.ValorID = v.ValorID
+        LEFT JOIN Cobro_Items_VIEW ci_cancel ON ci.CobroID = ci_cancel.CobroID
+          AND ci_cancel.ValorID = 0
+          AND ci_cancel.TipoItemCobroID = 1
+        LEFT JOIN Cobro_Cancelaciones_VIEW cc ON ci_cancel.CobroItemID = cc.CobroItemID
+        LEFT JOIN TipoComprobantes_VIEW tc ON cc.CanceladoTipoComprobanteID = tc.TipoComprobanteID
+        LEFT JOIN Ventas_VIEW ven ON cc.CanceladoID = ven.VentaID
+        WHERE pci.PlanillaCajaID = @planillaId
+        AND ci.ValorID > 0
+        ORDER BY pci.PlanillaCajaItemID
+      `)
+
+    const transacciones = result.recordset.map(r => ({
+      transaccion_id: r.transaccion_id,
+      importe: parseFloat(r.importe?.toFixed(2) || 0),
+      forma_pago: r.forma_pago?.trim() || null,
+      valor_id: r.valor_id,
+      cobro_id: r.cobro_id,
+      documento_id: r.documento_id,
+      tipo_comprobante: r.tipo_comprobante?.trim() || null,
+      codigo_comprobante: r.codigo_comprobante?.trim() || null,
+      numero_documento: r.numero_documento?.trim() || null,
+      fecha_documento: r.fecha_documento || null,
+      total_documento: r.total_documento ? parseFloat(r.total_documento.toFixed(2)) : null,
+    }))
+
+    // Detectar posibles duplicados (misma forma_pago + mismo importe + mismo cobro en corto tiempo)
+    const duplicadosSospechosos = []
+    for (let i = 0; i < transacciones.length; i++) {
+      for (let j = i + 1; j < transacciones.length; j++) {
+        const a = transacciones[i]
+        const b = transacciones[j]
+        if (a.forma_pago === b.forma_pago &&
+            Math.abs(a.importe - b.importe) < 0.01 &&
+            a.importe > 100 &&
+            a.numero_documento === b.numero_documento) {
+          duplicadosSospechosos.push({
+            monto: a.importe,
+            forma_pago: a.forma_pago,
+            documento: a.numero_documento,
+            ids: [a.transaccion_id, b.transaccion_id],
+          })
+        }
+      }
+    }
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'TransaccionesDetalle',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: transacciones.length, origen: 'consulta',
+    })
+
+    return {
+      total: transacciones.length,
+      transacciones: transacciones.slice(0, 100), // Limitar para no abrumar a la IA
+      duplicados_sospechosos: duplicadosSospechosos,
+      resumen_por_forma_pago: Object.values(
+        transacciones.reduce((acc, t) => {
+          const key = t.forma_pago || 'DESCONOCIDO'
+          if (!acc[key]) acc[key] = { forma_pago: key, total: 0, cantidad: 0 }
+          acc[key].total += t.importe
+          acc[key].cantidad++
+          return acc
+        }, {})
+      ),
+    }
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'TransaccionesDetalle',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'consulta',
+    })
+    throw err
+  }
+}
+
+/**
+ * Busca comprobantes que coincidan con un monto específico (con tolerancia)
+ * @param {number} planillaId - ID de planilla
+ * @param {number} monto - Monto a buscar
+ * @param {number} tolerancia - Tolerancia en pesos (+/-)
+ * @returns {Array} Comprobantes que coinciden
+ */
+async function buscarComprobantesPorMonto(planillaId, monto, tolerancia = 100) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+    const montoAbs = Math.abs(monto)
+
+    const result = await db.request()
+      .input('planillaId', sql.Int, planillaId)
+      .input('montoMin', sql.Decimal(12, 2), montoAbs - tolerancia)
+      .input('montoMax', sql.Decimal(12, 2), montoAbs + tolerancia)
+      .query(`
+        SELECT DISTINCT
+          ven.VentaID,
+          ven.NumeroDocumento,
+          ven.FechaDocumento,
+          ven.Total,
+          tc.CodigoComprobante,
+          tc.NombreComprobante,
+          cl.RazonSocialCliente
+        FROM PlanillaCaja_Items_VIEW pci
+        JOIN Cobro_Items_VIEW ci_valor ON pci.MovimientoValorIDPlanillaCajaItem = ci_valor.CobroItemID
+          AND ci_valor.ValorID > 0
+        JOIN Cobro_Items_VIEW ci_cancel ON ci_valor.CobroID = ci_cancel.CobroID
+          AND ci_cancel.ValorID = 0
+          AND ci_cancel.TipoItemCobroID = 1
+        JOIN Cobro_Cancelaciones_VIEW cc ON ci_cancel.CobroItemID = cc.CobroItemID
+        JOIN Ventas_VIEW ven ON cc.CanceladoID = ven.VentaID
+        JOIN TipoComprobantes_VIEW tc ON cc.CanceladoTipoComprobanteID = tc.TipoComprobanteID
+        LEFT JOIN Clientes_VIEW cl ON ven.ClienteID = cl.ClienteID
+        WHERE pci.PlanillaCajaID = @planillaId
+        AND ABS(ven.Total) BETWEEN @montoMin AND @montoMax
+        ORDER BY ABS(ven.Total - ${montoAbs}) ASC
+      `)
+
+    const comprobantes = result.recordset.map(r => ({
+      venta_id: r.VentaID,
+      numero: r.NumeroDocumento?.trim() || null,
+      fecha: r.FechaDocumento,
+      total: parseFloat(r.Total),
+      tipo: r.NombreComprobante?.trim() || null,
+      codigo: r.CodigoComprobante?.trim() || null,
+      cliente: r.RazonSocialCliente?.trim() || null,
+      diferencia_vs_buscado: parseFloat((Math.abs(r.Total) - montoAbs).toFixed(2)),
+    }))
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'ComprobantesPorMonto',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: comprobantes.length, origen: 'consulta',
+    })
+
+    return {
+      monto_buscado: monto,
+      tolerancia,
+      encontrados: comprobantes.length,
+      comprobantes,
+    }
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'ComprobantesPorMonto',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'consulta',
+    })
+    throw err
+  }
+}
+
+module.exports = {
+  getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
+  getTransaccionesDetalle, buscarComprobantesPorMonto,
+}
