@@ -32,7 +32,9 @@ REGLAS DE NEGOCIO IMPORTANTES:
 - Los montos están en pesos argentinos (ARS). En Argentina, diferencias menores a $2.000 son insignificantes (equivale a monedas/vuelto). No las marques como críticas ni sospechosas.
 - Diferencias de centavos (ej: $0.05, $0.10) entre sistemas son redondeos normales, ignoralas.
 - PAYWAY, PAYWAY INTEGRADO y variantes son el MISMO medio de pago (la tarjeta). El ERP a veces usa nombres distintos. No marques como "duplicación" ni "sin correspondencia" si los montos coinciden.
-- El "efectivo neto" del cajero ya tiene descontado fondo fijo y cambio. Compará ese valor con el ERP, no el bruto.
+- El "efectivo_neto" del cajero ya incluye fondo fijo, cambio Y gastos del turno. Compará ese valor directamente con el ERP.
+- GASTOS DURANTE EL TURNO: si hay gastos (ej: compras a proveedores como Bimbo, Coca-Cola, etc.), ya están sumados en el efectivo_neto. Mencioná los gastos como contexto pero NO los reportes como diferencia de efectivo.
+- DIFERENCIAS PRECALCULADAS: La sección "diferencias" del JSON ya tiene las diferencias correctas. Usá SIEMPRE esos valores para reportar diferencias. No calcules tus propias diferencias.
 - Continuidad de cambio: el cambio dejado en un cierre debe coincidir con el fondo fijo de la apertura siguiente. Si coincide, es correcto.
 - Ventas sin confirmar pueden explicar diferencias — mencionalo como posible causa.
 - Sé práctico y conciso. No recomiendes acciones obvias ni burocracia innecesaria.
@@ -70,7 +72,26 @@ async function cargarReglas() {
 }
 
 function limpiarJSON(texto) {
-  return texto.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+  // 1. Quitar markdown code blocks
+  let limpio = texto.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+
+  // 2. Si no empieza con {, intentar extraer JSON del texto
+  if (!limpio.startsWith('{')) {
+    const inicio = limpio.indexOf('{')
+    if (inicio === -1) throw new Error('No se encontró JSON en la respuesta')
+    limpio = limpio.slice(inicio)
+  }
+
+  // 3. Encontrar el cierre balanceado del JSON
+  let depth = 0
+  let fin = -1
+  for (let i = 0; i < limpio.length; i++) {
+    if (limpio[i] === '{') depth++
+    else if (limpio[i] === '}') { depth--; if (depth === 0) { fin = i; break } }
+  }
+  if (fin > 0) limpio = limpio.slice(0, fin + 1)
+
+  return limpio
 }
 
 function validarAnalisis(resultado) {
@@ -175,26 +196,8 @@ async function buscarCache(cierreId) {
  * @returns {object} { puntaje, nivel_riesgo, resumen, alertas, recomendaciones, posibles_causas }
  */
 async function analizarCierre(auditoriaData, options = {}) {
-  const { useCache = true, forceRefresh = false } = options
   const cierreId = auditoriaData.cierre_id
   const inicio = Date.now()
-
-  // Buscar cache si no se pide forzar
-  if (useCache && !forceRefresh && cierreId) {
-    const cached = await buscarCache(cierreId)
-    if (cached) {
-      return {
-        puntaje: cached.puntaje,
-        nivel_riesgo: cached.nivel_riesgo,
-        resumen: cached.resumen,
-        alertas: cached.alertas || [],
-        recomendaciones: cached.recomendaciones || [],
-        posibles_causas: cached.posibles_causas || [],
-        investigacion: cached.investigacion || null,
-        _cached: true,
-      }
-    }
-  }
 
   try {
     // Obtener contexto histórico en paralelo (Fase 2)
@@ -237,8 +240,23 @@ async function analizarCierre(auditoriaData, options = {}) {
     })
 
     const texto = response.content[0].text
-    const limpio = limpiarJSON(texto)
-    const resultado = validarAnalisis(JSON.parse(limpio))
+    let resultado
+    try {
+      const limpio = limpiarJSON(texto)
+      resultado = validarAnalisis(JSON.parse(limpio))
+    } catch (parseErr) {
+      console.error('Error parseando JSON de IA (intento 1):', parseErr.message)
+      // Retry: pedir a Claude que corrija el JSON
+      const retryResp = await client.messages.create({
+        model: MODELO,
+        max_tokens: 1500,
+        system: 'Corregí este JSON inválido. Devolvé SOLO el JSON corregido, sin texto ni backticks.',
+        messages: [{ role: 'user', content: texto }],
+      })
+      const retryTexto = retryResp.content[0].text
+      const retryLimpio = limpiarJSON(retryTexto)
+      resultado = validarAnalisis(JSON.parse(retryLimpio))
+    }
 
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'messages.create/analisis',
@@ -330,13 +348,15 @@ PROCESO:
 1. Analizá los datos del cierre que te pasan
 2. Si hay diferencias significativas (> $2.000), usá las herramientas para investigar la causa
 3. Buscá patrones: comprobantes duplicados, transacciones con timestamps muy cercanos, montos que coinciden con la diferencia
-4. Consultá el historial del cajero para ver si es un patrón recurrente
+4. Cruzá la información: observaciones del cajero + datos ERP + cantidad de operaciones por medio de pago
 5. Devolvé tu análisis final en JSON
 
-REGLAS DE NEGOCIO:
-- Montos en pesos argentinos (ARS). Diferencias < $2.000 son insignificantes.
+REGLAS DE NEGOCIO CRÍTICAS:
+- Montos en pesos argentinos (ARS). Diferencias < $2.000 son insignificantes (vuelto/monedas), no las reportes como problema.
 - PAYWAY, PAYWAY INTEGRADO = mismo medio de pago.
-- "Efectivo neto" ya tiene descontado fondo fijo y cambio.
+- El campo "efectivo_neto" del cajero YA INCLUYE gastos del turno. Compará directamente cajero.efectivo_neto vs erp.total_efectivo.
+- DIFERENCIAS PRECALCULADAS: la sección "diferencias" del JSON tiene los valores correctos. Usá SIEMPRE esos valores. NUNCA calcules tus propias diferencias.
+- Si la diferencia precalculada de efectivo es < $2.000, decí que es normal y no la reportes como alerta.
 - Ventas sin confirmar pueden explicar diferencias.
 
 Cuando termines de investigar, devolvé SOLO un JSON con esta estructura:
@@ -355,18 +375,24 @@ Cuando termines de investigar, devolvé SOLO un JSON con esta estructura:
 }`
 
 /**
- * Ejecuta una herramienta del agente
+ * Ejecuta una herramienta del agente con timeout
  */
 async function ejecutarHerramienta(nombre, input) {
   // Lazy import to avoid circular dependencies
   const { getTransaccionesDetalle, buscarComprobantesPorMonto } = require('../config/centum')
 
+  const timeoutMs = 10000
+  const withTimeout = (promise) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout consultando ERP')), timeoutMs))
+  ])
+
   switch (nombre) {
     case 'consultar_transacciones_detalle':
-      return await getTransaccionesDetalle(input.planilla_id)
+      return await withTimeout(getTransaccionesDetalle(input.planilla_id))
 
     case 'buscar_comprobantes_por_monto':
-      return await buscarComprobantesPorMonto(input.planilla_id, input.monto, input.tolerancia || 100)
+      return await withTimeout(buscarComprobantesPorMonto(input.planilla_id, input.monto, input.tolerancia || 100))
 
     case 'consultar_historial_cajero':
       return await getEstadisticasCajero(input.cajero_id)
@@ -421,9 +447,9 @@ async function analizarCierreAgente(auditoriaData, options = {}) {
       // Si la respuesta es solo texto (end_turn), parsear resultado final
       if (response.stop_reason === 'end_turn') {
         const textoFinal = response.content.find(c => c.type === 'text')?.text || ''
-        const limpio = limpiarJSON(textoFinal)
 
         try {
+          const limpio = limpiarJSON(textoFinal)
           const resultado = validarAnalisis(JSON.parse(limpio))
           resultado.investigacion = resultado.investigacion || {
             herramientas_usadas: herramientasUsadas,
@@ -439,9 +465,28 @@ async function analizarCierreAgente(auditoriaData, options = {}) {
 
           if (cierreId) cachearAnalisis(cierreId, resultado, MODELO, tokensTotal)
           return resultado
-        } catch {
-          // Si no es JSON válido, devolver como texto
-          break
+        } catch (parseErr) {
+          console.error('Error parseando JSON del agente:', parseErr.message)
+          // Retry: pedir corrección del JSON
+          try {
+            const retryResp = await client.messages.create({
+              model: MODELO,
+              max_tokens: 1500,
+              system: 'Corregí este JSON inválido. Devolvé SOLO el JSON corregido, sin texto ni backticks.',
+              messages: [{ role: 'user', content: textoFinal }],
+            })
+            const retryLimpio = limpiarJSON(retryResp.content[0].text)
+            const resultado = validarAnalisis(JSON.parse(retryLimpio))
+            resultado.investigacion = resultado.investigacion || {
+              herramientas_usadas: herramientasUsadas,
+              hallazgos: [],
+              conclusion: resultado.resumen,
+            }
+            if (cierreId) cachearAnalisis(cierreId, resultado, MODELO, tokensTotal)
+            return resultado
+          } catch {
+            break // Fallback a Fase 2
+          }
         }
       }
 
@@ -550,12 +595,52 @@ async function chatCajas(mensaje, historialChat = [], contextoAuditoria = null) 
 
     messages.push({ role: 'user', content: mensaje })
 
-    const response = await client.messages.create({
+    // Si hay contexto de un cierre específico con planilla_id, dar tool use
+    const tieneplanilla = contextoAuditoria && contextoAuditoria.planilla_id
+    const createOpts = {
       model: MODELO,
-      max_tokens: 1024,
+      max_tokens: 1500,
       system: systemPrompt,
       messages,
-    })
+    }
+    if (tieneplanilla) {
+      createOpts.tools = TOOLS_AGENTE
+    }
+
+    let response = await client.messages.create(createOpts)
+
+    // Si usó herramientas, ejecutarlas y obtener respuesta final (máx 2 iteraciones)
+    let iteraciones = 0
+    while (tieneplanilla && response.stop_reason === 'tool_use' && iteraciones < 2) {
+      messages.push({ role: 'assistant', content: response.content })
+
+      const toolResults = []
+      for (const block of response.content) {
+        if (block.type === 'tool_use') {
+          try {
+            const result = await ejecutarHerramienta(block.name, block.input)
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify(result).slice(0, 10000),
+            })
+          } catch (err) {
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify({ error: err.message }),
+              is_error: true,
+            })
+          }
+        }
+      }
+
+      messages.push({ role: 'user', content: toolResults })
+      response = await client.messages.create(createOpts)
+      iteraciones++
+    }
+
+    const textoFinal = response.content.find(c => c.type === 'text')?.text || ''
 
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'messages.create/chat',
@@ -564,7 +649,7 @@ async function chatCajas(mensaje, historialChat = [], contextoAuditoria = null) 
       origen: 'consulta',
     })
 
-    return response.content[0].text
+    return textoFinal
   } catch (err) {
     console.error('Error en chatCajas:', err.message)
     registrarLlamada({
