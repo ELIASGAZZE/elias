@@ -30,9 +30,9 @@ async function fetchPedidosCentum({ fechaDesde, fechaHasta, idSucursal, pagina =
   const inicio = Date.now()
 
   const body = {}
-  if (fechaDesde) body.fechaDocumentoDesde = fechaDesde
-  if (fechaHasta) body.fechaDocumentoHasta = fechaHasta
-  if (idSucursal) body.idSucursal = idSucursal
+  if (fechaDesde) body.FechaDocumentoDesde = fechaDesde
+  if (fechaHasta) body.FechaDocumentoHasta = fechaHasta
+  if (idSucursal) body.IdSucursal = idSucursal
 
   let response
   try {
@@ -61,8 +61,9 @@ async function fetchPedidosCentum({ fechaDesde, fechaHasta, idSucursal, pagina =
   }
 
   const data = await response.json()
-  const items = data.Items || (Array.isArray(data) ? data : [])
-  const total = data.CantidadTotalItems || items.length
+  const pv = data.PedidosVenta || data
+  const items = pv.Items || (Array.isArray(pv) ? pv : [])
+  const total = pv.CantidadTotalItems || items.length
 
   registrarLlamada({
     servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',

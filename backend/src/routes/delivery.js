@@ -29,35 +29,48 @@ router.get('/', verificarAuth, async (req, res) => {
     // 1. Obtener mapa de sucursales
     const sucursalesMap = await getSucursalesMap()
 
-    // 2. Determinar idSucursal de Centum para filtrar
-    let idSucursalCentum = null
+    // 2. Determinar qué sucursales consultar en Centum (IdSucursal es obligatorio)
+    const centumSucursalIds = []
     if (req.perfil.rol !== 'admin') {
+      // Operario: solo su sucursal
       const { data: suc } = await supabase
         .from('sucursales')
         .select('centum_sucursal_id')
         .eq('id', req.perfil.sucursal_id)
         .single()
-      idSucursalCentum = suc?.centum_sucursal_id || null
+      if (suc?.centum_sucursal_id) centumSucursalIds.push(suc.centum_sucursal_id)
     } else if (sucursal_id) {
+      // Admin filtrando por sucursal específica
       const { data: suc } = await supabase
         .from('sucursales')
         .select('centum_sucursal_id')
         .eq('id', sucursal_id)
         .single()
-      idSucursalCentum = suc?.centum_sucursal_id || null
+      if (suc?.centum_sucursal_id) centumSucursalIds.push(suc.centum_sucursal_id)
+    } else {
+      // Admin sin filtro: todas las sucursales con centum_sucursal_id
+      for (const csId of Object.keys(sucursalesMap)) centumSucursalIds.push(parseInt(csId))
     }
 
-    // 3. Fetch de Centum (últimos 60 días)
+    // 3. Fetch de Centum (últimos 60 días) — una llamada por sucursal
     const fechaDesde = new Date()
     fechaDesde.setDate(fechaDesde.getDate() - 60)
     const fechaDesdeStr = fechaDesde.toISOString().split('T')[0] + 'T00:00:00'
     const fechaHastaStr = new Date().toISOString().split('T')[0] + 'T23:59:59'
 
-    const { items: pedidosCentum } = await fetchPedidosCentum({
-      fechaDesde: fechaDesdeStr,
-      fechaHasta: fechaHastaStr,
-      idSucursal: idSucursalCentum,
-    })
+    let pedidosCentum = []
+    const fetchPromises = centumSucursalIds.map(csId =>
+      fetchPedidosCentum({
+        fechaDesde: fechaDesdeStr,
+        fechaHasta: fechaHastaStr,
+        idSucursal: csId,
+      }).then(r => r.items).catch(err => {
+        console.error(`[Delivery] Error consultando sucursal ${csId}:`, err.message)
+        return []
+      })
+    )
+    const resultados = await Promise.all(fetchPromises)
+    for (const items of resultados) pedidosCentum.push(...items)
 
     // 4. Obtener registros locales para merge de estados
     const idsCentum = pedidosCentum.map(p => p.IdPedidoVenta).filter(Boolean)
