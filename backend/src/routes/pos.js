@@ -37,8 +37,10 @@ router.get('/articulos', verificarAuth, async (req, res) => {
 
     const hoy = new Date().toISOString().split('T')[0]
     const body = {
+      FechaDocumento: hoy,
       FechaListaPrecio: hoy,
       IdCliente: idCliente,
+      Habilitado: true,
     }
 
     let response
