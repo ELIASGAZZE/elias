@@ -172,18 +172,28 @@ function mapCentumPedido(p, local, sucursalesMap) {
     telefono: p.Cliente.Telefono || null,
   } : null
 
-  // Items de Centum
-  const items_delivery = (p.PedidoVentaArticulos || []).map((item, idx) => ({
-    id: item.IdPedidoVentaArticulo || `centum-${idx}`,
-    cantidad: item.Cantidad || 0,
-    precio: item.Precio != null ? Math.round(item.Precio * 100) / 100 : null,
-    observaciones: item.Observaciones || null,
-    articulos: {
-      id: item.IdArticulo || null,
-      codigo: item.Codigo || null,
-      nombre: item.Nombre || item.NombreArticulo || 'Sin nombre',
-    },
-  }))
+  // Items de Centum (aplicar descuentos al precio)
+  const items_delivery = (p.PedidoVentaArticulos || []).map((item, idx) => {
+    let precio = item.Precio
+    if (precio != null) {
+      const d1 = item.PorcentajeDescuento1 || 0
+      const d2 = item.PorcentajeDescuento2 || 0
+      const d3 = item.PorcentajeDescuento3 || 0
+      precio = precio * (1 - d1 / 100) * (1 - d2 / 100) * (1 - d3 / 100)
+      precio = Math.round(precio * 100) / 100
+    }
+    return {
+      id: item.IdPedidoVentaArticulo || `centum-${idx}`,
+      cantidad: item.Cantidad || 0,
+      precio,
+      observaciones: item.Observaciones || null,
+      articulos: {
+        id: item.IdArticulo || null,
+        codigo: item.Codigo || null,
+        nombre: item.Nombre || item.NombreArticulo || 'Sin nombre',
+      },
+    }
+  })
 
   // Pedido anulado en Centum
   const anulado = p.Anulado === true || p.Anulado === 1
