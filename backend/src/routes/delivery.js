@@ -177,6 +177,52 @@ router.get('/:id/raw', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/delivery/:id/factura — datos de la factura vinculada (debug, solo admin)
+router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+
+    // 1. Obtener pedido y extraer nro de factura del estado Suscripto
+    const pedido = await fetchPedidoCentum(idCentum)
+    const estados = pedido.PedidoVentaEstados || []
+    const suscripto = estados.find(e => {
+      const nombre = e.Estado?.Nombre || ''
+      return nombre.toLowerCase().includes('suscripto')
+    })
+    if (!suscripto) return res.status(404).json({ error: 'Pedido no suscripto, no tiene factura' })
+
+    // Extraer nro factura del detalle: "Alta de Venta B00002-00007581"
+    const match = suscripto.Detalle?.match(/Alta de Venta\s+(\S+)/)
+    const nroFactura = match ? match[1] : null
+
+    // 2. Probar endpoints de Ventas en Centum
+    const { generateAccessToken } = require('../services/syncERP')
+    const BASE = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const KEY = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+    const headers = {
+      'Content-Type': 'application/json',
+      'CentumSuiteConsumidorApiPublicaId': process.env.CENTUM_CONSUMER_ID || '2',
+      'CentumSuiteAccessToken': generateAccessToken(KEY),
+    }
+
+    // Probar distintos endpoints
+    const resultados = {}
+
+    // GET /Ventas/FiltrosVenta con NumeroDocumento
+    try {
+      const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=5`, {
+        method: 'POST', headers, body: JSON.stringify({ IdPedidoVenta: idCentum })
+      })
+      resultados.filtrosVenta = r.ok ? await r.json() : { status: r.status, body: await r.text().then(t => t.slice(0, 500)) }
+    } catch (e) { resultados.filtrosVenta = { error: e.message } }
+
+    res.json({ nroFactura, detalleSuscripto: suscripto, resultados })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/delivery/:id
 // Detalle: fetch directo de Centum + merge estado local
 router.get('/:id', verificarAuth, async (req, res) => {
