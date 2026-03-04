@@ -618,15 +618,17 @@ router.post('/:id/link-pago', verificarAuth, async (req, res) => {
       return res.json({ link: pedido.mp_link_pago })
     }
 
-    // 3. Obtener detalle de Centum para calcular total
+    // 3. Obtener detalle de Centum para calcular total (misma lógica que mapCentumPedido)
     const pedidoCentum = await fetchPedidoCentum(idCentum)
     const articulos = pedidoCentum.PedidoVentaArticulos || []
     const total = articulos.reduce((sum, a) => {
-      const precio = a.Precio || 0
+      let precio = a.Precio || 0
+      const d1 = a.PorcentajeDescuento1 || 0
+      const d2 = a.PorcentajeDescuento2 || 0
+      const d3 = a.PorcentajeDescuento3 || 0
+      precio = precio * (1 - d1 / 100) * (1 - d2 / 100) * (1 - d3 / 100)
       const cantidad = a.Cantidad || 0
-      const tasaIVA = a.CategoriaImpuestoIVA?.Tasa || 0
-      const precioConIVA = precio * (1 + tasaIVA / 100)
-      return sum + (precioConIVA * cantidad)
+      return sum + (precio * cantidad)
     }, 0)
 
     if (total <= 0) {

@@ -4,7 +4,7 @@ const { MercadoPagoConfig, Preference, Payment } = require('mercadopago')
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN })
 
 async function crearPreferenciaPago({ idPedido, titulo, monto, notificationUrl }) {
-  const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'https://padanosrl-gilt.vercel.app'
+  const frontendUrl = 'https://zaatar.com.ar'
   const preference = new Preference(client)
   const result = await preference.create({
     body: {
