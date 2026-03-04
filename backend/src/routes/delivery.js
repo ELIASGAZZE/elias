@@ -208,11 +208,19 @@ router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
 
     // Probar distintos endpoints
     const resultados = {}
+    const fechaDesde = new Date()
+    fechaDesde.setDate(fechaDesde.getDate() - 60)
+    const fechaDesdeStr = fechaDesde.toISOString().split('T')[0] + 'T00:00:00'
+    const fechaHastaStr = new Date().toISOString().split('T')[0] + 'T23:59:59'
 
-    // GET /Ventas/FiltrosVenta con NumeroDocumento
+    // POST /Ventas/FiltrosVenta con IdPedidoVenta
     try {
       const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=5`, {
-        method: 'POST', headers, body: JSON.stringify({ IdPedidoVenta: idCentum })
+        method: 'POST', headers, body: JSON.stringify({
+          IdPedidoVenta: idCentum,
+          FechaDocumentoDesde: fechaDesdeStr,
+          FechaDocumentoHasta: fechaHastaStr,
+        })
       })
       resultados.filtrosVenta = r.ok ? await r.json() : { status: r.status, body: await r.text().then(t => t.slice(0, 500)) }
     } catch (e) { resultados.filtrosVenta = { error: e.message } }
