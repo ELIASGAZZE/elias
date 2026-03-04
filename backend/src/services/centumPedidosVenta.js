@@ -197,11 +197,18 @@ function mapCentumPedido(p, local, sucursalesMap) {
 
   // Pedido anulado en Centum
   const anulado = p.Anulado === true || p.Anulado === 1
+  // Suscripto en Centum → pagado automáticamente
+  const suscripto = estado_centum && typeof estado_centum === 'string' && estado_centum.toLowerCase().includes('suscripto')
+
+  // Determinar estado local
+  let estadoFinal = local?.estado || 'pendiente_pago'
+  if (anulado) estadoFinal = 'cancelado'
+  else if (suscripto && estadoFinal === 'pendiente_pago') estadoFinal = 'pagado'
 
   return {
     id: p.IdPedidoVenta,
     id_pedido_centum: p.IdPedidoVenta,
-    estado: anulado ? 'cancelado' : (local?.estado || 'pendiente_pago'),
+    estado: estadoFinal,
     estado_centum: anulado ? 'Anulado' : (estado_centum || local?.estado_centum || null),
     numero_documento: numero_documento || local?.numero_documento || null,
     observaciones: p.Observaciones || local?.observaciones || null,
