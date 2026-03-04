@@ -726,10 +726,10 @@ router.post('/:id/link-pago', verificarAuth, async (req, res) => {
       notificationUrl: `${backendUrl}/api/delivery/webhook-mp`,
     })
 
-    // 5. Guardar en BD
+    // 5. Guardar preference_id (para tracking del webhook, no para caché)
     await supabase
       .from('pedidos_delivery')
-      .update({ mp_preference_id: prefId, mp_link_pago: init_point })
+      .update({ mp_preference_id: prefId, mp_link_pago: null })
       .eq('id_pedido_centum', idCentum)
 
     res.json({ link: init_point })
