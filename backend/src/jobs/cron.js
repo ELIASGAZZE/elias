@@ -2,7 +2,6 @@
 const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
-const { sincronizarPedidosVenta } = require('../services/syncPedidosVenta')
 const { syncClientesRecientes, retrySyncCentum } = require('../services/centumClientes')
 const { analizarBatch } = require('../services/patronesIA')
 
@@ -67,26 +66,6 @@ function iniciarCronJobs() {
     }
   })
 
-  // Sync continuo de pedidos de venta desde Centum (loop con 15s de pausa)
-  async function loopSyncPedidos() {
-    // Esperar 30s antes de la primera sync para que el servidor termine de arrancar
-    await new Promise(r => setTimeout(r, 30000))
-    console.log('[SyncPedidos] Loop de sincronización iniciado')
-
-    while (true) {
-      try {
-        const resultado = await sincronizarPedidosVenta('cron')
-        if (resultado.nuevos > 0 || resultado.errores > 0) {
-          console.log(`[SyncPedidos] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados, ${resultado.errores} errores`)
-        }
-      } catch (err) {
-        console.error('[SyncPedidos] Error:', err.message)
-      }
-      await new Promise(r => setTimeout(r, 15000))
-    }
-  }
-  loopSyncPedidos()
-
   // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
   // Analiza los cierres del día anterior
   cron.schedule('0 8 * * *', async () => {
@@ -108,7 +87,6 @@ function iniciarCronJobs() {
   console.log('[CRON] Keep-alive programado: cada 14 minutos')
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
-  console.log('[CRON] Sync pedidos de venta: loop continuo (cada 15s)')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 

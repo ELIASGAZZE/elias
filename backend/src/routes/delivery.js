@@ -1,48 +1,127 @@
 // Rutas para gestión de pedidos de delivery
+// Consulta directa a Centum REST API + merge con estados locales
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
-const { sincronizarPedidosVenta } = require('../services/syncPedidosVenta')
 const { crearPedidoVentaCentum } = require('../services/centumClientes')
+const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento } = require('../services/centumPedidosVenta')
+
+// Helper: mapa centum_sucursal_id → { id, nombre }
+async function getSucursalesMap() {
+  const { data } = await supabase
+    .from('sucursales')
+    .select('id, nombre, centum_sucursal_id')
+    .not('centum_sucursal_id', 'is', null)
+  const map = {}
+  for (const s of (data || [])) map[s.centum_sucursal_id] = s
+  return map
+}
 
 // GET /api/delivery
-// Lista pedidos delivery con paginación (operario ve solo su sucursal)
+// Lista pedidos desde Centum API + merge con estados locales
 router.get('/', verificarAuth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1)
     const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 15), 100)
-    const from = (page - 1) * limit
-    const to = from + limit - 1
     const { estado, sucursal_id, busqueda } = req.query
 
-    let query = supabase
-      .from('pedidos_delivery')
-      .select(`
-        id, estado, estado_centum, numero_documento, observaciones, direccion_entrega, fecha_entrega, created_at,
-        clientes(id, razon_social, direccion, telefono),
-        perfiles(id, nombre),
-        sucursales(id, nombre),
-        items_delivery(id)
-      `, { count: 'exact' })
-      .order('created_at', { ascending: false })
+    // 1. Obtener mapa de sucursales
+    const sucursalesMap = await getSucursalesMap()
 
-    // Operario solo ve pedidos de su sucursal
+    // 2. Determinar idSucursal de Centum para filtrar
+    let idSucursalCentum = null
     if (req.perfil.rol !== 'admin') {
-      query = query.eq('sucursal_id', req.perfil.sucursal_id)
+      const { data: suc } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .eq('id', req.perfil.sucursal_id)
+        .single()
+      idSucursalCentum = suc?.centum_sucursal_id || null
     } else if (sucursal_id) {
-      query = query.eq('sucursal_id', sucursal_id)
+      const { data: suc } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .eq('id', sucursal_id)
+        .single()
+      idSucursalCentum = suc?.centum_sucursal_id || null
     }
 
-    if (estado) query = query.eq('estado', estado)
+    // 3. Fetch de Centum (últimos 60 días)
+    const fechaDesde = new Date()
+    fechaDesde.setDate(fechaDesde.getDate() - 60)
+    const fechaDesdeStr = fechaDesde.toISOString().split('T')[0] + 'T00:00:00'
+    const fechaHastaStr = new Date().toISOString().split('T')[0] + 'T23:59:59'
 
-    // Búsqueda: traer todo y filtrar post-query (para buscar en joins)
+    const { items: pedidosCentum } = await fetchPedidosCentum({
+      fechaDesde: fechaDesdeStr,
+      fechaHasta: fechaHastaStr,
+      idSucursal: idSucursalCentum,
+    })
+
+    // 4. Obtener registros locales para merge de estados
+    const idsCentum = pedidosCentum.map(p => p.IdPedidoVenta).filter(Boolean)
+    const localesMap = {}
+    if (idsCentum.length > 0) {
+      for (let i = 0; i < idsCentum.length; i += 500) {
+        const lote = idsCentum.slice(i, i + 500)
+        const { data: locales } = await supabase
+          .from('pedidos_delivery')
+          .select('id, id_pedido_centum, estado, estado_centum, direccion_entrega, observaciones, fecha_entrega, created_at, perfiles(id, nombre)')
+          .in('id_pedido_centum', lote)
+        for (const l of (locales || [])) localesMap[l.id_pedido_centum] = l
+      }
+    }
+
+    // 5. Auto-crear registros locales para pedidos nuevos
+    const nuevos = pedidosCentum.filter(p => p.IdPedidoVenta && !localesMap[p.IdPedidoVenta])
+    if (nuevos.length > 0) {
+      const { data: defaultSuc } = await supabase.from('sucursales').select('id').limit(1).single()
+      const inserts = nuevos.map(p => {
+        const sucFisicaId = p.SucursalFisica?.IdSucursalFisica
+        const sucLocal = sucFisicaId ? sucursalesMap[sucFisicaId] : null
+        return {
+          id_pedido_centum: p.IdPedidoVenta,
+          estado: 'pendiente_pago',
+          numero_documento: formatNumeroDocumento(p.NumeroDocumento),
+          sucursal_id: sucLocal?.id || defaultSuc?.id,
+        }
+      }).filter(ins => ins.sucursal_id)
+
+      if (inserts.length > 0) {
+        try {
+          const { data: creados } = await supabase
+            .from('pedidos_delivery')
+            .upsert(inserts, { onConflict: 'id_pedido_centum', ignoreDuplicates: true })
+            .select('id, id_pedido_centum, estado, estado_centum, perfiles(id, nombre)')
+          for (const n of (creados || [])) localesMap[n.id_pedido_centum] = n
+        } catch (err) {
+          console.error('[Delivery] Error auto-creando registros locales:', err.message)
+        }
+      }
+    }
+
+    // 6. Mapear Centum → formato frontend + merge estado local
+    let pedidosMapeados = pedidosCentum.map(p =>
+      mapCentumPedido(p, localesMap[p.IdPedidoVenta] || null, sucursalesMap)
+    )
+
+    // Ordenar por fecha más reciente
+    pedidosMapeados.sort((a, b) => {
+      const da = a.created_at ? new Date(a.created_at) : new Date(0)
+      const db = b.created_at ? new Date(b.created_at) : new Date(0)
+      return db - da
+    })
+
+    // 7. Filtrar por estado local
+    if (estado) {
+      pedidosMapeados = pedidosMapeados.filter(p => p.estado === estado)
+    }
+
+    // 8. Filtrar por búsqueda
     if (busqueda && busqueda.trim()) {
-      const { data: allData, error: allError } = await query
-      if (allError) throw allError
-
       const terminos = busqueda.toLowerCase().trim().split(/\s+/)
-      const filtrados = (allData || []).filter(p => {
+      pedidosMapeados = pedidosMapeados.filter(p => {
         const texto = [
           p.clientes?.razon_social,
           p.clientes?.direccion,
@@ -56,66 +135,102 @@ router.get('/', verificarAuth, async (req, res) => {
         ].filter(Boolean).join(' ').toLowerCase()
         return terminos.every(t => texto.includes(t))
       })
-
-      const paginados = filtrados.slice(from, to + 1)
-      return res.json({ pedidos: paginados, total: filtrados.length })
     }
 
-    query = query.range(from, to)
-    const { data, error, count } = await query
-    if (error) throw error
+    // 9. Paginar
+    const total = pedidosMapeados.length
+    const from = (page - 1) * limit
+    const paginados = pedidosMapeados.slice(from, from + limit)
 
-    res.json({ pedidos: data, total: count })
+    res.json({ pedidos: paginados, total })
   } catch (err) {
     console.error('Error al obtener pedidos delivery:', err)
+    if (err.message?.includes('Error al conectar con Centum')) {
+      return res.status(502).json({ error: 'Error al conectar con Centum ERP' })
+    }
     res.status(500).json({ error: 'Error al obtener pedidos delivery' })
   }
 })
 
 // GET /api/delivery/:id
-// Detalle con items + cliente
+// Detalle: fetch directo de Centum + merge estado local
 router.get('/:id', verificarAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+
+    // 1. Fetch pedido de Centum (con ítems)
+    const pedidoCentum = await fetchPedidoCentum(idCentum)
+
+    // 2. Mapa de sucursales
+    const sucursalesMap = await getSucursalesMap()
+
+    // 3. Buscar o crear registro local
+    const sucFisicaId = pedidoCentum.SucursalFisica?.IdSucursalFisica
+    const sucLocal = sucFisicaId ? sucursalesMap[sucFisicaId] : null
+    let sucursalId = sucLocal?.id || null
+    if (!sucursalId) {
+      const { data: defaultSuc } = await supabase.from('sucursales').select('id').limit(1).single()
+      sucursalId = defaultSuc?.id || null
+    }
+
+    let registroLocal = null
+    const { data: existing } = await supabase
       .from('pedidos_delivery')
-      .select(`
-        id, estado, estado_centum, numero_documento, fecha_entrega, observaciones, direccion_entrega, created_at, usuario_id, sucursal_id, id_pedido_centum,
-        clientes(id, razon_social, cuit, direccion, localidad, telefono),
-        perfiles(id, nombre),
-        sucursales(id, nombre),
-        items_delivery(id, cantidad, precio, observaciones, articulos(id, codigo, nombre))
-      `)
-      .eq('id', req.params.id)
-      .single()
+      .select('id, id_pedido_centum, estado, estado_centum, direccion_entrega, observaciones, fecha_entrega, created_at, usuario_id, perfiles(id, nombre)')
+      .eq('id_pedido_centum', idCentum)
+      .maybeSingle()
 
-    if (error || !data) {
-      return res.status(404).json({ error: 'Pedido delivery no encontrado' })
+    if (existing) {
+      registroLocal = existing
+    } else if (sucursalId) {
+      try {
+        const { data: nuevo } = await supabase
+          .from('pedidos_delivery')
+          .insert({
+            id_pedido_centum: idCentum,
+            estado: 'pendiente_pago',
+            numero_documento: formatNumeroDocumento(pedidoCentum.NumeroDocumento),
+            sucursal_id: sucursalId,
+          })
+          .select('id, id_pedido_centum, estado, estado_centum, direccion_entrega, observaciones, fecha_entrega, created_at, perfiles(id, nombre)')
+          .single()
+        registroLocal = nuevo
+      } catch (err) {
+        // Race condition (23505) o error — seguir sin registro local
+        if (err.code === '23505') {
+          const { data: retry } = await supabase
+            .from('pedidos_delivery')
+            .select('id, id_pedido_centum, estado, estado_centum, direccion_entrega, observaciones, fecha_entrega, created_at, perfiles(id, nombre)')
+            .eq('id_pedido_centum', idCentum)
+            .maybeSingle()
+          registroLocal = retry
+        } else {
+          console.error(`[Delivery] Error auto-creando registro para pedido ${idCentum}:`, err.message)
+        }
+      }
     }
 
-    // Operario solo ve pedidos de su sucursal
-    if (req.perfil.rol !== 'admin' && data.sucursal_id !== req.perfil.sucursal_id) {
-      return res.status(403).json({ error: 'No tenés acceso a este pedido' })
+    // 4. Validar acceso por sucursal
+    if (req.perfil.rol !== 'admin') {
+      const sucursalPedido = sucLocal?.id || registroLocal?.sucursal_id
+      if (sucursalPedido && sucursalPedido !== req.perfil.sucursal_id) {
+        return res.status(403).json({ error: 'No tenés acceso a este pedido' })
+      }
     }
 
-    res.json(data)
+    // 5. Mapear y retornar
+    const pedido = mapCentumPedido(pedidoCentum, registroLocal, sucursalesMap)
+    res.json(pedido)
   } catch (err) {
     console.error('Error al obtener pedido delivery:', err)
+    if (err.message?.includes('no encontrado en Centum')) {
+      return res.status(404).json({ error: 'Pedido no encontrado en Centum' })
+    }
+    if (err.message?.includes('Error al conectar con Centum')) {
+      return res.status(502).json({ error: 'Error al conectar con Centum ERP' })
+    }
     res.status(500).json({ error: 'Error al obtener pedido delivery' })
-  }
-})
-
-// POST /api/delivery/sincronizar
-// Admin: trigger manual de sincronización de pedidos desde Centum
-router.post('/sincronizar', verificarAuth, soloAdmin, async (req, res) => {
-  try {
-    const resultado = await sincronizarPedidosVenta('manual')
-    res.json({
-      mensaje: `Sincronización completada: ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados, ${resultado.cancelados || 0} cancelados`,
-      ...resultado,
-    })
-  } catch (err) {
-    console.error('Error al sincronizar pedidos:', err)
-    res.status(500).json({ error: 'Error al sincronizar pedidos de venta: ' + err.message })
   }
 })
 
@@ -197,18 +312,7 @@ router.post('/pedido-centum', verificarAuth, soloAdmin, async (req, res) => {
     // Extraer número de documento de la respuesta de Centum
     const idPedidoCentum = resultado.IdPedidoVenta || resultado.Id || null
     const numDocRaw = resultado.NumeroDocumento
-    let numeroFormateado = null
-    if (numDocRaw && typeof numDocRaw === 'object') {
-      // {PuntoVenta: 5, Numero: 1182} → "PV 5-1182"
-      const pv = numDocRaw.PuntoVenta ?? ''
-      const num = numDocRaw.Numero ?? ''
-      numeroFormateado = `PV ${pv}-${num}`
-    } else if (numDocRaw != null) {
-      const s = String(numDocRaw)
-      const match = s.match(/\w(\d+)-0*(\d+)/)
-      if (match) numeroFormateado = `PV ${parseInt(match[1])}-${parseInt(match[2])}`
-      else numeroFormateado = s
-    }
+    let numeroFormateado = formatNumeroDocumento(numDocRaw)
 
     // Resolver sucursal_id (NOT NULL en BD)
     let sucursalParaGuardar = tipo === 'retiro' ? sucursal_id : req.perfil.sucursal_id
@@ -236,16 +340,22 @@ router.post('/pedido-centum', verificarAuth, soloAdmin, async (req, res) => {
       .from('pedidos_delivery')
       .insert(insertData)
       .select(`
-        id, estado, estado_centum, numero_documento, fecha_entrega, observaciones, direccion_entrega, created_at,
+        id, estado, estado_centum, numero_documento, fecha_entrega, observaciones, direccion_entrega, created_at, id_pedido_centum,
         clientes(id, razon_social)
       `)
       .single()
 
     if (errIns) throw errIns
 
+    // Retornar id_pedido_centum como id para consistencia con el nuevo formato
+    const respuesta = {
+      ...pedido,
+      id: idPedidoCentum || pedido.id,
+    }
+
     res.status(201).json({
       mensaje: `Pedido de Venta creado en Centum${numeroFormateado ? ` (${numeroFormateado})` : ''}`,
-      pedido,
+      pedido: respuesta,
       centum: resultado,
     })
   } catch (err) {
@@ -255,25 +365,61 @@ router.post('/pedido-centum', verificarAuth, soloAdmin, async (req, res) => {
 })
 
 // PUT /api/delivery/:id/estado
-// Admin: cambiar estado
+// Admin: cambiar estado local (id = id_pedido_centum)
 router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { estado } = req.body
-    const estadosValidos = ['pendiente_pago', 'pagado', 'entregado', 'cancelado']
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
 
+    const estadosValidos = ['pendiente_pago', 'pagado', 'entregado', 'cancelado']
     if (!estadosValidos.includes(estado)) {
       return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` })
     }
 
-    const { data, error } = await supabase
+    // Intentar actualizar registro existente
+    const { data } = await supabase
       .from('pedidos_delivery')
       .update({ estado })
-      .eq('id', req.params.id)
+      .eq('id_pedido_centum', idCentum)
+      .select()
+
+    if (data && data.length > 0) {
+      return res.json(data[0])
+    }
+
+    // No existe registro local — crear uno con el estado
+    let sucursalId = null
+    try {
+      const pedidoCentum = await fetchPedidoCentum(idCentum)
+      const sucFisicaId = pedidoCentum.SucursalFisica?.IdSucursalFisica
+      if (sucFisicaId) {
+        const { data: suc } = await supabase
+          .from('sucursales')
+          .select('id')
+          .eq('centum_sucursal_id', sucFisicaId)
+          .single()
+        sucursalId = suc?.id || null
+      }
+    } catch (_) {}
+
+    if (!sucursalId) {
+      const { data: defaultSuc } = await supabase.from('sucursales').select('id').limit(1).single()
+      sucursalId = defaultSuc?.id || null
+    }
+
+    const { data: nuevo, error: errIns } = await supabase
+      .from('pedidos_delivery')
+      .insert({
+        id_pedido_centum: idCentum,
+        estado,
+        sucursal_id: sucursalId,
+      })
       .select()
       .single()
 
-    if (error) throw error
-    res.json(data)
+    if (errIns) throw errIns
+    res.json(nuevo)
   } catch (err) {
     console.error('Error al actualizar estado:', err)
     res.status(500).json({ error: 'Error al actualizar estado del pedido' })

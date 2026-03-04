@@ -218,8 +218,8 @@ const CONDICION_IVA_MAP = {
     CondicionVenta: { IdCondicionVenta: 14, Codigo: '1', Nombre: 'CONTADO CONSUMIDOR FINAL / SIN PRONTO PAGO' },
   },
   RI: {
-    CondicionIVA: { IdCondicionIVA: 1891, Codigo: 'RI', Nombre: 'Responsable Inscripto' },
-    CondicionVenta: { IdCondicionVenta: 1, Codigo: '1', Nombre: 'CONTADO' },
+    CondicionIVA: { IdCondicionIVA: 1895, Codigo: 'RI', Nombre: 'Responsable Inscripto' },
+    CondicionVenta: { IdCondicionVenta: 1, Codigo: '3', Nombre: 'CONTADO C/ PRONTO PAGO' },
   },
 }
 
