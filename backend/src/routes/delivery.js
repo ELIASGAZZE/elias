@@ -6,6 +6,7 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { crearPedidoVentaCentum } = require('../services/centumClientes')
 const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados } = require('../services/centumPedidosVenta')
+const { crearPreferenciaPago, obtenerPago } = require('../services/mercadopago')
 const { getFacturasTurno } = require('../config/centum')
 
 // Helper: mapa centum_sucursal_id → { id, nombre }
@@ -556,6 +557,102 @@ router.post('/pedido-centum', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('Error al crear pedido de venta:', err)
     res.status(500).json({ error: 'Error al crear pedido de venta en Centum: ' + err.message })
+  }
+})
+
+// POST /api/delivery/webhook-mp
+// Webhook de Mercado Pago — SIN auth (viene de servidores de MP)
+router.post('/webhook-mp', async (req, res) => {
+  try {
+    if (req.body.type === 'payment') {
+      const paymentId = req.body.data?.id
+      if (paymentId) {
+        const pago = await obtenerPago(paymentId)
+        if (pago.status === 'approved' && pago.external_reference) {
+          const idCentum = parseInt(pago.external_reference)
+          if (!isNaN(idCentum)) {
+            const { data: pedido } = await supabase
+              .from('pedidos_delivery')
+              .select('estado')
+              .eq('id_pedido_centum', idCentum)
+              .maybeSingle()
+            if (pedido && pedido.estado === 'pendiente_pago') {
+              await supabase
+                .from('pedidos_delivery')
+                .update({ estado: 'pagado', mp_payment_id: String(paymentId) })
+                .eq('id_pedido_centum', idCentum)
+              console.log(`[MP Webhook] Pedido ${idCentum} marcado como pagado (payment ${paymentId})`)
+            }
+          }
+        }
+      }
+    }
+    res.sendStatus(200)
+  } catch (err) {
+    console.error('[MP Webhook] Error:', err.message)
+    res.sendStatus(200) // Siempre responder 200 a MP
+  }
+})
+
+// POST /api/delivery/:id/link-pago
+// Genera link de pago de Mercado Pago para un pedido
+router.post('/:id/link-pago', verificarAuth, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+
+    // 1. Buscar pedido local
+    const { data: pedido } = await supabase
+      .from('pedidos_delivery')
+      .select('id, id_pedido_centum, estado, mp_link_pago, mp_preference_id, numero_documento')
+      .eq('id_pedido_centum', idCentum)
+      .maybeSingle()
+
+    if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' })
+    if (pedido.estado !== 'pendiente_pago') {
+      return res.status(400).json({ error: 'El pedido no está pendiente de pago' })
+    }
+
+    // 2. Si ya tiene link, retornarlo
+    if (pedido.mp_link_pago) {
+      return res.json({ link: pedido.mp_link_pago })
+    }
+
+    // 3. Obtener detalle de Centum para calcular total
+    const pedidoCentum = await fetchPedidoCentum(idCentum)
+    const articulos = pedidoCentum.PedidoVentaArticulos || []
+    const total = articulos.reduce((sum, a) => {
+      const precio = a.Precio || 0
+      const cantidad = a.Cantidad || 0
+      const tasaIVA = a.CategoriaImpuestoIVA?.Tasa || 0
+      const precioConIVA = precio * (1 + tasaIVA / 100)
+      return sum + (precioConIVA * cantidad)
+    }, 0)
+
+    if (total <= 0) {
+      return res.status(400).json({ error: 'El pedido no tiene un total válido para cobrar' })
+    }
+
+    // 4. Crear preferencia en MP
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+    const titulo = `Pedido ${pedido.numero_documento || `#${idCentum}`}`
+    const { id: prefId, init_point } = await crearPreferenciaPago({
+      idPedido: idCentum,
+      titulo,
+      monto: Math.round(total * 100) / 100,
+      notificationUrl: `${backendUrl}/api/delivery/webhook-mp`,
+    })
+
+    // 5. Guardar en BD
+    await supabase
+      .from('pedidos_delivery')
+      .update({ mp_preference_id: prefId, mp_link_pago: init_point })
+      .eq('id_pedido_centum', idCentum)
+
+    res.json({ link: init_point })
+  } catch (err) {
+    console.error('[Link MP] Error:', err)
+    res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })
   }
 })
 
