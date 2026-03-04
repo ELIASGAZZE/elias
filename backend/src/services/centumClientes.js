@@ -438,6 +438,7 @@ async function crearPedidoVentaCentum({ idCliente, fechaEntrega, tipo, observaci
   const body = {
     Bonificacion: { IdBonificacion: 6235 },
     Cliente: { IdCliente: idCliente },
+    NumeroDocumento: { PuntoVenta: 4 },
     FechaEntrega: `${fechaEntrega}T00:00:00`,
     Observaciones: obs,
     PedidoVentaArticulos: [

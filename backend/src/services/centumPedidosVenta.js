@@ -285,6 +285,7 @@ async function crearPedidoVentaCompletoCentum({
 
   const body = {
     Cliente: { IdCliente: idCliente },
+    NumeroDocumento: { PuntoVenta: 4 },
     FechaEntrega: `${fechaEntrega}T00:00:00`,
     Observaciones: observaciones || '',
     PedidoVentaArticulos: articulos.map(a => ({
