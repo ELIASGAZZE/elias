@@ -389,4 +389,123 @@ async function crearPedidoVentaCompletoCentum({
   return data
 }
 
-module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados }
+/**
+ * Crea una Venta (factura) suscribiendo un PedidoVenta existente en Centum.
+ * POST /Ventas
+ * @param {number} idPedidoVenta - ID del pedido a suscribir
+ * @param {number} idCliente - ID del cliente en Centum
+ * @param {number} sucursalFisicaId - ID de sucursal física en Centum
+ * @returns {Promise<Object>} Venta creada (IdVenta, Total, NumeroDocumento, etc.)
+ */
+async function crearVentaDesdePedido(idPedidoVenta, idCliente, sucursalFisicaId) {
+  const url = `${BASE_URL}/Ventas`
+  const inicio = Date.now()
+
+  const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+  const body = {
+    FechaImputacion: fechaHoy,
+    Cliente: { IdCliente: idCliente },
+    SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
+    TipoComprobanteVenta: { IdTipoComprobanteVenta: 4 },
+    NumeroDocumento: { PuntoVenta: 9 },
+    PedidoVenta: { IdPedidoVenta: idPedidoVenta },
+    EsContado: true,
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_ventas', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'api',
+    })
+    throw new Error('Error al conectar con Centum ERP (Ventas): ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_ventas', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
+    })
+    throw new Error(`Error al crear venta en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json()
+
+  registrarLlamada({
+    servicio: 'centum_ventas', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'api',
+  })
+
+  return data
+}
+
+/**
+ * Crea un Cobro para una Venta en Centum (registra el pago con IdValor 13 = Mercado Pago).
+ * POST /Cobros
+ * @param {number} idVenta - ID de la venta a cobrar
+ * @param {number} idCliente - ID del cliente en Centum
+ * @param {number} sucursalFisicaId - ID de sucursal física en Centum
+ * @param {number} importe - Monto total a cobrar
+ * @returns {Promise<Object>} Cobro creado
+ */
+async function crearCobroDeVenta(idVenta, idCliente, sucursalFisicaId, importe) {
+  const url = `${BASE_URL}/Cobros`
+  const inicio = Date.now()
+
+  const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+  const body = {
+    FechaImputacion: fechaHoy,
+    Cliente: { IdCliente: idCliente },
+    SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
+    CobroItems: [{ Venta: { IdVenta: idVenta }, Importe: importe }],
+    Valores: [{ IdValor: 13, Importe: importe }],
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'api',
+    })
+    throw new Error('Error al conectar con Centum ERP (Cobros): ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
+    })
+    throw new Error(`Error al crear cobro en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json()
+
+  registrarLlamada({
+    servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'api',
+  })
+
+  return data
+}
+
+module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados, crearVentaDesdePedido, crearCobroDeVenta }

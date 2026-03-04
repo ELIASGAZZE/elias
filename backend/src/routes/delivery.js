@@ -5,7 +5,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { crearPedidoVentaCentum } = require('../services/centumClientes')
-const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados } = require('../services/centumPedidosVenta')
+const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados, crearVentaDesdePedido, crearCobroDeVenta } = require('../services/centumPedidosVenta')
 const { crearPreferenciaPago, obtenerPago } = require('../services/mercadopago')
 const { getFacturasTurno } = require('../config/centum')
 
@@ -582,6 +582,11 @@ router.post('/webhook-mp', async (req, res) => {
                 .update({ estado: 'pagado', mp_payment_id: String(paymentId) })
                 .eq('id_pedido_centum', idCentum)
               console.log(`[MP Webhook] Pedido ${idCentum} marcado como pagado (payment ${paymentId})`)
+
+              // Facturación async — no bloquea la respuesta al webhook
+              facturarPedidoAsync(idCentum).catch(err => {
+                console.error(`[MP Webhook] Error en facturación async pedido ${idCentum}:`, err.message)
+              })
             }
           }
         }
@@ -593,6 +598,85 @@ router.post('/webhook-mp', async (req, res) => {
     res.sendStatus(200) // Siempre responder 200 a MP
   }
 })
+
+/**
+ * Facturación async: crea Venta + Cobro en Centum después de marcar como pagado.
+ * Si falla, guarda el error en error_facturacion para tracking.
+ */
+async function facturarPedidoAsync(idCentum) {
+  try {
+    // 1. Buscar pedido local con cliente_id
+    const { data: pedidoLocal } = await supabase
+      .from('pedidos_delivery')
+      .select('id, cliente_id')
+      .eq('id_pedido_centum', idCentum)
+      .maybeSingle()
+
+    if (!pedidoLocal?.cliente_id) {
+      throw new Error('Pedido local no tiene cliente_id asociado')
+    }
+
+    // 2. Buscar cliente para obtener id_centum
+    const { data: cliente } = await supabase
+      .from('clientes')
+      .select('id_centum')
+      .eq('id', pedidoLocal.cliente_id)
+      .single()
+
+    if (!cliente?.id_centum) {
+      throw new Error('Cliente no tiene id_centum')
+    }
+
+    // 3. Obtener pedido de Centum para SucursalFisica
+    const pedidoCentum = await fetchPedidoCentum(idCentum)
+    const sucursalFisicaId = pedidoCentum.SucursalFisica?.IdSucursalFisica
+    if (!sucursalFisicaId) {
+      throw new Error('Pedido Centum no tiene SucursalFisica')
+    }
+
+    // 4. Crear Venta (factura) suscribiendo el PedidoVenta
+    console.log(`[Facturación] Creando venta para pedido ${idCentum}...`)
+    const venta = await crearVentaDesdePedido(idCentum, cliente.id_centum, sucursalFisicaId)
+    const idVenta = venta.IdVenta || venta.Id
+    const totalVenta = venta.Total || venta.ImporteTotal || 0
+    const numDocVenta = venta.NumeroDocumento
+    let numeroFactura = null
+    if (numDocVenta) {
+      const letra = numDocVenta.LetraDocumento || ''
+      const pv = String(numDocVenta.PuntoVenta || '').padStart(5, '0')
+      const num = String(numDocVenta.Numero || '').padStart(8, '0')
+      numeroFactura = `${letra}${pv}-${num}`
+    }
+    console.log(`[Facturación] Venta creada: IdVenta=${idVenta}, Total=${totalVenta}, Factura=${numeroFactura}`)
+
+    // 5. Crear Cobro con IdValor 13 (Mercado Pago)
+    console.log(`[Facturación] Creando cobro para venta ${idVenta}...`)
+    const cobro = await crearCobroDeVenta(idVenta, cliente.id_centum, sucursalFisicaId, totalVenta)
+    const idCobro = cobro.IdCobro || cobro.Id
+    console.log(`[Facturación] Cobro creado: IdCobro=${idCobro}`)
+
+    // 6. Actualizar BD con datos de facturación
+    await supabase
+      .from('pedidos_delivery')
+      .update({
+        id_venta_centum: idVenta,
+        id_cobro_centum: idCobro,
+        numero_factura: numeroFactura,
+        error_facturacion: null,
+      })
+      .eq('id_pedido_centum', idCentum)
+
+    console.log(`[Facturación] Pedido ${idCentum} facturado OK → Venta ${idVenta}, Cobro ${idCobro}, Factura ${numeroFactura}`)
+  } catch (err) {
+    console.error(`[Facturación] Error facturando pedido ${idCentum}:`, err.message)
+    // Guardar error para tracking — el pedido queda como 'pagado' sin factura
+    await supabase
+      .from('pedidos_delivery')
+      .update({ error_facturacion: err.message.slice(0, 500) })
+      .eq('id_pedido_centum', idCentum)
+      .catch(e => console.error('[Facturación] Error guardando error_facturacion:', e.message))
+  }
+}
 
 // POST /api/delivery/:id/link-pago
 // Genera link de pago de Mercado Pago para un pedido
