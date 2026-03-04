@@ -423,8 +423,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
 })
 
 // POST /api/delivery/pedido-centum
-// Admin: crear Pedido de Venta en Centum + registro local
-router.post('/pedido-centum', verificarAuth, soloAdmin, async (req, res) => {
+// Crear Pedido de Venta en Centum + registro local (admin y operarios)
+router.post('/pedido-centum', verificarAuth, async (req, res) => {
   try {
     const { cliente_id, tipo, fecha_entrega, direccion_entrega_id, sucursal_id } = req.body
 
@@ -434,6 +434,13 @@ router.post('/pedido-centum', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(400).json({ error: 'tipo debe ser "delivery" o "retiro"' })
     }
     if (!fecha_entrega) return res.status(400).json({ error: 'fecha_entrega es requerida' })
+
+    // Operarios solo pueden crear retiro en su propia sucursal o delivery
+    if (req.perfil.rol !== 'admin' && tipo === 'retiro') {
+      if (sucursal_id && sucursal_id !== req.perfil.sucursal_id) {
+        return res.status(403).json({ error: 'Solo podés crear pedidos de retiro para tu sucursal' })
+      }
+    }
 
     // Obtener cliente y verificar que tenga id_centum
     const { data: cliente, error: errCli } = await supabase

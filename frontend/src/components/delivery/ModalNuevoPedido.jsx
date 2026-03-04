@@ -4,7 +4,8 @@ import api from '../../services/api'
 
 const PASOS = ['cliente', 'tipo', 'detalles', 'confirmar']
 
-const ModalNuevoPedido = ({ onClose, onCreado }) => {
+const ModalNuevoPedido = ({ onClose, onCreado, usuario }) => {
+  const esAdmin = usuario?.rol === 'admin'
   const [paso, setPaso] = useState(0) // index en PASOS
   const [error, setError] = useState(null)
   const inputRef = useRef(null)
@@ -97,9 +98,18 @@ const ModalNuevoPedido = ({ onClose, onCreado }) => {
         setDirecciones(data || [])
         if (data.length > 0) setDireccionSeleccionada(data[0].id)
       } else {
-        const { data } = await api.get('/api/sucursales')
-        setSucursales(data || [])
-        if (data.length > 0) setSucursalSeleccionada(data[0].id)
+        if (esAdmin) {
+          // Admin ve todas las sucursales
+          const { data } = await api.get('/api/sucursales')
+          setSucursales(data || [])
+          if (data.length > 0) setSucursalSeleccionada(data[0].id)
+        } else {
+          // Operario solo puede retirar en su sucursal
+          const { data } = await api.get('/api/sucursales')
+          const miSucursal = (data || []).filter(s => s.id === usuario?.sucursal_id)
+          setSucursales(miSucursal)
+          if (miSucursal.length > 0) setSucursalSeleccionada(miSucursal[0].id)
+        }
       }
     } catch (err) {
       console.error('Error cargando detalles:', err)
