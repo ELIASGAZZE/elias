@@ -5,7 +5,8 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { crearPedidoVentaCentum } = require('../services/centumClientes')
-const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum } = require('../services/centumPedidosVenta')
+const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados } = require('../services/centumPedidosVenta')
+const { getFacturasTurno } = require('../config/centum')
 
 // Helper: mapa centum_sucursal_id → { id, nombre }
 async function getSucursalesMap() {
@@ -114,10 +115,54 @@ router.get('/', verificarAuth, async (req, res) => {
       }
     }
 
-    // 6. Mapear Centum → formato frontend + merge estado local
+    // 6. Obtener turnos de factura para pedidos suscriptos (SQL Server)
+    const facturasMap = {} // nroFactura → idPedidoVenta
+    for (const p of pedidosCentum) {
+      const estados = p.PedidoVentaEstados || []
+      const ultimoEstado = estados.length > 0 ? estados[estados.length - 1] : null
+      const estadoNombre = ultimoEstado?.Estado?.Nombre || ''
+      if (typeof estadoNombre === 'string' && estadoNombre.toLowerCase().includes('suscripto')) {
+        const nroFactura = extractFacturaFromEstados(estados)
+        if (nroFactura) facturasMap[nroFactura] = p.IdPedidoVenta
+      }
+    }
+
+    let turnosFactura = {} // nroFactura → { turnoId, turnoNombre }
+    const nroFacturas = Object.keys(facturasMap)
+    if (nroFacturas.length > 0) {
+      try {
+        turnosFactura = await getFacturasTurno(nroFacturas)
+      } catch (err) {
+        console.error('[Delivery] Error al obtener turnos de facturas:', err.message)
+      }
+    }
+
+    // Invertir mapa: idPedidoVenta → turnoNombre
+    const turnosPorPedido = {}
+    for (const [nroFac, idPV] of Object.entries(facturasMap)) {
+      if (turnosFactura[nroFac]) {
+        turnosPorPedido[idPV] = turnosFactura[nroFac].turnoNombre
+      }
+    }
+
+    // 7. Mapear Centum → formato frontend + merge estado local + turno factura
     let pedidosMapeados = pedidosCentum.map(p =>
-      mapCentumPedido(p, localesMap[p.IdPedidoVenta] || null, sucursalesMap)
+      mapCentumPedido(p, localesMap[p.IdPedidoVenta] || null, sucursalesMap, turnosPorPedido[p.IdPedidoVenta] || null)
     )
+
+    // 8. Auto-actualizar estados locales que cambiaron
+    const actualizaciones = []
+    for (const pm of pedidosMapeados) {
+      const local = localesMap[pm.id_pedido_centum]
+      if (local && local.estado !== pm.estado) {
+        actualizaciones.push({ id_pedido_centum: pm.id_pedido_centum, estado: pm.estado })
+      }
+    }
+    if (actualizaciones.length > 0) {
+      for (const upd of actualizaciones) {
+        supabase.from('pedidos_delivery').update({ estado: upd.estado }).eq('id_pedido_centum', upd.id_pedido_centum).then()
+      }
+    }
 
     // Ordenar por fecha más reciente
     pedidosMapeados.sort((a, b) => {
@@ -126,12 +171,12 @@ router.get('/', verificarAuth, async (req, res) => {
       return db - da
     })
 
-    // 7. Filtrar por estado local
+    // 9. Filtrar por estado local
     if (estado) {
       pedidosMapeados = pedidosMapeados.filter(p => p.estado === estado)
     }
 
-    // 8. Filtrar por búsqueda
+    // 10. Filtrar por búsqueda
     if (busqueda && busqueda.trim()) {
       const terminos = busqueda.toLowerCase().trim().split(/\s+/)
       pedidosMapeados = pedidosMapeados.filter(p => {
@@ -150,7 +195,7 @@ router.get('/', verificarAuth, async (req, res) => {
       })
     }
 
-    // 9. Paginar
+    // 11. Paginar
     const total = pedidosMapeados.length
     const from = (page - 1) * limit
     const paginados = pedidosMapeados.slice(from, from + limit)
@@ -337,8 +382,27 @@ router.get('/:id', verificarAuth, async (req, res) => {
       }
     }
 
-    // 5. Mapear y retornar
-    const pedido = mapCentumPedido(pedidoCentum, registroLocal, sucursalesMap)
+    // 5. Obtener turno de factura para suscripto (SQL Server)
+    let turnoFacturaNombre = null
+    const estados = pedidoCentum.PedidoVentaEstados || []
+    const nroFactura = extractFacturaFromEstados(estados)
+    if (nroFactura) {
+      try {
+        const turnos = await getFacturasTurno([nroFactura])
+        if (turnos[nroFactura]) turnoFacturaNombre = turnos[nroFactura].turnoNombre
+      } catch (err) {
+        console.error('[Delivery] Error al obtener turno de factura:', err.message)
+      }
+    }
+
+    // 6. Mapear y retornar
+    const pedido = mapCentumPedido(pedidoCentum, registroLocal, sucursalesMap, turnoFacturaNombre)
+
+    // Auto-actualizar estado local si cambió
+    if (registroLocal && registroLocal.estado !== pedido.estado) {
+      supabase.from('pedidos_delivery').update({ estado: pedido.estado }).eq('id_pedido_centum', idCentum).then()
+    }
+
     res.json(pedido)
   } catch (err) {
     console.error('Error al obtener pedido delivery:', err)

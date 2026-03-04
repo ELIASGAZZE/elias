@@ -142,12 +142,32 @@ function formatNumeroDocumento(numDoc) {
 }
 
 /**
+ * Extrae el número de factura del detalle de estados suscriptos.
+ * Busca "Alta de Venta B00002-00007584" en los estados (último primero).
+ * @param {Array} estados - PedidoVentaEstados del pedido Centum
+ * @returns {string|null} NumeroDocumento de la factura (ej: "B00002-00007584")
+ */
+function extractFacturaFromEstados(estados) {
+  if (!estados || !Array.isArray(estados)) return null
+  for (let i = estados.length - 1; i >= 0; i--) {
+    const e = estados[i]
+    const nombre = e.Estado?.Nombre || ''
+    if (nombre.toLowerCase().includes('suscripto')) {
+      const match = e.Detalle?.match(/Alta de Venta\s+(\S+)/)
+      if (match) return match[1]
+    }
+  }
+  return null
+}
+
+/**
  * Mapea un pedido de Centum al formato que espera el frontend.
  * @param {Object} p - Pedido crudo de la API de Centum
  * @param {Object|null} local - Registro local de pedidos_delivery (estado, perfiles, etc.)
  * @param {Object} sucursalesMap - centum_sucursal_id → { id, nombre }
+ * @param {string|null} turnoFacturaNombre - Nombre del TurnoEntrega de la factura (de SQL Server)
  */
-function mapCentumPedido(p, local, sucursalesMap) {
+function mapCentumPedido(p, local, sucursalesMap, turnoFacturaNombre) {
   const numero_documento = formatNumeroDocumento(p.NumeroDocumento)
 
   // Estado Centum (último de la lista de estados)
@@ -197,13 +217,29 @@ function mapCentumPedido(p, local, sucursalesMap) {
 
   // Pedido anulado en Centum
   const anulado = p.Anulado === true || p.Anulado === 1
-  // Suscripto en Centum → pagado automáticamente
+  // Suscripto en Centum → pagado o entregado automáticamente
   const suscripto = estado_centum && typeof estado_centum === 'string' && estado_centum.toLowerCase().includes('suscripto')
 
   // Determinar estado local
   let estadoFinal = local?.estado || 'pendiente_pago'
   if (anulado) estadoFinal = 'cancelado'
-  else if (suscripto && estadoFinal === 'pendiente_pago') estadoFinal = 'pagado'
+  else if (suscripto && (estadoFinal === 'pendiente_pago' || estadoFinal === 'pagado')) {
+    // Si tenemos turno de factura, determinar entregado vs pagado
+    if (turnoFacturaNombre) {
+      const turnoLower = turnoFacturaNombre.toLowerCase()
+      // RETIRADO o ENTREGADO → entregado (cliente ya retiró/se entregó)
+      // NO RETIRADO o NO ENTREGADO → pagado (pendiente de entrega)
+      if ((turnoLower.includes('retirado') && !turnoLower.includes('no retirado')) ||
+          (turnoLower.includes('entregado') && !turnoLower.includes('no entregado'))) {
+        estadoFinal = 'entregado'
+      } else {
+        estadoFinal = 'pagado'
+      }
+    } else if (estadoFinal === 'pendiente_pago') {
+      // Sin turno de factura, al menos marcar como pagado
+      estadoFinal = 'pagado'
+    }
+  }
 
   return {
     id: p.IdPedidoVenta,
@@ -353,4 +389,4 @@ async function crearPedidoVentaCompletoCentum({
   return data
 }
 
-module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum }
+module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados }

@@ -677,7 +677,61 @@ async function buscarComprobantesPorMonto(planillaId, monto, tolerancia = 100) {
   }
 }
 
+/**
+ * Obtiene el TurnoEntrega de facturas por NumeroDocumento.
+ * Consulta Ventas_VIEW + TurnosEntrega_VIEW en el SQL Server de Centum BI.
+ * @param {string[]} nroDocumentos - Array de NumeroDocumento (ej: ["B00002-00007584"])
+ * @returns {Object} Mapa { nroDocumento: { turnoId, turnoNombre } }
+ */
+async function getFacturasTurno(nroDocumentos) {
+  if (!nroDocumentos || nroDocumentos.length === 0) return {}
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+
+    // Parametrizar con tabla temporal o IN clause
+    const placeholders = nroDocumentos.map((_, i) => `@doc${i}`).join(', ')
+    const request = db.request()
+    nroDocumentos.forEach((doc, i) => request.input(`doc${i}`, sql.VarChar, doc))
+
+    const result = await request.query(`
+      SELECT v.NumeroDocumento, v.TurnoEntregaID, t.NombreTurnoEntrega
+      FROM Ventas_VIEW v
+      LEFT JOIN TurnosEntrega_VIEW t ON v.TurnoEntregaID = t.TurnoEntregaID
+      WHERE v.NumeroDocumento IN (${placeholders})
+      AND v.Anulado = 0
+    `)
+
+    const mapa = {}
+    for (const r of result.recordset) {
+      const doc = r.NumeroDocumento?.trim()
+      if (doc) {
+        mapa[doc] = {
+          turnoId: r.TurnoEntregaID,
+          turnoNombre: r.NombreTurnoEntrega?.trim() || null,
+        }
+      }
+    }
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'FacturasTurnoEntrega',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: Object.keys(mapa).length, origen: 'consulta',
+    })
+
+    return mapa
+  } catch (err) {
+    console.error('[Centum BI] Error al obtener turnos de facturas:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'FacturasTurnoEntrega',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'consulta',
+    })
+    return {}
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
-  getTransaccionesDetalle, buscarComprobantesPorMonto,
+  getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno,
 }
