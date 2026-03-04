@@ -331,14 +331,16 @@ const DeliveryHome = () => {
                         </button>
                       ))}
                       <div className="flex-1" />
-                      {/* Editar */}
-                      <button
-                        onClick={(e) => abrirEditar(e, pedido)}
-                        disabled={actualizandoId === pedido.id}
-                        className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
-                      >
-                        Editar
-                      </button>
+                      {/* Editar (no si suscripto total) */}
+                      {puedeEliminar && (
+                        <button
+                          onClick={(e) => abrirEditar(e, pedido)}
+                          disabled={actualizandoId === pedido.id}
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                        >
+                          Editar
+                        </button>
+                      )}
                       {/* Eliminar (no si suscripto total) */}
                       {puedeEliminar && (
                         <button

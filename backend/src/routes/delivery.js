@@ -463,6 +463,10 @@ router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
     if (anulado || anuladoPorEstado) {
       return res.status(400).json({ error: 'No se puede editar un pedido anulado' })
     }
+    const suscriptoTotal = typeof estadoNombre === 'string' && estadoNombre.toLowerCase().includes('suscripto total')
+    if (suscriptoTotal) {
+      return res.status(400).json({ error: 'No se puede editar un pedido con estado "Suscripto Total"' })
+    }
 
     // 3. Verificar que tenga artículos
     const articulos = pedidoOriginal.PedidoVentaArticulos || []
