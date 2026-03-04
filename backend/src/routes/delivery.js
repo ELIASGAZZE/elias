@@ -213,44 +213,55 @@ router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
     const fechaDesdeStr = fechaDesde.toISOString().split('T')[0] + 'T00:00:00'
     const fechaHastaStr = new Date().toISOString().split('T')[0] + 'T23:59:59'
 
-    // POST /Ventas/FiltrosVenta — solo fechas, sin sucursal
+    // POST /Ventas/FiltrosVenta — buscar todas del día, matchear por PedidoVenta
     try {
-      const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=5`, {
+      const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=100`, {
         method: 'POST', headers, body: JSON.stringify({
           FechaDocumentoDesde: '2026-03-04T00:00:00',
           FechaDocumentoHasta: fechaHastaStr,
         })
       })
       const data = r.ok ? await r.json() : { status: r.status, body: await r.text().then(t => t.slice(0, 500)) }
-      resultados.filtrosVenta = data
-      // Mostrar los primeros 3 items resumidos
       const items = data?.Ventas?.Items || []
-      resultados.ventasResumen = items.slice(0, 5).map(v => ({
-        IdVenta: v.IdVenta,
-        NumeroDocumento: v.NumeroDocumento,
-        TipoVenta: v.TipoVenta,
-        keys: Object.keys(v),
-      }))
-      resultados.totalVentas = data?.Ventas?.CantidadTotalItems
-    } catch (e) { resultados.filtrosVenta = { error: e.message } }
 
-    // GET /Ventas/{idVenta} si encontramos la factura
-    const ventas = resultados.filtrosVenta?.Ventas?.Items || []
-    const facturaMatch = ventas.find(v => {
-      const nd = v.NumeroDocumento
-      if (!nd) return false
-      const formatted = `${nd.LetraDocumento || ''}${String(nd.PuntoVenta || '').padStart(5, '0')}-${String(nd.Numero || '').padStart(8, '0')}`
-      return formatted === nroFactura || nroFactura.includes(String(nd.Numero))
-    })
+      // Buscar la factura que suscribe nuestro pedido
+      const facturaMatch = items.find(v => {
+        // Match por PedidoVenta vinculado
+        if (v.PedidoVenta?.IdPedidoVenta === idCentum) return true
+        // Match por PedidosVentaSuscriptos
+        if (v.PedidosVentaSuscriptos?.some(p => p.IdPedidoVenta === idCentum)) return true
+        // Match por nro documento
+        const nd = v.NumeroDocumento
+        if (nd) {
+          const formatted = `${nd.LetraDocumento || ''}${String(nd.PuntoVenta || '').padStart(5, '0')}-${String(nd.Numero || '').padStart(8, '0')}`
+          if (formatted === nroFactura) return true
+        }
+        return false
+      })
 
-    if (facturaMatch?.IdVenta) {
-      try {
-        const r2 = await fetch(`${BASE}/Ventas/${facturaMatch.IdVenta}`, { method: 'GET', headers })
-        resultados.ventaDetalle = r2.ok ? await r2.json() : { status: r2.status, body: await r2.text().then(t => t.slice(0, 500)) }
-      } catch (e) { resultados.ventaDetalle = { error: e.message } }
-    }
-    resultados.nroFacturaBuscado = nroFactura
-    resultados.facturaMatch = facturaMatch || null
+      if (facturaMatch) {
+        // Obtener detalle completo
+        try {
+          const r2 = await fetch(`${BASE}/Ventas/${facturaMatch.IdVenta}`, { method: 'GET', headers })
+          const det = r2.ok ? await r2.json() : { status: r2.status, body: await r2.text().then(t => t.slice(0, 500)) }
+          // Limpiar para ver campos relevantes
+          delete det.VentaArticulos
+          delete det.Cliente
+          delete det.VentaValoresEfectivos
+          delete det.VentaValoresVouchers
+          delete det.VentaRegimenesEspeciales
+          delete det.VentaConceptos
+          delete det.VentaDescuentosPorPromocion
+          delete det.PresupuestoVentaArticulosSuscriptos
+          delete det.PedidoVentaArticulosSuscriptos
+          delete det.RemitoVentaArticulosSuscriptos
+          resultados.ventaDetalle = det
+        } catch (e) { resultados.ventaDetalle = { error: e.message } }
+      } else {
+        resultados.ventaDetalle = null
+        resultados.totalVentas = items.length
+      }
+    } catch (e) { resultados.error = e.message }
 
     res.json({ nroFactura, detalleSuscripto: suscripto, resultados })
   } catch (err) {
