@@ -230,6 +230,8 @@ const DeliveryHome = () => {
               const cantItems = pedido.items_delivery?.length || 0
               const esDelivery = !!pedido.direccion_entrega
               const noCancelado = pedido.estado !== 'cancelado' && pedido.estado_centum !== 'Anulado'
+              const suscriptoTotal = pedido.estado_centum?.toLowerCase().includes('suscripto total')
+              const puedeEliminar = noCancelado && !suscriptoTotal
 
               return (
                 <Link
@@ -337,14 +339,16 @@ const DeliveryHome = () => {
                       >
                         Editar
                       </button>
-                      {/* Eliminar */}
-                      <button
-                        onClick={(e) => eliminarPedido(e, pedido)}
-                        disabled={actualizandoId === pedido.id}
-                        className="text-[11px] px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
-                      >
-                        Eliminar
-                      </button>
+                      {/* Eliminar (no si suscripto total) */}
+                      {puedeEliminar && (
+                        <button
+                          onClick={(e) => eliminarPedido(e, pedido)}
+                          disabled={actualizandoId === pedido.id}
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                        >
+                          Eliminar
+                        </button>
+                      )}
                     </div>
                   )}
                 </Link>

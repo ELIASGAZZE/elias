@@ -598,6 +598,10 @@ router.post('/:id/eliminar', verificarAuth, soloAdmin, async (req, res) => {
     if (anulado || anuladoPorEstado) {
       return res.status(400).json({ error: 'El pedido ya está anulado en Centum' })
     }
+    const suscriptoTotal = typeof estadoNombre === 'string' && estadoNombre.toLowerCase().includes('suscripto total')
+    if (suscriptoTotal) {
+      return res.status(400).json({ error: 'No se puede anular un pedido con estado "Suscripto Total"' })
+    }
 
     // 2. Anular en Centum
     await anularPedidoCentum(idCentum)
