@@ -5,7 +5,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { crearPedidoVentaCentum } = require('../services/centumClientes')
-const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento } = require('../services/centumPedidosVenta')
+const { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum } = require('../services/centumPedidosVenta')
 
 // Helper: mapa centum_sucursal_id → { id, nombre }
 async function getSucursalesMap() {
@@ -436,6 +436,148 @@ router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al actualizar estado:', err)
     res.status(500).json({ error: 'Error al actualizar estado del pedido' })
+  }
+})
+
+// POST /api/delivery/:id/editar
+// Admin: anular pedido viejo en Centum y crear uno nuevo con los mismos artículos + cambios
+router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+
+    const { tipo, sucursal_id, direccion_entrega_id, fecha_entrega } = req.body
+    if (!tipo || !['delivery', 'retiro'].includes(tipo)) {
+      return res.status(400).json({ error: 'tipo debe ser "delivery" o "retiro"' })
+    }
+
+    // 1. Obtener pedido original completo de Centum
+    const pedidoOriginal = await fetchPedidoCentum(idCentum)
+
+    // 2. Verificar que no esté anulado (campo Anulado o último estado)
+    const anulado = pedidoOriginal.Anulado === true || pedidoOriginal.Anulado === 1
+    const estados = pedidoOriginal.PedidoVentaEstados || []
+    const ultimoEstado = estados.length > 0 ? estados[estados.length - 1] : null
+    const estadoNombre = ultimoEstado?.Estado?.Nombre || ultimoEstado?.Estado || ''
+    const anuladoPorEstado = typeof estadoNombre === 'string' && estadoNombre.toLowerCase().includes('anulado')
+    if (anulado || anuladoPorEstado) {
+      return res.status(400).json({ error: 'No se puede editar un pedido anulado' })
+    }
+
+    // 3. Verificar que tenga artículos
+    const articulos = pedidoOriginal.PedidoVentaArticulos || []
+    if (articulos.length === 0) {
+      return res.status(400).json({ error: 'El pedido no tiene artículos en Centum' })
+    }
+
+    // 4. Determinar nueva sucursal física y observaciones
+    let sucursalFisicaId = null
+    let observaciones = ''
+    let direccionEntrega = null
+    let sucursalParaGuardar = null
+
+    if (tipo === 'delivery') {
+      // Delivery siempre entra por Fisherton
+      const { data: fisherton } = await supabase
+        .from('sucursales')
+        .select('id, centum_sucursal_id')
+        .ilike('nombre', '%fisherton%')
+        .single()
+      if (fisherton?.centum_sucursal_id) sucursalFisicaId = fisherton.centum_sucursal_id
+      sucursalParaGuardar = fisherton?.id || req.perfil.sucursal_id
+
+      // Dirección de entrega
+      if (direccion_entrega_id) {
+        const { data: dir } = await supabase
+          .from('direcciones_entrega')
+          .select('*')
+          .eq('id', direccion_entrega_id)
+          .single()
+        if (dir) {
+          direccionEntrega = [dir.direccion, dir.localidad].filter(Boolean).join(', ')
+          observaciones = `Entregar en: ${direccionEntrega}`
+        }
+      }
+    } else {
+      // Retiro por sucursal
+      if (!sucursal_id) return res.status(400).json({ error: 'sucursal_id es requerido para retiro' })
+
+      const { data: suc, error: errSuc } = await supabase
+        .from('sucursales')
+        .select('id, nombre, centum_sucursal_id')
+        .eq('id', sucursal_id)
+        .single()
+
+      if (errSuc || !suc) return res.status(404).json({ error: 'Sucursal no encontrada' })
+      sucursalFisicaId = suc.centum_sucursal_id
+      sucursalParaGuardar = suc.id
+      observaciones = `Retiro por sucursal: ${suc.nombre}`
+    }
+
+    // 5. Datos del pedido original para recrear
+    const idCliente = pedidoOriginal.Cliente?.IdCliente
+    if (!idCliente) return res.status(400).json({ error: 'El pedido no tiene cliente asociado en Centum' })
+
+    const fechaEntregaFinal = fecha_entrega || (pedidoOriginal.FechaEntrega ? pedidoOriginal.FechaEntrega.split('T')[0] : new Date().toISOString().split('T')[0])
+
+    // 6. PRIMERO crear el nuevo pedido (si falla, el viejo queda intacto)
+    const nuevoResultado = await crearPedidoVentaCompletoCentum({
+      idCliente,
+      fechaEntrega: fechaEntregaFinal,
+      observaciones,
+      sucursalFisicaId,
+      articulos,
+      bonificacion: pedidoOriginal.Bonificacion || null,
+      vendedor: pedidoOriginal.Vendedor || null,
+      turnoEntrega: pedidoOriginal.TurnoEntrega || null,
+      condicionVenta: pedidoOriginal.CondicionVenta || null,
+      transporte: pedidoOriginal.Transporte || null,
+    })
+
+    const nuevoIdCentum = nuevoResultado.IdPedidoVenta || nuevoResultado.Id || null
+    const nuevoNumDoc = formatNumeroDocumento(nuevoResultado.NumeroDocumento)
+
+    // 7. LUEGO anular el viejo
+    let pedidoAnulado = null
+    try {
+      pedidoAnulado = await anularPedidoCentum(idCentum)
+    } catch (errAnular) {
+      console.error(`[Delivery] Error anulando pedido ${idCentum} (nuevo ya creado: ${nuevoIdCentum}):`, errAnular.message)
+      // El nuevo ya se creó, notificar pero no fallar
+    }
+
+    // 8. Actualizar registro local
+    if (nuevoIdCentum) {
+      // Actualizar el registro existente: apuntar al nuevo pedido de Centum
+      const updateData = {
+        id_pedido_centum: nuevoIdCentum,
+        numero_documento: nuevoNumDoc,
+        observaciones,
+        direccion_entrega: tipo === 'delivery' ? direccionEntrega : null,
+        fecha_entrega: fechaEntregaFinal,
+      }
+      if (sucursalParaGuardar) updateData.sucursal_id = sucursalParaGuardar
+
+      await supabase
+        .from('pedidos_delivery')
+        .update(updateData)
+        .eq('id_pedido_centum', idCentum)
+    }
+
+    res.json({
+      mensaje: `Pedido editado. Nuevo: ${nuevoNumDoc || nuevoIdCentum}, Anulado: ${idCentum}`,
+      pedido_nuevo: { id: nuevoIdCentum, numero_documento: nuevoNumDoc },
+      pedido_anulado: { id: idCentum, anulado: !!pedidoAnulado },
+    })
+  } catch (err) {
+    console.error('Error al editar pedido delivery:', err)
+    if (err.message?.includes('no encontrado en Centum')) {
+      return res.status(404).json({ error: 'Pedido no encontrado en Centum' })
+    }
+    if (err.message?.includes('Error al conectar con Centum')) {
+      return res.status(502).json({ error: 'Error al conectar con Centum ERP' })
+    }
+    res.status(500).json({ error: 'Error al editar pedido: ' + err.message })
   }
 })
 

@@ -216,4 +216,133 @@ function mapCentumPedido(p, local, sucursalesMap) {
   }
 }
 
-module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento }
+/**
+ * Anula un pedido de venta en Centum.
+ * POST /PedidosVenta/Anular/{idPedidoVenta}
+ * @param {number} idPedidoVenta - ID entero del pedido en Centum
+ * @returns {Promise<Object>}
+ */
+async function anularPedidoCentum(idPedidoVenta) {
+  const url = `${BASE_URL}/PedidosVenta/Anular/${idPedidoVenta}`
+  const inicio = Date.now()
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'api',
+    })
+    throw new Error('Error al conectar con Centum ERP: ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
+    })
+    throw new Error(`Error al anular pedido Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json().catch(() => ({ anulado: true }))
+
+  registrarLlamada({
+    servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'api',
+  })
+
+  return data
+}
+
+/**
+ * Crea un Pedido de Venta en Centum con artículos completos (para recrear un pedido editado).
+ * A diferencia de crearPedidoVentaCentum (artículo fijo 08136), recibe los artículos originales.
+ * @param {Object} params
+ * @returns {Promise<Object>}
+ */
+async function crearPedidoVentaCompletoCentum({
+  idCliente,
+  fechaEntrega,
+  observaciones,
+  sucursalFisicaId,
+  articulos,
+  bonificacion,
+  vendedor,
+  turnoEntrega,
+  condicionVenta,
+  transporte,
+}) {
+  const url = `${BASE_URL}/PedidosVenta`
+  const inicio = Date.now()
+
+  const body = {
+    Cliente: { IdCliente: idCliente },
+    FechaEntrega: `${fechaEntrega}T00:00:00`,
+    Observaciones: observaciones || '',
+    PedidoVentaArticulos: articulos.map(a => ({
+      IdArticulo: a.IdArticulo,
+      Codigo: a.Codigo,
+      Nombre: a.Nombre,
+      Cantidad: a.Cantidad,
+      Precio: a.Precio,
+      PorcentajeDescuento1: a.PorcentajeDescuento1 || 0,
+      PorcentajeDescuento2: a.PorcentajeDescuento2 || 0,
+      PorcentajeDescuento3: a.PorcentajeDescuento3 || 0,
+      PorcentajeDescuentoMaximo: a.PorcentajeDescuentoMaximo || 100,
+      CategoriaImpuestoIVA: a.CategoriaImpuestoIVA,
+    })),
+    Bonificacion: bonificacion || { IdBonificacion: 6235 },
+    Vendedor: vendedor || { IdVendedor: 2 },
+    TurnoEntrega: turnoEntrega || { IdTurnoEntrega: 8782 },
+  }
+
+  if (sucursalFisicaId) body.SucursalFisica = { IdSucursalFisica: sucursalFisicaId }
+  if (condicionVenta) body.CondicionVenta = condicionVenta
+  if (transporte) body.Transporte = transporte
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'api',
+    })
+    throw new Error('Error al conectar con Centum ERP: ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
+    })
+    throw new Error(`Error al crear pedido de venta en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json()
+
+  registrarLlamada({
+    servicio: 'centum_pedidos_venta', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'api',
+  })
+
+  return data
+}
+
+module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum }

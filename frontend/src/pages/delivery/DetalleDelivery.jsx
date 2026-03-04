@@ -49,6 +49,16 @@ const DetalleDelivery = () => {
   const [actualizando, setActualizando] = useState(false)
   const [error, setError] = useState('')
 
+  // Estado para edición
+  const [editando, setEditando] = useState(false)
+  const [editTipo, setEditTipo] = useState('delivery')
+  const [editSucursalId, setEditSucursalId] = useState('')
+  const [editDireccionId, setEditDireccionId] = useState('')
+  const [editFechaEntrega, setEditFechaEntrega] = useState('')
+  const [sucursales, setSucursales] = useState([])
+  const [direcciones, setDirecciones] = useState([])
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false)
+
   useEffect(() => {
     cargarPedido()
   }, [id])
@@ -62,6 +72,58 @@ const DetalleDelivery = () => {
       setError('Error al cargar el pedido')
     } finally {
       setCargando(false)
+    }
+  }
+
+  const abrirEdicion = async () => {
+    setEditando(true)
+    setError('')
+    // Determinar tipo actual
+    const tipoActual = pedido.direccion_entrega ? 'delivery' : 'retiro'
+    setEditTipo(tipoActual)
+    setEditSucursalId(pedido.sucursal_id || '')
+    setEditFechaEntrega(pedido.fecha_entrega ? pedido.fecha_entrega.split('T')[0] : '')
+
+    // Cargar sucursales
+    try {
+      const { data } = await api.get('/api/sucursales')
+      setSucursales(data || [])
+    } catch (_) {}
+
+    // Cargar direcciones del cliente si hay
+    if (pedido.clientes?.id_centum || pedido.clientes?.id) {
+      try {
+        const clienteId = pedido.clientes.id
+        const { data } = await api.get(`/api/clientes/${clienteId}/direcciones`)
+        setDirecciones(data || [])
+      } catch (_) {
+        setDirecciones([])
+      }
+    }
+  }
+
+  const confirmarEdicion = async () => {
+    setGuardandoEdicion(true)
+    setError('')
+    try {
+      const body = { tipo: editTipo }
+      if (editTipo === 'retiro' && editSucursalId) body.sucursal_id = editSucursalId
+      if (editTipo === 'delivery' && editDireccionId) body.direccion_entrega_id = editDireccionId
+      if (editFechaEntrega) body.fecha_entrega = editFechaEntrega
+
+      const { data } = await api.post(`/api/delivery/${id}/editar`, body)
+      // Redirigir al nuevo pedido
+      const nuevoId = data.pedido_nuevo?.id
+      if (nuevoId) {
+        navigate(`/delivery/${nuevoId}`, { replace: true })
+      } else {
+        setEditando(false)
+        cargarPedido()
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al editar pedido')
+    } finally {
+      setGuardandoEdicion(false)
     }
   }
 
@@ -213,6 +275,106 @@ const DetalleDelivery = () => {
         {esAdmin && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <h3 className="text-sm font-semibold text-gray-700">Acciones</h3>
+
+            {/* Botón Editar pedido — solo si no está cancelado/anulado */}
+            {pedido.estado !== 'cancelado' && pedido.estado_centum !== 'Anulado' && (
+              <div>
+                {!editando ? (
+                  <button
+                    onClick={abrirEdicion}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                  >
+                    Editar pedido
+                  </button>
+                ) : (
+                  <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-3">
+                    <p className="text-xs text-amber-700 font-medium">
+                      Se anulará el pedido actual y se creará uno nuevo con los mismos artículos.
+                    </p>
+
+                    {/* Tipo */}
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 block mb-1">Tipo</label>
+                      <div className="flex gap-3">
+                        <label className="flex items-center gap-1 text-xs">
+                          <input type="radio" name="editTipo" value="delivery" checked={editTipo === 'delivery'} onChange={() => setEditTipo('delivery')} />
+                          Delivery
+                        </label>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input type="radio" name="editTipo" value="retiro" checked={editTipo === 'retiro'} onChange={() => setEditTipo('retiro')} />
+                          Retiro por sucursal
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Sucursal (solo retiro) */}
+                    {editTipo === 'retiro' && (
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1">Sucursal de retiro</label>
+                        <select
+                          value={editSucursalId}
+                          onChange={e => setEditSucursalId(e.target.value)}
+                          className="w-full text-xs border border-gray-300 rounded-lg px-2 py-1.5"
+                        >
+                          <option value="">Seleccionar...</option>
+                          {sucursales.map(s => (
+                            <option key={s.id} value={s.id}>{s.nombre}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Dirección (solo delivery) */}
+                    {editTipo === 'delivery' && direcciones.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1">Dirección de entrega</label>
+                        <select
+                          value={editDireccionId}
+                          onChange={e => setEditDireccionId(e.target.value)}
+                          className="w-full text-xs border border-gray-300 rounded-lg px-2 py-1.5"
+                        >
+                          <option value="">Sin cambio</option>
+                          {direcciones.map(d => (
+                            <option key={d.id} value={d.id}>
+                              {[d.direccion, d.localidad].filter(Boolean).join(', ')}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Fecha de entrega */}
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 block mb-1">Fecha de entrega</label>
+                      <input
+                        type="date"
+                        value={editFechaEntrega}
+                        onChange={e => setEditFechaEntrega(e.target.value)}
+                        className="w-full text-xs border border-gray-300 rounded-lg px-2 py-1.5"
+                      />
+                    </div>
+
+                    {/* Botones */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={confirmarEdicion}
+                        disabled={guardandoEdicion || (editTipo === 'retiro' && !editSucursalId)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40 transition-colors"
+                      >
+                        {guardandoEdicion ? 'Procesando...' : 'Confirmar edición'}
+                      </button>
+                      <button
+                        onClick={() => setEditando(false)}
+                        disabled={guardandoEdicion}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Cambiar estado */}
             <div>
