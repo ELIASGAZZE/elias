@@ -240,9 +240,10 @@ router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
       })
 
       if (facturaMatch) {
-        // Obtener detalle completo
+        // Obtener detalle completo (regenerar token)
         try {
-          const r2 = await fetch(`${BASE}/Ventas/${facturaMatch.IdVenta}`, { method: 'GET', headers })
+          const headers2 = { ...headers, 'CentumSuiteAccessToken': generateAccessToken(KEY) }
+          const r2 = await fetch(`${BASE}/Ventas/${facturaMatch.IdVenta}`, { method: 'GET', headers: headers2 })
           const det = r2.ok ? await r2.json() : { status: r2.status, body: await r2.text().then(t => t.slice(0, 500)) }
           // Limpiar para ver campos relevantes
           delete det.VentaArticulos
