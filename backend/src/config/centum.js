@@ -677,22 +677,44 @@ async function buscarComprobantesPorMonto(planillaId, monto, tolerancia = 100) {
   }
 }
 
+// Cache de turnos de factura (una factura nunca cambia de turno después de creada)
+const turnoCache = new Map() // nroDocumento → { turnoId, turnoNombre, timestamp }
+const TURNO_CACHE_TTL = 30 * 60 * 1000 // 30 minutos
+
 /**
  * Obtiene el TurnoEntrega de facturas por NumeroDocumento.
  * Consulta Ventas_VIEW + TurnosEntrega_VIEW en el SQL Server de Centum BI.
+ * Usa cache en memoria para evitar consultas repetidas.
  * @param {string[]} nroDocumentos - Array de NumeroDocumento (ej: ["B00002-00007584"])
  * @returns {Object} Mapa { nroDocumento: { turnoId, turnoNombre } }
  */
 async function getFacturasTurno(nroDocumentos) {
   if (!nroDocumentos || nroDocumentos.length === 0) return {}
+
+  const ahora = Date.now()
+  const resultado = {}
+  const sinCache = []
+
+  // Revisar cache primero
+  for (const doc of nroDocumentos) {
+    const cached = turnoCache.get(doc)
+    if (cached && (ahora - cached.timestamp) < TURNO_CACHE_TTL) {
+      resultado[doc] = { turnoId: cached.turnoId, turnoNombre: cached.turnoNombre }
+    } else {
+      sinCache.push(doc)
+    }
+  }
+
+  // Si todo estaba en cache, retornar directo
+  if (sinCache.length === 0) return resultado
+
   const inicio = Date.now()
   try {
     const db = await getPool()
 
-    // Parametrizar con tabla temporal o IN clause
-    const placeholders = nroDocumentos.map((_, i) => `@doc${i}`).join(', ')
+    const placeholders = sinCache.map((_, i) => `@doc${i}`).join(', ')
     const request = db.request()
-    nroDocumentos.forEach((doc, i) => request.input(`doc${i}`, sql.VarChar, doc))
+    sinCache.forEach((doc, i) => request.input(`doc${i}`, sql.VarChar, doc))
 
     const result = await request.query(`
       SELECT v.NumeroDocumento, v.TurnoEntregaID, t.NombreTurnoEntrega
@@ -702,24 +724,25 @@ async function getFacturasTurno(nroDocumentos) {
       AND v.Anulado = 0
     `)
 
-    const mapa = {}
     for (const r of result.recordset) {
       const doc = r.NumeroDocumento?.trim()
       if (doc) {
-        mapa[doc] = {
+        const turno = {
           turnoId: r.TurnoEntregaID,
           turnoNombre: r.NombreTurnoEntrega?.trim() || null,
         }
+        resultado[doc] = turno
+        turnoCache.set(doc, { ...turno, timestamp: ahora })
       }
     }
 
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'FacturasTurnoEntrega',
       metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
-      items_procesados: Object.keys(mapa).length, origen: 'consulta',
+      items_procesados: result.recordset.length, origen: 'consulta',
     })
 
-    return mapa
+    return resultado
   } catch (err) {
     console.error('[Centum BI] Error al obtener turnos de facturas:', err.message)
     registrarLlamada({
@@ -727,7 +750,7 @@ async function getFacturasTurno(nroDocumentos) {
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
       error_mensaje: err.message, origen: 'consulta',
     })
-    return {}
+    return resultado // retornar lo que teníamos en cache
   }
 }
 
