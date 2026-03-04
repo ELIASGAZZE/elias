@@ -697,12 +697,7 @@ router.post('/:id/link-pago', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'El pedido no está pendiente de pago' })
     }
 
-    // 2. Si ya tiene link, retornarlo
-    if (pedido.mp_link_pago) {
-      return res.json({ link: pedido.mp_link_pago })
-    }
-
-    // 3. Obtener detalle de Centum para calcular total (misma lógica que mapCentumPedido)
+    // 2. Obtener detalle de Centum para calcular total actual (siempre recalcular)
     const pedidoCentum = await fetchPedidoCentum(idCentum)
     const articulos = pedidoCentum.PedidoVentaArticulos || []
     const total = articulos.reduce((sum, a) => {
@@ -941,6 +936,8 @@ router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
         observaciones,
         direccion_entrega: tipo === 'delivery' ? direccionEntrega : null,
         fecha_entrega: fechaEntregaFinal,
+        mp_link_pago: null,
+        mp_preference_id: null,
       }
       if (sucursalParaGuardar) updateData.sucursal_id = sucursalParaGuardar
 
