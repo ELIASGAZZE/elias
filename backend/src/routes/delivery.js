@@ -710,6 +710,8 @@ router.post('/:id/link-pago', verificarAuth, async (req, res) => {
       return sum + (precio * cantidad)
     }, 0)
 
+    console.log(`[Link MP] Pedido ${idCentum}: total calculado = $${total} (${articulos.length} artículos)`)
+
     if (total <= 0) {
       return res.status(400).json({ error: 'El pedido no tiene un total válido para cobrar' })
     }
