@@ -581,4 +581,44 @@ router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// POST /api/delivery/:id/eliminar
+// Admin: anular pedido en Centum + marcar como cancelado localmente
+router.post('/:id/eliminar', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+
+    // 1. Verificar que no esté ya anulado en Centum
+    const pedidoCentum = await fetchPedidoCentum(idCentum)
+    const anulado = pedidoCentum.Anulado === true || pedidoCentum.Anulado === 1
+    const estados = pedidoCentum.PedidoVentaEstados || []
+    const ultimoEstado = estados.length > 0 ? estados[estados.length - 1] : null
+    const estadoNombre = ultimoEstado?.Estado?.Nombre || ultimoEstado?.Estado || ''
+    const anuladoPorEstado = typeof estadoNombre === 'string' && estadoNombre.toLowerCase().includes('anulado')
+    if (anulado || anuladoPorEstado) {
+      return res.status(400).json({ error: 'El pedido ya está anulado en Centum' })
+    }
+
+    // 2. Anular en Centum
+    await anularPedidoCentum(idCentum)
+
+    // 3. Actualizar registro local
+    await supabase
+      .from('pedidos_delivery')
+      .update({ estado: 'cancelado', estado_centum: 'Anulado' })
+      .eq('id_pedido_centum', idCentum)
+
+    res.json({ mensaje: `Pedido ${formatNumeroDocumento(pedidoCentum.NumeroDocumento) || idCentum} anulado correctamente` })
+  } catch (err) {
+    console.error('Error al eliminar pedido delivery:', err)
+    if (err.message?.includes('no encontrado en Centum')) {
+      return res.status(404).json({ error: 'Pedido no encontrado en Centum' })
+    }
+    if (err.message?.includes('Error al conectar con Centum')) {
+      return res.status(502).json({ error: 'Error al conectar con Centum ERP' })
+    }
+    res.status(500).json({ error: 'Error al anular pedido: ' + err.message })
+  }
+})
+
 module.exports = router

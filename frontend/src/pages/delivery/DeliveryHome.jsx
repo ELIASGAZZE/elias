@@ -1,9 +1,10 @@
 // Página principal de la app Delivery
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import ModalNuevoPedido from '../../components/delivery/ModalNuevoPedido'
+import ModalEditarPedido from '../../components/delivery/ModalEditarPedido'
 import api from '../../services/api'
 
 const TABS = [
@@ -23,6 +24,8 @@ const ESTADOS = {
   en_camino: { label: 'En camino', color: 'bg-purple-100 text-purple-700' },
 }
 
+const ORDEN_ESTADOS = ['pendiente_pago', 'pagado', 'entregado', 'cancelado']
+
 const BadgeEstado = ({ estado }) => {
   const cfg = ESTADOS[estado] || { label: estado, color: 'bg-gray-100 text-gray-700' }
   return (
@@ -39,8 +42,20 @@ const formatFechaHora = (fecha) => {
     ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
+const formatFecha = (fecha) => {
+  if (!fecha) return ''
+  const d = new Date(fecha)
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+const formatPrecio = (precio) => {
+  if (precio == null) return null
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(precio)
+}
+
 const DeliveryHome = () => {
   const { esAdmin } = useAuth()
+  const navigate = useNavigate()
   const [tabActivo, setTabActivo] = useState('pendiente_pago')
   const [pedidos, setPedidos] = useState([])
   const [total, setTotal] = useState(0)
@@ -49,6 +64,8 @@ const DeliveryHome = () => {
   const [busquedaActiva, setBusquedaActiva] = useState('')
   const [cargando, setCargando] = useState(true)
   const [mostrarNuevoPedido, setMostrarNuevoPedido] = useState(false)
+  const [pedidoEditando, setPedidoEditando] = useState(null)
+  const [actualizandoId, setActualizandoId] = useState(null)
   const LIMIT = 15
 
   useEffect(() => {
@@ -85,7 +102,50 @@ const DeliveryHome = () => {
     setPage(1)
   }
 
+  const cambiarEstado = async (e, pedidoId, nuevoEstado) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setActualizandoId(pedidoId)
+    try {
+      await api.put(`/api/delivery/${pedidoId}/estado`, { estado: nuevoEstado })
+      cargarPedidos()
+    } catch (err) {
+      console.error('Error al cambiar estado:', err)
+    } finally {
+      setActualizandoId(null)
+    }
+  }
+
+  const eliminarPedido = async (e, pedido) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!window.confirm(`¿Anular pedido ${pedido.numero_documento || pedido.id}? Esta acción no se puede deshacer.`)) return
+    setActualizandoId(pedido.id)
+    try {
+      await api.post(`/api/delivery/${pedido.id}/eliminar`)
+      cargarPedidos()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al anular pedido')
+    } finally {
+      setActualizandoId(null)
+    }
+  }
+
+  const abrirEditar = (e, pedido) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setPedidoEditando(pedido)
+  }
+
   const totalPaginas = Math.max(1, Math.ceil(total / LIMIT))
+
+  // Calcular total de un pedido
+  const calcularTotal = (items) => {
+    if (!items || items.length === 0) return null
+    const tienePrecios = items.some(i => i.precio != null)
+    if (!tienePrecios) return null
+    return items.reduce((sum, i) => sum + (i.precio || 0) * (i.cantidad || 0), 0)
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
@@ -154,42 +214,132 @@ const DeliveryHome = () => {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {pedidos.map(pedido => (
-              <Link
-                key={pedido.id}
-                to={`/delivery/${pedido.id}`}
-                className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 truncate mr-2">
-                    <span className="text-sm font-semibold text-gray-800 truncate">
+          <div className="space-y-3">
+            {pedidos.map(pedido => {
+              const totalPedido = calcularTotal(pedido.items_delivery)
+              const cantItems = pedido.items_delivery?.length || 0
+              const esDelivery = !!pedido.direccion_entrega
+              const noCancelado = pedido.estado !== 'cancelado' && pedido.estado_centum !== 'Anulado'
+
+              return (
+                <Link
+                  key={pedido.id}
+                  to={`/delivery/${pedido.id}`}
+                  className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
+                >
+                  {/* Fila 1: Nro doc + badges */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-mono font-semibold text-gray-800">
+                      {pedido.numero_documento || `#${pedido.id}`}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <BadgeEstado estado={pedido.estado} />
+                      {pedido.estado_centum && pedido.estado_centum !== 'Anulado' && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                          {pedido.estado_centum}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Fila 2: Cliente */}
+                  <div className="mb-1.5">
+                    <span className="text-sm font-medium text-gray-800">
                       {pedido.clientes?.razon_social || 'Sin cliente'}
                     </span>
-                    {pedido.numero_documento && (
-                      <span className="text-xs font-mono text-gray-400">{pedido.numero_documento}</span>
+                    <div className="flex flex-wrap items-center gap-x-3 text-xs text-gray-400 mt-0.5">
+                      {pedido.clientes?.cuit && <span>CUIT: {pedido.clientes.cuit}</span>}
+                      {pedido.clientes?.telefono && <span>Tel: {pedido.clientes.telefono}</span>}
+                      {pedido.clientes?.direccion && <span>{pedido.clientes.direccion}</span>}
+                    </div>
+                  </div>
+
+                  {/* Fila 3: Tipo + dirección/sucursal */}
+                  <div className="text-xs text-gray-500 mb-1.5">
+                    {esDelivery ? (
+                      <span className="inline-flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.079-.504 1.004-1.1A17.05 17.05 0 0015.064 8.39a2.25 2.25 0 00-1.89-1.014H12m-1.5 11.374h6" />
+                        </svg>
+                        Entregar en: <span className="font-medium text-gray-700">{pedido.direccion_entrega}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349m-16.5 11.65V9.35m0 0a3.001 3.001 0 003.75-.615A2.993 2.993 0 009.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 002.25 1.016c.896 0 1.7-.393 2.25-1.016A3.001 3.001 0 0021 9.349m-18 0V7.875C3 6.839 3.839 6 4.875 6h14.25C20.16 6 21 6.839 21 7.875v1.474" />
+                        </svg>
+                        Retiro por: <span className="font-medium text-gray-700">{pedido.sucursales?.nombre || 'Sucursal'}</span>
+                      </span>
+                    )}
+                    {!esDelivery && pedido.sucursales?.nombre && null}
+                  </div>
+
+                  {/* Fila 4: Fechas + creado por */}
+                  <div className="flex flex-wrap items-center gap-x-3 text-xs text-gray-400 mb-1">
+                    {pedido.fecha_entrega && (
+                      <span>Entrega: {formatFecha(pedido.fecha_entrega)}</span>
+                    )}
+                    <span>Creado: {formatFechaHora(pedido.created_at)}</span>
+                    {pedido.perfiles?.nombre && (
+                      <span>por {pedido.perfiles.nombre}</span>
                     )}
                   </div>
-                  <BadgeEstado estado={pedido.estado} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-gray-400 truncate">
-                    {pedido.direccion_entrega && (
-                      <span>{pedido.direccion_entrega}</span>
-                    )}
-                    {pedido.items_delivery && (
-                      <span> · {pedido.items_delivery.length} art.</span>
-                    )}
-                    {pedido.sucursales?.nombre && (
-                      <span> · {pedido.sucursales.nombre}</span>
+
+                  {/* Fila 5: Observaciones */}
+                  {pedido.observaciones && (
+                    <p className="text-xs text-gray-500 italic mb-1 line-clamp-2">
+                      {pedido.observaciones}
+                    </p>
+                  )}
+
+                  {/* Fila 6: Total + cantidad artículos */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                    <span className="text-xs text-gray-400">
+                      {cantItems} artículo{cantItems !== 1 ? 's' : ''}
+                    </span>
+                    {totalPedido != null && (
+                      <span className="text-sm font-bold text-gray-800">
+                        {formatPrecio(totalPedido)}
+                      </span>
                     )}
                   </div>
-                  <span className="text-xs text-gray-400 whitespace-nowrap ml-2">
-                    {formatFechaHora(pedido.created_at)}
-                  </span>
-                </div>
-              </Link>
-            ))}
+
+                  {/* Fila 7: Botones admin */}
+                  {esAdmin && noCancelado && (
+                    <div className="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t border-gray-100">
+                      {/* Cambiar estado */}
+                      {ORDEN_ESTADOS.filter(e => e !== pedido.estado && e !== 'cancelado').map(estado => (
+                        <button
+                          key={estado}
+                          onClick={(e) => cambiarEstado(e, pedido.id, estado)}
+                          disabled={actualizandoId === pedido.id}
+                          className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-colors text-gray-600"
+                        >
+                          {ESTADOS[estado]?.label || estado}
+                        </button>
+                      ))}
+                      <div className="flex-1" />
+                      {/* Editar */}
+                      <button
+                        onClick={(e) => abrirEditar(e, pedido)}
+                        disabled={actualizandoId === pedido.id}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                      >
+                        Editar
+                      </button>
+                      {/* Eliminar */}
+                      <button
+                        onClick={(e) => eliminarPedido(e, pedido)}
+                        disabled={actualizandoId === pedido.id}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  )}
+                </Link>
+              )
+            })}
           </div>
         )}
 
@@ -222,6 +372,15 @@ const DeliveryHome = () => {
         <ModalNuevoPedido
           onClose={() => setMostrarNuevoPedido(false)}
           onCreado={() => { setMostrarNuevoPedido(false); cargarPedidos() }}
+        />
+      )}
+
+      {/* Modal editar pedido */}
+      {pedidoEditando && (
+        <ModalEditarPedido
+          pedido={pedidoEditando}
+          onClose={() => setPedidoEditando(null)}
+          onEditado={() => { setPedidoEditando(null); cargarPedidos() }}
         />
       )}
     </div>
