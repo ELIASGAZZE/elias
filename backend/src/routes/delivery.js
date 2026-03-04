@@ -213,17 +213,25 @@ router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
     const fechaDesdeStr = fechaDesde.toISOString().split('T')[0] + 'T00:00:00'
     const fechaHastaStr = new Date().toISOString().split('T')[0] + 'T23:59:59'
 
-    // POST /Ventas/FiltrosVenta con IdSucursal
+    // POST /Ventas/FiltrosVenta — solo fechas, sin sucursal
     try {
-      const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=3`, {
+      const r = await fetch(`${BASE}/Ventas/FiltrosVenta?numeroPagina=1&cantidadItemsPorPagina=5`, {
         method: 'POST', headers, body: JSON.stringify({
-          IdSucursal: 6084,
           FechaDocumentoDesde: '2026-03-04T00:00:00',
           FechaDocumentoHasta: fechaHastaStr,
         })
       })
       const data = r.ok ? await r.json() : { status: r.status, body: await r.text().then(t => t.slice(0, 500)) }
       resultados.filtrosVenta = data
+      // Mostrar los primeros 3 items resumidos
+      const items = data?.Ventas?.Items || []
+      resultados.ventasResumen = items.slice(0, 5).map(v => ({
+        IdVenta: v.IdVenta,
+        NumeroDocumento: v.NumeroDocumento,
+        TipoVenta: v.TipoVenta,
+        keys: Object.keys(v),
+      }))
+      resultados.totalVentas = data?.Ventas?.CantidadTotalItems
     } catch (e) { resultados.filtrosVenta = { error: e.message } }
 
     // GET /Ventas/{idVenta} si encontramos la factura
