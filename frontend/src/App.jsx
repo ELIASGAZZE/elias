@@ -27,6 +27,9 @@ import BatchAnalisis from './pages/cajas/BatchAnalisis'
 import DeliveryHome from './pages/delivery/DeliveryHome'
 import DetalleDelivery from './pages/delivery/DetalleDelivery'
 
+// Páginas de la app POS
+import POS from './pages/pos/POS'
+
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
@@ -123,6 +126,13 @@ const App = () => {
           <Route path="/cajas/verificar/:id" element={
             <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
               <VerificarCierre />
+            </RutaProtegida>
+          } />
+
+          {/* App: POS */}
+          <Route path="/pos" element={
+            <RutaProtegida>
+              <POS />
             </RutaProtegida>
           } />
 
