@@ -172,8 +172,18 @@ const DeliveryHome = () => {
           ))}
         </div>
 
-        {/* Barra de búsqueda + botón nuevo */}
+        {/* Barra de búsqueda + botones */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => cargarPedidos()}
+            disabled={cargando}
+            className="flex-shrink-0 bg-white border border-gray-200 hover:bg-gray-50 text-gray-500 p-2.5 rounded-xl transition-colors disabled:opacity-40"
+            title="Sincronizar pedidos"
+          >
+            <svg className={`w-5 h-5 ${cargando ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.015 4.356v4.992" />
+            </svg>
+          </button>
           <input
             type="text"
             value={busqueda}
