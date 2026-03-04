@@ -165,6 +165,18 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/delivery/:id/raw — datos crudos de Centum (debug, solo admin)
+router.get('/:id/raw', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.id)
+    if (isNaN(idCentum)) return res.status(400).json({ error: 'ID inválido' })
+    const data = await fetchPedidoCentum(idCentum)
+    res.json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/delivery/:id
 // Detalle: fetch directo de Centum + merge estado local
 router.get('/:id', verificarAuth, async (req, res) => {
