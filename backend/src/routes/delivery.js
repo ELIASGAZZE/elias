@@ -560,8 +560,9 @@ router.post('/pedido-centum', verificarAuth, async (req, res) => {
 })
 
 // PUT /api/delivery/:id/estado
-// Admin: cambiar estado local (id = id_pedido_centum)
-router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
+// Cambiar estado local (id = id_pedido_centum)
+// Admin: cualquier transición. Operario: solo pagado → entregado
+router.put('/:id/estado', verificarAuth, async (req, res) => {
   try {
     const { estado } = req.body
     const idCentum = parseInt(req.params.id)
@@ -570,6 +571,22 @@ router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
     const estadosValidos = ['pendiente_pago', 'pagado', 'entregado', 'cancelado']
     if (!estadosValidos.includes(estado)) {
       return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` })
+    }
+
+    // Operarios solo pueden pasar de pagado → entregado
+    if (req.perfil.rol !== 'admin') {
+      if (estado !== 'entregado') {
+        return res.status(403).json({ error: 'Solo podés marcar pedidos como entregados' })
+      }
+      // Verificar que el pedido esté en pagado
+      const { data: actual } = await supabase
+        .from('pedidos_delivery')
+        .select('estado')
+        .eq('id_pedido_centum', idCentum)
+        .maybeSingle()
+      if (actual && actual.estado !== 'pagado') {
+        return res.status(403).json({ error: 'Solo podés marcar como entregado un pedido que esté pagado' })
+      }
     }
 
     // Intentar actualizar registro existente

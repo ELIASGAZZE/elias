@@ -314,11 +314,11 @@ const DeliveryHome = () => {
                     )}
                   </div>
 
-                  {/* Fila 7: Botones admin */}
-                  {esAdmin && noCancelado && (
+                  {/* Fila 7: Botones de acción */}
+                  {noCancelado && (esAdmin || pedido.estado === 'pagado') && (
                     <div className="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t border-gray-100">
-                      {/* Cambiar estado */}
-                      {ORDEN_ESTADOS.filter(e => e !== pedido.estado && e !== 'cancelado').map(estado => (
+                      {/* Admin: todos los cambios de estado */}
+                      {esAdmin && ORDEN_ESTADOS.filter(e => e !== pedido.estado && e !== 'cancelado').map(estado => (
                         <button
                           key={estado}
                           onClick={(e) => cambiarEstado(e, pedido.id, estado)}
@@ -328,9 +328,19 @@ const DeliveryHome = () => {
                           {ESTADOS[estado]?.label || estado}
                         </button>
                       ))}
+                      {/* Operario: solo puede marcar como entregado si está pagado */}
+                      {!esAdmin && pedido.estado === 'pagado' && (
+                        <button
+                          onClick={(e) => cambiarEstado(e, pedido.id, 'entregado')}
+                          disabled={actualizandoId === pedido.id}
+                          className="text-[11px] px-2.5 py-1 rounded-lg border border-green-200 bg-green-50 hover:bg-green-100 disabled:opacity-40 transition-colors text-green-700"
+                        >
+                          Marcar como Entregado
+                        </button>
+                      )}
                       <div className="flex-1" />
-                      {/* Editar (no si suscripto total) */}
-                      {puedeEliminar && (
+                      {/* Editar (solo admin, no si suscripto total) */}
+                      {esAdmin && puedeEliminar && (
                         <button
                           onClick={(e) => abrirEditar(e, pedido)}
                           disabled={actualizandoId === pedido.id}
@@ -339,8 +349,8 @@ const DeliveryHome = () => {
                           Editar
                         </button>
                       )}
-                      {/* Eliminar (no si suscripto total) */}
-                      {puedeEliminar && (
+                      {/* Eliminar (solo admin, no si suscripto total) */}
+                      {esAdmin && puedeEliminar && (
                         <button
                           onClick={(e) => eliminarPedido(e, pedido)}
                           disabled={actualizandoId === pedido.id}
