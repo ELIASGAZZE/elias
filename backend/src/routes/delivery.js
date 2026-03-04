@@ -115,9 +115,13 @@ router.get('/', verificarAuth, async (req, res) => {
       }
     }
 
-    // 6. Obtener turnos de factura para pedidos suscriptos (SQL Server)
+    // 6. Obtener turnos de factura SOLO para suscriptos que aún no están como 'entregado'
+    //    Una vez determinado, se guarda en Supabase → no se vuelve a consultar SQL Server
     const facturasMap = {} // nroFactura → idPedidoVenta
     for (const p of pedidosCentum) {
+      const local = localesMap[p.IdPedidoVenta]
+      // Si ya está como 'entregado' en local, no necesitamos consultar SQL Server
+      if (local?.estado === 'entregado') continue
       const estados = p.PedidoVentaEstados || []
       const ultimoEstado = estados.length > 0 ? estados[estados.length - 1] : null
       const estadoNombre = ultimoEstado?.Estado?.Nombre || ''
@@ -150,7 +154,7 @@ router.get('/', verificarAuth, async (req, res) => {
       mapCentumPedido(p, localesMap[p.IdPedidoVenta] || null, sucursalesMap, turnosPorPedido[p.IdPedidoVenta] || null)
     )
 
-    // 8. Auto-actualizar estados locales que cambiaron
+    // 8. Auto-actualizar estados locales que cambiaron (persistir en Supabase)
     const actualizaciones = []
     for (const pm of pedidosMapeados) {
       const local = localesMap[pm.id_pedido_centum]
@@ -382,23 +386,25 @@ router.get('/:id', verificarAuth, async (req, res) => {
       }
     }
 
-    // 5. Obtener turno de factura para suscripto (SQL Server)
+    // 5. Obtener turno de factura SOLO si suscripto y no ya 'entregado'
     let turnoFacturaNombre = null
-    const estados = pedidoCentum.PedidoVentaEstados || []
-    const nroFactura = extractFacturaFromEstados(estados)
-    if (nroFactura) {
-      try {
-        const turnos = await getFacturasTurno([nroFactura])
-        if (turnos[nroFactura]) turnoFacturaNombre = turnos[nroFactura].turnoNombre
-      } catch (err) {
-        console.error('[Delivery] Error al obtener turno de factura:', err.message)
+    if (registroLocal?.estado !== 'entregado') {
+      const estados = pedidoCentum.PedidoVentaEstados || []
+      const nroFactura = extractFacturaFromEstados(estados)
+      if (nroFactura) {
+        try {
+          const turnos = await getFacturasTurno([nroFactura])
+          if (turnos[nroFactura]) turnoFacturaNombre = turnos[nroFactura].turnoNombre
+        } catch (err) {
+          console.error('[Delivery] Error al obtener turno de factura:', err.message)
+        }
       }
     }
 
     // 6. Mapear y retornar
     const pedido = mapCentumPedido(pedidoCentum, registroLocal, sucursalesMap, turnoFacturaNombre)
 
-    // Auto-actualizar estado local si cambió
+    // Auto-actualizar estado local si cambió (persistir en Supabase)
     if (registroLocal && registroLocal.estado !== pedido.estado) {
       supabase.from('pedidos_delivery').update({ estado: pedido.estado }).eq('id_pedido_centum', idCentum).then()
     }
