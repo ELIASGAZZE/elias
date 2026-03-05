@@ -123,7 +123,7 @@ router.get('/promociones', verificarAuth, async (req, res) => {
       response = await fetch(url, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({}),
+        body: JSON.stringify({ Activa: true }),
       })
     } catch (err) {
       registrarLlamada({
@@ -145,32 +145,46 @@ router.get('/promociones', verificarAuth, async (req, res) => {
     }
 
     const data = await response.json()
-    const items = data.PromocionesComerciales?.Items || data.Items || (Array.isArray(data) ? data : [])
+    // Centum retorna array plano con duplicados (mismo id repetido)
+    const rawItems = Array.isArray(data) ? data : data.PromocionesComerciales?.Items || data.Items || []
 
     registrarLlamada({
       servicio: 'centum_pos_promos', endpoint: url, metodo: 'POST',
       estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
-      items_procesados: items.length, origen: 'api',
+      items_procesados: rawItems.length, origen: 'api',
     })
 
-    // Parsear promociones
-    const promociones = items.map(p => {
-      const detalles = p.PromocionComercialDetalles || []
+    // Deduplicar por IdPromocionComercial
+    const promosMap = {}
+    for (const p of rawItems) {
+      if (!p.IdPromocionComercial) continue
+      if (!promosMap[p.IdPromocionComercial]) {
+        promosMap[p.IdPromocionComercial] = p
+      }
+    }
+
+    // Parsear: campo real es PromocionComercialResultados, TipoEntidad es string
+    const promociones = Object.values(promosMap).map(p => {
+      const resultados = p.PromocionComercialResultados || []
       return {
         id: p.IdPromocionComercial,
         nombre: p.Nombre || '',
         activa: p.Activo !== false,
-        fechaDesde: p.FechaDesde,
-        fechaHasta: p.FechaHasta,
-        unidades: p.Unidades || 0,
-        detalles: detalles.map(d => ({
-          id: d.IdPromocionComercialDetalle,
-          tipo: d.SubRubro ? 'SubRubro' : d.Rubro ? 'Rubro' : d.Articulo ? 'Articulo' : 'Otro',
-          entidadId: d.SubRubro?.IdSubRubro || d.Rubro?.IdRubro || d.Articulo?.IdArticulo || null,
-          entidadNombre: d.SubRubro?.Nombre || d.Rubro?.Nombre || d.Articulo?.Nombre || '',
-          porcentajeDescuento: d.PorcentajeDescuento || 0,
-          listaPrecio: d.ListaPrecio || null,
-        })),
+        fechaDesde: p.FechaPromocionDesde,
+        fechaHasta: p.FechaPromocionHasta,
+        detalles: resultados.map(d => {
+          // TipoEntidad: "Sub Rubro", "Rubro", "Artículo", "Atributo de Artículo"
+          let tipo = 'Otro'
+          if (d.TipoEntidad === 'Sub Rubro') tipo = 'SubRubro'
+          else if (d.TipoEntidad === 'Rubro') tipo = 'Rubro'
+          else if (d.TipoEntidad === 'Artículo') tipo = 'Articulo'
+          return {
+            tipo,
+            entidadId: d.IdEntidad,
+            porcentajeDescuento: d.Descuento || 0,
+            unidades: d.Unidades || 0,
+          }
+        }).filter(d => d.tipo !== 'Otro'),
       }
     }).filter(p => p.activa && p.detalles.length > 0)
 

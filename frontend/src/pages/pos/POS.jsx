@@ -65,9 +65,8 @@ function calcularPromociones(carrito, promociones, listaPrecioId) {
       aplicadas.push({
         promoId: promo.id,
         promoNombre: promo.nombre,
-        detalleId: detalle.id,
         tipo: detalle.tipo,
-        entidadNombre: detalle.entidadNombre,
+        entidadId: detalle.entidadId,
         porcentajeDescuento: detalle.porcentajeDescuento,
         cantidadMinima,
         cantidadActual: cantidadTotal,
