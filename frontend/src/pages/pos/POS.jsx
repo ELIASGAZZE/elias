@@ -226,28 +226,21 @@ const POS = () => {
   }, [])
 
   // Calcular totales
-  const { subtotal, descuentoTotal, ivaTotal, total, promosAplicadas } = useMemo(() => {
+  // Precio de Centum ya incluye IVA — no sumar IVA
+  const { subtotal, descuentoTotal, total, promosAplicadas } = useMemo(() => {
     let sub = 0
-    let iva = 0
     for (const item of carrito) {
       const precioBase = calcularPrecioConDescuentosBase(item.articulo)
-      const lineaSubtotal = precioBase * item.cantidad
-      sub += lineaSubtotal
-      iva += lineaSubtotal * ((item.articulo.iva?.tasa || 21) / 100)
+      sub += precioBase * item.cantidad
     }
 
     const aplicadas = calcularPromociones(carrito, promociones, cliente?.lista_precio_id || 1)
     const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
-    // Recalcular IVA sobre el monto con descuento
-    const proporcionDesc = sub > 0 ? (sub - descTotal) / sub : 1
-    const ivaAjustado = iva * proporcionDesc
-
     return {
       subtotal: sub,
       descuentoTotal: descTotal,
-      ivaTotal: ivaAjustado,
-      total: sub - descTotal + ivaAjustado,
+      total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
   }, [carrito, promociones, cliente])
@@ -534,10 +527,6 @@ const POS = () => {
                     <span>-{formatPrecio(descuentoTotal)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-sm text-gray-500">
-                  <span>IVA</span>
-                  <span>{formatPrecio(ivaTotal)}</span>
-                </div>
                 <div className="flex justify-between text-lg font-bold text-gray-800 pt-1 border-t">
                   <span>TOTAL</span>
                   <span>{formatPrecio(total)}</span>
@@ -560,7 +549,7 @@ const POS = () => {
           total={total}
           subtotal={subtotal}
           descuentoTotal={descuentoTotal}
-          ivaTotal={ivaTotal}
+          ivaTotal={0}
           carrito={carrito}
           cliente={cliente}
           promosAplicadas={promosAplicadas}

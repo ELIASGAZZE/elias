@@ -155,10 +155,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 <span>-{formatPrecio(descuentoTotal)}</span>
               </div>
             )}
-            <div className="flex justify-between text-sm text-gray-500">
-              <span>IVA</span>
-              <span>{formatPrecio(ivaTotal)}</span>
-            </div>
             <div className="flex justify-between text-xl font-bold text-gray-800 pt-2 border-t mt-1">
               <span>TOTAL</span>
               <span>{formatPrecio(total)}</span>
