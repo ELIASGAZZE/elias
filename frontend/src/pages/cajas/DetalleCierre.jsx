@@ -345,6 +345,13 @@ const DetalleCierre = () => {
     }
     return 0
   }
+  const getErpOperaciones = (nombre) => {
+    if (!erpData) return null
+    for (const [key, mp] of Object.entries(erpMediosMap)) {
+      if (mediosSonIguales(nombre, key)) return mp.operaciones || 0
+    }
+    return 0
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
@@ -677,17 +684,35 @@ const DetalleCierre = () => {
                 : nombre.toLowerCase().includes('transfer') ? 'transferencia'
                 : nombre.toLowerCase().includes('mercado') || nombre.toLowerCase().includes('qr') ? 'mercadopago'
                 : 'otro_medio'
+              const cantCajero = parseInt(cierreMp?.cantidad) || 0
+              const cantErp = getErpOperaciones(nombre)
               return (
-                <FilaComparativa
-                  key={fcId}
-                  label={nombre}
-                  valorCajero={parseFloat(cierreMp?.monto) || 0}
-                  valorGestor={verificacion ? (parseFloat(verifMp?.monto) || 0) : null}
-                  valorErp={getErpMonto(nombre)}
-                  resolucion={getResolucion(tipoRes)}
-                  puedeResolver={esGestor || esAdmin}
-                  onResolver={(diff) => setModalResolucion({ tipo: tipoRes, monto: diff })}
-                />
+                <div key={fcId}>
+                  <FilaComparativa
+                    label={nombre}
+                    valorCajero={parseFloat(cierreMp?.monto) || 0}
+                    valorGestor={verificacion ? (parseFloat(verifMp?.monto) || 0) : null}
+                    valorErp={getErpMonto(nombre)}
+                    resolucion={getResolucion(tipoRes)}
+                    puedeResolver={esGestor || esAdmin}
+                    onResolver={(diff) => setModalResolucion({ tipo: tipoRes, monto: diff })}
+                  />
+                  {(cantCajero > 0 || (cantErp != null && cantErp > 0)) && (
+                    <div className="flex items-center text-xs py-0.5 pl-4">
+                      <span className="flex-1 text-gray-400 italic">Comprobantes</span>
+                      <span className="w-28 text-right text-gray-500 flex-shrink-0 border-r border-gray-100 pr-3">{cantCajero}</span>
+                      <span className="w-28 text-right text-gray-400 flex-shrink-0 border-r border-gray-100 pr-3">—</span>
+                      <span className={`w-28 text-right flex-shrink-0 border-r border-gray-100 pr-3 ${
+                        cantErp == null ? 'text-gray-400' :
+                        cantCajero !== cantErp ? 'text-red-600 font-medium' : 'text-indigo-600'
+                      }`}>{cantErp != null ? cantErp : '—'}</span>
+                      <span className={`w-28 text-right flex-shrink-0 ${
+                        cantErp == null ? 'text-gray-400' :
+                        cantCajero === cantErp ? 'text-green-600' : 'text-red-600 font-medium'
+                      }`}>{cantErp != null ? cantCajero - cantErp : '—'}</span>
+                    </div>
+                  )}
+                </div>
               )
             })}
 
@@ -699,13 +724,23 @@ const DetalleCierre = () => {
                 return mediosSonIguales(nombre, emp.nombre)
               }) && upper !== 'EFECTIVO'
             }).map(emp => (
-              <FilaComparativa
-                key={`erp-${emp.valor_id}`}
-                label={emp.nombre}
-                valorCajero={0}
-                valorGestor={verificacion ? 0 : null}
-                valorErp={emp.total}
-              />
+              <div key={`erp-${emp.valor_id}`}>
+                <FilaComparativa
+                  label={emp.nombre}
+                  valorCajero={0}
+                  valorGestor={verificacion ? 0 : null}
+                  valorErp={emp.total}
+                />
+                {(emp.operaciones || 0) > 0 && (
+                  <div className="flex items-center text-xs py-0.5 pl-4">
+                    <span className="flex-1 text-gray-400 italic">Comprobantes</span>
+                    <span className="w-28 text-right text-gray-500 flex-shrink-0 border-r border-gray-100 pr-3">0</span>
+                    <span className="w-28 text-right text-gray-400 flex-shrink-0 border-r border-gray-100 pr-3">—</span>
+                    <span className="w-28 text-right text-red-600 font-medium flex-shrink-0 border-r border-gray-100 pr-3">{emp.operaciones}</span>
+                    <span className="w-28 text-right text-red-600 font-medium flex-shrink-0">{-(emp.operaciones)}</span>
+                  </div>
+                )}
+              </div>
             ))}
 
             {/* Total general — ajustado con cambio y gastos */}
