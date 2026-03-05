@@ -9,20 +9,34 @@ const { sincronizarERP } = require('../services/syncERP')
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    let query = supabase
-      .from('articulos')
-      .select('id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable')
-      .eq('tipo', 'automatico')
-      .gt('precio', 0)
+    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable'
 
-    if (req.query.buscar) {
-      query = query.or(`nombre.ilike.%${req.query.buscar}%,codigo.ilike.%${req.query.buscar}%`)
+    // Supabase limita a 1000 por defecto — paginar para traer todos
+    const PAGE_SIZE = 1000
+    let allData = []
+    let from = 0
+
+    while (true) {
+      let query = supabase
+        .from('articulos')
+        .select(campos)
+        .eq('tipo', 'automatico')
+        .gt('precio', 0)
+        .range(from, from + PAGE_SIZE - 1)
+
+      if (req.query.buscar) {
+        query = query.or(`nombre.ilike.%${req.query.buscar}%,codigo.ilike.%${req.query.buscar}%`)
+      }
+
+      const { data, error } = await query
+      if (error) throw error
+      if (!data || data.length === 0) break
+      allData = allData.concat(data)
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
     }
 
-    const { data, error } = await query
-    if (error) throw error
-
-    const articulos = (data || []).map(a => ({
+    const articulos = allData.map(a => ({
       id: a.id_centum || a.id,
       codigo: a.codigo || '',
       nombre: a.nombre || '',

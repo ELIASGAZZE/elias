@@ -82,8 +82,7 @@ const AdminPromociones = () => {
     const timeout = setTimeout(async () => {
       setBuscando(true)
       try {
-        // Usa el endpoint de artículos del POS con cliente default (1 = consumidor final)
-        const { data } = await api.get('/api/pos/articulos', { params: { id_cliente_centum: 1 } })
+        const { data } = await api.get('/api/pos/articulos', { params: { buscar: busqueda.trim() } })
         const items = data.articulos || []
         const terminos = busqueda.toLowerCase().trim().split(/\s+/)
         const filtrados = items.filter(a => {
