@@ -65,6 +65,10 @@ const AdminConfiguracion = () => {
   // Acordeón
   const [seccionAbierta, setSeccionAbierta] = useState(null)
 
+  // Sync POS
+  const [sincronizandoPOS, setSincronizandoPOS] = useState(false)
+  const [mensajeSyncPOS, setMensajeSyncPOS] = useState(null)
+
   // Sucursales
   const [sucursales, setSucursales] = useState([])
   const [cargandoSucursales, setCargandoSucursales] = useState(true)
@@ -1493,6 +1497,31 @@ const AdminConfiguracion = () => {
           onToggle={toggleSeccion}
           cargando={false}
         >
+          <div className="mb-4 flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setSincronizandoPOS(true)
+                setMensajeSyncPOS(null)
+                try {
+                  const { data } = await api.post('/api/pos/sincronizar-articulos')
+                  setMensajeSyncPOS(`ok:${data.mensaje || data.cantidad + ' artículos sincronizados'}`)
+                } catch (err) {
+                  setMensajeSyncPOS(err.response?.data?.error || err.message)
+                } finally {
+                  setSincronizandoPOS(false)
+                }
+              }}
+              disabled={sincronizandoPOS}
+              className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              {sincronizandoPOS ? 'Sincronizando...' : 'Sincronizar artículos POS'}
+            </button>
+            {mensajeSyncPOS && (
+              <span className={`text-sm ${mensajeSyncPOS.startsWith('ok:') ? 'text-green-600' : 'text-red-600'}`}>
+                {mensajeSyncPOS.startsWith('ok:') ? mensajeSyncPOS.slice(3) : mensajeSyncPOS}
+              </span>
+            )}
+          </div>
           <AdminPromociones />
         </SeccionAcordeon>
 

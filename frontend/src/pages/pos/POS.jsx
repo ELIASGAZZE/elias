@@ -172,10 +172,10 @@ const POS = () => {
 
   const inputBusquedaRef = useRef(null)
 
-  // Cargar promos y artículos al montar
+  // Cargar promos y artículos al montar (1 sola vez)
   useEffect(() => {
     cargarPromociones()
-    cargarArticulos(CLIENTE_DEFAULT.id_centum)
+    cargarArticulos()
   }, [])
 
   async function cargarPromociones() {
@@ -214,13 +214,11 @@ const POS = () => {
     return () => clearTimeout(timeout)
   }, [busquedaCliente])
 
-  // Cargar artículos cuando se selecciona cliente
-  async function cargarArticulos(idClienteCentum) {
+  // Cargar artículos desde DB local (precios minoristas, sync 1x/día)
+  async function cargarArticulos() {
     setCargandoArticulos(true)
     try {
-      const { data } = await api.get('/api/pos/articulos', {
-        params: { id_cliente_centum: idClienteCentum }
-      })
+      const { data } = await api.get('/api/pos/articulos')
       setArticulos(data.articulos || [])
     } catch (err) {
       console.error('Error cargando artículos:', err)
@@ -238,7 +236,6 @@ const POS = () => {
     })
     setBusquedaCliente('')
     setClientesCentum([])
-    cargarArticulos(cli.id_centum)
   }
 
   // Filtrar artículos por búsqueda
@@ -305,7 +302,6 @@ const POS = () => {
     setCliente(CLIENTE_DEFAULT)
     setBusquedaArt('')
     setBusquedaCliente('')
-    cargarArticulos(CLIENTE_DEFAULT.id_centum)
   }
 
   function handleVentaExitosa() {

@@ -32,7 +32,7 @@ async function sincronizarERP(origen = 'cron') {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
-  const clientId = process.env.CENTUM_CLIENT_ID || '2'
+  const clientId = process.env.CENTUM_CLIENT_ID || '0'
 
   if (!apiKey) {
     throw new Error('Falta CENTUM_API_KEY en las variables de entorno')
@@ -108,6 +108,13 @@ async function sincronizarERP(origen = 'cron') {
     es_pesable: art.EsPesable === true,
     id_centum: art.IdArticulo || null,
     precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : null,
+    subrubro: art.SubRubro?.Nombre || null,
+    rubro_id_centum: art.Rubro?.IdRubro || null,
+    subrubro_id_centum: art.SubRubro?.IdSubRubro || null,
+    descuento1: art.PorcentajeDescuento1 || 0,
+    descuento2: art.PorcentajeDescuento2 || 0,
+    descuento3: art.PorcentajeDescuento3 || 0,
+    iva_tasa: art.CategoriaImpuestoIVA?.Tasa != null ? art.CategoriaImpuestoIVA.Tasa : 21,
   }))
 
   // Upsert en lotes de 500
