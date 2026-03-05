@@ -1,4 +1,4 @@
-// Punto de Venta — POS con promociones de Centum
+// Punto de Venta — POS con motor de promociones local
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
@@ -10,75 +10,6 @@ const formatPrecio = (n) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2 }).format(n)
 }
 
-// Extraer cantidad mínima del nombre de la promo (ej: "a partir de 6" → 6)
-function extraerCantidadMinima(nombre) {
-  const match = nombre.match(/(?:a partir de|desde|min(?:imo)?\.?\s*)\s*(\d+)/i)
-  if (match) return parseInt(match[1])
-  const matchNum = nombre.match(/(\d+)\s*(?:unid|bot|u\.)/i)
-  if (matchNum) return parseInt(matchNum[1])
-  return 1
-}
-
-// Determinar si una promo aplica a una lista de precio
-function promoAplicaALista(promo, listaPrecioId) {
-  const nombre = (promo.nombre || '').toUpperCase()
-  // Si el nombre contiene "MINORISTA" → lista 1
-  if (nombre.includes('MINORISTA') && listaPrecioId === 1) return true
-  // Si contiene "L3" → lista 5
-  if (nombre.includes('L3') && listaPrecioId === 5) return true
-  // Si no tiene indicador de lista → aplica a todas
-  if (!nombre.includes('MINORISTA') && !nombre.includes('L3') && !nombre.includes('L2') && !nombre.includes('L4')) return true
-  return false
-}
-
-// Calcular promociones aplicables al carrito
-function calcularPromociones(carrito, promociones, listaPrecioId) {
-  const aplicadas = []
-
-  for (const promo of promociones) {
-    if (!promoAplicaALista(promo, listaPrecioId)) continue
-
-    const cantidadMinima = extraerCantidadMinima(promo.nombre)
-
-    for (const detalle of promo.detalles) {
-      // Buscar items del carrito que matcheen
-      const itemsMatch = carrito.filter(item => {
-        if (detalle.tipo === 'SubRubro' && item.articulo.subRubro?.id === detalle.entidadId) return true
-        if (detalle.tipo === 'Rubro' && item.articulo.rubro?.id === detalle.entidadId) return true
-        if (detalle.tipo === 'Articulo' && item.articulo.id === detalle.entidadId) return true
-        return false
-      })
-
-      if (itemsMatch.length === 0) continue
-
-      const cantidadTotal = itemsMatch.reduce((sum, i) => sum + i.cantidad, 0)
-      if (cantidadTotal < cantidadMinima) continue
-
-      // Calcular descuento
-      const subtotalItems = itemsMatch.reduce((sum, i) => {
-        const precioConDesc = calcularPrecioConDescuentosBase(i.articulo)
-        return sum + precioConDesc * i.cantidad
-      }, 0)
-
-      const descuento = subtotalItems * (detalle.porcentajeDescuento / 100)
-
-      aplicadas.push({
-        promoId: promo.id,
-        promoNombre: promo.nombre,
-        tipo: detalle.tipo,
-        entidadId: detalle.entidadId,
-        porcentajeDescuento: detalle.porcentajeDescuento,
-        cantidadMinima,
-        cantidadActual: cantidadTotal,
-        descuento,
-        itemsAfectados: itemsMatch.map(i => i.articulo.id),
-      })
-    }
-  }
-
-  return aplicadas
-}
-
 // Precio con descuentos base del artículo (no promo)
 function calcularPrecioConDescuentosBase(articulo) {
   let precio = articulo.precio || 0
@@ -88,6 +19,129 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
+// Verificar si un item del carrito matchea una regla aplicar_a
+function itemMatcheaRegla(item, aplicarA) {
+  if (!aplicarA || aplicarA.length === 0) return true
+  for (const regla of aplicarA) {
+    if (regla.tipo === 'todos') return true
+    if (regla.tipo === 'articulo' && item.articulo.id === regla.id) return true
+    if (regla.tipo === 'rubro' && item.articulo.rubro?.id === regla.id) return true
+    if (regla.tipo === 'subrubro' && item.articulo.subRubro?.id === regla.id) return true
+  }
+  return false
+}
+
+// Verificar si la promo está dentro de rango de fechas
+function promoEnRango(promo) {
+  const hoy = new Date().toISOString().split('T')[0]
+  if (promo.fecha_desde && hoy < promo.fecha_desde) return false
+  if (promo.fecha_hasta && hoy > promo.fecha_hasta) return false
+  return true
+}
+
+// Motor de promociones local
+function calcularPromocionesLocales(carrito, promociones) {
+  const aplicadas = []
+
+  for (const promo of promociones) {
+    if (!promo.activa || !promoEnRango(promo)) continue
+    const reglas = promo.reglas || {}
+
+    switch (promo.tipo) {
+      case 'porcentaje': {
+        const itemsMatch = carrito.filter(i => itemMatcheaRegla(i, reglas.aplicar_a))
+        if (itemsMatch.length === 0) break
+        const cantidadTotal = itemsMatch.reduce((s, i) => s + i.cantidad, 0)
+        const cantMin = reglas.cantidad_minima || 1
+        if (cantidadTotal < cantMin) break
+        const subtotalItems = itemsMatch.reduce((s, i) => s + calcularPrecioConDescuentosBase(i.articulo) * i.cantidad, 0)
+        const descuento = subtotalItems * ((reglas.valor || 0) / 100)
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'porcentaje',
+          detalle: `${reglas.valor}% off`,
+          descuento,
+          itemsAfectados: itemsMatch.map(i => i.articulo.id),
+        })
+        break
+      }
+
+      case 'monto_fijo': {
+        const itemsMatch = carrito.filter(i => itemMatcheaRegla(i, reglas.aplicar_a))
+        if (itemsMatch.length === 0) break
+        const cantidadTotal = itemsMatch.reduce((s, i) => s + i.cantidad, 0)
+        const cantMin = reglas.cantidad_minima || 1
+        if (cantidadTotal < cantMin) break
+        const cantidadQueCalifica = cantidadTotal
+        const descuento = (reglas.valor || 0) * cantidadQueCalifica
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'monto_fijo',
+          detalle: `${formatPrecio(reglas.valor)} off x${cantidadQueCalifica}`,
+          descuento,
+          itemsAfectados: itemsMatch.map(i => i.articulo.id),
+        })
+        break
+      }
+
+      case 'nxm': {
+        const itemsMatch = carrito.filter(i => itemMatcheaRegla(i, reglas.aplicar_a))
+        if (itemsMatch.length === 0) break
+        const cantidadTotal = itemsMatch.reduce((s, i) => s + i.cantidad, 0)
+        const llevar = reglas.llevar || 3
+        const pagar = reglas.pagar || 2
+        if (cantidadTotal < llevar) break
+        const grupos = Math.floor(cantidadTotal / llevar)
+        const unidadesGratis = grupos * (llevar - pagar)
+        // Descuento = unidades gratis * precio más bajo entre los items que matchean
+        const precioMasBajo = Math.min(...itemsMatch.map(i => calcularPrecioConDescuentosBase(i.articulo)))
+        const descuento = unidadesGratis * precioMasBajo
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'nxm',
+          detalle: `${llevar}x${pagar} (${unidadesGratis} gratis)`,
+          descuento,
+          itemsAfectados: itemsMatch.map(i => i.articulo.id),
+        })
+        break
+      }
+
+      case 'combo': {
+        const articulosCombo = reglas.articulos || []
+        if (articulosCombo.length < 2) break
+        // Verificar que TODOS los artículos del combo estén con cantidad suficiente
+        let combosPosibles = Infinity
+        let sumaPreciosIndividuales = 0
+        for (const artCombo of articulosCombo) {
+          const enCarrito = carrito.find(i => i.articulo.id === artCombo.id)
+          if (!enCarrito) { combosPosibles = 0; break }
+          const cantRequerida = artCombo.cantidad || 1
+          combosPosibles = Math.min(combosPosibles, Math.floor(enCarrito.cantidad / cantRequerida))
+          sumaPreciosIndividuales += calcularPrecioConDescuentosBase(enCarrito.articulo) * cantRequerida
+        }
+        if (combosPosibles <= 0 || !isFinite(combosPosibles)) break
+        const precioCombo = reglas.precio_combo || 0
+        const descuento = (sumaPreciosIndividuales - precioCombo) * combosPosibles
+        if (descuento <= 0) break
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'combo',
+          detalle: `Combo x${combosPosibles}`,
+          descuento,
+          itemsAfectados: articulosCombo.map(a => a.id),
+        })
+        break
+      }
+    }
+  }
+
+  return aplicadas
+}
+
 const POS = () => {
   const { usuario } = useAuth()
 
@@ -95,7 +149,8 @@ const POS = () => {
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
-  const [cliente, setCliente] = useState(null) // { id_centum, razon_social, lista_precio_id }
+  const CLIENTE_DEFAULT = { id_centum: 0, razon_social: 'Consumidor Final', lista_precio_id: 1 }
+  const [cliente, setCliente] = useState(CLIENTE_DEFAULT)
 
   // Estado artículos
   const [articulos, setArticulos] = useState([])
@@ -117,9 +172,10 @@ const POS = () => {
 
   const inputBusquedaRef = useRef(null)
 
-  // Cargar promos al montar
+  // Cargar promos y artículos al montar
   useEffect(() => {
     cargarPromociones()
+    cargarArticulos(CLIENTE_DEFAULT.id_centum)
   }, [])
 
   async function cargarPromociones() {
@@ -233,7 +289,7 @@ const POS = () => {
       sub += precioBase * item.cantidad
     }
 
-    const aplicadas = calcularPromociones(carrito, promociones, cliente?.lista_precio_id || 1)
+    const aplicadas = calcularPromocionesLocales(carrito, promociones)
     const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
     return {
@@ -242,14 +298,14 @@ const POS = () => {
       total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
-  }, [carrito, promociones, cliente])
+  }, [carrito, promociones])
 
   function limpiarVenta() {
     setCarrito([])
-    setCliente(null)
-    setArticulos([])
+    setCliente(CLIENTE_DEFAULT)
     setBusquedaArt('')
     setBusquedaCliente('')
+    cargarArticulos(CLIENTE_DEFAULT.id_centum)
   }
 
   function handleVentaExitosa() {
@@ -268,18 +324,22 @@ const POS = () => {
       {/* Barra cliente */}
       <div className="bg-white border-b px-4 py-3">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-          {!cliente ? (
-            <div className="relative flex-1 max-w-md">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="bg-violet-50 border border-violet-200 rounded-lg px-3 py-1.5 text-sm">
+              <span className="text-violet-700 font-medium">{cliente.razon_social}</span>
+              <span className="text-violet-400 ml-2">Lista {cliente.lista_precio_id}</span>
+            </div>
+            {/* Buscador inline para cambiar cliente */}
+            <div className="relative flex-1 max-w-xs">
               <input
                 type="text"
-                placeholder="Buscar cliente..."
+                placeholder="Cambiar cliente..."
                 value={busquedaCliente}
                 onChange={e => setBusquedaCliente(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                autoFocus
+                className="w-full border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               {buscandoClientes && (
-                <div className="absolute right-3 top-2.5 text-gray-400 text-xs">Buscando...</div>
+                <div className="absolute right-3 top-2 text-gray-400 text-xs">Buscando...</div>
               )}
               {clientesCentum.length > 0 && (
                 <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-60 overflow-y-auto">
@@ -296,20 +356,7 @@ const POS = () => {
                 </div>
               )}
             </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <div className="bg-violet-50 border border-violet-200 rounded-lg px-3 py-1.5 text-sm">
-                <span className="text-violet-700 font-medium">{cliente.razon_social}</span>
-                <span className="text-violet-400 ml-2">Lista {cliente.lista_precio_id}</span>
-              </div>
-              <button
-                onClick={() => { setCliente(null); setArticulos([]); setBusquedaCliente('') }}
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                Cambiar
-              </button>
-            </div>
-          )}
+          </div>
 
           <button
             onClick={limpiarVenta}
@@ -321,17 +368,6 @@ const POS = () => {
       </div>
 
       {/* Contenido principal */}
-      {!cliente ? (
-        <div className="flex-1 flex items-center justify-center text-gray-400">
-          <div className="text-center">
-            <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-            </svg>
-            <p className="text-lg font-medium">Selecciona un cliente para comenzar</p>
-            <p className="text-sm mt-1">Busca por nombre o CUIT</p>
-          </div>
-        </div>
-      ) : (
         <div className="flex-1 flex flex-col lg:flex-row max-w-7xl mx-auto w-full">
           {/* Panel izquierdo: artículos */}
           <div className="flex-1 lg:w-3/5 p-4 flex flex-col min-h-0">
@@ -504,7 +540,7 @@ const POS = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
                       </svg>
                       <span className="flex-1 truncate">
-                        -{p.porcentajeDescuento}% {p.promoNombre}
+                        {p.promoNombre} ({p.detalle})
                       </span>
                       <span className="font-semibold">-{formatPrecio(p.descuento)}</span>
                     </div>
@@ -540,7 +576,6 @@ const POS = () => {
             )}
           </div>
         </div>
-      )}
 
       {/* Modal de cobro */}
       {mostrarCobrar && (

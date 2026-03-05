@@ -1,6 +1,7 @@
 // Panel de administrador: configuración general (usuarios, empleados, cajas, denominaciones, formas de cobro, rubros y sucursales)
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
+import AdminPromociones from '../../components/pos/AdminPromociones'
 import api from '../../services/api'
 
 const ChevronIcon = ({ abierta }) => (
@@ -1481,6 +1482,18 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
+        </SeccionAcordeon>
+
+        {/* ===== PROMOCIONES POS ===== */}
+        <SeccionAcordeon
+          id="promociones"
+          titulo="Promociones POS"
+          count=""
+          abierta={seccionAbierta === 'promociones'}
+          onToggle={toggleSeccion}
+          cargando={false}
+        >
+          <AdminPromociones />
         </SeccionAcordeon>
 
       </div>

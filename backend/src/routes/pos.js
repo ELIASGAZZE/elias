@@ -1,8 +1,8 @@
-// Rutas para el Punto de Venta (POS) con promociones de Centum
+// Rutas para el Punto de Venta (POS) con promociones locales
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
-const { verificarAuth } = require('../middleware/auth')
+const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { generateAccessToken } = require('../services/syncERP')
 const { registrarLlamada } = require('../services/apiLogger')
 
@@ -18,17 +18,12 @@ function getHeaders() {
   }
 }
 
-// Cache de promociones (5 minutos)
-let promosCache = null
-let promosCacheTime = 0
-const PROMOS_CACHE_TTL = 5 * 60 * 1000
-
 // GET /api/pos/articulos?id_cliente_centum=X
 // Obtiene artículos de Centum con precios para el cliente dado
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
     const idCliente = parseInt(req.query.id_cliente_centum)
-    if (!idCliente || isNaN(idCliente)) {
+    if (idCliente == null || isNaN(idCliente)) {
       return res.status(400).json({ error: 'id_cliente_centum es requerido' })
     }
 
@@ -106,101 +101,119 @@ router.get('/articulos', verificarAuth, async (req, res) => {
   }
 })
 
+// ============ PROMOCIONES LOCALES ============
+
 // GET /api/pos/promociones
-// Obtiene promociones comerciales activas de Centum
+// Lista promos activas (POS) o todas si ?todas=1 (admin)
 router.get('/promociones', verificarAuth, async (req, res) => {
   try {
-    // Devolver cache si es válido
-    if (promosCache && Date.now() - promosCacheTime < PROMOS_CACHE_TTL) {
-      return res.json({ promociones: promosCache, cached: true })
+    let query = supabase
+      .from('promociones_pos')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (!req.query.todas) {
+      query = query.eq('activa', true)
     }
 
-    const url = `${BASE_URL}/PromocionesComerciales/FiltrosPromocionComercial?numeroPagina=1&cantidadItemsPorPagina=500`
-    const inicio = Date.now()
+    const { data, error } = await query
+    if (error) throw error
 
-    let response
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ Activa: true }),
-      })
-    } catch (err) {
-      registrarLlamada({
-        servicio: 'centum_pos_promos', endpoint: url, metodo: 'POST',
-        estado: 'error', duracion_ms: Date.now() - inicio,
-        error_mensaje: err.message, origen: 'api',
-      })
-      throw new Error('Error al conectar con Centum: ' + err.message)
-    }
-
-    if (!response.ok) {
-      const texto = await response.text()
-      registrarLlamada({
-        servicio: 'centum_pos_promos', endpoint: url, metodo: 'POST',
-        estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
-        error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
-      })
-      throw new Error(`Error Centum (${response.status}): ${texto.slice(0, 200)}`)
-    }
-
-    const data = await response.json()
-    // Centum retorna array plano con duplicados (mismo id repetido)
-    const rawItems = Array.isArray(data) ? data : data.PromocionesComerciales?.Items || data.Items || []
-
-    registrarLlamada({
-      servicio: 'centum_pos_promos', endpoint: url, metodo: 'POST',
-      estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
-      items_procesados: rawItems.length, origen: 'api',
-    })
-
-    // Deduplicar por IdPromocionComercial
-    const promosMap = {}
-    for (const p of rawItems) {
-      if (!p.IdPromocionComercial) continue
-      if (!promosMap[p.IdPromocionComercial]) {
-        promosMap[p.IdPromocionComercial] = p
-      }
-    }
-
-    // Parsear: campo real es PromocionComercialResultados, TipoEntidad es string
-    const promociones = Object.values(promosMap).map(p => {
-      const resultados = p.PromocionComercialResultados || []
-      return {
-        id: p.IdPromocionComercial,
-        nombre: p.Nombre || '',
-        activa: p.Activo !== false,
-        fechaDesde: p.FechaPromocionDesde,
-        fechaHasta: p.FechaPromocionHasta,
-        detalles: resultados.map(d => {
-          // TipoEntidad: "Sub Rubro", "Rubro", "Artículo", "Atributo de Artículo"
-          let tipo = 'Otro'
-          if (d.TipoEntidad === 'Sub Rubro') tipo = 'SubRubro'
-          else if (d.TipoEntidad === 'Rubro') tipo = 'Rubro'
-          else if (d.TipoEntidad === 'Artículo') tipo = 'Articulo'
-          return {
-            tipo,
-            entidadId: d.IdEntidad,
-            porcentajeDescuento: d.Descuento || 0,
-            unidades: d.Unidades || 0,
-          }
-        }).filter(d => d.tipo !== 'Otro'),
-      }
-    }).filter(p => p.activa && p.detalles.length > 0)
-
-    promosCache = promociones
-    promosCacheTime = Date.now()
-
-    res.json({ promociones, cached: false })
+    res.json({ promociones: data || [] })
   } catch (err) {
-    console.error('[POS] Error al obtener promociones:', err.message)
-    // Si hay cache viejo, usarlo como fallback
-    if (promosCache) {
-      return res.json({ promociones: promosCache, cached: true, fallback: true })
-    }
-    res.status(500).json({ error: err.message })
+    console.error('[POS] Error al listar promociones:', err.message)
+    res.status(500).json({ error: 'Error al listar promociones' })
   }
 })
+
+// POST /api/pos/promociones (admin)
+router.post('/promociones', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { nombre, tipo, fecha_desde, fecha_hasta, reglas } = req.body
+
+    if (!nombre || !tipo || !reglas) {
+      return res.status(400).json({ error: 'nombre, tipo y reglas son requeridos' })
+    }
+    if (!['porcentaje', 'monto_fijo', 'nxm', 'combo'].includes(tipo)) {
+      return res.status(400).json({ error: 'tipo inválido' })
+    }
+
+    const { data, error } = await supabase
+      .from('promociones_pos')
+      .insert({
+        nombre,
+        tipo,
+        fecha_desde: fecha_desde || null,
+        fecha_hasta: fecha_hasta || null,
+        reglas,
+        created_by: req.perfil.id,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    res.status(201).json({ promocion: data })
+  } catch (err) {
+    console.error('[POS] Error al crear promoción:', err.message)
+    res.status(500).json({ error: 'Error al crear promoción: ' + err.message })
+  }
+})
+
+// PUT /api/pos/promociones/:id (admin)
+router.put('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { nombre, tipo, activa, fecha_desde, fecha_hasta, reglas } = req.body
+    const updates = { updated_at: new Date().toISOString() }
+
+    if (nombre !== undefined) updates.nombre = nombre
+    if (tipo !== undefined) {
+      if (!['porcentaje', 'monto_fijo', 'nxm', 'combo'].includes(tipo)) {
+        return res.status(400).json({ error: 'tipo inválido' })
+      }
+      updates.tipo = tipo
+    }
+    if (activa !== undefined) updates.activa = activa
+    if (fecha_desde !== undefined) updates.fecha_desde = fecha_desde || null
+    if (fecha_hasta !== undefined) updates.fecha_hasta = fecha_hasta || null
+    if (reglas !== undefined) updates.reglas = reglas
+
+    const { data, error } = await supabase
+      .from('promociones_pos')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+
+    res.json({ promocion: data })
+  } catch (err) {
+    console.error('[POS] Error al editar promoción:', err.message)
+    res.status(500).json({ error: 'Error al editar promoción: ' + err.message })
+  }
+})
+
+// DELETE /api/pos/promociones/:id (admin) — soft delete
+router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('promociones_pos')
+      .update({ activa: false, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+
+    res.json({ promocion: data, mensaje: 'Promoción desactivada' })
+  } catch (err) {
+    console.error('[POS] Error al eliminar promoción:', err.message)
+    res.status(500).json({ error: 'Error al eliminar promoción: ' + err.message })
+  }
+})
+
+// ============ VENTAS ============
 
 // POST /api/pos/ventas
 // Guarda una venta POS localmente
