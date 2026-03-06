@@ -73,42 +73,10 @@ const CajasHome = () => {
   const [billetesApertura, setBilletesApertura] = useState({})
   const [cargandoDenominaciones, setCargandoDenominaciones] = useState(false)
 
-  // Último cambio dejado en caja (para comparación)
-  const [ultimoCambio, setUltimoCambio] = useState(null)
-  const [ultimoCambioCajaId, setUltimoCambioCajaId] = useState(null)
-
   const totalCambioInicial = useMemo(
     () => denomBilletes.reduce((sum, d) => sum + d.valor * (billetesApertura[d.valor] || 0), 0),
     [denomBilletes, billetesApertura]
   )
-
-  // Verificar si hay diferencia con el último cierre para una denominación
-  const hayUltimoCambio = ultimoCambio && (
-    Object.keys(ultimoCambio.cambio_billetes || {}).length > 0
-  )
-
-  const tieneDiferencia = (valor) => {
-    if (!hayUltimoCambio) return false
-    const anterior = (ultimoCambio.cambio_billetes || {})[String(valor)] || 0
-    const actual = billetesApertura[valor] || 0
-    return anterior !== actual
-  }
-
-  // Calcular diferencias_apertura
-  const calcularDiferencias = () => {
-    if (!hayUltimoCambio) return null
-    const diffs = {}
-
-    denomBilletes.forEach(d => {
-      const anterior = (ultimoCambio.cambio_billetes || {})[String(d.valor)] || 0
-      const actual = billetesApertura[d.valor] || 0
-      if (anterior !== actual) {
-        diffs[String(d.valor)] = { anterior, actual, tipo: 'billete' }
-      }
-    })
-
-    return Object.keys(diffs).length > 0 ? diffs : null
-  }
 
   useEffect(() => {
     cargarDatos()
@@ -134,23 +102,6 @@ const CajasHome = () => {
     cargarDenominaciones()
   }, [mostrarAbrir])
 
-  // Cargar último cambio cuando se selecciona una caja
-  useEffect(() => {
-    if (!cajaId || cajaId === ultimoCambioCajaId) return
-
-    const cargarUltimoCambio = async () => {
-      try {
-        const { data } = await api.get(`/api/cierres/ultimo-cambio?caja_id=${cajaId}`)
-        setUltimoCambio(data)
-        setUltimoCambioCajaId(cajaId)
-      } catch (err) {
-        console.error('Error cargando último cambio:', err)
-        setUltimoCambio(null)
-      }
-    }
-
-    cargarUltimoCambio()
-  }, [cajaId])
 
   // Cargar sucursales al abrir el formulario
   useEffect(() => {
@@ -301,7 +252,6 @@ const CajasHome = () => {
         fondo_fijo: totalCambioInicial,
         fondo_fijo_billetes: ffBilletes,
         fondo_fijo_monedas: {},
-        diferencias_apertura: calcularDiferencias(),
         observaciones_apertura: observacionesApertura.trim() || null,
         skip_validacion: planillaResuelto?.sin_validar || false,
       })
@@ -310,8 +260,6 @@ const CajasHome = () => {
       setPlanillaResuelto(null)
       setErrorPlanilla('')
       setBilletesApertura({})
-      setUltimoCambio(null)
-      setUltimoCambioCajaId(null)
       setSucursalId(esAdmin ? '' : (usuario?.sucursal_id || ''))
       setCajaId('')
       setCodigoEmpleado('')
@@ -334,8 +282,6 @@ const CajasHome = () => {
     setPlanillaResuelto(null)
     setErrorPlanilla('')
     setBilletesApertura({})
-    setUltimoCambio(null)
-    setUltimoCambioCajaId(null)
     setSucursalId('')
     setCajaId('')
     setCodigoEmpleado('')
@@ -522,7 +468,7 @@ const CajasHome = () => {
                         valor={d.valor}
                         cantidad={billetesApertura[d.valor] || 0}
                         onChange={(val) => setBilletesApertura(prev => ({ ...prev, [d.valor]: val }))}
-                        alerta={tieneDiferencia(d.valor)}
+                        alerta={false}
                       />
                     ))}
                   </div>
@@ -534,16 +480,6 @@ const CajasHome = () => {
                     </div>
                   )}
 
-                  {hayUltimoCambio && calcularDiferencias() && (
-                    <div className="bg-red-50 border border-red-300 rounded-xl px-3 py-2 mt-2">
-                      <p className="text-xs font-semibold text-red-700">
-                        El cambio ingresado difiere del último cierre de esta caja
-                      </p>
-                      <p className="text-xs text-red-600 mt-0.5">
-                        Las denominaciones con diferencia están marcadas en rojo
-                      </p>
-                    </div>
-                  )}
                 </>
               )}
             </div>
