@@ -399,16 +399,16 @@ const DetalleCierre = () => {
           {/* Diferencias de apertura + Retiro y cambio (columna derecha del header) */}
           <div className="space-y-4">
             {cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
-              <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
-                <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
-                <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                <h3 className="text-sm font-semibold text-amber-800">Diferencias en apertura vs cierre anterior</h3>
+                <p className="text-xs text-amber-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
                 <div className="space-y-1">
                   {Object.entries(cierre.diferencias_apertura).map(([denom, diff]) => (
                     <div key={denom} className="flex justify-between text-sm">
-                      <span className="text-red-700">
+                      <span className="text-amber-700">
                         ${Number(denom).toLocaleString('es-AR')} ({diff.tipo === 'billete' ? 'billete' : 'moneda'})
                       </span>
-                      <span className="text-red-800 font-medium">
+                      <span className="text-amber-800 font-medium">
                         Anterior: {diff.anterior} → Actual: {diff.actual}
                       </span>
                     </div>
