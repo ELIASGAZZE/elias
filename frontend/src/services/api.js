@@ -29,4 +29,8 @@ api.interceptors.response.use(
   }
 )
 
+export function isNetworkError(error) {
+  return !error.response && error.code === 'ERR_NETWORK'
+}
+
 export default api
