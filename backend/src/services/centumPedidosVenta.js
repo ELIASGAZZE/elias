@@ -397,11 +397,26 @@ async function crearPedidoVentaCompletoCentum({
  * @param {number} sucursalFisicaId - ID de sucursal física en Centum
  * @returns {Promise<Object>} Venta creada (IdVenta, Total, NumeroDocumento, etc.)
  */
-async function crearVentaDesdePedido(idPedidoVenta, idCliente, sucursalFisicaId) {
+async function crearVentaDesdePedido(idPedidoVenta, idCliente, sucursalFisicaId, pedidoCentum) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
   const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+
+  // Calcular total con descuentos e IVA para Valores
+  const articulos = pedidoCentum?.PedidoVentaArticulos || []
+  let importeTotal = 0
+  for (const a of articulos) {
+    let precio = a.Precio || 0
+    precio *= (1 - (a.PorcentajeDescuento1 || 0) / 100)
+    precio *= (1 - (a.PorcentajeDescuento2 || 0) / 100)
+    precio *= (1 - (a.PorcentajeDescuento3 || 0) / 100)
+    const iva = a.CategoriaImpuestoIVA?.Tasa || 0
+    precio *= (1 + iva / 100)
+    importeTotal += precio * (a.Cantidad || 0)
+  }
+  importeTotal = Math.round(importeTotal * 100) / 100
+
   const body = {
     FechaImputacion: fechaHoy,
     Cliente: { IdCliente: idCliente },
@@ -410,6 +425,26 @@ async function crearVentaDesdePedido(idPedidoVenta, idCliente, sucursalFisicaId)
     NumeroDocumento: { PuntoVenta: 9 },
     PedidoVenta: { IdPedidoVenta: idPedidoVenta },
     EsContado: true,
+    VentaValoresEfectivos: [{ IdValor: 13, Cotizacion: 1, Importe: importeTotal }],
+    Vendedor: pedidoCentum?.Vendedor || { IdVendedor: 2 },
+    CondicionVenta: pedidoCentum?.CondicionVenta || { IdCondicionVenta: 14 },
+    Bonificacion: pedidoCentum?.Bonificacion || { IdBonificacion: 6235 },
+    Transporte: pedidoCentum?.Transporte || undefined,
+    VentaArticulos: (pedidoCentum?.PedidoVentaArticulos || []).map(a => ({
+      IdArticulo: a.IdArticulo,
+      Codigo: a.Codigo,
+      Nombre: a.Nombre,
+      Cantidad: a.Cantidad,
+      Precio: a.Precio,
+      PorcentajeDescuento1: a.PorcentajeDescuento1 || 0,
+      PorcentajeDescuento2: a.PorcentajeDescuento2 || 0,
+      PorcentajeDescuento3: a.PorcentajeDescuento3 || 0,
+      PorcentajeDescuentoMaximo: a.PorcentajeDescuentoMaximo || 100,
+      CategoriaImpuestoIVA: a.CategoriaImpuestoIVA,
+      ClaseDescuento: a.ClaseDescuento || { IdClaseDescuento: 0 },
+      Comision: { IdComision: 6089, Calculada: 0 },
+      ImpuestoInterno: a.ImpuestoInterno || 0,
+    })),
   }
 
   let response
@@ -467,8 +502,16 @@ async function crearCobroDeVenta(idVenta, idCliente, sucursalFisicaId, importe) 
     FechaImputacion: fechaHoy,
     Cliente: { IdCliente: idCliente },
     SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
-    CobroItems: [{ Venta: { IdVenta: idVenta }, Importe: importe }],
-    Valores: [{ IdValor: 13, Importe: importe }],
+    TipoComprobanteVenta: { IdTipoComprobanteVenta: 6 },
+    NumeroDocumento: { PuntoVenta: 9 },
+    Vendedor: { IdVendedor: 2 },
+    CobroAnticipos: [{ Importe: importe }],
+    CobroEfectivos: [{
+      Valor: { IdValor: 13 },
+      Importe: importe,
+      Cotizacion: 1,
+      CotizacionMonedaRespectoMonedaCliente: 1,
+    }],
   }
 
   let response
@@ -487,25 +530,39 @@ async function crearCobroDeVenta(idVenta, idCliente, sucursalFisicaId, importe) 
     throw new Error('Error al conectar con Centum ERP (Cobros): ' + err.message)
   }
 
-  if (!response.ok) {
-    const texto = await response.text()
+  // Centum devuelve 500 ErrorNoEsperadoCreacionComprobanteException en la serialización
+  // de la respuesta, pero el cobro SÍ se crea correctamente. Aceptamos 500 como éxito.
+  const texto = await response.text()
+  let data = {}
+  try { data = JSON.parse(texto) } catch { /* response may not be JSON on 500 */ }
+
+  if (response.ok) {
     registrarLlamada({
       servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
-      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
-      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
+      estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+      items_procesados: 1, origen: 'api',
     })
-    throw new Error(`Error al crear cobro en Centum (${response.status}): ${texto.slice(0, 500)}`)
+    return data
   }
 
-  const data = await response.json()
+  if (response.status === 500) {
+    // 500 = cobro creado pero error en serialización de respuesta
+    console.warn(`[Cobro] Centum devolvió 500 pero el cobro se crea igualmente (idVenta=${idVenta})`)
+    registrarLlamada({
+      servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
+      estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
+      items_procesados: 1, error_mensaje: 'HTTP 500 pero cobro creado', origen: 'api',
+    })
+    return { _cobroCreadoConWarning: true, ...data }
+  }
 
+  // Otros errores (400, 404, etc.) sí son errores reales
   registrarLlamada({
     servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
-    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
-    items_procesados: 1, origen: 'api',
+    estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'api',
   })
-
-  return data
+  throw new Error(`Error al crear cobro en Centum (${response.status}): ${texto.slice(0, 500)}`)
 }
 
 module.exports = { fetchPedidosCentum, fetchPedidoCentum, mapCentumPedido, formatNumeroDocumento, anularPedidoCentum, crearPedidoVentaCompletoCentum, extractFacturaFromEstados, crearVentaDesdePedido, crearCobroDeVenta }

@@ -23,7 +23,7 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
-const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline }) => {
+const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId }) => {
   const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
@@ -190,6 +190,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       vuelto: vuelto > 0 ? vuelto : 0,
       pagos: pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
     }
+    if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
 
     const ticketData = {
       items,
@@ -203,6 +204,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       total: totalEfectivo,
       totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
+    }
+
+    // Modo soloPago: no crear venta, solo devolver datos de pago (para pedidos con pago anticipado)
+    if (soloPago) {
+      onConfirmar({ pagos: payload.pagos, total: payload.total, monto_pagado: payload.monto_pagado, vuelto: payload.vuelto })
+      setGuardando(false)
+      return
     }
 
     try {

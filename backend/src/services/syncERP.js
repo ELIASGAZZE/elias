@@ -159,6 +159,44 @@ async function sincronizarERP(origen = 'cron') {
     }
   }
 
+  // Sincronizar códigos de barra desde Centum BI (SQL Server)
+  let barcodesSincronizados = 0
+  try {
+    const { getPool } = require('../config/centum')
+    const db = await getPool()
+    const barcodeResult = await db.request().query(`
+      SELECT ArticuloID, CodigoBarras
+      FROM ArticulosCodigosBarras_VIEW
+      WHERE CodigoBarras IS NOT NULL AND CodigoBarras != ''
+        AND LEN(CodigoBarras) >= 8
+    `)
+
+    // Agrupar barcodes por ArticuloID
+    const barcodeMap = {}
+    for (const row of barcodeResult.recordset) {
+      const id = row.ArticuloID
+      if (!barcodeMap[id]) barcodeMap[id] = []
+      barcodeMap[id].push(row.CodigoBarras.trim())
+    }
+
+    // Actualizar artículos que tienen barcodes (en paralelo, lotes de 50)
+    const entries = Object.entries(barcodeMap)
+    const BC_BATCH = 50
+    for (let i = 0; i < entries.length; i += BC_BATCH) {
+      const lote = entries.slice(i, i + BC_BATCH)
+      await Promise.all(lote.map(([idCentum, codigos]) =>
+        supabase
+          .from('articulos')
+          .update({ codigos_barras: codigos })
+          .eq('id_centum', parseInt(idCentum))
+          .then(() => barcodesSincronizados++)
+      ))
+    }
+    console.log(`[Sync] ${barcodesSincronizados} artículos con códigos de barra sincronizados`)
+  } catch (err) {
+    console.error('[Sync] Error al sincronizar códigos de barra:', err.message)
+  }
+
   const duracion = Date.now() - inicioFetch
   registrarLlamada({
     servicio: 'centum_articulos', endpoint, metodo: 'POST',
@@ -167,7 +205,7 @@ async function sincronizarERP(origen = 'cron') {
   })
 
   return {
-    mensaje: `${totalInsertados} artículos sincronizados desde el ERP`,
+    mensaje: `${totalInsertados} artículos sincronizados desde el ERP (${barcodesSincronizados} con códigos de barra)`,
     cantidad: totalInsertados,
   }
 }

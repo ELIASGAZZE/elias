@@ -636,7 +636,7 @@ async function facturarPedidoAsync(idCentum) {
 
     // 4. Crear Venta (factura) suscribiendo el PedidoVenta
     console.log(`[Facturación] Creando venta para pedido ${idCentum}...`)
-    const venta = await crearVentaDesdePedido(idCentum, cliente.id_centum, sucursalFisicaId)
+    const venta = await crearVentaDesdePedido(idCentum, cliente.id_centum, sucursalFisicaId, pedidoCentum)
     const idVenta = venta.IdVenta || venta.Id
     const totalVenta = venta.Total || venta.ImporteTotal || 0
     const numDocVenta = venta.NumeroDocumento
@@ -652,7 +652,10 @@ async function facturarPedidoAsync(idCentum) {
     // 5. Crear Cobro con IdValor 13 (Mercado Pago)
     console.log(`[Facturación] Creando cobro para venta ${idVenta}...`)
     const cobro = await crearCobroDeVenta(idVenta, cliente.id_centum, sucursalFisicaId, totalVenta)
-    const idCobro = cobro.IdCobro || cobro.Id
+    const idCobro = cobro.IdCobro || cobro.Id || null
+    if (cobro._cobroCreadoConWarning) {
+      console.warn(`[Facturación] Cobro creado con warning (500) para venta ${idVenta} — IdCobro puede no estar disponible`)
+    }
     console.log(`[Facturación] Cobro creado: IdCobro=${idCobro}`)
 
     // 6. Actualizar BD con datos de facturación

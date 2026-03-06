@@ -25,15 +25,7 @@ const formatFechaHora = (iso) => {
   return d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
-function abrirVentanaImpresion(html) {
-  const win = window.open('', '_blank', 'width=320,height=600')
-  if (!win) return
-  win.document.write(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Comprobante</title>
-<style>
+const PRINT_STYLES = `
   @page { margin: 0; size: 80mm auto; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -52,15 +44,31 @@ function abrirVentanaImpresion(html) {
   .line-double { border-top: 2px solid #000; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; }
   .firma { margin-top: 24px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 14px; }
-</style>
-</head>
-<body>${html}</body>
-</html>`)
-  win.document.close()
-  setTimeout(() => {
-    win.print()
-    win.onafterprint = () => win.close()
-  }, 300)
+`
+
+function abrirVentanaImpresion(html) {
+  // Iframe oculto — imprime directo sin preview
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = 'none'
+  iframe.style.left = '-9999px'
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentDocument || iframe.contentWindow.document
+  doc.open()
+  doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PRINT_STYLES}</style></head><body>${html}</body></html>`)
+  doc.close()
+
+  iframe.onload = () => {
+    iframe.contentWindow.focus()
+    iframe.contentWindow.print()
+    // Limpiar iframe después de imprimir
+    setTimeout(() => {
+      document.body.removeChild(iframe)
+    }, 1000)
+  }
 }
 
 function buildDenominacionesHtml(billetes, monedas, denominaciones) {
@@ -197,6 +205,80 @@ export function imprimirRetiro(retiro, cierre) {
 
   html += '<div class="firma">Firma cajero: _______________</div>'
   html += '<div class="firma">Firma gestor: _______________</div>'
+
+  abrirVentanaImpresion(html)
+}
+
+export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline }) {
+  let html = ''
+
+  html += '<div class="center titulo">PADANO SRL</div>'
+  html += '<div class="center" style="font-size:12px;margin-bottom:4px">Punto de Venta</div>'
+  html += '<div class="line-double"></div>'
+
+  // Fecha y cliente
+  const ahora = new Date()
+  html += `<div style="font-size:13px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+  if (cliente?.razon_social) html += `<div style="font-size:13px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
+  html += '<div class="line"></div>'
+
+  // Items
+  items.forEach(item => {
+    const lineTotal = item.precio_unitario * item.cantidad
+    html += `<div style="font-size:13px">${escapeHtml(item.nombre)}</div>`
+    html += `<div class="row" style="font-size:13px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
+  })
+
+  html += '<div class="line"></div>'
+
+  // Subtotal
+  html += `<div class="row"><span>Subtotal</span><span>${formatMonto(subtotal)}</span></div>`
+
+  // Descuentos promos
+  if (promosAplicadas && promosAplicadas.length > 0) {
+    promosAplicadas.forEach(p => {
+      html += `<div class="row" style="font-size:13px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
+    })
+  }
+
+  // Descuentos forma de pago
+  if (descuentosPorForma && descuentosPorForma.length > 0) {
+    descuentosPorForma.forEach(d => {
+      html += `<div class="row" style="font-size:13px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+    })
+  }
+
+  if ((descuentoTotal || 0) + (totalDescuentoPagos || 0) > 0) {
+    html += '<div class="line"></div>'
+  }
+
+  // Total
+  html += `<div class="row total"><span>TOTAL</span><span>${formatMonto(total)}</span></div>`
+  html += '<div class="line-double"></div>'
+
+  // Pagos
+  if (pagos && pagos.length > 0) {
+    const resumen = pagos.reduce((acc, p) => { acc[p.tipo] = (acc[p.tipo] || 0) + p.monto; return acc }, {})
+    Object.entries(resumen).forEach(([tipo, monto]) => {
+      html += `<div class="row" style="font-size:13px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
+    })
+  }
+
+  if (vuelto > 0) {
+    html += '<div class="line"></div>'
+    html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(vuelto)}</span></div>`
+  }
+
+  if (esOffline) {
+    html += '<div class="line"></div>'
+    html += '<div class="center" style="font-size:12px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
+  }
+
+  html += '<div class="line-double"></div>'
+  html += '<div class="center" style="font-size:12px;margin-top:8px">Gracias por su compra</div>'
+  html += '<div class="line"></div>'
+  html += '<div class="center" style="font-size:10px;margin-top:4px;line-height:1.4">Este ticket no es un comprobante fiscal.</div>'
+  html += '<div class="center" style="font-size:10px;line-height:1.4">El comprobante oficial (AFIP/ARCA) sera enviado por correo electronico a la direccion proporcionada al cajero.</div>'
 
   abrirVentanaImpresion(html)
 }

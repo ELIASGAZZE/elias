@@ -6,6 +6,7 @@ const TIPOS = [
   { value: 'monto_fijo', label: 'Monto fijo' },
   { value: 'nxm', label: 'NxM' },
   { value: 'combo', label: 'Combo' },
+  { value: 'forma_pago', label: 'Desc. forma de pago' },
 ]
 
 const TIPO_BADGE_COLORS = {
@@ -13,6 +14,7 @@ const TIPO_BADGE_COLORS = {
   monto_fijo: 'bg-amber-50 text-amber-700',
   nxm: 'bg-purple-50 text-purple-700',
   combo: 'bg-emerald-50 text-emerald-700',
+  forma_pago: 'bg-cyan-50 text-cyan-700',
 }
 
 const TIPO_ENTIDAD = [
@@ -35,6 +37,9 @@ const AdminPromociones = () => {
   const [editandoId, setEditandoId] = useState(null)
   const [guardando, setGuardando] = useState(false)
 
+  // Formas de cobro para tipo forma_pago
+  const [formasCobro, setFormasCobro] = useState([])
+
   // Form state
   const [form, setForm] = useState({
     nombre: '',
@@ -51,6 +56,8 @@ const AdminPromociones = () => {
     // combo
     precio_combo: '',
     articulos_combo: [], // [{ id, nombre, cantidad }]
+    // forma_pago
+    forma_cobro_nombre: '',
   })
 
   // Buscador de artículos
@@ -70,7 +77,24 @@ const AdminPromociones = () => {
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => {
+    cargar()
+    cargarFormasCobro()
+  }, [])
+
+  async function cargarFormasCobro() {
+    try {
+      const { data } = await api.get('/api/formas-cobro')
+      const fcs = (data.formas_cobro || data || []).filter(f => f.activo !== false)
+      // Incluir Efectivo manualmente si no está
+      const nombres = fcs.map(f => (f.nombre || '').toLowerCase())
+      const lista = nombres.includes('efectivo') ? fcs : [{ id: 'efectivo', nombre: 'Efectivo' }, ...fcs]
+      setFormasCobro(lista)
+    } catch (err) {
+      console.error('Error cargando formas de cobro:', err)
+      setFormasCobro([{ id: 'efectivo', nombre: 'Efectivo' }])
+    }
+  }
 
   // Buscar artículos con debounce
   useEffect(() => {
@@ -106,6 +130,7 @@ const AdminPromociones = () => {
       valor: '', cantidad_minima: '1', aplicar_a: [],
       llevar: '3', pagar: '2',
       precio_combo: '', articulos_combo: [],
+      forma_cobro_nombre: '',
     })
     setBusqueda('')
     setResultados([])
@@ -134,6 +159,7 @@ const AdminPromociones = () => {
       pagar: reglas.pagar != null ? String(reglas.pagar) : '2',
       precio_combo: reglas.precio_combo != null ? String(reglas.precio_combo) : '',
       articulos_combo: reglas.articulos || [],
+      forma_cobro_nombre: reglas.forma_cobro_nombre || '',
     })
     setEditandoId(promo.id)
     setMostrarForm(true)
@@ -141,7 +167,7 @@ const AdminPromociones = () => {
   }
 
   const construirReglas = () => {
-    const { tipo, valor, cantidad_minima, aplicar_a, llevar, pagar, precio_combo, articulos_combo } = form
+    const { tipo, valor, cantidad_minima, aplicar_a, llevar, pagar, precio_combo, articulos_combo, forma_cobro_nombre } = form
 
     switch (tipo) {
       case 'porcentaje':
@@ -166,6 +192,11 @@ const AdminPromociones = () => {
         return {
           precio_combo: parseFloat(precio_combo) || 0,
           articulos: articulos_combo,
+        }
+      case 'forma_pago':
+        return {
+          forma_cobro_nombre,
+          valor: parseFloat(valor) || 0,
         }
       default:
         return {}
@@ -197,6 +228,16 @@ const AdminPromociones = () => {
       }
       if (!reglas.precio_combo || reglas.precio_combo <= 0) {
         setMensaje('El precio del combo debe ser mayor a 0')
+        return
+      }
+    }
+    if (form.tipo === 'forma_pago') {
+      if (!reglas.forma_cobro_nombre) {
+        setMensaje('Seleccioná una forma de cobro')
+        return
+      }
+      if (!reglas.valor || reglas.valor <= 0) {
+        setMensaje('El porcentaje debe ser mayor a 0')
         return
       }
     }
@@ -428,6 +469,36 @@ const AdminPromociones = () => {
             </div>
           )}
 
+          {form.tipo === 'forma_pago' && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-500">Forma de cobro</label>
+                <select
+                  value={form.forma_cobro_nombre}
+                  onChange={e => setForm(prev => ({ ...prev, forma_cobro_nombre: e.target.value }))}
+                  className="campo-form text-sm"
+                >
+                  <option value="">Seleccionar...</option>
+                  {formasCobro.map(fc => (
+                    <option key={fc.id} value={fc.nombre}>{fc.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Porcentaje (%)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.valor}
+                  onChange={e => setForm(prev => ({ ...prev, valor: e.target.value }))}
+                  placeholder="Ej: 10"
+                  className="campo-form text-sm"
+                />
+              </div>
+            </div>
+          )}
+
           {form.tipo === 'combo' && (
             <div>
               <label className="text-xs text-gray-500">Precio del combo ($)</label>
@@ -443,8 +514,8 @@ const AdminPromociones = () => {
             </div>
           )}
 
-          {/* Buscador de entidades / artículos */}
-          <div className="border-t border-violet-200 pt-3">
+          {/* Buscador de entidades / artículos (no aplica a forma_pago) */}
+          {form.tipo !== 'forma_pago' && <div className="border-t border-violet-200 pt-3">
             <label className="text-xs text-gray-500 font-medium">
               {form.tipo === 'combo' ? 'Artículos del combo' : 'Aplica a'}
             </label>
@@ -538,7 +609,7 @@ const AdminPromociones = () => {
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {mensaje && <p className="text-sm text-red-600">{mensaje}</p>}
 
@@ -573,9 +644,12 @@ const AdminPromociones = () => {
             else if (promo.tipo === 'monto_fijo') detalle = `${formatPrecio(reglas.valor)} off${reglas.cantidad_minima > 1 ? ` (min ${reglas.cantidad_minima})` : ''}`
             else if (promo.tipo === 'nxm') detalle = `${reglas.llevar}x${reglas.pagar}`
             else if (promo.tipo === 'combo') detalle = `Combo ${formatPrecio(reglas.precio_combo)}`
+            else if (promo.tipo === 'forma_pago') detalle = `${reglas.valor}% off en ${reglas.forma_cobro_nombre}`
 
             const entidades = promo.tipo === 'combo'
               ? (reglas.articulos || []).map(a => a.nombre).join(', ')
+              : promo.tipo === 'forma_pago'
+              ? reglas.forma_cobro_nombre || ''
               : (reglas.aplicar_a || []).map(a => a.tipo === 'todos' ? 'Todos' : a.nombre).join(', ')
 
             return (
@@ -584,7 +658,7 @@ const AdminPromociones = () => {
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-gray-800 truncate">{promo.nombre}</p>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TIPO_BADGE_COLORS[promo.tipo] || 'bg-gray-100 text-gray-600'}`}>
-                      {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
+                      {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo === 'forma_pago' ? 'F. Pago' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 truncate">{detalle} — {entidades || 'Sin destino'}</p>

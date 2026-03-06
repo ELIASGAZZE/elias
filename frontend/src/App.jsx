@@ -37,6 +37,11 @@ import DetalleDelivery from './pages/delivery/DetalleDelivery'
 
 // Páginas de la app POS
 import POS from './pages/pos/POS'
+import PedidosPOS from './pages/pos/PedidosPOS'
+
+// Páginas de la app Ventas
+import VentasHome from './pages/ventas/VentasHome'
+import DetalleVenta from './pages/ventas/DetalleVenta'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
@@ -178,6 +183,23 @@ const App = () => {
           <Route path="/pos" element={
             <RutaProtegida>
               <POS />
+            </RutaProtegida>
+          } />
+          <Route path="/pos/pedidos" element={
+            <RutaProtegida>
+              <PedidosPOS />
+            </RutaProtegida>
+          } />
+
+          {/* App: Ventas */}
+          <Route path="/ventas" element={
+            <RutaProtegida>
+              <VentasHome />
+            </RutaProtegida>
+          } />
+          <Route path="/ventas/:id" element={
+            <RutaProtegida>
+              <DetalleVenta />
             </RutaProtegida>
           } />
 

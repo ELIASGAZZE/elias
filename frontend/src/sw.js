@@ -1,7 +1,32 @@
 import { precacheAndRoute } from 'workbox-precaching'
+import { registerRoute } from 'workbox-routing'
+import { NetworkFirst } from 'workbox-strategies'
+import { CacheableResponsePlugin } from 'workbox-cacheable-response'
 
 // Precaching de assets generados por Vite
 precacheAndRoute(self.__WB_MANIFEST)
+
+// NetworkFirst cache para rutas POS (safety net adicional al IndexedDB del frontend)
+const POS_API_PATTERNS = [
+  /\/api\/pos\/articulos/,
+  /\/api\/pos\/promociones/,
+  /\/api\/clientes/,
+  /\/api\/denominaciones/,
+  /\/api\/formas-cobro/,
+]
+
+POS_API_PATTERNS.forEach(pattern => {
+  registerRoute(
+    ({ url }) => pattern.test(url.pathname),
+    new NetworkFirst({
+      cacheName: 'pos-api-cache',
+      networkTimeoutSeconds: 5,
+      plugins: [
+        new CacheableResponsePlugin({ statuses: [0, 200] }),
+      ],
+    })
+  )
+})
 
 // Offline fallback: si la navegación falla (sin conexión), mostrar página offline
 self.addEventListener('fetch', (event) => {
