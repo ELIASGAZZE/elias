@@ -23,6 +23,14 @@ import VerificarRetiro from './pages/cajas/VerificarRetiro'
 import ChatAuditoria from './pages/cajas/ChatAuditoria'
 import BatchAnalisis from './pages/cajas/BatchAnalisis'
 
+// Páginas de la app Control Caja POS
+import CajasPosHome from './pages/cajas-pos/CajasPosHome'
+import CerrarCajaPos from './pages/cajas-pos/CerrarCajaPos'
+import DetalleCierrePos from './pages/cajas-pos/DetalleCierrePos'
+import VerificarCierrePos from './pages/cajas-pos/VerificarCierrePos'
+import NuevoRetiroPos from './pages/cajas-pos/NuevoRetiroPos'
+import VerificarRetiroPos from './pages/cajas-pos/VerificarRetiroPos'
+
 // Páginas de la app Delivery
 import DeliveryHome from './pages/delivery/DeliveryHome'
 import DetalleDelivery from './pages/delivery/DetalleDelivery'
@@ -126,6 +134,43 @@ const App = () => {
           <Route path="/cajas/verificar/:id" element={
             <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
               <VerificarCierre />
+            </RutaProtegida>
+          } />
+
+          {/* App: Control Caja POS */}
+          <Route path="/cajas-pos" element={
+            <RutaProtegida>
+              <CajasPosHome />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/cierre/:id/cerrar" element={
+            <RutaProtegida rolesPermitidos={['operario', 'admin']}>
+              <CerrarCajaPos />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/cierre/:id/editar" element={
+            <RutaProtegida>
+              <CerrarCajaPos />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/cierre/:id/retiro" element={
+            <RutaProtegida rolesPermitidos={['operario', 'admin']}>
+              <NuevoRetiroPos />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/retiro/:id/verificar" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <VerificarRetiroPos />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/cierre/:id" element={
+            <RutaProtegida>
+              <DetalleCierrePos />
+            </RutaProtegida>
+          } />
+          <Route path="/cajas-pos/verificar/:id" element={
+            <RutaProtegida rolesPermitidos={['gestor', 'admin']}>
+              <VerificarCierrePos />
             </RutaProtegida>
           } />
 

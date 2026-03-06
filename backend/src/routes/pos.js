@@ -9,7 +9,7 @@ const { sincronizarERP } = require('../services/syncERP')
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable'
+    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras'
 
     // Supabase limita a 1000 por defecto — paginar para traer todos
     const PAGE_SIZE = 1000
@@ -48,6 +48,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       descuento2: parseFloat(a.descuento2) || 0,
       descuento3: parseFloat(a.descuento3) || 0,
       esPesable: a.es_pesable || false,
+      codigosBarras: a.codigos_barras || [],
     }))
 
     res.json({ articulos, total: articulos.length })
@@ -102,7 +103,7 @@ router.post('/promociones', verificarAuth, soloAdmin, async (req, res) => {
     if (!nombre || !tipo || !reglas) {
       return res.status(400).json({ error: 'nombre, tipo y reglas son requeridos' })
     }
-    if (!['porcentaje', 'monto_fijo', 'nxm', 'combo'].includes(tipo)) {
+    if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago'].includes(tipo)) {
       return res.status(400).json({ error: 'tipo inválido' })
     }
 
@@ -136,7 +137,7 @@ router.put('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     if (nombre !== undefined) updates.nombre = nombre
     if (tipo !== undefined) {
-      if (!['porcentaje', 'monto_fijo', 'nxm', 'combo'].includes(tipo)) {
+      if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago'].includes(tipo)) {
         return res.status(400).json({ error: 'tipo inválido' })
       }
       updates.tipo = tipo
@@ -187,9 +188,9 @@ router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => 
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago } = req.body
 
-    if (!id_cliente_centum) return res.status(400).json({ error: 'id_cliente_centum es requerido' })
+    if (id_cliente_centum == null) return res.status(400).json({ error: 'id_cliente_centum es requerido' })
     if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items es requerido' })
     if (total == null || total <= 0) return res.status(400).json({ error: 'total debe ser mayor a 0' })
     if (monto_pagado == null || monto_pagado < total) return res.status(400).json({ error: 'monto_pagado debe ser >= total' })
@@ -208,6 +209,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         vuelto: vuelto || 0,
         items: JSON.stringify(items),
         promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
+        pagos: pagos || [],
+        descuento_forma_pago: descuento_forma_pago || null,
       })
       .select()
       .single()
@@ -248,6 +251,97 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
+  }
+})
+
+// ============ PEDIDOS POS ============
+
+// POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
+router.post('/pedidos', verificarAuth, async (req, res) => {
+  try {
+    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega } = req.body
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items es requerido' })
+    }
+
+    const insertData = {
+      cajero_id: req.perfil.id,
+      sucursal_id: req.perfil.sucursal_id || null,
+      id_cliente_centum: id_cliente_centum ?? 0,
+      nombre_cliente: nombre_cliente || 'Consumidor Final',
+      items: JSON.stringify(items),
+      total: total || 0,
+      observaciones: observaciones || null,
+    }
+    if (tipo) insertData.tipo = tipo
+    if (direccion_entrega) insertData.direccion_entrega = direccion_entrega
+    if (sucursal_retiro) insertData.sucursal_retiro = sucursal_retiro
+    if (estado && ['pendiente', 'pagado'].includes(estado)) insertData.estado = estado
+    if (fecha_entrega) insertData.fecha_entrega = fecha_entrega
+
+    const { data, error } = await supabase
+      .from('pedidos_pos')
+      .insert(insertData)
+      .select()
+      .single()
+
+    if (error) throw error
+
+    res.status(201).json({ pedido: data, mensaje: 'Pedido registrado correctamente' })
+  } catch (err) {
+    console.error('[POS] Error al crear pedido:', err.message)
+    res.status(500).json({ error: 'Error al crear pedido: ' + err.message })
+  }
+})
+
+// GET /api/pos/pedidos — listar pedidos (default: pendientes)
+router.get('/pedidos', verificarAuth, async (req, res) => {
+  try {
+    const estado = req.query.estado || 'pendiente'
+
+    let query = supabase
+      .from('pedidos_pos')
+      .select('*, perfiles:cajero_id(nombre)')
+      .order('created_at', { ascending: false })
+
+    if (estado !== 'todos') {
+      query = query.eq('estado', estado)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    res.json({ pedidos: data || [] })
+  } catch (err) {
+    console.error('[POS] Error al listar pedidos:', err.message)
+    res.status(500).json({ error: 'Error al listar pedidos' })
+  }
+})
+
+// PUT /api/pos/pedidos/:id/estado — cambiar estado (entregado/cancelado)
+router.put('/pedidos/:id/estado', verificarAuth, async (req, res) => {
+  try {
+    const { estado } = req.body
+    if (!['entregado', 'cancelado'].includes(estado)) {
+      return res.status(400).json({ error: 'Estado inválido. Debe ser entregado o cancelado' })
+    }
+
+    const { data, error } = await supabase
+      .from('pedidos_pos')
+      .update({ estado })
+      .eq('id', req.params.id)
+      .eq('estado', 'pendiente') // solo se puede cambiar si está pendiente
+      .select()
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(404).json({ error: 'Pedido no encontrado o ya procesado' })
+
+    res.json({ pedido: data, mensaje: `Pedido marcado como ${estado}` })
+  } catch (err) {
+    console.error('[POS] Error al cambiar estado pedido:', err.message)
+    res.status(500).json({ error: 'Error al cambiar estado: ' + err.message })
   }
 })
 

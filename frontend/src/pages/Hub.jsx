@@ -35,9 +35,22 @@ const APPS = [
     descripcion: 'POS con promociones',
     path: '/pos',
     color: 'bg-violet-600',
+    abrirEnNuevaPestana: true,
     icono: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'cajas-pos',
+    nombre: 'Control Caja POS',
+    descripcion: 'Cierres y verificación del POS',
+    path: '/cajas-pos',
+    color: 'bg-teal-600',
+    icono: (
+      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
       </svg>
     ),
   },
@@ -115,17 +128,33 @@ const Hub = () => {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {appsVisibles.map(app => (
-            <Link
-              key={app.id}
-              to={app.path}
-              className="group flex flex-col items-center text-center p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 hover:shadow-lg transition-all duration-200"
-            >
-              <div className={`${app.color} text-white w-14 h-14 rounded-2xl flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-200`}>
-                {app.icono}
-              </div>
-              <span className="text-sm font-semibold text-gray-800">{app.nombre}</span>
-              <span className="text-xs text-gray-400 mt-1">{app.descripcion}</span>
-            </Link>
+            <div key={app.id} className="relative group">
+              <Link
+                to={app.path}
+                className="flex flex-col items-center text-center p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 hover:shadow-lg transition-all duration-200"
+              >
+                <div className={`${app.color} text-white w-14 h-14 rounded-2xl flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-200`}>
+                  {app.icono}
+                </div>
+                <span className="text-sm font-semibold text-gray-800">{app.nombre}</span>
+                <span className="text-xs text-gray-400 mt-1">{app.descripcion}</span>
+              </Link>
+              {/* Botón abrir en nueva pestaña (solo POS) */}
+              {app.abrirEnNuevaPestana && (
+                <a
+                  href={app.path}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all"
+                  title="Abrir en nueva pestaña"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                  </svg>
+                </a>
+              )}
+            </div>
           ))}
         </div>
       </div>
