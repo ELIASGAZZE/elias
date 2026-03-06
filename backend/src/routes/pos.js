@@ -188,30 +188,33 @@ router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => 
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id } = req.body
 
     if (id_cliente_centum == null) return res.status(400).json({ error: 'id_cliente_centum es requerido' })
     if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items es requerido' })
     if (total == null || total <= 0) return res.status(400).json({ error: 'total debe ser mayor a 0' })
     if (monto_pagado == null || monto_pagado < total) return res.status(400).json({ error: 'monto_pagado debe ser >= total' })
 
+    const insertData = {
+      cajero_id: req.perfil.id,
+      sucursal_id: req.perfil.sucursal_id || null,
+      id_cliente_centum,
+      nombre_cliente: nombre_cliente || null,
+      subtotal: subtotal || 0,
+      descuento_total: descuento_total || 0,
+      total,
+      monto_pagado,
+      vuelto: vuelto || 0,
+      items: JSON.stringify(items),
+      promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
+      pagos: pagos || [],
+      descuento_forma_pago: descuento_forma_pago || null,
+    }
+    if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
+
     const { data, error } = await supabase
       .from('ventas_pos')
-      .insert({
-        cajero_id: req.perfil.id,
-        sucursal_id: req.perfil.sucursal_id || null,
-        id_cliente_centum,
-        nombre_cliente: nombre_cliente || null,
-        subtotal: subtotal || 0,
-        descuento_total: descuento_total || 0,
-        total,
-        monto_pagado,
-        vuelto: vuelto || 0,
-        items: JSON.stringify(items),
-        promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
-        pagos: pagos || [],
-        descuento_forma_pago: descuento_forma_pago || null,
-      })
+      .insert(insertData)
       .select()
       .single()
 
@@ -224,7 +227,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
   }
 })
 
-// GET /api/pos/ventas?fecha=YYYY-MM-DD
+// GET /api/pos/ventas?fecha=YYYY-MM-DD&sucursal_id=X&cajero_id=X
 // Lista ventas del día
 router.get('/ventas', verificarAuth, async (req, res) => {
   try {
@@ -234,7 +237,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre)')
+      .select('*, perfiles:cajero_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .gte('created_at', desde)
       .lte('created_at', hasta)
       .order('created_at', { ascending: false })
@@ -242,6 +245,14 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     // No-admin solo ve sus ventas
     if (req.perfil.rol !== 'admin') {
       query = query.eq('cajero_id', req.perfil.id)
+    } else {
+      // Filtros opcionales solo para admin
+      if (req.query.sucursal_id) {
+        query = query.eq('sucursal_id', req.query.sucursal_id)
+      }
+      if (req.query.cajero_id) {
+        query = query.eq('cajero_id', req.query.cajero_id)
+      }
     }
 
     const { data, error } = await query
@@ -251,6 +262,30 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
+  }
+})
+
+// GET /api/pos/ventas/:id — Detalle de una venta
+router.get('/ventas/:id', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('ventas_pos')
+      .select('*, perfiles:cajero_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(404).json({ error: 'Venta no encontrada' })
+
+    // No-admin solo puede ver sus propias ventas
+    if (req.perfil.rol !== 'admin' && data.cajero_id !== req.perfil.id) {
+      return res.status(403).json({ error: 'No tenés permiso para ver esta venta' })
+    }
+
+    res.json({ venta: data })
+  } catch (err) {
+    console.error('[POS] Error al obtener detalle de venta:', err.message)
+    res.status(500).json({ error: 'Error al obtener detalle de venta' })
   }
 })
 
@@ -265,6 +300,16 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'items es requerido' })
     }
 
+    // Generar número secuencial
+    const { data: ultimoPedido } = await supabase
+      .from('pedidos_pos')
+      .select('numero')
+      .not('numero', 'is', null)
+      .order('numero', { ascending: false })
+      .limit(1)
+      .single()
+    const numero = (ultimoPedido?.numero || 0) + 1
+
     const insertData = {
       cajero_id: req.perfil.id,
       sucursal_id: req.perfil.sucursal_id || null,
@@ -272,13 +317,15 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
       nombre_cliente: nombre_cliente || 'Consumidor Final',
       items: JSON.stringify(items),
       total: total || 0,
-      observaciones: observaciones || null,
+      numero,
+      observaciones: [
+        observaciones,
+        direccion_entrega ? `Dirección: ${direccion_entrega}` : null,
+        sucursal_retiro ? `Retiro en: ${sucursal_retiro}` : null,
+      ].filter(Boolean).join(' | ') || null,
+      tipo: tipo || 'retiro',
+      fecha_entrega: fecha_entrega || null,
     }
-    if (tipo) insertData.tipo = tipo
-    if (direccion_entrega) insertData.direccion_entrega = direccion_entrega
-    if (sucursal_retiro) insertData.sucursal_retiro = sucursal_retiro
-    if (estado && ['pendiente', 'pagado'].includes(estado)) insertData.estado = estado
-    if (fecha_entrega) insertData.fecha_entrega = fecha_entrega
 
     const { data, error } = await supabase
       .from('pedidos_pos')
@@ -342,6 +389,89 @@ router.put('/pedidos/:id/estado', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al cambiar estado pedido:', err.message)
     res.status(500).json({ error: 'Error al cambiar estado: ' + err.message })
+  }
+})
+
+// ============ MERCADO PAGO ============
+
+const { crearPreferenciaPago, obtenerPago } = require('../services/mercadopago')
+
+// POST /api/pos/pedidos/:id/link-pago
+// Genera link de pago de Mercado Pago para un pedido POS
+router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
+  try {
+    const { data: pedido, error } = await supabase
+      .from('pedidos_pos')
+      .select('id, numero, total, estado, observaciones')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error || !pedido) return res.status(404).json({ error: 'Pedido no encontrado' })
+    if (pedido.estado !== 'pendiente') {
+      return res.status(400).json({ error: 'El pedido no está pendiente' })
+    }
+    if ((pedido.observaciones || '').includes('PAGO ANTICIPADO')) {
+      return res.status(400).json({ error: 'El pedido ya tiene pago anticipado' })
+    }
+    if (!pedido.total || pedido.total <= 0) {
+      return res.status(400).json({ error: 'El pedido no tiene un total válido' })
+    }
+
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+
+    const { id: prefId, init_point } = await crearPreferenciaPago({
+      idPedido: pedido.id,
+      titulo: `Pedido POS #${pedido.numero}`,
+      monto: Math.round(pedido.total * 100) / 100,
+      notificationUrl: `${backendUrl}/api/pos/webhook-mp`,
+      backUrl: `${frontendUrl}/pos`,
+    })
+
+    await supabase
+      .from('pedidos_pos')
+      .update({ mp_preference_id: prefId })
+      .eq('id', pedido.id)
+
+    res.json({ link: init_point })
+  } catch (err) {
+    console.error('[POS Link MP] Error:', err)
+    res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })
+  }
+})
+
+// POST /api/pos/webhook-mp
+// Webhook de Mercado Pago — SIN auth (viene de servidores de MP)
+router.post('/webhook-mp', async (req, res) => {
+  try {
+    if (req.body.type === 'payment') {
+      const paymentId = req.body.data?.id
+      if (paymentId) {
+        const pago = await obtenerPago(paymentId)
+        if (pago.status === 'approved' && pago.external_reference) {
+          const pedidoId = pago.external_reference
+          const { data: pedido } = await supabase
+            .from('pedidos_pos')
+            .select('id, estado, observaciones')
+            .eq('id', pedidoId)
+            .maybeSingle()
+
+          if (pedido && pedido.estado === 'pendiente') {
+            const obsActual = pedido.observaciones || ''
+            const nuevaObs = obsActual ? `PAGO ANTICIPADO | ${obsActual}` : 'PAGO ANTICIPADO'
+            await supabase
+              .from('pedidos_pos')
+              .update({ observaciones: nuevaObs, mp_payment_id: String(paymentId) })
+              .eq('id', pedidoId)
+            console.log(`[POS MP Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)
+          }
+        }
+      }
+    }
+    res.sendStatus(200)
+  } catch (err) {
+    console.error('[POS MP Webhook] Error:', err)
+    res.sendStatus(200)
   }
 })
 

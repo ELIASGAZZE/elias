@@ -3,8 +3,9 @@ const { MercadoPagoConfig, Preference, Payment } = require('mercadopago')
 
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN })
 
-async function crearPreferenciaPago({ idPedido, titulo, monto, notificationUrl }) {
-  const frontendUrl = 'https://zaatar.com.ar'
+async function crearPreferenciaPago({ idPedido, titulo, monto, notificationUrl, backUrl }) {
+  const defaultBackUrl = `https://zaatar.com.ar/delivery/${idPedido}`
+  const redirectUrl = backUrl || defaultBackUrl
   const preference = new Preference(client)
   const result = await preference.create({
     body: {
@@ -17,9 +18,9 @@ async function crearPreferenciaPago({ idPedido, titulo, monto, notificationUrl }
       external_reference: String(idPedido),
       notification_url: notificationUrl,
       back_urls: {
-        success: `${frontendUrl}/delivery/${idPedido}`,
-        failure: `${frontendUrl}/delivery/${idPedido}`,
-        pending: `${frontendUrl}/delivery/${idPedido}`,
+        success: redirectUrl,
+        failure: redirectUrl,
+        pending: redirectUrl,
       },
     }
   })
