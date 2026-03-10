@@ -295,17 +295,15 @@ async function fetchNotificacionesSheet() {
 
   const idxId = header.findIndex(h => /NotificacionID/i.test(h))
   const idxDesc = header.findIndex(h => /Descripcion/i.test(h))
-  const idxUser = header.findIndex(h => /UsuarioIDAlta/i.test(h))
   const idxFecha = header.findIndex(h => /FechaCreacion/i.test(h))
 
   const rows = []
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i])
-    if (cols.length < header.length) continue
+    if (cols.length < Math.max(idxId, idxDesc, idxFecha) + 1) continue
     rows.push({
       notificacion_id: Number(cols[idxId]?.replace(/"/g, '')) || 0,
       descripcion: cols[idxDesc]?.replace(/^"|"$/g, '') || '',
-      usuario_id_alta: Number(cols[idxUser]?.replace(/"/g, '')) || 0,
       fecha_creacion: cols[idxFecha]?.replace(/^"|"$/g, '') || '',
     })
   }
@@ -327,13 +325,14 @@ async function getVentasSinConfirmar(planillaId) {
   try {
     const db = await getPool()
 
-    // 1. Obtener usuario y fecha de la planilla desde BI
+    // 1. Obtener nombre de usuario y fecha de la planilla desde BI
     const planillaResult = await db.request()
       .input('planillaId', sql.Int, planillaId)
       .query(`
-        SELECT UsuarioAsignadoIDPlanillaCaja, FechaPlanillaCaja
-        FROM PlanillasCajas_VIEW
-        WHERE PlanillaCajaID = @planillaId
+        SELECT p.FechaPlanillaCaja, u.NombreUsuario
+        FROM PlanillasCajas_VIEW p
+        LEFT JOIN Usuarios_VIEW u ON p.UsuarioAsignadoIDPlanillaCaja = u.UsuarioID
+        WHERE p.PlanillaCajaID = @planillaId
       `)
 
     if (planillaResult.recordset.length === 0) {
@@ -345,21 +344,25 @@ async function getVentasSinConfirmar(planillaId) {
       return { cantidad: 0, ventas: [] }
     }
 
-    const { UsuarioAsignadoIDPlanillaCaja: usuarioId, FechaPlanillaCaja: fechaPlanilla } = planillaResult.recordset[0]
+    const { NombreUsuario: nombreUsuario, FechaPlanillaCaja: fechaPlanilla } = planillaResult.recordset[0]
+    const nombreNorm = (nombreUsuario || '').trim().toLowerCase()
 
-    // Normalizar fecha de planilla a DD/MM/YYYY para comparar
+    // Normalizar fecha de planilla a DD/MM/YYYY para comparar (usar UTC para evitar desfase de timezone)
     const fp = new Date(fechaPlanilla)
-    const fechaStr = `${String(fp.getDate()).padStart(2, '0')}/${String(fp.getMonth() + 1).padStart(2, '0')}/${fp.getFullYear()}`
+    const fechaStr = `${String(fp.getUTCDate()).padStart(2, '0')}/${String(fp.getUTCMonth() + 1).padStart(2, '0')}/${fp.getUTCFullYear()}`
 
     // 2. Leer notificaciones del Google Sheet
     const todas = await fetchNotificacionesSheet()
 
-    // 3. Filtrar por UsuarioIDAlta + misma fecha
+    // 3. Filtrar por nombre de usuario (extraído de la descripción) + misma fecha
     const filtradas = todas.filter(n => {
-      if (n.usuario_id_alta !== usuarioId) return false
       // Comparar fecha: el campo viene como "DD/MM/YYYY HH:MM:SS"
       const fechaNotif = n.fecha_creacion.split(' ')[0]
-      return fechaNotif === fechaStr
+      if (fechaNotif !== fechaStr) return false
+      // Matchear nombre de usuario de la descripción contra el de la planilla
+      const userMatch = n.descripcion.match(/El usuario:\s*(.+?),\s*en la fecha/i)
+      if (!userMatch) return false
+      return userMatch[1].trim().toLowerCase() === nombreNorm
     })
 
     const ventas = filtradas.map(n => ({

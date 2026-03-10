@@ -23,7 +23,7 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
-const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId }) => {
+const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta }) => {
   const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
@@ -33,6 +33,15 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [error, setError] = useState('')
   const [ultimoPago, setUltimoPago] = useState(null) // flash feedback
   const [promosPago, setPromosPago] = useState([])
+
+  // Gift Cards
+  const [gcCodigo, setGcCodigo] = useState('')
+  const [gcConsultando, setGcConsultando] = useState(false)
+  const [gcResultado, setGcResultado] = useState(null) // { gift_card, error }
+  const [giftCardsAplicadas, setGiftCardsAplicadas] = useState([]) // [{ codigo, monto, saldo }]
+
+  // Saldo a favor del cliente
+  const saldoDisponible = parseFloat(saldoProp) || 0
 
   useEffect(() => {
     cargarConfig()
@@ -103,16 +112,22 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }).filter(Boolean)
 
   const totalDescuentoPagos = descuentosPorForma.reduce((s, d) => s + d.descuento, 0)
-  const totalEfectivo = Math.round((total - totalDescuentoPagos) * 100) / 100
+
+  // Saldo aplicado: min(saldoDisponible, total después de descuentos forma pago)
+  const totalConDescFormaPago = Math.round((total - totalDescuentoPagos) * 100) / 100
+  const saldoAplicado = saldoDisponible > 0 ? Math.min(saldoDisponible, totalConDescFormaPago) : 0
+  const totalEfectivo = Math.round((totalConDescFormaPago - saldoAplicado) * 100) / 100
 
   // Promo de efectivo (para mostrar "resta en efectivo" con descuento)
   const promoEfectivo = promosPago.find(p => (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo')
   const porcentajeDescEfectivo = promoEfectivo?.reglas?.valor || 0
 
+  const totalGiftCards = giftCardsAplicadas.reduce((s, g) => s + g.monto, 0)
+  const totalEfectivoConGC = Math.round((totalEfectivo - totalGiftCards) * 100) / 100
   const totalPagado = pagos.reduce((s, p) => s + p.monto, 0)
-  const restante = Math.max(0, totalEfectivo - totalPagado)
-  const montoSuficiente = totalPagado >= totalEfectivo
-  const vuelto = Math.max(0, totalPagado - totalEfectivo)
+  const restante = Math.max(0, totalEfectivoConGC - totalPagado)
+  const montoSuficiente = totalEfectivoConGC <= 0 || totalPagado >= totalEfectivoConGC
+  const vuelto = Math.max(0, totalPagado - totalEfectivoConGC)
 
   // Conteo de billetes por denominación para efectivo
   const conteoBilletes = pagos
@@ -150,6 +165,46 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setFormaSeleccionada(null)
   }
 
+  // Gift Cards
+  async function consultarGiftCard() {
+    if (!gcCodigo.trim()) return
+    setGcConsultando(true)
+    setGcResultado(null)
+    try {
+      const { data } = await api.get(`/api/gift-cards/consultar/${gcCodigo.trim()}`)
+      if (data.gift_card.estado !== 'activa') {
+        setGcResultado({ error: `Gift card ${data.gift_card.estado}` })
+      } else if (parseFloat(data.gift_card.saldo) <= 0) {
+        setGcResultado({ error: 'Gift card sin saldo' })
+      } else if (giftCardsAplicadas.some(g => g.codigo === data.gift_card.codigo)) {
+        setGcResultado({ error: 'Esta gift card ya fue agregada' })
+      } else {
+        setGcResultado({ gift_card: data.gift_card })
+      }
+    } catch (err) {
+      setGcResultado({ error: err.response?.data?.error || 'Gift card no encontrada' })
+    } finally {
+      setGcConsultando(false)
+    }
+  }
+
+  function aplicarGiftCard() {
+    if (!gcResultado?.gift_card) return
+    const gc = gcResultado.gift_card
+    const saldo = parseFloat(gc.saldo)
+    const restanteActual = Math.max(0, totalEfectivo - totalPagado - totalGiftCards)
+    const montoAplicar = Math.min(saldo, restanteActual > 0 ? restanteActual : saldo)
+    if (montoAplicar <= 0) return
+
+    setGiftCardsAplicadas(prev => [...prev, { codigo: gc.codigo, monto: montoAplicar, saldo }])
+    setGcCodigo('')
+    setGcResultado(null)
+  }
+
+  function quitarGiftCard(codigo) {
+    setGiftCardsAplicadas(prev => prev.filter(g => g.codigo !== codigo))
+  }
+
   async function confirmarVenta() {
     if (!montoSuficiente) return
     setGuardando(true)
@@ -174,6 +229,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       entidadNombre: p.entidadNombre,
     }))
 
+    const totalOriginalSinSaldo = totalConDescFormaPago
     const payload = {
       id_cliente_centum: cliente.id_centum,
       nombre_cliente: cliente.razon_social,
@@ -185,12 +241,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         total: totalDescuentoPagos,
         detalle: descuentosPorForma,
       } : null,
-      total: totalEfectivo,
-      monto_pagado: totalPagado,
+      total: totalOriginalSinSaldo,
+      monto_pagado: totalPagado + saldoAplicado,
       vuelto: vuelto > 0 ? vuelto : 0,
       pagos: pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
     }
+    if (saldoAplicado > 0) payload.saldo_aplicado = saldoAplicado
     if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
+    if (giftCardsAplicadas.length > 0) {
+      payload.gift_cards_aplicadas = giftCardsAplicadas.map(g => ({ codigo: g.codigo, monto: g.monto }))
+    }
+    if (giftCardsEnVenta && giftCardsEnVenta.length > 0) {
+      payload.gift_cards_a_activar = giftCardsEnVenta
+    }
 
     const ticketData = {
       items,
@@ -340,6 +403,60 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           </div>
         )}
 
+        {/* Gift Card */}
+        <div>
+          <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Gift Card</h3>
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={gcCodigo}
+              onChange={e => setGcCodigo(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); consultarGiftCard() } }}
+              placeholder="Escanear código..."
+              className="flex-1 bg-slate-600 border-0 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:ring-2 focus:ring-violet-500"
+            />
+            <button
+              onClick={consultarGiftCard}
+              disabled={gcConsultando || !gcCodigo.trim()}
+              className="bg-violet-600 hover:bg-violet-700 disabled:bg-slate-600 text-white text-xs font-semibold px-3 rounded-lg transition-colors"
+            >
+              {gcConsultando ? '...' : 'Consultar'}
+            </button>
+          </div>
+          {gcResultado?.error && (
+            <div className="mt-2 text-red-400 text-xs">{gcResultado.error}</div>
+          )}
+          {gcResultado?.gift_card && (
+            <div className="mt-2 bg-slate-700/50 rounded-xl p-3 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-white/60 text-xs font-mono">{gcResultado.gift_card.codigo}</span>
+                <span className="text-emerald-400 font-bold text-sm">Saldo: {formatPrecio(parseFloat(gcResultado.gift_card.saldo))}</span>
+              </div>
+              <button
+                onClick={aplicarGiftCard}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg text-sm transition-colors"
+              >
+                Aplicar
+              </button>
+            </div>
+          )}
+          {giftCardsAplicadas.length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              {giftCardsAplicadas.map(gc => (
+                <div key={gc.codigo} className="flex items-center justify-between bg-slate-700/40 rounded-lg px-3 py-2">
+                  <div>
+                    <span className="text-white/60 text-xs font-mono">{gc.codigo}</span>
+                    <span className="text-emerald-400 font-semibold text-sm ml-2">{formatPrecio(gc.monto)}</span>
+                  </div>
+                  <button onClick={() => quitarGiftCard(gc.codigo)} className="text-red-400 hover:text-red-300 text-xs">
+                    Quitar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Detalle de pagos cargados */}
         {pagos.length > 0 && (
           <div className="flex-1">
@@ -412,7 +529,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           }`}>
             Total a cobrar
           </span>
-          {totalDescuentoPagos > 0 ? (
+          {(totalDescuentoPagos > 0 || saldoAplicado > 0 || totalGiftCards > 0) ? (
             <>
               <span className="text-2xl font-bold text-white/40 line-through mb-1">
                 {formatPrecio(total)}
@@ -423,9 +540,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                     Desc. {d.formaCobro} {d.porcentaje}%: -{formatPrecio(d.descuento)}
                   </span>
                 ))}
+                {saldoAplicado > 0 && (
+                  <span className="text-emerald-300 text-xs font-medium">
+                    Saldo a favor: -{formatPrecio(saldoAplicado)}
+                  </span>
+                )}
+                {totalGiftCards > 0 && (
+                  <span className="text-amber-300 text-xs font-medium">
+                    Gift Card: -{formatPrecio(totalGiftCards)}
+                  </span>
+                )}
               </div>
               <span className="text-5xl font-black text-white mb-6">
-                {formatPrecio(totalEfectivo)}
+                {totalEfectivoConGC <= 0 ? '$0' : formatPrecio(totalEfectivoConGC)}
               </span>
             </>
           ) : (
@@ -476,7 +603,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               : 'bg-slate-700 text-slate-500 cursor-not-allowed'
           }`}
         >
-          {guardando ? 'Guardando...' : montoSuficiente ? 'Confirmar venta' : 'Ingresá el pago'}
+          {guardando ? 'Guardando...' : montoSuficiente ? (totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta') : 'Ingresá el pago'}
         </button>
       </div>
     </div>

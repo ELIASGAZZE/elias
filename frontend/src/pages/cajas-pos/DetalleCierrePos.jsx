@@ -764,7 +764,7 @@ const DetalleCierrePos = () => {
         <div className="flex gap-3">
           {!esBlind && cierre.estado !== 'abierta' && (
             <button
-              onClick={() => imprimirCierre(cierre, retiros, denominaciones)}
+              onClick={() => imprimirCierre(cierre, retiros, denominaciones, gastos)}
               className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-100 py-2.5 rounded-xl font-medium transition-colors text-sm"
             >
               Imprimir comprobante

@@ -165,7 +165,8 @@ router.get('/', verificarAuth, async (req, res) => {
     }
     if (actualizaciones.length > 0) {
       for (const upd of actualizaciones) {
-        supabase.from('pedidos_delivery').update({ estado: upd.estado }).eq('id_pedido_centum', upd.id_pedido_centum).then()
+        supabase.from('pedidos_delivery').update({ estado: upd.estado }).eq('id_pedido_centum', upd.id_pedido_centum)
+          .then(({ error }) => { if (error) console.error(`[Delivery] Error actualizando estado local pedido ${upd.id_pedido_centum}:`, error.message) })
       }
     }
 
@@ -249,7 +250,7 @@ router.get('/:id/factura', verificarAuth, soloAdmin, async (req, res) => {
     // 2. Probar endpoints de Ventas en Centum
     const { generateAccessToken } = require('../services/syncERP')
     const BASE = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-    const KEY = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+    const KEY = process.env.CENTUM_API_KEY
     const headers = {
       'Content-Type': 'application/json',
       'CentumSuiteConsumidorApiPublicaId': process.env.CENTUM_CONSUMER_ID || '2',
@@ -407,7 +408,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
     // Auto-actualizar estado local si cambió (persistir en Supabase)
     if (registroLocal && registroLocal.estado !== pedido.estado) {
-      supabase.from('pedidos_delivery').update({ estado: pedido.estado }).eq('id_pedido_centum', idCentum).then()
+      supabase.from('pedidos_delivery').update({ estado: pedido.estado }).eq('id_pedido_centum', idCentum)
+        .then(({ error }) => { if (error) console.error(`[Delivery] Error actualizando estado local pedido ${idCentum}:`, error.message) })
     }
 
     res.json(pedido)
@@ -925,11 +927,12 @@ router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
 
     // 7. LUEGO anular el viejo
     let pedidoAnulado = null
+    let warningAnulacion = null
     try {
       pedidoAnulado = await anularPedidoCentum(idCentum)
     } catch (errAnular) {
       console.error(`[Delivery] Error anulando pedido ${idCentum} (nuevo ya creado: ${nuevoIdCentum}):`, errAnular.message)
-      // El nuevo ya se creó, notificar pero no fallar
+      warningAnulacion = `No se pudo anular el pedido original ${idCentum}. Anularlo manualmente en Centum.`
     }
 
     // 8. Actualizar registro local
@@ -952,11 +955,13 @@ router.post('/:id/editar', verificarAuth, soloAdmin, async (req, res) => {
         .eq('id_pedido_centum', idCentum)
     }
 
-    res.json({
+    const respuesta = {
       mensaje: `Pedido editado. Nuevo: ${nuevoNumDoc || nuevoIdCentum}, Anulado: ${idCentum}`,
       pedido_nuevo: { id: nuevoIdCentum, numero_documento: nuevoNumDoc },
       pedido_anulado: { id: idCentum, anulado: !!pedidoAnulado },
-    })
+    }
+    if (warningAnulacion) respuesta.warning = warningAnulacion
+    res.json(respuesta)
   } catch (err) {
     console.error('Error al editar pedido delivery:', err)
     if (err.message?.includes('no encontrado en Centum')) {

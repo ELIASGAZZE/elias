@@ -76,7 +76,7 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   const { nombre, activo } = req.body
 
   const updateData = {}
-  if (nombre !== undefined) updateData.nombre = nombre.trim()
+  if (nombre !== undefined && nombre !== null) updateData.nombre = String(nombre).trim()
   if (activo !== undefined) updateData.activo = activo
 
   if (Object.keys(updateData).length === 0) {

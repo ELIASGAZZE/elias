@@ -53,7 +53,7 @@ const AdminPedidos = () => {
 
       const [resPedidos, resSucursales] = await Promise.all([
         api.get('/api/pedidos', { params }),
-        api.get('/api/sucursales'),
+        api.get('/api/sucursales').catch(() => ({ data: [] })),
       ])
       setPedidos(resPedidos.data.pedidos)
       setTotal(resPedidos.data.total)

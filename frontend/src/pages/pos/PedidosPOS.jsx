@@ -15,7 +15,7 @@ const FILTROS_ESTADO = [
   { value: 'todos', label: 'Todos' },
 ]
 
-const PedidosPOS = ({ embebido, onEntregarPedido }) => {
+const PedidosPOS = ({ embebido, onEntregarPedido, onEditarPedido }) => {
   const { usuario, esAdmin } = useAuth()
   const [pedidos, setPedidos] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -42,7 +42,15 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
   }, [cargarPedidos])
 
   async function cambiarEstado(pedidoId, estado) {
-    if (!confirm(`¿Marcar pedido como "${estado}"?`)) return
+    const pedido = pedidos.find(p => p.id === pedidoId)
+    const esPagado = pedido && (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+    const totalPagado = pedido ? (parseFloat(pedido.total_pagado) || 0) : 0
+
+    if (estado === 'cancelado' && esPagado && totalPagado > 0) {
+      if (!confirm(`Se generará saldo a favor de ${formatPrecio(totalPagado)} para el cliente.\n\n¿Cancelar pedido?`)) return
+    } else {
+      if (!confirm(`¿Marcar pedido como "${estado}"?`)) return
+    }
     try {
       await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado })
       setPedidos(prev => prev.filter(p => p.id !== pedidoId))
@@ -94,10 +102,15 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
     if (!pedidoSeleccionado) return null
     const p = pedidos.find(p => p.id === pedidoSeleccionado)
     if (!p) return null
+    const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+    const totalPagado = parseFloat(p.total_pagado) || 0
+    const diferencia = esPagado ? (p.total - totalPagado) : 0
     return {
       ...p,
       items: typeof p.items === 'string' ? JSON.parse(p.items) : p.items,
-      esPagado: (p.observaciones || '').includes('PAGO ANTICIPADO'),
+      esPagado,
+      totalPagado,
+      diferencia, // >0 debe más, <0 devolver
     }
   }, [pedidoSeleccionado, pedidos])
 
@@ -197,6 +210,8 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
             {pedidosFiltrados.map(pedido => {
               const fecha = new Date(pedido.created_at)
               const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+              const totalPagado = parseFloat(pedido.total_pagado) || 0
+              const diferencia = esPagado ? (pedido.total - totalPagado) : 0
               const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
 
               return (
@@ -228,6 +243,16 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
                             Pagado
                           </span>
                         )}
+                        {esPagado && diferencia > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-50 text-red-600">
+                            Debe {formatPrecio(diferencia)}
+                          </span>
+                        )}
+                        {esPagado && diferencia < 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-50 text-emerald-700">
+                            Saldo +{formatPrecio(Math.abs(diferencia))}
+                          </span>
+                        )}
                         {pedido.estado !== 'pendiente' && (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                             pedido.estado === 'entregado' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
@@ -237,21 +262,6 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
                         )}
                       </div>
                       <div className="flex items-center gap-3 flex-shrink-0">
-                        {pedido.estado === 'pendiente' && !esPagado && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); generarLinkMP(pedido.id) }}
-                            disabled={generandoLink === pedido.id}
-                            className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1"
-                          >
-                            {generandoLink === pedido.id ? (
-                              <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                            ) : linkCopiado === pedido.id ? (
-                              'Copiado!'
-                            ) : (
-                              'Link MP'
-                            )}
-                          </button>
-                        )}
                         <span className="text-sm font-bold text-gray-800">{formatPrecio(pedido.total)}</span>
                         <span className="text-xs text-gray-400">{items.length} art.</span>
                       </div>
@@ -273,6 +283,44 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
                         </>
                       )}
                     </div>
+                    {/* Botones de acción en la card */}
+                    {pedido.estado === 'pendiente' && (
+                      <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                        {onEditarPedido && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onEditarPedido({ ...pedido, items, esPagado, totalPagado: parseFloat(pedido.total_pagado) || 0, diferencia }); setPedidoSeleccionado(null) }}
+                            className="bg-violet-100 hover:bg-violet-200 text-violet-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
+                          >
+                            Editar
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (esPagado && diferencia > 0) { alert(`Falta cobrar ${formatPrecio(diferencia)} antes de entregar`); return }
+                            onEntregarPedido ? onEntregarPedido({ ...pedido, items, esPagado, totalPagado: parseFloat(pedido.total_pagado) || 0, diferencia }) : cambiarEstado(pedido.id, 'entregado')
+                          }}
+                          className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
+                        >
+                          {esPagado && diferencia < 0 ? `Entregar (saldo +${formatPrecio(Math.abs(diferencia))})` : 'Entregar'}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); generarLinkMP(pedido.id) }}
+                          disabled={generandoLink === pedido.id}
+                          className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                        >
+                          {generandoLink === pedido.id ? (
+                            <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                          ) : linkCopiado === pedido.id ? 'Copiado!' : diferencia > 0 ? `MP dif. ${formatPrecio(diferencia)}` : 'Link MP'}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); cambiarEstado(pedido.id, 'cancelado') }}
+                          className="bg-red-100 hover:bg-red-200 text-red-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -343,6 +391,21 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
 
             {/* Items scrolleables */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
+              {/* Badges de diferencia en el drawer */}
+              {pedidoDetalle.esPagado && pedidoDetalle.diferencia !== 0 && (
+                <div className={`mb-3 px-3 py-2 rounded-lg text-sm font-medium flex items-center justify-between ${
+                  pedidoDetalle.diferencia > 0 ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                }`}>
+                  <span>
+                    {pedidoDetalle.diferencia > 0
+                      ? `Debe ${formatPrecio(pedidoDetalle.diferencia)}`
+                      : `Saldo a favor: +${formatPrecio(Math.abs(pedidoDetalle.diferencia))}`
+                    }
+                  </span>
+                  <span className="text-xs opacity-70">Pagó {formatPrecio(pedidoDetalle.totalPagado)}</span>
+                </div>
+              )}
+
               <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
                 {pedidoDetalle.items.length} artículos
               </div>
@@ -393,13 +456,38 @@ const PedidosPOS = ({ embebido, onEntregarPedido }) => {
                 <span className="text-sm font-medium text-gray-500">Total</span>
                 <span className="text-xl font-bold text-gray-800">{formatPrecio(pedidoDetalle.total)}</span>
               </div>
+
               {pedidoDetalle.estado === 'pendiente' && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {onEditarPedido && (
+                    <button
+                      onClick={() => { onEditarPedido(pedidoDetalle); setPedidoSeleccionado(null) }}
+                      className="bg-violet-100 hover:bg-violet-200 text-violet-700 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+                    >
+                      Editar
+                    </button>
+                  )}
                   <button
-                    onClick={() => onEntregarPedido ? onEntregarPedido(pedidoDetalle) : cambiarEstado(pedidoDetalle.id, 'entregado')}
+                    onClick={() => {
+                      if (pedidoDetalle.esPagado && pedidoDetalle.diferencia > 0) {
+                        alert(`Falta cobrar ${formatPrecio(pedidoDetalle.diferencia)} antes de entregar`)
+                        return
+                      }
+                      onEntregarPedido ? onEntregarPedido(pedidoDetalle) : cambiarEstado(pedidoDetalle.id, 'entregado')
+                    }}
                     className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
                   >
-                    {onEntregarPedido ? 'Entregar' : 'Marcar entregado'}
+                    {pedidoDetalle.esPagado && pedidoDetalle.diferencia < 0
+                      ? `Entregar (saldo +${formatPrecio(Math.abs(pedidoDetalle.diferencia))})`
+                      : onEntregarPedido ? 'Entregar' : 'Marcar entregado'
+                    }
+                  </button>
+                  <button
+                    onClick={() => generarLinkMP(pedidoDetalle.id)}
+                    disabled={generandoLink === pedidoDetalle.id}
+                    className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {generandoLink === pedidoDetalle.id ? 'Generando...' : linkCopiado === pedidoDetalle.id ? 'Copiado!' : pedidoDetalle.esPagado && pedidoDetalle.diferencia > 0 ? `MP dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Link MP'}
                   </button>
                   <button
                     onClick={() => cambiarEstado(pedidoDetalle.id, 'cancelado')}

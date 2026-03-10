@@ -28,6 +28,7 @@ const posRoutes = require('./routes/pos')
 const cierresPosRoutes = require('./routes/cierresPos')
 const retirosPosRoutes = require('./routes/retirosPos')
 const gastosPosRoutes = require('./routes/gastosPos')
+const giftCardsRoutes = require('./routes/giftcards')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -75,10 +76,19 @@ app.use('/api/pos', posRoutes)
 app.use('/api/cierres-pos', cierresPosRoutes)
 app.use('/api', retirosPosRoutes)
 app.use('/api', gastosPosRoutes)
+app.use('/api/gift-cards', giftCardsRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {
   res.json({ estado: 'ok', timestamp: new Date().toISOString() })
+})
+
+// ── Error handler global ──────────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('[Error no manejado]', err.stack || err.message || err)
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
 })
 
 // ── Inicio del servidor ───────────────────────────────────────────────────────

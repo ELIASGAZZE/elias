@@ -65,6 +65,7 @@ const NuevoPedido = () => {
   const [totalErp, setTotalErp] = useState(0)
   const [paginaErp, setPaginaErp] = useState(1)
   const [busquedaErp, setBusquedaErp] = useState('')
+  const [busquedaErpDebounced, setBusquedaErpDebounced] = useState('')
   const [buscandoErp, setBuscandoErp] = useState(false)
   const [articulosSeleccionados, setArticulosSeleccionados] = useState([]) // artículos con cantidad > 0 (datos completos)
   const busquedaTimerRef = useRef(null)
@@ -149,6 +150,14 @@ const NuevoPedido = () => {
     cargarArticulos()
   }, [sucursalSeleccionada, esExtraordinario])
 
+  // Debounce de búsqueda ERP (400ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setBusquedaErpDebounced(busquedaErp)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [busquedaErp])
+
   // Cargar artículos ERP cuando cambia página, búsqueda o se activa flujo extraordinario
   useEffect(() => {
     if (!sucursalSeleccionada || !esExtraordinario) {
@@ -162,7 +171,7 @@ const NuevoPedido = () => {
       setError('')
       try {
         const params = { page: paginaErp, limit: ERP_LIMIT }
-        if (busquedaErp.trim()) params.buscar = busquedaErp.trim()
+        if (busquedaErpDebounced.trim()) params.buscar = busquedaErpDebounced.trim()
 
         const { data } = await api.get('/api/articulos/erp', { params })
         setArticulosErp(data.articulos)
@@ -189,7 +198,7 @@ const NuevoPedido = () => {
       }
     }
     cargarErp()
-  }, [sucursalSeleccionada, esExtraordinario, paginaErp, busquedaErp])
+  }, [sucursalSeleccionada, esExtraordinario, paginaErp, busquedaErpDebounced])
 
   // Rubros únicos para el filtro (solo flujo regular)
   const rubrosDisponibles = useMemo(() => {
@@ -712,7 +721,7 @@ const ArticuloCard = ({ articulo, cantidad, onChange, sucursalId, mostrarStockId
       await api.put(`/api/articulos/${articulo.id}/sucursal/${sucursalId}/stock-ideal`, {
         stock_ideal: nuevoStock,
       })
-      articulo.stock_ideal = nuevoStock
+      // stock_ideal se persiste en la API; el estado local ya está actualizado
     } catch {
       setStockIdeal(articulo.stock_ideal || 0)
     } finally {

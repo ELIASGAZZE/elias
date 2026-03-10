@@ -104,7 +104,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
   return html
 }
 
-export function imprimirCierre(cierre, retiros, denominaciones) {
+export function imprimirCierre(cierre, retiros, denominaciones, gastos) {
   let html = ''
 
   html += '<div class="center titulo">CIERRE DE CAJA</div>'
@@ -153,6 +153,17 @@ export function imprimirCierre(cierre, retiros, denominaciones) {
     })
     const totalRetiros = retiros.reduce((sum, r) => sum + parseFloat(r.total || 0), 0)
     html += `<div class="row total"><span>Total retiros</span><span>${formatMonto(totalRetiros)}</span></div>`
+  }
+
+  // Gastos durante el turno
+  if (gastos && gastos.length > 0) {
+    html += '<div class="line"></div>'
+    html += '<div class="seccion">Gastos:</div>'
+    gastos.forEach(g => {
+      html += `<div class="row"><span>  ${escapeHtml(g.descripcion)}</span><span>${formatMonto(g.importe)}</span></div>`
+    })
+    const totalGastos = gastos.reduce((sum, g) => sum + parseFloat(g.importe || 0), 0)
+    html += `<div class="row total"><span>Total gastos</span><span>${formatMonto(totalGastos)}</span></div>`
   }
 
   html += '<div class="line-double"></div>'

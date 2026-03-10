@@ -83,7 +83,11 @@ const DetallePedido = () => {
         }
       })
       .catch(() => {
-        if (ext === 'pdf') alert('Este pedido no tiene artículos manuales')
+        if (ext === 'pdf') {
+          alert('Este pedido no tiene artículos manuales')
+        } else {
+          alert('Error al descargar el archivo')
+        }
       })
   }
 

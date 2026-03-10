@@ -160,6 +160,34 @@ router.get('/', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/cierres-pos/abierta?caja_id=X — verificar si la caja tiene un cierre abierto
+router.get('/abierta', verificarAuth, async (req, res) => {
+  const { caja_id } = req.query
+  if (!caja_id) {
+    return res.status(400).json({ error: 'caja_id es requerido' })
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('cierres_pos')
+      .select(SELECT_CIERRE)
+      .eq('caja_id', caja_id)
+      .eq('estado', 'abierta')
+      .limit(1)
+
+    if (error) throw error
+
+    if (data && data.length > 0) {
+      return res.json({ abierta: true, cierre: data[0] })
+    }
+
+    res.json({ abierta: false })
+  } catch (err) {
+    console.error('Error al verificar caja abierta POS:', err)
+    res.status(500).json({ error: 'Error al verificar caja abierta' })
+  }
+})
+
 // GET /api/cierres-pos/ultimo-cambio?caja_id=X — último cambio dejado en caja
 router.get('/ultimo-cambio', verificarAuth, async (req, res) => {
   const { caja_id } = req.query
@@ -685,6 +713,15 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
 
     if (errorVentas) throw errorVentas
 
+    // Gift cards activadas en el mismo rango (generan movimiento de caja pero no venta)
+    const { data: giftCardsActivadas } = await supabase
+      .from('gift_cards')
+      .select('id, codigo, monto_inicial, pagos, created_at')
+      .eq('created_by', cierre.cajero_id)
+      .gte('created_at', desde)
+      .lte('created_at', hasta)
+      .not('pagos', 'is', null)
+
     // Aggregate payments by type
     const mediosPago = {}
     let totalEfectivo = 0
@@ -693,6 +730,19 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
     ;(ventas || []).forEach(v => {
       totalGeneral += parseFloat(v.total) || 0
       const pagos = v.pagos || []
+      pagos.forEach(p => {
+        const tipo = p.tipo || 'Efectivo'
+        if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
+        mediosPago[tipo].total += parseFloat(p.monto) || 0
+        mediosPago[tipo].cantidad += 1
+      })
+    })
+
+    // Sumar pagos de gift cards activadas al movimiento de caja
+    let totalGiftCardsActivadas = 0
+    ;(giftCardsActivadas || []).forEach(gc => {
+      totalGiftCardsActivadas += parseFloat(gc.monto_inicial) || 0
+      const pagos = gc.pagos || []
       pagos.forEach(p => {
         const tipo = p.tipo || 'Efectivo'
         if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
@@ -711,8 +761,10 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
     res.json({
       total_efectivo: parseFloat(totalEfectivo.toFixed(2)),
       medios_pago: mediosPagoArray,
-      total_general: parseFloat(totalGeneral.toFixed(2)),
+      total_general: parseFloat((totalGeneral + totalGiftCardsActivadas).toFixed(2)),
       cantidad_ventas: (ventas || []).length,
+      gift_cards_activadas: (giftCardsActivadas || []).length,
+      total_gift_cards_activadas: parseFloat(totalGiftCardsActivadas.toFixed(2)),
       detalle_ventas: (ventas || []).map(v => ({
         id: v.id,
         total: v.total,

@@ -112,6 +112,9 @@ const DetalleDelivery = () => {
       if (editFechaEntrega) body.fecha_entrega = editFechaEntrega
 
       const { data } = await api.post(`/api/delivery/${id}/editar`, body)
+      if (data.warning) {
+        alert(`Atención: ${data.warning}`)
+      }
       // Redirigir al nuevo pedido
       const nuevoId = data.pedido_nuevo?.id
       if (nuevoId) {

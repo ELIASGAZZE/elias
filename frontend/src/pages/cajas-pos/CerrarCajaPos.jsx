@@ -288,12 +288,13 @@ const CerrarCajaPos = () => {
       } else {
         const { data: cierreActualizado } = await api.put(`/api/cierres-pos/${id}/cerrar`, payload)
 
-        // Fetch retiros actualizados y denominaciones para imprimir
-        const [retirosRes, denomRes] = await Promise.all([
+        // Fetch retiros, gastos y denominaciones para imprimir
+        const [retirosRes, gastosRes, denomRes] = await Promise.all([
           api.get(`/api/cierres-pos/${id}/retiros`).catch(() => ({ data: [] })),
+          api.get(`/api/cierres-pos/${id}/gastos`).catch(() => ({ data: [] })),
           api.get('/api/denominaciones').catch(() => ({ data: [] })),
         ])
-        imprimirCierre(cierreActualizado, retirosRes.data || [], denomRes.data || [])
+        imprimirCierre(cierreActualizado, retirosRes.data || [], denomRes.data || [], gastosRes.data || [])
 
         navigate(`/cajas-pos/cierre/${id}`)
       }

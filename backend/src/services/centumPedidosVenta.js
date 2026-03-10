@@ -3,7 +3,8 @@ const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
 
 const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
-const API_KEY = process.env.CENTUM_API_KEY || '0f09803856c74e07a95c637e15b1d742149a72ffcd684e679e5fede6fb89ae3232fd1cc2954941679c91e8d847587aeb'
+const API_KEY = process.env.CENTUM_API_KEY
+if (!API_KEY) throw new Error('CENTUM_API_KEY env var is required')
 const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 
 function getHeaders() {

@@ -26,8 +26,8 @@ export const AuthProvider = ({ children }) => {
 
       if (tokenGuardado && usuarioGuardado) {
         try {
-          // Verificamos que el token siga siendo válido
-          await api.get('/api/auth/me')
+          // Verificamos que el token siga siendo válido (skip redirect en interceptor)
+          await api.get('/api/auth/me', { _skipAuthRedirect: true })
           const usr = JSON.parse(usuarioGuardado)
           setUsuario(usr)
 
