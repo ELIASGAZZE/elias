@@ -61,14 +61,19 @@ function abrirVentanaImpresion(html) {
   doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PRINT_STYLES}</style></head><body>${html}</body></html>`)
   doc.close()
 
-  iframe.onload = () => {
-    iframe.contentWindow.focus()
-    iframe.contentWindow.print()
+  // Esperar a que el contenido esté listo y lanzar impresión
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.focus()
+      iframe.contentWindow.print()
+    } catch (e) {
+      console.error('Error al imprimir:', e)
+    }
     // Limpiar iframe después de imprimir
     setTimeout(() => {
-      document.body.removeChild(iframe)
-    }, 1000)
-  }
+      try { document.body.removeChild(iframe) } catch {}
+    }, 2000)
+  }, 100)
 }
 
 function buildDenominacionesHtml(billetes, monedas, denominaciones) {
