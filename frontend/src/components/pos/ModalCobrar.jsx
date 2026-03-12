@@ -535,6 +535,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }
 
+  // Mapeo de F-keys: F3-F9 = billetes, F1/F2 = posnet, F10-F12 = formas de cobro
+  const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100 }
+  const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
+
+  // Track último billete seleccionado con F-key para Enter = abrir modal cantidad
+  const [ultimoFKeyBillete, setUltimoFKeyBillete] = useState(null)
+
   // Atajos de teclado globales del modal de cobro
   useEffect(() => {
     const handler = (e) => {
@@ -548,10 +555,15 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         onCerrar()
         return
       }
-      // Enter = Confirmar venta (solo si monto suficiente y no en input)
-      if (e.key === 'Enter' && montoSuficiente && !guardando && !enInput) {
+      // Enter: si hay billete pendiente → abrir modal cantidad, sino confirmar venta
+      if (e.key === 'Enter' && !enInput) {
         e.preventDefault()
-        confirmarVenta()
+        if (ultimoFKeyBillete) {
+          setCantidadModal({ valor: ultimoFKeyBillete, cantidad: '' })
+          setUltimoFKeyBillete(null)
+        } else if (montoSuficiente && !guardando) {
+          confirmarVenta()
+        }
         return
       }
       if (enInput) return
@@ -566,31 +578,45 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         e.preventDefault()
         borrarPagos()
       }
-      // F1-F4 = Seleccionar forma de pago (otros medios)
-      if (e.key === 'F1' && formasCobro.length >= 1) {
+
+      // F1 = Tarjeta (posnet MP)
+      if (e.key === 'F1') {
         e.preventDefault()
-        setFormaSeleccionada(formasCobro[0])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+        setUltimoFKeyBillete(null)
+        iniciarPagoMP('credit_card')
       }
-      if (e.key === 'F2' && formasCobro.length >= 2) {
+      // F2 = QR (posnet MP)
+      if (e.key === 'F2') {
         e.preventDefault()
-        setFormaSeleccionada(formasCobro[1])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+        setUltimoFKeyBillete(null)
+        iniciarPagoMP('qr')
       }
-      if (e.key === 'F3' && formasCobro.length >= 3) {
+
+      // F3-F9 = Billetes
+      const valorBillete = FKEY_BILLETES[e.key]
+      if (valorBillete) {
         e.preventDefault()
-        setFormaSeleccionada(formasCobro[2])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+        agregarBillete(valorBillete)
+        setUltimoFKeyBillete(valorBillete)
+        // Limpiar después de 2 segundos si no se aprieta Enter
+        setTimeout(() => setUltimoFKeyBillete(prev => prev === valorBillete ? null : prev), 2000)
       }
-      if (e.key === 'F4' && formasCobro.length >= 4) {
+
+      // F10-F12 = Formas de cobro (Transferencia, Payway, Rappi)
+      const nombreForma = FKEY_FORMAS[e.key]
+      if (nombreForma) {
         e.preventDefault()
-        setFormaSeleccionada(formasCobro[3])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+        setUltimoFKeyBillete(null)
+        const fc = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
+        if (fc) {
+          setFormaSeleccionada(fc)
+          setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante])
+  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante, ultimoFKeyBillete])
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row">
@@ -629,6 +655,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 }`}
               >
                 {formatDenominacion(den.valor)}
+                {Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor) && (
+                  <span className="absolute top-1 left-1.5 text-[9px] text-white/40">{Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor)[0]}</span>
+                )}
                 {conteoBilletes[den.valor]?.cantidad > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 bg-white text-slate-800 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md">
                     {conteoBilletes[den.valor].cantidad}
@@ -706,7 +735,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div>
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Otros medios</h3>
             <div className="space-y-2">
-              {formasCobro.map((fc, fcIdx) => (
+              {formasCobro.map((fc) => {
+                const fkeyMatch = Object.entries(FKEY_FORMAS).find(([,name]) => fc.nombre.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fc.nombre.toLowerCase()))
+                return (
                 <button
                   key={fc.id}
                   onClick={() => {
@@ -724,8 +755,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                       : 'bg-slate-700 hover:bg-slate-600 text-white'
                   }`}
                 >
-                  {fc.nombre} {fcIdx < 4 && <span className="text-[9px] opacity-50 ml-1">F{fcIdx + 1}</span>}
+                  {fc.nombre} {fkeyMatch && <span className="text-[9px] opacity-50 ml-1">{fkeyMatch[0]}</span>}
                 </button>
+                )}}
               ))}
             </div>
 
@@ -820,7 +852,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 disabled={restante <= 0 && totalEfectivoConGC <= 0}
                 className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
               >
-                <span className="block text-xs opacity-70">Tarjeta</span>
+                <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
                 {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
               </button>
               <button
@@ -828,7 +860,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 disabled={restante <= 0 && totalEfectivoConGC <= 0}
                 className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
               >
-                <span className="block text-xs opacity-70">QR</span>
+                <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
                 {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
               </button>
             </div>
