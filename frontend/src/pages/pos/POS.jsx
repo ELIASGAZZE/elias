@@ -1369,23 +1369,44 @@ const POS = () => {
     }
   }, [confirmEliminar, usuario])
 
-  // Atajos de teclado para modales (Enter=confirmar, Escape=cancelar)
+  // Atajos de teclado para modales y acciones rápidas
   useEffect(() => {
     const handler = (e) => {
+      // Modal eliminar artículo
       if (confirmEliminar) {
         if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() }
         if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) }
         return
       }
+      // Modal cancelar venta
       if (mostrarCancelar) {
         if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
         if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
         return
       }
+      // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys
+      if (mostrarCobrar) return
+
+      const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
+      // F9 = Cancelar venta
+      if (e.key === 'F9' && tieneItems) {
+        e.preventDefault()
+        setMostrarCancelar(true); setCancelarMotivo(null); setCancelarMotivoOtro(''); setCancelarPasoConfirm(false)
+      }
+      // F10 = Es pedido
+      if (e.key === 'F10' && tieneItems && !pedidoEnProceso) {
+        e.preventDefault()
+        handleEsPedido()
+      }
+      // F11 = Cobrar
+      if (e.key === 'F11' && tieneItems) {
+        e.preventDefault()
+        setMostrarCobrar(true)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro])
+  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito.length, giftCardsEnVenta.length, pedidoEnProceso])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -2465,6 +2486,7 @@ const POS = () => {
                 <button
                   onClick={() => { setMostrarCancelar(true); setCancelarMotivo(null); setCancelarMotivoOtro(''); setCancelarPasoConfirm(false) }}
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                  title="F9"
                 >
                   Cancelar
                 </button>
@@ -2485,12 +2507,14 @@ const POS = () => {
                       onClick={handleEsPedido}
                       disabled={guardandoPedido}
                       className="px-3 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold rounded-lg transition-colors"
+                      title="F10"
                     >
                       {guardandoPedido ? 'Guardando...' : 'Es pedido'}
                     </button>
                     <button
                       onClick={() => setMostrarCobrar(true)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                      title="F11"
                     >
                       Cobrar {formatPrecio(totalConGiftCards)}
                     </button>
@@ -2501,6 +2525,7 @@ const POS = () => {
                   <button
                     onClick={() => setMostrarCobrar(true)}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                    title="F11"
                   >
                     Cobrar {formatPrecio(totalConGiftCards)}
                   </button>
@@ -2570,7 +2595,7 @@ const POS = () => {
                         ref={seleccionado ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                         onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); setBusquedaIdx(-1); inputBusquedaRef.current?.focus() }}
                         className={`flex items-center justify-between px-4 py-2.5 cursor-pointer border-b last:border-b-0 transition-colors ${
-                          seleccionado ? 'bg-violet-100' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
+                          seleccionado ? 'bg-violet-200 border-l-4 border-l-violet-600' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
                         }`}
                       >
                         <button
