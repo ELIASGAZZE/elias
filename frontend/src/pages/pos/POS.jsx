@@ -1390,10 +1390,17 @@ const POS = () => {
         if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
         // Flechas arriba/abajo para seleccionar motivo
         if (!cancelarPasoConfirm && document.activeElement?.tagName !== 'TEXTAREA') {
-          const motivos = ['error_precio', 'cliente_no_quiere', 'producto_defectuoso', 'otro']
+          const motivos = [
+            'El cliente no tiene dinero suficiente',
+            'El cliente cambió de opinión',
+            'Error del cajero al cargar productos',
+            'Problema con el medio de pago',
+            'El cliente se retiró del local',
+            'otro',
+          ]
           const idxActual = motivos.indexOf(cancelarMotivo)
-          if (e.key === 'ArrowDown') { e.preventDefault(); setCancelarMotivo(motivos[Math.min(idxActual + 1, motivos.length - 1)]) }
-          if (e.key === 'ArrowUp') { e.preventDefault(); setCancelarMotivo(motivos[Math.max(idxActual - 1, 0)]) }
+          if (e.key === 'ArrowDown') { e.preventDefault(); const next = Math.min(idxActual + 1, motivos.length - 1); setCancelarMotivo(motivos[next]); if (motivos[next] !== 'otro') setCancelarMotivoOtro('') }
+          if (e.key === 'ArrowUp') { e.preventDefault(); const prev = Math.max(idxActual <= 0 ? 0 : idxActual - 1, 0); setCancelarMotivo(motivos[prev]); if (motivos[prev] !== 'otro') setCancelarMotivoOtro('') }
         }
         return
       }
