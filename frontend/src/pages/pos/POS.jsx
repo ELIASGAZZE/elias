@@ -1226,6 +1226,7 @@ const POS = () => {
 
   // Detectar entrada rápida tipo escáner de barras
   const ultimoInputRef = useRef({ time: 0, buffer: '' })
+  const scannerTimeoutRef = useRef(null)
   const scannerProcesadoRef = useRef(false)
 
   const handleBusquedaChange = useCallback((e) => {
@@ -1240,25 +1241,38 @@ const POS = () => {
     // Si el valor tiene 8+ dígitos y llegó rápido (< 50ms entre chars) o fue pegado
     if (/^\d{8,}$/.test(valor.trim()) && (dt < 50 || valor.length > 8)) {
       scannerProcesadoRef.current = true
-      // Dar un pequeño delay para que el scanner termine de escribir
-      setTimeout(() => {
+      // Cancelar timeout anterior (el scanner sigue escribiendo)
+      if (scannerTimeoutRef.current) clearTimeout(scannerTimeoutRef.current)
+      scannerTimeoutRef.current = setTimeout(() => {
+        scannerTimeoutRef.current = null
         if (!buscarPorBarcode(valor.trim())) {
           setAlertaBarcode(valor.trim())
           playAlertSound()
           setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
           setBusquedaArt('')
         }
-      }, 100)
+      }, 150)
     }
   }, [buscarPorBarcode])
 
   const handleBusquedaKeyDown = useCallback((e) => {
     if (e.key === 'Enter') {
-      // Si el scanner ya procesó este código, ignorar el Enter del scanner
+      // Si el scanner ya procesó o está procesando este código, ignorar el Enter
       if (scannerProcesadoRef.current) {
         e.preventDefault()
         scannerProcesadoRef.current = false
-        setBusquedaArt('')
+        // Si hay un timeout pendiente, cancelarlo y buscar ahora con el valor final
+        if (scannerTimeoutRef.current) {
+          clearTimeout(scannerTimeoutRef.current)
+          scannerTimeoutRef.current = null
+          const valor = busquedaArt.trim()
+          if (valor && !buscarPorBarcode(valor)) {
+            setAlertaBarcode(valor)
+            playAlertSound()
+            setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
+          }
+          setBusquedaArt('')
+        }
         return
       }
       const valor = busquedaArt.trim()
