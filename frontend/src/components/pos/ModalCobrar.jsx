@@ -358,6 +358,65 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       return acc
     }, {})
 
+  // Atajos de teclado globales del modal de cobro
+  useEffect(() => {
+    const handler = (e) => {
+      // No interceptar si hay modal de cantidad abierto
+      if (cantidadModal) return
+      // No interceptar si hay un input con foco (salvo Escape/Enter especiales)
+      const enInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
+
+      // Escape = Cerrar modal
+      if (e.key === 'Escape' && !guardando) {
+        e.preventDefault()
+        onCerrar()
+        return
+      }
+      // Enter = Confirmar venta (solo si monto suficiente y no en input)
+      if (e.key === 'Enter' && montoSuficiente && !guardando && !enInput) {
+        e.preventDefault()
+        confirmarVenta()
+        return
+      }
+      // No interceptar teclas si estamos en un input
+      if (enInput) return
+
+      // Backspace = Deshacer último pago
+      if (e.key === 'Backspace' && pagos.length > 0) {
+        e.preventDefault()
+        borrarUltimoPago()
+      }
+      // Delete = Borrar todo
+      if (e.key === 'Delete') {
+        e.preventDefault()
+        borrarPagos()
+      }
+      // F1-F4 = Seleccionar forma de pago (otros medios)
+      if (e.key === 'F1' && formasCobro.length >= 1) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[0])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F2' && formasCobro.length >= 2) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[1])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F3' && formasCobro.length >= 3) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[2])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F4' && formasCobro.length >= 4) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[3])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante])
+
   function agregarBillete(valor, cantidad = 1) {
     const nuevos = Array.from({ length: cantidad }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
     setPagos(prev => [...prev, ...nuevos])
@@ -553,11 +612,12 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               }
               onCerrar()
             }}
-            className="text-white/40 hover:text-white/80 transition-colors"
+            className="text-white/40 hover:text-white/80 transition-colors flex items-center gap-1.5"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
+            <span className="text-[9px] opacity-50">Esc</span>
           </button>
         </div>
 
@@ -595,14 +655,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               onClick={borrarUltimoPago}
               className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-3 rounded-xl transition-colors"
             >
-              Deshacer
+              Deshacer <span className="text-[9px] opacity-50">Backspace</span>
             </button>
           )}
           <button
             onClick={borrarPagos}
             className={`${pagos.length > 0 ? 'flex-1' : 'w-full'} bg-red-500/80 hover:bg-red-500 text-white font-medium text-sm py-3 rounded-xl transition-colors`}
           >
-            Borrar todo
+            Borrar todo <span className="text-[9px] opacity-50">Supr</span>
           </button>
         </div>
 
@@ -648,7 +708,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div>
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Otros medios</h3>
             <div className="space-y-2">
-              {formasCobro.map(fc => (
+              {formasCobro.map((fc, fcIdx) => (
                 <button
                   key={fc.id}
                   onClick={() => {
@@ -666,7 +726,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                       : 'bg-slate-700 hover:bg-slate-600 text-white'
                   }`}
                 >
-                  {fc.nombre}
+                  {fc.nombre} {fcIdx < 4 && <span className="text-[9px] opacity-50 ml-1">F{fcIdx + 1}</span>}
                 </button>
               ))}
             </div>
@@ -984,7 +1044,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               : 'bg-slate-700 text-slate-500 cursor-not-allowed'
           }`}
         >
-          {guardando ? 'Guardando...' : montoSuficiente ? (totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta') : 'Ingresá el pago'}
+          {guardando ? 'Guardando...' : montoSuficiente ? (<>{totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta'} <span className="text-[9px] opacity-50">Enter</span></>) : 'Ingresá el pago'}
         </button>
       </div>
     </div>
