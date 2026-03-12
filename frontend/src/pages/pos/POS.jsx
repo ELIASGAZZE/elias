@@ -1225,76 +1225,38 @@ const POS = () => {
   }, [articulos, agregarAlCarrito, parsearBarcodeBalanza])
 
   // Detectar entrada rápida tipo escáner de barras
-  const ultimoInputRef = useRef({ time: 0, buffer: '' })
-  const scannerTimeoutRef = useRef(null)
-  const scannerProcesadoRef = useRef(false)
+  const ultimoInputRef = useRef({ time: 0 })
 
   const handleBusquedaChange = useCallback((e) => {
     const valor = e.target.value
     setBusquedaArt(valor)
-
-    // Detectar si es entrada rápida (escáner): varios caracteres pegados de golpe
-    const ahora = Date.now()
-    const dt = ahora - ultimoInputRef.current.time
-    ultimoInputRef.current.time = ahora
-
-    // Si el valor tiene 8+ dígitos y llegó rápido (< 50ms entre chars) o fue pegado
-    if (/^\d{8,}$/.test(valor.trim()) && (dt < 50 || valor.length > 8)) {
-      scannerProcesadoRef.current = true
-      // Cancelar timeout anterior (el scanner sigue escribiendo)
-      if (scannerTimeoutRef.current) clearTimeout(scannerTimeoutRef.current)
-      scannerTimeoutRef.current = setTimeout(() => {
-        scannerTimeoutRef.current = null
-        if (!buscarPorBarcode(valor.trim())) {
-          setAlertaBarcode(valor.trim())
-          playAlertSound()
-          setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
-          setBusquedaArt('')
-        }
-      }, 150)
-    }
-  }, [buscarPorBarcode])
+    ultimoInputRef.current.time = Date.now()
+  }, [])
 
   const handleBusquedaKeyDown = useCallback((e) => {
     if (e.key === 'Enter') {
-      // Si el scanner ya procesó o está procesando este código, ignorar el Enter
-      if (scannerProcesadoRef.current) {
-        e.preventDefault()
-        scannerProcesadoRef.current = false
-        // Si hay un timeout pendiente, cancelarlo y buscar ahora con el valor final
-        if (scannerTimeoutRef.current) {
-          clearTimeout(scannerTimeoutRef.current)
-          scannerTimeoutRef.current = null
-          const valor = busquedaArt.trim()
-          if (valor && !buscarPorBarcode(valor)) {
-            setAlertaBarcode(valor)
-            playAlertSound()
-            setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
-          }
-          setBusquedaArt('')
-        }
-        return
-      }
-      const valor = busquedaArt.trim()
+      e.preventDefault()
+      // Leer valor directo del input (no del state que puede estar desactualizado)
+      const valor = e.target.value.trim()
+      if (!valor) return
+
       // Si es un código numérico largo, buscar como barcode
       if (/^\d{4,}$/.test(valor)) {
-        e.preventDefault()
         if (!buscarPorBarcode(valor)) {
           setAlertaBarcode(valor)
           playAlertSound()
           setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
-          setBusquedaArt('')
         }
+        setBusquedaArt('')
         return
       }
       // Si hay exactamente un resultado de búsqueda por texto, agregarlo
       if (resultadosBusqueda.length === 1) {
-        e.preventDefault()
         agregarAlCarrito(resultadosBusqueda[0])
         setBusquedaArt('')
       }
     }
-  }, [busquedaArt, buscarPorBarcode, resultadosBusqueda, agregarAlCarrito])
+  }, [buscarPorBarcode, resultadosBusqueda, agregarAlCarrito])
 
   const cambiarCantidad = useCallback((articuloId, delta, esPesable) => {
     const paso = esPesable ? 0.1 : 1
