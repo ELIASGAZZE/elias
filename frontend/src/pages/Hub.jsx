@@ -36,6 +36,7 @@ const APPS = [
     path: '/pos',
     color: 'bg-violet-600',
     abrirEnNuevaPestana: true,
+    ocultarPara: ['operario'],
     icono: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
@@ -48,6 +49,7 @@ const APPS = [
     descripcion: 'Cierres y verificación del POS',
     path: '/cajas-pos',
     color: 'bg-teal-600',
+    ocultarPara: ['operario'],
     icono: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -60,21 +62,10 @@ const APPS = [
     descripcion: 'Historial de ventas POS',
     path: '/ventas',
     color: 'bg-rose-600',
+    ocultarPara: ['operario'],
     icono: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5m.75-9l3-3 2.148 2.148A12.061 12.061 0 0116.5 7.605" />
-      </svg>
-    ),
-  },
-  {
-    id: 'delivery',
-    nombre: 'Delivery',
-    descripcion: 'Pedidos de delivery a clientes',
-    path: '/delivery',
-    color: 'bg-amber-600',
-    icono: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.125-.504 1.125-1.125v-3.375c0-.621-.504-1.125-1.125-1.125H18.75M3.375 14.25h2.25m0 0V6.375c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v7.875m-7.5 0h7.5m0 0h2.25m0 0V9.75c0-.621.504-1.125 1.125-1.125h1.5c.621 0 1.125.504 1.125 1.125v4.5" />
       </svg>
     ),
   },
@@ -139,7 +130,10 @@ const Hub = () => {
 
   const showDev = import.meta.env.VITE_SHOW_DEV_APPS === 'true'
   const appsBase = showDev ? APPS : APPS.filter(a => !a.dev)
-  const appsVisibles = esAdmin ? [...appsBase, ...APPS_ADMIN] : appsBase
+  const todasLasApps = esAdmin ? [...appsBase, ...APPS_ADMIN] : appsBase
+  const appsVisibles = todasLasApps.filter(app =>
+    !app.ocultarPara || !app.ocultarPara.includes(usuario?.rol)
+  )
 
   return (
     <div className="min-h-screen bg-gray-100">

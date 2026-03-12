@@ -50,6 +50,7 @@ import AuditoriaHome from './pages/auditoria/AuditoriaHome'
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
+import ConfiguracionHub from './pages/admin/ConfiguracionHub'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
 import AdminApiLogs from './pages/admin/AdminApiLogs'
 
@@ -233,16 +234,21 @@ const App = () => {
 
           {/* Rutas admin */}
           <Route path="/admin/articulos" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminArticulos />
             </RutaProtegida>
           } />
           <Route path="/admin/articulos-manuales" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminArticulosManuales />
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion" element={
+            <RutaProtegida soloAdmin>
+              <ConfiguracionHub />
+            </RutaProtegida>
+          } />
+          <Route path="/admin/configuracion/:seccion" element={
             <RutaProtegida soloAdmin>
               <AdminConfiguracion />
             </RutaProtegida>

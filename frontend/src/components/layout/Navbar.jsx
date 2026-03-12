@@ -10,7 +10,7 @@ const Navbar = ({ titulo, sinTabs, volverA }) => {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const tabs = getTabsParaRol(esAdmin)
+  const tabs = getTabsParaRol(usuario?.rol)
 
   // Badge de errores API para admins
   const [erroresApi, setErroresApi] = useState(0)

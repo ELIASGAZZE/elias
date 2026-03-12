@@ -1,5 +1,6 @@
 // Panel de administrador: configuración general (usuarios, empleados, cajas, denominaciones, formas de cobro, rubros y sucursales)
 import React, { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import AdminPromociones from '../../components/pos/AdminPromociones'
 import api from '../../services/api'
@@ -61,9 +62,23 @@ const BotonActivo = ({ activo, onClick }) => (
   </button>
 )
 
+const TITULOS_SECCION = {
+  usuarios: 'Usuarios',
+  empleados: 'Empleados',
+  cajas: 'Cajas',
+  denominaciones: 'Denominaciones',
+  'formas-cobro': 'Formas de Cobro',
+  rubros: 'Rubros',
+  sucursales: 'Sucursales',
+  promociones: 'Promociones POS',
+}
+
 const AdminConfiguracion = () => {
-  // Acordeón
-  const [seccionAbierta, setSeccionAbierta] = useState(null)
+  const { seccion } = useParams()
+  const navigate = useNavigate()
+
+  // Acordeón (legacy, ahora siempre abierta la sección de la URL)
+  const seccionAbierta = seccion || null
 
   // Sync POS
   const [sincronizandoPOS, setSincronizandoPOS] = useState(false)
@@ -213,18 +228,18 @@ const AdminConfiguracion = () => {
   }
 
   useEffect(() => {
-    cargarSucursales()
-    cargarRubros()
-    cargarUsuarios()
-    cargarEmpleados()
-    cargarCajas()
-    cargarDenominaciones()
-    cargarFormasCobro()
-  }, [])
-
-  const toggleSeccion = (id) => {
-    setSeccionAbierta(prev => prev === id ? null : id)
-  }
+    // Sucursales se necesita para usuarios, empleados y cajas
+    if (['usuarios', 'empleados', 'cajas'].includes(seccion)) {
+      cargarSucursales()
+    }
+    if (seccion === 'usuarios') cargarUsuarios()
+    if (seccion === 'empleados') cargarEmpleados()
+    if (seccion === 'cajas') cargarCajas()
+    if (seccion === 'denominaciones') cargarDenominaciones()
+    if (seccion === 'formas-cobro') cargarFormasCobro()
+    if (seccion === 'rubros') cargarRubros()
+    if (seccion === 'sucursales') cargarSucursales()
+  }, [seccion])
 
   // --- Sucursales ---
   const crearSucursal = async (e) => {
@@ -723,19 +738,25 @@ const AdminConfiguracion = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Configuración" sinTabs />
+      <Navbar titulo={TITULOS_SECCION[seccion] || 'Configuración'} sinTabs />
+
+      {/* Botón volver */}
+      <div className="px-4 pt-3">
+        <button
+          onClick={() => navigate('/admin/configuracion')}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+          Volver a configuración
+        </button>
+      </div>
 
       <div className="px-4 py-4 space-y-3">
 
         {/* ===== USUARIOS ===== */}
-        <SeccionAcordeon
-          id="usuarios"
-          titulo="Usuarios"
-          count={usuarios.length}
-          abierta={seccionAbierta === 'usuarios'}
-          onToggle={toggleSeccion}
-          cargando={cargandoUsuarios}
-        >
+        {seccion === 'usuarios' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearUsuario} className="space-y-3 pt-4">
             <input
               type="text"
@@ -821,17 +842,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== EMPLEADOS ===== */}
-        <SeccionAcordeon
-          id="empleados"
-          titulo="Empleados"
-          count={empleados.length}
-          abierta={seccionAbierta === 'empleados'}
-          onToggle={toggleSeccion}
-          cargando={cargandoEmpleados}
-        >
+        {seccion === 'empleados' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearEmpleado} className="space-y-3 pt-4">
             <input
               type="text"
@@ -957,17 +971,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== CAJAS ===== */}
-        <SeccionAcordeon
-          id="cajas"
-          titulo="Cajas"
-          count={cajas.length}
-          abierta={seccionAbierta === 'cajas'}
-          onToggle={toggleSeccion}
-          cargando={cargandoCajas}
-        >
+        {seccion === 'cajas' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearCaja} className="space-y-3 pt-4">
             <input
               type="text"
@@ -1077,17 +1084,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== DENOMINACIONES ===== */}
-        <SeccionAcordeon
-          id="denominaciones"
-          titulo="Denominaciones"
-          count={denominaciones.length}
-          abierta={seccionAbierta === 'denominaciones'}
-          onToggle={toggleSeccion}
-          cargando={cargandoDenominaciones}
-        >
+        {seccion === 'denominaciones' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearDenominacion} className="space-y-3 pt-4">
             <input
               type="number"
@@ -1212,17 +1212,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== FORMAS DE COBRO ===== */}
-        <SeccionAcordeon
-          id="formas-cobro"
-          titulo="Formas de Cobro"
-          count={formasCobro.length}
-          abierta={seccionAbierta === 'formas-cobro'}
-          onToggle={toggleSeccion}
-          cargando={cargandoFormasCobro}
-        >
+        {seccion === 'formas-cobro' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearFormaCobro} className="space-y-3 pt-4">
             <input
               type="text"
@@ -1325,17 +1318,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== RUBROS ===== */}
-        <SeccionAcordeon
-          id="rubros"
-          titulo="Rubros"
-          count={rubros.length}
-          abierta={seccionAbierta === 'rubros'}
-          onToggle={toggleSeccion}
-          cargando={cargandoRubros}
-        >
+        {seccion === 'rubros' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearRubro} className="flex items-center gap-2 pt-4">
             <input
               type="text"
@@ -1422,17 +1408,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== SUCURSALES ===== */}
-        <SeccionAcordeon
-          id="sucursales"
-          titulo="Sucursales"
-          count={sucursales.length}
-          abierta={seccionAbierta === 'sucursales'}
-          onToggle={toggleSeccion}
-          cargando={cargandoSucursales}
-        >
+        {seccion === 'sucursales' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearSucursal} className="flex items-center gap-2 pt-4">
             <input
               type="text"
@@ -1528,17 +1507,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== PROMOCIONES POS ===== */}
-        <SeccionAcordeon
-          id="promociones"
-          titulo="Promociones POS"
-          count=""
-          abierta={seccionAbierta === 'promociones'}
-          onToggle={toggleSeccion}
-          cargando={false}
-        >
+        {seccion === 'promociones' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <div className="mb-4 flex items-center gap-3">
             <button
               onClick={async () => {
@@ -1565,7 +1537,7 @@ const AdminConfiguracion = () => {
             )}
           </div>
           <AdminPromociones />
-        </SeccionAcordeon>
+        </div>}
 
       </div>
 
