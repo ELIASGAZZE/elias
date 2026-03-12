@@ -69,27 +69,42 @@ router.get('/devices', async (req, res) => {
 // Helper: buscar órdenes pendientes de un device y cancelarlas
 async function cancelarOrdenesPendientes(deviceId) {
   try {
+    // 1) Cancelar vía Orders API — buscar órdenes de las últimas 2 horas
     const now = new Date()
-    const desde = new Date(now - 3600000).toISOString() // última hora
+    const desde = new Date(now - 7200000).toISOString()
     const hasta = now.toISOString()
     const resp = await fetch(`${MP_BASE_ORDERS}?type=point&begin_date=${desde}&end_date=${hasta}`, {
       headers: mpHeaders(),
     })
-    if (!resp.ok) return
-    const { data: orders } = await resp.json()
-    if (!Array.isArray(orders)) return
-
-    for (const order of orders) {
-      if (order.config?.point?.terminal_id !== deviceId) continue
-      if (order.status !== 'created' && order.status !== 'at_terminal') continue
-      try {
-        await fetch(`${MP_BASE_ORDERS}/${order.id}/cancel`, {
-          method: 'POST',
-          headers: mpHeaders(`auto-cancel-${order.id}-${Date.now()}`),
-        })
-        console.log(`[MP Point] Orden pendiente cancelada: ${order.id}`)
-      } catch {}
+    if (resp.ok) {
+      const body = await resp.json()
+      const orders = body.data || body.elements || []
+      if (Array.isArray(orders)) {
+        for (const order of orders) {
+          if (order.config?.point?.terminal_id !== deviceId) continue
+          if (order.status !== 'created' && order.status !== 'at_terminal' && order.status !== 'open') continue
+          try {
+            await fetch(`${MP_BASE_ORDERS}/${order.id}/cancel`, {
+              method: 'POST',
+              headers: mpHeaders(`auto-cancel-${order.id}-${Date.now()}`),
+            })
+            console.log(`[MP Point] Orden pendiente cancelada: ${order.id}`)
+          } catch {}
+        }
+      }
     }
+
+    // 2) Cancelar vía Integration API (delete del intent del device)
+    try {
+      await fetch(`${MP_BASE_POINT}/devices/${deviceId}/payment-intents`, {
+        method: 'DELETE',
+        headers: mpHeaders(),
+      })
+      console.log(`[MP Point] Payment intents del device ${deviceId} eliminados`)
+    } catch {}
+
+    // Dar tiempo a MP para procesar las cancelaciones
+    await new Promise(r => setTimeout(r, 1500))
   } catch (err) {
     console.error('[MP Point] Error limpiando órdenes pendientes:', err.message)
   }
@@ -197,6 +212,17 @@ router.post('/order/:id/cancel', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[MP Point] Error cancelando orden:', err.message)
     res.status(500).json({ error: 'Error al cancelar orden' })
+  }
+})
+
+// POST /api/mp-point/devices/:id/clear — forzar limpieza de órdenes pendientes de un device
+router.post('/devices/:id/clear', verificarAuth, async (req, res) => {
+  try {
+    await cancelarOrdenesPendientes(req.params.id)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[MP Point] Error limpiando device:', err.message)
+    res.status(500).json({ error: 'Error al limpiar órdenes pendientes' })
   }
 })
 

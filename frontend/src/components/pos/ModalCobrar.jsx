@@ -54,6 +54,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [mpError, setMpError] = useState('')
   const [mpPaymentId, setMpPaymentId] = useState(null)
   const [mpMontoIntent, setMpMontoIntent] = useState(0)
+  const [mpUltimoPaymentType, setMpUltimoPaymentType] = useState(null)
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
   const cobrarRootRef = useRef(null)
@@ -168,6 +169,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setMpEstado('creando')
     setMpError('')
     setMpPaymentId(null)
+    setMpUltimoPaymentType(paymentType)
 
     try {
       const terminalConfig = (() => { try { return JSON.parse(localStorage.getItem('pos_terminal_config') || '{}') } catch { return {} } })()
@@ -925,7 +927,20 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 <p className="text-red-400 text-sm">{mpError || 'Error en el pago'}</p>
               </div>
               <button
-                onClick={() => { setMpEstado(null); setMpError('') }}
+                onClick={async () => {
+                  // Limpiar órdenes pendientes del device y reintentar
+                  if (mpDeviceId) {
+                    setMpEstado('creando')
+                    setMpError('')
+                    try { await api.post(`/api/mp-point/devices/${mpDeviceId}/clear`) } catch {}
+                  }
+                  setMpEstado(null)
+                  setMpError('')
+                  // Reintentar automáticamente el mismo tipo de pago
+                  if (mpUltimoPaymentType) {
+                    setTimeout(() => iniciarPagoMP(mpUltimoPaymentType), 300)
+                  }
+                }}
                 className="w-full py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white/80"
               >
                 Reintentar
