@@ -243,4 +243,40 @@ router.get('/payment/:id', verificarAuth, async (req, res) => {
   }
 })
 
+// POST /api/mp-point/order/:id/refund — devolver (anular) un cobro completado
+router.post('/order/:id/refund', verificarAuth, async (req, res) => {
+  try {
+    const orderId = req.params.id
+    const { transaction_id, amount } = req.body // si viene amount → refund parcial
+
+    const body = {}
+    if (transaction_id && amount) {
+      // Refund parcial
+      body.transactions = [{ id: transaction_id, amount: amount.toString() }]
+    }
+    // Si body vacío → refund total
+
+    const idempotencyKey = `refund-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const resp = await fetch(`${MP_BASE_ORDERS}/${orderId}/refund`, {
+      method: 'POST',
+      headers: mpHeaders(idempotencyKey),
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+    })
+
+    if (resp.status === 201 || resp.status === 200) {
+      const data = await resp.json().catch(() => ({}))
+      console.log(`[MP Point] Refund exitoso para orden ${orderId}`)
+      return res.json({ ok: true, ...data })
+    }
+
+    const data = await resp.json().catch(() => ({}))
+    console.error('[MP Point] Error en refund:', data)
+    const msg = data.errors?.[0]?.message || data.message || 'Error al anular el cobro'
+    return res.status(resp.status).json({ error: msg })
+  } catch (err) {
+    console.error('[MP Point] Error en refund:', err.message)
+    res.status(500).json({ error: 'Error al anular el cobro' })
+  }
+})
+
 module.exports = router

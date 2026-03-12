@@ -56,6 +56,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [mpPaymentId, setMpPaymentId] = useState(null)
   const [mpMontoIntent, setMpMontoIntent] = useState(0)
   const [mpUltimoPaymentType, setMpUltimoPaymentType] = useState(null)
+  const [mpRefundingIdx, setMpRefundingIdx] = useState(null) // índice del pago que se está anulando
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
   const cobrarRootRef = useRef(null)
@@ -331,6 +332,30 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setMpEstado('aprobado')
     setMpIntentId(null)
     setMpError('')
+  }
+
+  // Anular cobro MP (refund)
+  async function anularPagoMP(pagoIdx) {
+    const pago = pagos[pagoIdx]
+    if (!pago?.detalle?.mp_order_id) return
+    setMpRefundingIdx(pagoIdx)
+    try {
+      const { data } = await api.post(`/api/mp-point/order/${pago.detalle.mp_order_id}/refund`)
+      if (data.ok || data.id) {
+        // Quitar el pago de la lista
+        setPagos(prev => prev.filter((_, i) => i !== pagoIdx))
+        // Reset estado MP para permitir nuevo cobro
+        setMpEstado(null)
+        setMpIntentId(null)
+        setMpError('')
+        setMpPaymentId(null)
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al anular el cobro'
+      setMpError(msg)
+    } finally {
+      setMpRefundingIdx(null)
+    }
   }
 
   // Conteo de billetes por denominación para efectivo
@@ -971,15 +996,37 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                   )}
                 </div>
               )}
-              {/* Otros medios de pago */}
+              {/* Otros medios de pago — pagos MP se muestran individual con botón anular */}
               {Object.entries(resumenPagos)
-                .filter(([tipo]) => tipo !== 'Efectivo')
+                .filter(([tipo]) => tipo !== 'Efectivo' && !pagos.some(p => p.tipo === tipo && p.detalle?.mp_order_id))
                 .map(([tipo, monto]) => (
                   <div key={tipo} className="flex justify-between items-center">
                     <span className="text-white/60 text-sm">{tipo}</span>
                     <span className="text-white font-semibold text-sm">{formatPrecio(monto)}</span>
                   </div>
                 ))}
+              {/* Pagos MP individuales con opción de anular */}
+              {pagos.map((p, idx) => p.detalle?.mp_order_id ? (
+                <div key={`mp-${idx}`} className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white/60 text-sm">{p.tipo}</span>
+                    {p.detalle?.card_last_four && <span className="text-white/30 text-xs">****{p.detalle.card_last_four}</span>}
+                    {p.detalle?.mp_problema && <span className="text-amber-400 text-[9px]">(problema)</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-semibold text-sm">{formatPrecio(p.monto)}</span>
+                    {!p.detalle?.mp_problema && (
+                      <button
+                        onClick={() => anularPagoMP(idx)}
+                        disabled={mpRefundingIdx === idx}
+                        className="text-red-400 hover:text-red-300 text-[10px] font-medium underline disabled:opacity-50 disabled:no-underline"
+                      >
+                        {mpRefundingIdx === idx ? 'Anulando...' : 'Anular'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : null)}
               {/* Descuentos por forma de pago */}
               {descuentosPorForma.length > 0 && (
                 <div className="border-t border-white/10 pt-1.5 mt-1.5 space-y-1">
