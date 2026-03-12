@@ -2591,7 +2591,7 @@ const POS = () => {
 
             {/* Dropdown de resultados de búsqueda */}
             {busquedaArt.trim() && !cargandoArticulos && (
-              <div className="absolute z-30 w-full bg-white border border-gray-300 rounded-xl shadow-xl mt-1 max-h-80 overflow-y-auto">
+              <div className={`${mostrarTeclado ? 'relative max-h-48' : 'absolute z-30 max-h-80'} w-full bg-white border border-gray-300 rounded-xl shadow-xl mt-1 overflow-y-auto`}>
                 {resultadosBusqueda.length === 0 ? (
                   <div className="px-4 py-3 text-sm text-gray-500 text-center">
                     Sin resultados para "{busquedaArt}"
