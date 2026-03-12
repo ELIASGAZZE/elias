@@ -379,7 +379,15 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   function confirmarCantidadBilletes() {
     const cant = parseInt(cantidadModal.cantidad)
-    if (cant > 0) agregarBillete(cantidadModal.valor, cant)
+    if (cant > 0) {
+      // Reemplazar: quitar todos los billetes de esta denominación y poner la cantidad indicada
+      const valor = cantidadModal.valor
+      setPagos(prev => {
+        const sinEstaDenom = prev.filter(p => !(p.tipo === 'Efectivo' && p.detalle?.denominacion === valor))
+        const nuevos = Array.from({ length: cant }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
+        return [...sinEstaDenom, ...nuevos]
+      })
+    }
     setCantidadModal(null)
   }
 
