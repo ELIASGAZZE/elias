@@ -1305,6 +1305,26 @@ const POS = () => {
 
   const [confirmEliminar, setConfirmEliminar] = useState(null) // { articuloId, nombre, cantidad }
 
+  // Atajos de teclado para modales (Enter=confirmar, Escape=cancelar)
+  useEffect(() => {
+    const handler = (e) => {
+      // Modal eliminar artículo
+      if (confirmEliminar) {
+        if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() }
+        if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) }
+        return
+      }
+      // Modal cancelar venta
+      if (mostrarCancelar) {
+        if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
+        if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
+        return
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro])
+
   const quitarDelCarrito = useCallback((articuloId) => {
     setCarrito(prev => {
       const item = prev.find(i => i.articulo.id === articuloId)
@@ -3994,10 +4014,7 @@ const POS = () => {
 
       {/* Modal cancelar venta */}
       {mostrarCancelar && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center" data-modal onKeyDown={e => {
-          if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
-          if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
-        }}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" data-modal>
           <div className="absolute inset-0 bg-black/40" onClick={() => setMostrarCancelar(false)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="px-5 py-4 border-b bg-red-50 flex items-center justify-between">
@@ -4638,8 +4655,8 @@ const POS = () => {
 
       {/* Modal confirmación eliminación de artículo */}
       {confirmEliminar && (
-        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() } else if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) } }}>
-          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4" tabIndex={-1} ref={el => el?.focus()}>
+        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
             <div className="text-center mb-4">
               <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
