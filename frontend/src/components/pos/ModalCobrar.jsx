@@ -593,16 +593,18 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       borrarPagos()
     }
 
-    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP en curso
-    if (e.key === 'F1' && !mpEstado) {
+    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo
+    if (e.key === 'F1' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('credit_card')
     }
-    // F2 = QR (posnet MP) — solo si no hay pago MP en curso
-    if (e.key === 'F2' && !mpEstado) {
+    // F2 = QR (posnet MP) — solo si no hay pago MP activo
+    if (e.key === 'F2' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('qr')
     }
 
@@ -925,24 +927,27 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           )}
           {(mpEstado === 'error' || mpEstado === 'cancelado') && (
             <div className="space-y-2">
-              <div className="bg-red-900/30 rounded-xl p-3 text-center">
-                <p className="text-red-400 text-sm">{mpError || 'Error en el pago'}</p>
+              <div className="bg-red-900/30 rounded-xl p-2 text-center">
+                <p className="text-red-400 text-xs">{mpError || 'Error en el pago'}</p>
               </div>
-              <button
-                onClick={async () => {
-                  // Limpiar órdenes pendientes del device y volver a mostrar opciones
-                  if (mpDeviceId) {
-                    try { await api.post(`/api/mp-point/devices/${mpDeviceId}/clear`) } catch {}
-                  }
-                  setMpEstado(null)
-                  setMpError('')
-                  setMpIntentId(null)
-                  setMpPaymentId(null)
-                }}
-                className="w-full py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white/80"
-              >
-                Reintentar
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('credit_card') }}
+                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+                >
+                  <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
+                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                </button>
+                <button
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('qr') }}
+                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+                >
+                  <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
+                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                </button>
+              </div>
             </div>
           )}
         </div>
