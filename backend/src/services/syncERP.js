@@ -28,7 +28,7 @@ function generateAccessToken(clavePublica) {
  * Sincroniza artículos desde ERP Centum.
  * Retorna { mensaje, cantidad } o lanza error.
  */
-async function sincronizarERP(origen = 'cron') {
+async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucursales = false } = {}) {
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
@@ -117,13 +117,59 @@ async function sincronizarERP(origen = 'cron') {
     iva_tasa: art.CategoriaImpuestoIVA?.Tasa != null ? art.CategoriaImpuestoIVA.Tasa : 21,
   }))
 
-  // Upsert en lotes de 500
+  // Comparar con precios actuales para solo actualizar los que cambiaron
   const BATCH_SIZE = 500
-  let totalInsertados = 0
   let todosLosArticulos = []
 
-  for (let i = 0; i < articulosMapeados.length; i += BATCH_SIZE) {
-    const lote = articulosMapeados.slice(i, i + BATCH_SIZE)
+  // 1. Leer artículos actuales de Supabase (codigo, precio, descuentos)
+  const articulosActuales = {}
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('articulos')
+      .select('id, codigo, precio, descuento1, descuento2, descuento3, iva_tasa, nombre')
+      .eq('tipo', 'automatico')
+      .range(from, from + BATCH_SIZE - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    for (const a of data) {
+      articulosActuales[a.codigo] = a
+    }
+    if (data.length < BATCH_SIZE) break
+    from += BATCH_SIZE
+  }
+
+  // 2. Separar artículos nuevos y los que cambiaron
+  const nuevos = []
+  const actualizados = []
+  let sinCambios = 0
+
+  for (const art of articulosMapeados) {
+    const actual = articulosActuales[art.codigo]
+    if (!actual) {
+      nuevos.push(art)
+    } else {
+      const cambioPrecio = Math.abs((parseFloat(actual.precio) || 0) - (art.precio || 0)) > 0.001
+      const cambioDesc1 = Math.abs((parseFloat(actual.descuento1) || 0) - (art.descuento1 || 0)) > 0.001
+      const cambioDesc2 = Math.abs((parseFloat(actual.descuento2) || 0) - (art.descuento2 || 0)) > 0.001
+      const cambioDesc3 = Math.abs((parseFloat(actual.descuento3) || 0) - (art.descuento3 || 0)) > 0.001
+      const cambioIva = Math.abs((parseFloat(actual.iva_tasa) || 21) - (art.iva_tasa || 21)) > 0.001
+      const cambioNombre = actual.nombre !== art.nombre
+
+      if (cambioPrecio || cambioDesc1 || cambioDesc2 || cambioDesc3 || cambioIva || cambioNombre) {
+        actualizados.push(art)
+      } else {
+        sinCambios++
+      }
+    }
+  }
+
+  // 3. Upsert solo nuevos + actualizados
+  const aUpsertear = [...nuevos, ...actualizados]
+  let totalInsertados = 0
+
+  for (let i = 0; i < aUpsertear.length; i += BATCH_SIZE) {
+    const lote = aUpsertear.slice(i, i + BATCH_SIZE)
     const { data, error } = await supabase
       .from('articulos')
       .upsert(lote, { onConflict: 'codigo' })
@@ -134,34 +180,43 @@ async function sincronizarERP(origen = 'cron') {
     totalInsertados += data.length
   }
 
-  // Crear relaciones con sucursales
-  const { data: sucursales } = await supabase
-    .from('sucursales')
-    .select('id')
+  // Si no hubo cambios, igual necesitamos los IDs para relaciones de sucursales
+  if (aUpsertear.length === 0) {
+    todosLosArticulos = Object.values(articulosActuales).map(a => ({ id: a.id }))
+  }
 
-  if (sucursales && sucursales.length > 0 && todosLosArticulos.length > 0) {
-    const filasRelacion = []
-    for (const art of todosLosArticulos) {
-      for (const suc of sucursales) {
-        filasRelacion.push({
-          articulo_id: art.id,
-          sucursal_id: suc.id,
-          habilitado: false,
-        })
+  console.log(`[Sync] ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios`)
+
+  // Crear relaciones con sucursales (skip en sync rápida)
+  if (!skipSucursales) {
+    const { data: sucursales } = await supabase
+      .from('sucursales')
+      .select('id')
+
+    if (sucursales && sucursales.length > 0 && todosLosArticulos.length > 0) {
+      const filasRelacion = []
+      for (const art of todosLosArticulos) {
+        for (const suc of sucursales) {
+          filasRelacion.push({
+            articulo_id: art.id,
+            sucursal_id: suc.id,
+            habilitado: false,
+          })
+        }
       }
-    }
 
-    for (let i = 0; i < filasRelacion.length; i += BATCH_SIZE) {
-      const lote = filasRelacion.slice(i, i + BATCH_SIZE)
-      await supabase
-        .from('articulos_por_sucursal')
-        .upsert(lote, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+      for (let i = 0; i < filasRelacion.length; i += BATCH_SIZE) {
+        const lote = filasRelacion.slice(i, i + BATCH_SIZE)
+        await supabase
+          .from('articulos_por_sucursal')
+          .upsert(lote, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+      }
     }
   }
 
-  // Sincronizar códigos de barra desde Centum BI (SQL Server)
+  // Sincronizar códigos de barra desde Centum BI (SQL Server) — skip en sync rápida
   let barcodesSincronizados = 0
-  try {
+  if (!skipBarcodes) try {
     const { getPool } = require('../config/centum')
     const db = await getPool()
     const barcodeResult = await db.request().query(`
@@ -205,8 +260,11 @@ async function sincronizarERP(origen = 'cron') {
   })
 
   return {
-    mensaje: `${totalInsertados} artículos sincronizados desde el ERP (${barcodesSincronizados} con códigos de barra)`,
+    mensaje: `Sync ERP: ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios (${barcodesSincronizados} con códigos de barra)`,
     cantidad: totalInsertados,
+    nuevos: nuevos.length,
+    actualizados: actualizados.length,
+    sin_cambios: sinCambios,
   }
 }
 

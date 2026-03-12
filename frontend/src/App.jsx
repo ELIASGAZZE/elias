@@ -31,10 +31,6 @@ import VerificarCierrePos from './pages/cajas-pos/VerificarCierrePos'
 import NuevoRetiroPos from './pages/cajas-pos/NuevoRetiroPos'
 import VerificarRetiroPos from './pages/cajas-pos/VerificarRetiroPos'
 
-// Páginas de la app Delivery
-import DeliveryHome from './pages/delivery/DeliveryHome'
-import DetalleDelivery from './pages/delivery/DetalleDelivery'
-
 // Páginas de la app POS
 import POS from './pages/pos/POS'
 import PedidosPOS from './pages/pos/PedidosPOS'
@@ -47,6 +43,9 @@ import DetalleVenta from './pages/ventas/DetalleVenta'
 import TareasHome from './pages/tareas/TareasHome'
 import TareasAdmin from './pages/tareas/TareasAdmin'
 import TareasAnalytics from './pages/tareas/TareasAnalytics'
+
+// Páginas de la app Auditoría
+import AuditoriaHome from './pages/auditoria/AuditoriaHome'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
@@ -208,15 +207,10 @@ const App = () => {
             </RutaProtegida>
           } />
 
-          {/* App: Delivery */}
-          <Route path="/delivery" element={
-            <RutaProtegida>
-              <DeliveryHome />
-            </RutaProtegida>
-          } />
-          <Route path="/delivery/:id" element={
-            <RutaProtegida>
-              <DetalleDelivery />
+          {/* App: Auditoría */}
+          <Route path="/auditoria" element={
+            <RutaProtegida soloAdmin>
+              <AuditoriaHome />
             </RutaProtegida>
           } />
 

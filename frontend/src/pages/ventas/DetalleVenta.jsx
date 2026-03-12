@@ -31,6 +31,8 @@ const DetalleVenta = () => {
   const [venta, setVenta] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [reenviando, setReenviando] = useState(false)
+  const [reenvioMsg, setReenvioMsg] = useState('')
 
   useEffect(() => {
     const cargar = async () => {
@@ -64,6 +66,23 @@ const DetalleVenta = () => {
     )
   }
 
+  const reenviarCentum = async () => {
+    if (!confirm('¿Reintentar envío a Centum? Esto generará una factura fiscal.')) return
+    setReenviando(true)
+    setReenvioMsg('')
+    try {
+      const { data } = await api.post(`/api/pos/ventas/${id}/reenviar-centum`)
+      setReenvioMsg(`Enviado OK: ${data.comprobante || 'Sin comprobante'}`)
+      // Recargar venta para actualizar estado
+      const { data: updated } = await api.get(`/api/pos/ventas/${id}`)
+      setVenta(updated.venta)
+    } catch (err) {
+      setReenvioMsg(`Error: ${err.response?.data?.error || err.message}`)
+    } finally {
+      setReenviando(false)
+    }
+  }
+
   const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
   const promociones = typeof venta.promociones_aplicadas === 'string'
     ? JSON.parse(venta.promociones_aplicadas)
@@ -83,6 +102,15 @@ const DetalleVenta = () => {
             <span className="text-gray-500">Fecha</span>
             <span className="text-gray-800 font-medium">{formatFechaHora(venta.created_at)}</span>
 
+            <span className="text-gray-500">Clasificación</span>
+            <span className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
+              venta.clasificacion === 'EMPRESA'
+                ? 'bg-blue-100 text-blue-700'
+                : 'bg-amber-100 text-amber-700'
+            }`}>
+              {venta.clasificacion}
+            </span>
+
             <span className="text-gray-500">Cliente</span>
             <span className="text-gray-800 font-medium">{venta.nombre_cliente || 'Consumidor Final'}</span>
 
@@ -101,7 +129,42 @@ const DetalleVenta = () => {
                 </span>
               </>
             )}
+
+            {venta.centum_comprobante && (
+              <>
+                <span className="text-gray-500">Centum</span>
+                <span className="text-green-600 font-medium">
+                  {venta.centum_comprobante}
+                </span>
+              </>
+            )}
+            {!venta.centum_sync && venta.centum_error && (
+              <>
+                <span className="text-gray-500">Centum</span>
+                <span className="text-red-600 font-medium text-sm">
+                  Error: {venta.centum_error}
+                </span>
+              </>
+            )}
           </div>
+
+          {/* Botón reintentar Centum */}
+          {!venta.centum_sync && !venta.centum_comprobante && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <button
+                onClick={reenviarCentum}
+                disabled={reenviando}
+                className="w-full text-sm font-medium py-2 px-4 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
+              >
+                {reenviando ? 'Enviando a Centum...' : 'Reintentar Centum'}
+              </button>
+              {reenvioMsg && (
+                <p className={`text-xs mt-2 ${reenvioMsg.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                  {reenvioMsg}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Items */}
@@ -109,7 +172,7 @@ const DetalleVenta = () => {
           <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items ({items.length})</h2>
           <div className="divide-y divide-gray-100">
             {items.map((item, i) => {
-              const precioUnit = parseFloat(item.precioFinal || item.precio || 0)
+              const precioUnit = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
               const cant = parseFloat(item.cantidad || 1)
               const subtotal = precioUnit * cant
 
@@ -149,16 +212,18 @@ const DetalleVenta = () => {
         )}
 
         {/* Descuento por forma de pago */}
-        {descFormaPago && (
+        {descFormaPago && descFormaPago.total > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Descuento por forma de pago</h2>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-700">
-                {MEDIOS_LABELS[descFormaPago.medio] || descFormaPago.medio}
-                {descFormaPago.porcentaje ? ` (${descFormaPago.porcentaje}%)` : ''}
-              </span>
-              <span className="text-green-600 font-medium">-{formatPrecio(descFormaPago.monto || 0)}</span>
-            </div>
+            {(descFormaPago.detalle || []).map((d, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-gray-700">
+                  {MEDIOS_LABELS[d.formaCobro?.toLowerCase()] || d.formaCobro}
+                  {d.porcentaje ? ` (${d.porcentaje}%)` : ''}
+                </span>
+                <span className="text-green-600 font-medium">-{formatPrecio(d.descuento || 0)}</span>
+              </div>
+            ))}
           </div>
         )}
 

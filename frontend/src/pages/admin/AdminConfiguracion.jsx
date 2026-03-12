@@ -77,6 +77,7 @@ const AdminConfiguracion = () => {
   const [mensajeSucursal, setMensajeSucursal] = useState('')
   const [editandoSucursalId, setEditandoSucursalId] = useState(null)
   const [editandoSucursalNombre, setEditandoSucursalNombre] = useState('')
+  const [editandoSucursalCentumId, setEditandoSucursalCentumId] = useState('')
 
   // Rubros
   const [rubros, setRubros] = useState([])
@@ -114,7 +115,7 @@ const AdminConfiguracion = () => {
   const [creandoCaja, setCreandoCaja] = useState(false)
   const [mensajeCaja, setMensajeCaja] = useState('')
   const [editandoCajaId, setEditandoCajaId] = useState(null)
-  const [editandoCajaData, setEditandoCajaData] = useState({ nombre: '' })
+  const [editandoCajaData, setEditandoCajaData] = useState({ nombre: '', punto_venta_centum: '' })
 
   // Denominaciones
   const [denominaciones, setDenominaciones] = useState([])
@@ -252,19 +253,25 @@ const AdminConfiguracion = () => {
   const iniciarEdicionSucursal = (sucursal) => {
     setEditandoSucursalId(sucursal.id)
     setEditandoSucursalNombre(sucursal.nombre)
+    setEditandoSucursalCentumId(sucursal.centum_sucursal_id || '')
   }
 
   const cancelarEdicionSucursal = () => {
     setEditandoSucursalId(null)
     setEditandoSucursalNombre('')
+    setEditandoSucursalCentumId('')
   }
 
   const guardarEdicionSucursal = async (id) => {
     if (!editandoSucursalNombre.trim()) return
     try {
-      await api.put(`/api/sucursales/${id}`, { nombre: editandoSucursalNombre.trim() })
+      await api.put(`/api/sucursales/${id}`, {
+        nombre: editandoSucursalNombre.trim(),
+        centum_sucursal_id: editandoSucursalCentumId || null,
+      })
       setEditandoSucursalId(null)
       setEditandoSucursalNombre('')
+      setEditandoSucursalCentumId('')
       await cargarSucursales()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar sucursal')
@@ -528,20 +535,23 @@ const AdminConfiguracion = () => {
 
   const iniciarEdicionCaja = (caja) => {
     setEditandoCajaId(caja.id)
-    setEditandoCajaData({ nombre: caja.nombre })
+    setEditandoCajaData({ nombre: caja.nombre, punto_venta_centum: caja.punto_venta_centum || '' })
   }
 
   const cancelarEdicionCaja = () => {
     setEditandoCajaId(null)
-    setEditandoCajaData({ nombre: '' })
+    setEditandoCajaData({ nombre: '', punto_venta_centum: '' })
   }
 
   const guardarEdicionCaja = async (id) => {
     if (!editandoCajaData.nombre.trim()) return
     try {
-      await api.put(`/api/cajas/${id}`, { nombre: editandoCajaData.nombre.trim() })
+      await api.put(`/api/cajas/${id}`, {
+        nombre: editandoCajaData.nombre.trim(),
+        punto_venta_centum: editandoCajaData.punto_venta_centum || null,
+      })
       setEditandoCajaId(null)
-      setEditandoCajaData({ nombre: '' })
+      setEditandoCajaData({ nombre: '', punto_venta_centum: '' })
       await cargarCajas()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar caja')
@@ -1005,7 +1015,19 @@ const AdminConfiguracion = () => {
                               if (e.key === 'Escape') cancelarEdicionCaja()
                             }}
                             autoFocus
+                            placeholder="Nombre"
                             className="campo-form text-sm flex-1"
+                          />
+                          <input
+                            type="number"
+                            value={editandoCajaData.punto_venta_centum}
+                            onChange={(e) => setEditandoCajaData(prev => ({ ...prev, punto_venta_centum: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionCaja(caja.id)
+                              if (e.key === 'Escape') cancelarEdicionCaja()
+                            }}
+                            placeholder="PV Centum"
+                            className="campo-form text-sm w-24"
                           />
                           <button
                             onClick={() => guardarEdicionCaja(caja.id)}
@@ -1027,7 +1049,10 @@ const AdminConfiguracion = () => {
                             onClick={() => iniciarEdicionCaja(caja)}
                           >
                             <p className="text-sm font-medium text-gray-800 truncate">{caja.nombre}</p>
-                            <p className="text-xs text-gray-400 truncate">{caja.sucursales?.nombre || 'Sin sucursal'}</p>
+                            <p className="text-xs text-gray-400 truncate">
+                              {caja.sucursales?.nombre || 'Sin sucursal'}
+                              {caja.punto_venta_centum ? ` · PV Centum: ${caja.punto_venta_centum}` : ''}
+                            </p>
                           </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             <BotonActivo activo={caja.activo} onClick={() => toggleActivoCaja(caja)} />
@@ -1449,7 +1474,19 @@ const AdminConfiguracion = () => {
                               if (e.key === 'Escape') cancelarEdicionSucursal()
                             }}
                             autoFocus
+                            placeholder="Nombre"
                             className="campo-form text-sm flex-1"
+                          />
+                          <input
+                            type="number"
+                            value={editandoSucursalCentumId}
+                            onChange={(e) => setEditandoSucursalCentumId(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
+                              if (e.key === 'Escape') cancelarEdicionSucursal()
+                            }}
+                            placeholder="ID Sucursal Centum"
+                            className="campo-form text-sm w-40"
                           />
                           <button
                             onClick={() => guardarEdicionSucursal(sucursal.id)}
@@ -1466,12 +1503,17 @@ const AdminConfiguracion = () => {
                         </div>
                       ) : (
                         <>
-                          <p
-                            className="text-sm font-medium text-gray-800 cursor-pointer hover:text-blue-600 transition-colors"
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
                             onClick={() => iniciarEdicionSucursal(sucursal)}
                           >
-                            {sucursal.nombre}
-                          </p>
+                            <p className="text-sm font-medium text-gray-800 hover:text-blue-600 transition-colors">
+                              {sucursal.nombre}
+                            </p>
+                            {sucursal.centum_sucursal_id && (
+                              <p className="text-xs text-gray-400">Centum ID: {sucursal.centum_sucursal_id}</p>
+                            )}
+                          </div>
                           <button
                             onClick={() => iniciarEdicionSucursal(sucursal)}
                             className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"

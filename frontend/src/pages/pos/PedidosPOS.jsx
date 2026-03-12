@@ -15,7 +15,7 @@ const FILTROS_ESTADO = [
   { value: 'todos', label: 'Todos' },
 ]
 
-const PedidosPOS = ({ embebido, onEntregarPedido, onEditarPedido }) => {
+const PedidosPOS = ({ embebido, onEntregarPedido, onEditarPedido, onCobrarEnCaja }) => {
   const { usuario, esAdmin } = useAuth()
   const [pedidos, setPedidos] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -304,15 +304,25 @@ const PedidosPOS = ({ embebido, onEntregarPedido, onEditarPedido }) => {
                         >
                           {esPagado && diferencia < 0 ? `Entregar (saldo +${formatPrecio(Math.abs(diferencia))})` : 'Entregar'}
                         </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); generarLinkMP(pedido.id) }}
-                          disabled={generandoLink === pedido.id}
-                          className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors disabled:opacity-50"
-                        >
-                          {generandoLink === pedido.id ? (
-                            <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                          ) : linkCopiado === pedido.id ? 'Copiado!' : diferencia > 0 ? `MP dif. ${formatPrecio(diferencia)}` : 'Link MP'}
-                        </button>
+                        {(!esPagado || diferencia > 0) && (<>
+                          {onCobrarEnCaja && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onCobrarEnCaja({ id: pedido.id, total: diferencia > 0 ? diferencia : pedido.total, items: pedido.items, nombre_cliente: pedido.nombre_cliente, id_cliente_centum: pedido.id_cliente_centum }) }}
+                              className="bg-violet-100 hover:bg-violet-200 text-violet-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
+                            >
+                              {diferencia > 0 ? `Cobrar dif. ${formatPrecio(diferencia)}` : 'Cobrar en caja'}
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); generarLinkMP(pedido.id) }}
+                            disabled={generandoLink === pedido.id}
+                            className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                          >
+                            {generandoLink === pedido.id ? (
+                              <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                            ) : linkCopiado === pedido.id ? 'Copiado!' : diferencia > 0 ? `MP dif. ${formatPrecio(diferencia)}` : 'Link MP'}
+                          </button>
+                        </>)}
                         <button
                           onClick={(e) => { e.stopPropagation(); cambiarEstado(pedido.id, 'cancelado') }}
                           className="bg-red-100 hover:bg-red-200 text-red-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
@@ -482,13 +492,23 @@ const PedidosPOS = ({ embebido, onEntregarPedido, onEditarPedido }) => {
                       : onEntregarPedido ? 'Entregar' : 'Marcar entregado'
                     }
                   </button>
-                  <button
-                    onClick={() => generarLinkMP(pedidoDetalle.id)}
-                    disabled={generandoLink === pedidoDetalle.id}
-                    className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {generandoLink === pedidoDetalle.id ? 'Generando...' : linkCopiado === pedidoDetalle.id ? 'Copiado!' : pedidoDetalle.esPagado && pedidoDetalle.diferencia > 0 ? `MP dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Link MP'}
-                  </button>
+                  {(!pedidoDetalle.esPagado || pedidoDetalle.diferencia > 0) && (<>
+                    {onCobrarEnCaja && (
+                      <button
+                        onClick={() => { setPedidoSeleccionado(null); onCobrarEnCaja({ id: pedidoDetalle.id, total: pedidoDetalle.diferencia > 0 ? pedidoDetalle.diferencia : pedidoDetalle.total, items: pedidoDetalle.items, nombre_cliente: pedidoDetalle.nombre_cliente, id_cliente_centum: pedidoDetalle.id_cliente_centum }) }}
+                        className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+                      >
+                        {pedidoDetalle.diferencia > 0 ? `Cobrar dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Cobrar en caja'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => generarLinkMP(pedidoDetalle.id)}
+                      disabled={generandoLink === pedidoDetalle.id}
+                      className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {generandoLink === pedidoDetalle.id ? 'Generando...' : linkCopiado === pedidoDetalle.id ? 'Copiado!' : pedidoDetalle.diferencia > 0 ? `MP dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Link MP'}
+                    </button>
+                  </>)}
                   <button
                     onClick={() => cambiarEstado(pedidoDetalle.id, 'cancelado')}
                     className="bg-red-100 hover:bg-red-200 text-red-600 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"

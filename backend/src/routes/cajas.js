@@ -70,14 +70,15 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// PUT /api/cajas/:id — admin edita nombre/activo
+// PUT /api/cajas/:id — admin edita nombre/activo/punto_venta_centum
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   const { id } = req.params
-  const { nombre, activo } = req.body
+  const { nombre, activo, punto_venta_centum } = req.body
 
   const updateData = {}
   if (nombre !== undefined && nombre !== null) updateData.nombre = String(nombre).trim()
   if (activo !== undefined) updateData.activo = activo
+  if (punto_venta_centum !== undefined) updateData.punto_venta_centum = punto_venta_centum ? Number(punto_venta_centum) : null
 
   if (Object.keys(updateData).length === 0) {
     return res.status(400).json({ error: 'Nada que actualizar' })

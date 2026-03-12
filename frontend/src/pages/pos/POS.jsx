@@ -180,6 +180,8 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [cajas, setCajas] = useState([])
   const [sucursalId, setSucursalId] = useState(configActual?.sucursal_id || '')
   const [cajaId, setCajaId] = useState(configActual?.caja_id || '')
+  const [mpDevices, setMpDevices] = useState([])
+  const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -187,6 +189,13 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       .then(({ data }) => setSucursales(data || []))
       .catch((err) => console.error('Error cargando sucursales:', err.message))
       .finally(() => setCargando(false))
+    // Cargar dispositivos MP Point
+    api.get('/api/mp-point/devices')
+      .then(({ data }) => {
+        const devs = data.devices || data || []
+        setMpDevices(Array.isArray(devs) ? devs : [])
+      })
+      .catch((err) => console.warn('MP Point devices no disponible:', err.message))
   }, [])
 
   useEffect(() => {
@@ -206,6 +215,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       sucursal_nombre: sucursalSeleccionada?.nombre || '',
       caja_id: cajaId,
       caja_nombre: cajaSeleccionada?.nombre || '',
+      mp_device_id: mpDeviceId || null,
     })
   }
 
@@ -258,6 +268,33 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
                 <option key={c.id} value={c.id}>{c.nombre}</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Posnet Mercado Pago (opcional)</label>
+            {mpDevices.length > 0 ? (
+              <select
+                value={mpDeviceId}
+                onChange={e => setMpDeviceId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              >
+                <option value="">Sin posnet</option>
+                {mpDevices.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.id}{d.operating_mode === 'PDV' ? ' (PDV)' : ' (Standalone)'}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={mpDeviceId}
+                onChange={e => setMpDeviceId(e.target.value)}
+                placeholder="ID del dispositivo (ej: PAX_A910__SMARTPOS...)"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              />
+            )}
+            <p className="text-xs text-gray-400 mt-1">Solo dispositivos en modo PDV aceptan pagos automáticos</p>
           </div>
         </div>
 
@@ -565,7 +602,8 @@ const POS = () => {
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
-  const CLIENTE_DEFAULT = { id_centum: 0, razon_social: 'Consumidor Final', lista_precio_id: 1 }
+  const [guardandoContacto, setGuardandoContacto] = useState(false)
+  const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF' }
 
   // Multi-ticket: 2 tickets en paralelo
   const [tickets, setTickets] = useState([
@@ -625,12 +663,14 @@ const POS = () => {
     })
   }, [])
 
-  const setCliente = useCallback((cli) => {
+  const setCliente = useCallback((cliOrUpdater) => {
     setTickets(prev => {
       const idx = ticketActivoRef.current
       ticketTimestamps.current[idx] = Date.now()
       const nuevo = [...prev]
-      nuevo[idx] = { ...nuevo[idx], cliente: cli }
+      const clienteActual = nuevo[idx].cliente
+      const nuevoCliente = typeof cliOrUpdater === 'function' ? cliOrUpdater(clienteActual) : cliOrUpdater
+      nuevo[idx] = { ...nuevo[idx], cliente: nuevoCliente }
       return nuevo
     })
   }, [])
@@ -638,8 +678,13 @@ const POS = () => {
   // Estado artículos
   const [articulos, setArticulos] = useState([])
   const [cargandoArticulos, setCargandoArticulos] = useState(false)
+  const [sincronizandoERP, setSincronizandoERP] = useState(false)
   const [busquedaArt, setBusquedaArt] = useState('')
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
+  const [alertaDuplicado, setAlertaDuplicado] = useState(null) // pesable duplicado
+  const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
+  const [popupPesable, setPopupPesable] = useState(null) // { articulo } — pedir peso manual
+  const [popupPesableKg, setPopupPesableKg] = useState('')
 
   // Alarma continua con Web Audio API — suena hasta que se cierra la alerta
   const alertCtxRef = useRef(null)
@@ -689,6 +734,7 @@ const POS = () => {
   const [pasoPedido, setPasoPedido] = useState(0) // 0=cliente, 1=tipo, 2=fecha, 3=dirección/sucursal, 4=pago
   const [fechaEntregaPedido, setFechaEntregaPedido] = useState('')
   const [mostrarCobrarPedido, setMostrarCobrarPedido] = useState(false)
+  const [cobrarPedidoExistente, setCobrarPedidoExistente] = useState(null) // { id, total, items, cliente_nombre, id_cliente_centum }
   const pedidoWizardDataRef = useRef(null)
   const [clientePedido, setClientePedido] = useState(null)
   const [busquedaClientePedido, setBusquedaClientePedido] = useState('')
@@ -753,6 +799,7 @@ const POS = () => {
   // Modal cancelar venta
   const [mostrarCancelar, setMostrarCancelar] = useState(false)
   const [cancelarMotivo, setCancelarMotivo] = useState(null)
+  const [cancelarMotivoOtro, setCancelarMotivoOtro] = useState('')
   const [cancelarPasoConfirm, setCancelarPasoConfirm] = useState(false)
   const problemaTimerRef = useRef(null)
   const problemaCliTimerRef = useRef(null)
@@ -926,6 +973,20 @@ const POS = () => {
     }
   }
 
+  // Sincronizar precios desde Centum ERP
+  async function sincronizarPrecios() {
+    if (sincronizandoERP) return
+    setSincronizandoERP(true)
+    try {
+      await api.post('/api/articulos/sincronizar-precios')
+      await cargarArticulos()
+    } catch (err) {
+      alert('Error al sincronizar: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setSincronizandoERP(false)
+    }
+  }
+
   // Consultar saldo a favor del cliente seleccionado
   useEffect(() => {
     if (!cliente.id_centum || cliente.id_centum === 0) {
@@ -939,14 +1000,67 @@ const POS = () => {
     return () => { cancelled = true }
   }, [cliente.id_centum])
 
-  function seleccionarCliente(cli) {
-    setCliente({
-      id_centum: cli.id_centum,
-      razon_social: cli.razon_social,
-      lista_precio_id: cli.lista_precio_id || 1,
-    })
+  async function seleccionarCliente(cli) {
+    // Verificar en Centum que el cliente esté activo
+    if (cli.id_centum) {
+      try {
+        const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`)
+        // Usar datos actualizados de Centum
+        setCliente({
+          id_centum: cli.id_centum,
+          codigo: data.codigo || cli.codigo || '',
+          razon_social: data.razon_social || cli.razon_social,
+          lista_precio_id: cli.lista_precio_id || 1,
+          email: data.email || cli.email || '',
+          celular: data.celular || cli.celular || '',
+          condicion_iva: data.condicion_iva || cli.condicion_iva || 'CF',
+        })
+      } catch (err) {
+        if (err.response?.status === 410) {
+          alert('Este cliente está desactivado en Centum y no se puede usar.')
+          setClientesCentum(prev => prev.filter(c => c.id_centum !== cli.id_centum))
+          setBusquedaCliente('')
+          return
+        }
+        // Si falla la verificación (sin conexión a BI), usar datos locales
+        setCliente({
+          id_centum: cli.id_centum,
+          codigo: cli.codigo || '',
+          razon_social: cli.razon_social,
+          lista_precio_id: cli.lista_precio_id || 1,
+          email: cli.email || '',
+          celular: cli.celular || '',
+          condicion_iva: cli.condicion_iva || 'CF',
+        })
+      }
+    } else {
+      setCliente({
+        id_centum: 0,
+        codigo: '',
+        razon_social: cli.razon_social || 'Consumidor Final',
+        lista_precio_id: 1,
+        email: '',
+        celular: '',
+        condicion_iva: 'CF',
+      })
+    }
     setBusquedaCliente('')
     setClientesCentum([])
+  }
+
+  async function guardarContactoCliente() {
+    if (!cliente.id_centum || cliente.id_centum === 0) return
+    setGuardandoContacto(true)
+    try {
+      await api.put(`/api/clientes/contacto/${cliente.id_centum}`, {
+        email: cliente.email,
+        celular: cliente.celular,
+      })
+    } catch (err) {
+      console.error('Error guardando contacto:', err)
+    } finally {
+      setGuardandoContacto(false)
+    }
   }
 
   // Extraer rubros únicos de los artículos cargados
@@ -981,10 +1095,14 @@ const POS = () => {
     })
   }, [])
 
-  // Favoritos: siempre visibles como tiles
+  // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
-    return articulos.filter(a => favoritos.includes(a.id))
-  }, [articulos, favoritos])
+    const favs = articulos.filter(a => favoritos.includes(a.id))
+    const rubroOrden = {}
+    rubros.forEach((r, i) => { rubroOrden[r.nombre] = i })
+    favs.sort((a, b) => (rubroOrden[a.rubro?.nombre] ?? 999) - (rubroOrden[b.rubro?.nombre] ?? 999))
+    return favs
+  }, [articulos, favoritos, rubros])
 
   // Resultados de búsqueda: dropdown autocompletado
   const resultadosBusqueda = useMemo(() => {
@@ -996,28 +1114,80 @@ const POS = () => {
     }).slice(0, 30)
   }, [articulos, busquedaArt])
 
-  // Agregar al carrito (pesables suman 0.1, no pesables suman 1)
+  // Agregar al carrito — pesables abren popup para ingresar peso, no pesables suman 1
   const agregarAlCarrito = useCallback((articulo) => {
-    const incremento = articulo.esPesable ? 0.1 : 1
+    if (articulo.esPesable) {
+      setPopupPesable({ articulo })
+      setPopupPesableKg('')
+      return
+    }
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articulo.id)
       if (idx >= 0) {
         const nuevo = [...prev]
-        nuevo[idx] = { ...nuevo[idx], cantidad: Math.round((nuevo[idx].cantidad + incremento) * 1000) / 1000 }
+        nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + 1 }
         return nuevo
       }
-      return [...prev, { articulo, cantidad: incremento }]
+      return [...prev, { articulo, cantidad: 1 }]
     })
   }, [])
 
-  // Buscar artículo por código de barras (también busca por código interno)
+  const confirmarPesable = useCallback(() => {
+    if (!popupPesable) return
+    const kg = parseFloat(popupPesableKg)
+    if (!kg || kg <= 0) return
+    setCarrito(prev => [...prev, { articulo: popupPesable.articulo, cantidad: Math.round(kg * 1000) / 1000 }])
+    setPopupPesable(null)
+    setPopupPesableKg('')
+    setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+  }, [popupPesable, popupPesableKg])
+
+  // Parsear código de barras de balanza Kretz (EAN-13, prefijo 20)
+  // Formato: 20 PPPPP WWWWW C → PLU (5 dígitos) + Peso en gramos (5 dígitos) + check
+  const parsearBarcodeBalanza = useCallback((barcode) => {
+    const code = barcode.replace(/\s/g, '')
+    if (code.length === 13 && code.startsWith('20')) {
+      const plu = code.substring(2, 7)        // 5 dígitos PLU
+      const pesoGramos = parseInt(code.substring(7, 12), 10) // 5 dígitos peso
+      const pesoKg = pesoGramos / 1000
+      if (pesoKg > 0) {
+        return { plu, pesoKg }
+      }
+    }
+    return null
+  }, [])
+
+  // Buscar artículo por código de barras (también busca por código interno y balanza)
   const buscarPorBarcode = useCallback((barcode) => {
     const codigo = barcode.trim()
-    // Buscar en codigos_barras
+
+    // 1. Verificar si es código de balanza Kretz (prefijo 20, 13 dígitos)
+    const balanza = parsearBarcodeBalanza(codigo)
+    if (balanza) {
+      const articuloPlu = articulos.find(a => a.codigo === balanza.plu)
+      if (articuloPlu) {
+        // Detectar duplicado: mismo código de barras escaneado dos veces seguidas
+        const ultimo = ultimoBarcodaBalanzaRef.current
+        if (ultimo && ultimo === codigo) {
+          // Mostrar alerta de duplicado y guardar datos para agregar si confirma
+          setAlertaDuplicado({ articulo: articuloPlu, pesoKg: balanza.pesoKg, barcode: codigo })
+          setBusquedaArt('')
+          return true
+        }
+        // Guardar como último escaneado
+        ultimoBarcodaBalanzaRef.current = codigo
+        // Agregar como línea separada (no sumar al existente)
+        setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: balanza.pesoKg }])
+        setBusquedaArt('')
+        return true
+      }
+    }
+
+    // 2. Buscar en codigos_barras
     let encontrado = articulos.find(a =>
       a.codigosBarras && a.codigosBarras.length > 0 && a.codigosBarras.includes(codigo)
     )
-    // Si no se encuentra, buscar por código interno exacto
+    // 3. Si no se encuentra, buscar por código interno exacto
     if (!encontrado) {
       encontrado = articulos.find(a => a.codigo === codigo)
     }
@@ -1027,7 +1197,7 @@ const POS = () => {
       return true
     }
     return false
-  }, [articulos, agregarAlCarrito])
+  }, [articulos, agregarAlCarrito, parsearBarcodeBalanza])
 
   // Detectar entrada rápida tipo escáner de barras
   const ultimoInputRef = useRef({ time: 0, buffer: '' })
@@ -1084,7 +1254,10 @@ const POS = () => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
       const nuevaCantidad = Math.round((prev[idx].cantidad + paso * delta) * 1000) / 1000
-      if (nuevaCantidad <= 0) return prev.filter((_, i) => i !== idx)
+      if (nuevaCantidad <= 0) {
+        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
+        return prev
+      }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: nuevaCantidad }
       return nuevo
@@ -1095,16 +1268,42 @@ const POS = () => {
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
-      if (cantidad <= 0) return prev.filter((_, i) => i !== idx)
+      if (cantidad <= 0) {
+        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
+        return prev
+      }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: Math.round(cantidad * 1000) / 1000 }
       return nuevo
     })
   }, [])
 
+  const [confirmEliminar, setConfirmEliminar] = useState(null) // { articuloId, nombre, cantidad }
+
   const quitarDelCarrito = useCallback((articuloId) => {
-    setCarrito(prev => prev.filter(i => i.articulo.id !== articuloId))
+    setCarrito(prev => {
+      const item = prev.find(i => i.articulo.id === articuloId)
+      if (item) {
+        setConfirmEliminar({ articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad })
+      }
+      return prev
+    })
   }, [])
+
+  const confirmarEliminacion = useCallback(async () => {
+    if (!confirmEliminar) return
+    const { articuloId, nombre, cantidad } = confirmEliminar
+    setCarrito(prev => prev.filter(i => i.articulo.id !== articuloId))
+    setConfirmEliminar(null)
+    try {
+      await api.post('/api/pos/log-eliminacion', {
+        usuario_nombre: usuario?.nombre || 'Desconocido',
+        items: [{ articulo_id: articuloId, nombre, cantidad, hora: new Date().toISOString() }],
+      })
+    } catch (err) {
+      console.error('Error registrando eliminación:', err)
+    }
+  }, [confirmEliminar, usuario])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -1191,6 +1390,8 @@ const POS = () => {
         id_centum: pedido.id_cliente_centum || 0,
         razon_social: pedido.nombre_cliente,
         lista_precio_id: 1,
+        email: pedido.email_cliente || '',
+        celular: pedido.celular_cliente || '',
       })
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
@@ -1220,6 +1421,8 @@ const POS = () => {
         id_centum: pedido.id_cliente_centum || 0,
         razon_social: pedido.nombre_cliente,
         lista_precio_id: 1,
+        email: pedido.email_cliente || '',
+        celular: pedido.celular_cliente || '',
       })
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
@@ -1315,6 +1518,7 @@ const POS = () => {
       const payload = {
         id_cliente_centum: cliente.id_centum,
         nombre_cliente: cliente.razon_social,
+        caja_id: terminalConfig?.caja_id || null,
         items,
         promociones_aplicadas: null,
         subtotal: total,
@@ -1322,7 +1526,10 @@ const POS = () => {
         total,
         monto_pagado: totalPagado + saldoAplicadoEntrega,
         vuelto: 0,
-        pagos: [{ tipo: 'Pago anticipado', monto: totalPagado, detalle: null }],
+        pagos: [
+          { tipo: 'Pago anticipado', monto: totalPagado, detalle: null },
+          ...(saldoAplicadoEntrega > 0 ? [{ tipo: 'Saldo', monto: saldoAplicadoEntrega, detalle: null }] : []),
+        ],
         pedido_pos_id: pedidoEnProceso.id,
       }
       if (saldoAplicadoEntrega > 0) {
@@ -1357,6 +1564,26 @@ const POS = () => {
     // Solo se registró el pago (sin crear venta). Guardar el pedido con marca de pagado.
     const wd = pedidoWizardDataRef.current
     setMostrarCobrarPedido(false)
+
+    // Cobro de pedido existente (desde tab Pedidos)
+    if (cobrarPedidoExistente) {
+      const pedido = cobrarPedidoExistente
+      setCobrarPedidoExistente(null);
+      (async () => {
+        try {
+          const resumenPago = datosPago?.pagos ? datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ') : ''
+          await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
+            total_pagado: pedido.total,
+            observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
+          })
+        } catch (err) {
+          console.error('Error actualizando pago pedido:', err)
+          alert('Error al registrar pago: ' + (err.response?.data?.error || err.message))
+        }
+      })()
+      return
+    }
+
     if (wd) {
       guardarComoPedidoConCliente(wd.cli, wd.tipo, wd.dirObj, wd.sucObj, true, wd.fecha, datosPago)
       pedidoWizardDataRef.current = null
@@ -1371,6 +1598,12 @@ const POS = () => {
     setSucursalSeleccionadaPedido(null)
   }
 
+  // Cobrar pedido existente desde tab Pedidos
+  function handleCobrarPedidoEnCaja(pedido) {
+    setCobrarPedidoExistente(pedido)
+    setMostrarCobrarPedido(true)
+  }
+
   // ---- Buscar cliente para pedido (debounced) ----
   useEffect(() => {
     if (!mostrarBuscarClientePedido) return
@@ -1381,7 +1614,7 @@ const POS = () => {
       setBuscandoClientePedido(true)
       try {
         if (isOnline) {
-          const { data } = await api.get('/api/clientes', { params: { buscar: termino, limit: 15 } })
+          const { data } = await api.get('/api/clientes', { params: { buscar: termino, limit: 15, solo_dni: true } })
           setClientesPedido(data.clientes || data.data || [])
         } else {
           const cached = await getClientes(termino)
@@ -1723,6 +1956,16 @@ const POS = () => {
               </svg>
               <span>Cerrar Caja</span>
             </a>
+            <button
+              onClick={sincronizarPrecios}
+              disabled={sincronizandoERP}
+              className="text-violet-400 hover:text-white p-1 rounded transition-colors disabled:opacity-50"
+              title="Sincronizar precios desde Centum"
+            >
+              <svg className={`w-3.5 h-3.5 ${sincronizandoERP ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.016 4.66v4.993" />
+              </svg>
+            </button>
             {esAdmin && (
               <button
                 onClick={() => setMostrarConfigTerminal(true)}
@@ -1742,7 +1985,7 @@ const POS = () => {
       {/* === TAB PEDIDOS === */}
       {vistaActiva === 'pedidos' && (
         <div className="flex-1 overflow-hidden">
-          <PedidosPOS embebido onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} />
+          <PedidosPOS embebido onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} onCobrarEnCaja={handleCobrarPedidoEnCaja} />
         </div>
       )}
 
@@ -1848,7 +2091,59 @@ const POS = () => {
                   <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-1 rounded truncate">
                     {cliente.razon_social}
                   </span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">Lista {cliente.lista_precio_id}</span>
+                  {cliente.id_centum > 0 && cliente.codigo && (
+                    <span className="text-gray-500 text-xs font-mono">{cliente.codigo}</span>
+                  )}
+                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
+                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
+                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    {cliente.condicion_iva === 'RI' ? 'Resp. Inscripto' : cliente.condicion_iva === 'MT' ? 'Monotributo' : 'Cons. Final'}
+                  </span>
+                  {cliente.id_centum > 0 && (<>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { data } = await api.get(`/api/clientes/refresh/${cliente.id_centum}`)
+                          setCliente(prev => ({
+                            ...prev,
+                            razon_social: data.razon_social,
+                            codigo: data.codigo || prev.codigo || '',
+                            cuit: data.cuit,
+                            condicion_iva: data.condicion_iva || 'CF',
+                            email: data.email || '',
+                            celular: data.celular || '',
+                            lista_precio_id: data.lista_precio_id || 1,
+                          }))
+                        } catch (err) {
+                          console.error('Error refrescando cliente:', err)
+                        }
+                      }}
+                      className="text-gray-400 hover:text-violet-600 flex-shrink-0"
+                      title="Actualizar datos del cliente"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setCliente({ ...CLIENTE_DEFAULT })}
+                      className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                      title="Volver a Consumidor Final"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </>)}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
+                  </span>
                   {saldoCliente > 0 && (
                     <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
                       Saldo: {formatPrecio(saldoCliente)}
@@ -1892,6 +2187,31 @@ const POS = () => {
                 </svg>
               </button>
             </div>
+            {cliente.id_centum > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={cliente.email || ''}
+                  onChange={e => setCliente({ ...cliente, email: e.target.value })}
+                  className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
+                />
+                <input
+                  type="tel"
+                  placeholder="Tel / Cel"
+                  value={cliente.celular || ''}
+                  onChange={e => setCliente({ ...cliente, celular: e.target.value })}
+                  className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
+                />
+                <button
+                  onClick={guardarContactoCliente}
+                  disabled={guardandoContacto}
+                  className="bg-violet-600 text-white text-[10px] px-2 py-0.5 rounded hover:bg-violet-700 disabled:opacity-50 flex-shrink-0"
+                >
+                  {guardandoContacto ? '...' : 'Guardar'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Items del carrito */}
@@ -2077,7 +2397,7 @@ const POS = () => {
             {(carrito.length > 0 || giftCardsEnVenta.length > 0) && (
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => { setMostrarCancelar(true); setCancelarMotivo(null); setCancelarPasoConfirm(false) }}
+                  onClick={() => { setMostrarCancelar(true); setCancelarMotivo(null); setCancelarMotivoOtro(''); setCancelarPasoConfirm(false) }}
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
                 >
                   Cancelar
@@ -2264,7 +2584,7 @@ const POS = () => {
                       className={`relative rounded-xl cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-95 select-none ${
                         enCarrito ? 'ring-2 ring-violet-500 shadow-md' : 'shadow-sm'
                       }`}
-                      style={{ borderTop: `4px solid ${color.border}`, backgroundColor: enCarrito ? color.bg : '#fff' }}
+                      style={{ borderTop: `4px solid ${color.border}`, backgroundColor: color.bg }}
                     >
                       {enCarrito && (
                         <span className="absolute -top-2 -right-2 bg-violet-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow z-10">
@@ -2274,6 +2594,7 @@ const POS = () => {
                       <div className="p-3 flex flex-col items-center text-center min-h-[100px] justify-center">
                         <span className="text-base font-bold text-gray-800">{formatPrecio(precioFinal)}</span>
                         <span className="text-xs text-gray-600 mt-1.5 line-clamp-2 leading-tight">{art.nombre}</span>
+                        {art.codigo && <span className="text-[10px] text-gray-400 mt-1 font-mono">{art.codigo}</span>}
                       </div>
                     </div>
                   )
@@ -2555,6 +2876,7 @@ const POS = () => {
                         >
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-sm font-semibold text-gray-800">
+                              {v.numero_venta ? <span className="text-blue-600 mr-1">#{v.numero_venta}</span> : null}
                               {v.nombre_cliente || 'Consumidor Final'}
                             </span>
                             <span className="text-sm font-bold text-gray-700">{formatPrecio(v.total)}</span>
@@ -2626,7 +2948,10 @@ const POS = () => {
                   {/* Info venta */}
                   <div className="bg-gray-50 rounded-lg px-3 py-2 mb-3 flex-shrink-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-gray-700">{problemaVentaSel.nombre_cliente || 'Consumidor Final'}</span>
+                      <span className="text-sm font-semibold text-gray-700">
+                        {problemaVentaSel.numero_venta ? <span className="text-blue-600 mr-1">#{problemaVentaSel.numero_venta}</span> : null}
+                        {problemaVentaSel.nombre_cliente || 'Consumidor Final'}
+                      </span>
                       <span className="text-sm font-bold text-gray-600">{formatPrecio(problemaVentaSel.total)}</span>
                     </div>
                     <div className="text-xs text-gray-400 mt-0.5">
@@ -3104,7 +3429,10 @@ const POS = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-xs text-gray-400">Facturado a:</div>
-                        <span className="text-sm font-semibold text-gray-700">{problemaVentaSel.nombre_cliente || 'Consumidor Final'}</span>
+                        <span className="text-sm font-semibold text-gray-700">
+                          {problemaVentaSel.numero_venta ? <span className="text-blue-600 mr-1">#{problemaVentaSel.numero_venta}</span> : null}
+                          {problemaVentaSel.nombre_cliente || 'Consumidor Final'}
+                        </span>
                       </div>
                       <span className="text-sm font-bold text-gray-600">{formatPrecio(problemaVentaSel.total)}</span>
                     </div>
@@ -3668,7 +3996,7 @@ const POS = () => {
                   ].map(motivo => (
                     <button
                       key={motivo}
-                      onClick={() => setCancelarMotivo(motivo)}
+                      onClick={() => { setCancelarMotivo(motivo); setCancelarMotivoOtro('') }}
                       className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
                         cancelarMotivo === motivo ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
                       }`}
@@ -3676,13 +4004,31 @@ const POS = () => {
                       {motivo}
                     </button>
                   ))}
+                  <button
+                    onClick={() => setCancelarMotivo('otro')}
+                    className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
+                      cancelarMotivo === 'otro' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
+                    }`}
+                  >
+                    Otro
+                  </button>
+                  {cancelarMotivo === 'otro' && (
+                    <textarea
+                      autoFocus
+                      value={cancelarMotivoOtro}
+                      onChange={e => setCancelarMotivoOtro(e.target.value)}
+                      placeholder="Escribí el motivo..."
+                      className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-500 focus:outline-none text-sm resize-none"
+                      rows={2}
+                    />
+                  )}
                 </div>
                 <div className="flex gap-3 mt-5">
                   <button onClick={() => setMostrarCancelar(false)}
                     className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
                     Volver
                   </button>
-                  <button disabled={!cancelarMotivo} onClick={() => setCancelarPasoConfirm(true)}
+                  <button disabled={!cancelarMotivo || (cancelarMotivo === 'otro' && !cancelarMotivoOtro.trim())} onClick={() => setCancelarPasoConfirm(true)}
                     className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors">
                     Continuar
                   </button>
@@ -3696,7 +4042,7 @@ const POS = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                     </svg>
                     <p className="text-sm text-amber-900 leading-relaxed">
-                      El usuario <strong>{usuario?.nombre || 'Sin nombre'}</strong> deja constancia de que la venta iniciada es cancelada por motivo: <strong>"{cancelarMotivo}"</strong> el día <strong>{new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</strong> a las <strong>{new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</strong>.
+                      El usuario <strong>{usuario?.nombre || 'Sin nombre'}</strong> deja constancia de que la venta iniciada es cancelada por motivo: <strong>"{cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo}"</strong> el día <strong>{new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</strong> a las <strong>{new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</strong>.
                     </p>
                   </div>
                 </div>
@@ -3705,7 +4051,21 @@ const POS = () => {
                     className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
                     Volver
                   </button>
-                  <button onClick={() => { limpiarVenta(); setMostrarCancelar(false) }}
+                  <button onClick={async () => {
+                    const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
+                    try {
+                      await api.post('/api/auditoria/cancelacion', {
+                        motivo: motivoFinal,
+                        items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+                        subtotal,
+                        total,
+                        cliente_nombre: cliente?.nombre || null,
+                        caja_id: terminalConfig?.caja_id || null,
+                        sucursal_id: terminalConfig?.sucursal_id || null,
+                      })
+                    } catch (err) { console.error('Error registrando cancelación:', err) }
+                    limpiarVenta(); setMostrarCancelar(false)
+                  }}
                     className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
                     Confirmar cancelación
                   </button>
@@ -3736,18 +4096,18 @@ const POS = () => {
         />
       )}
 
-      {/* Modal de cobro para pedido (pago anticipado) */}
+      {/* Modal de cobro para pedido (pago anticipado o cobro en caja) */}
       {mostrarCobrarPedido && (
         <ModalCobrar
-          total={total}
-          subtotal={subtotal}
-          descuentoTotal={descuentoTotal}
+          total={cobrarPedidoExistente ? cobrarPedidoExistente.total : total}
+          subtotal={cobrarPedidoExistente ? cobrarPedidoExistente.total : subtotal}
+          descuentoTotal={cobrarPedidoExistente ? 0 : descuentoTotal}
           ivaTotal={0}
-          carrito={carrito}
-          cliente={cliente}
-          promosAplicadas={promosAplicadas}
+          carrito={cobrarPedidoExistente ? (typeof cobrarPedidoExistente.items === 'string' ? JSON.parse(cobrarPedidoExistente.items) : cobrarPedidoExistente.items || []) : carrito}
+          cliente={cobrarPedidoExistente ? { id_centum: cobrarPedidoExistente.id_cliente_centum || 0, razon_social: cobrarPedidoExistente.nombre_cliente || 'Consumidor Final', condicion_iva: 'CF' } : cliente}
+          promosAplicadas={cobrarPedidoExistente ? [] : promosAplicadas}
           onConfirmar={handleCobroPedidoExitoso}
-          onCerrar={() => { setMostrarCobrarPedido(false); pedidoWizardDataRef.current = null }}
+          onCerrar={() => { setMostrarCobrarPedido(false); setCobrarPedidoExistente(null); pedidoWizardDataRef.current = null }}
           isOnline={isOnline}
           onVentaOffline={actualizarPendientes}
           soloPago
@@ -3815,7 +4175,7 @@ const POS = () => {
                     type="text"
                     value={busquedaClientePedido}
                     onChange={e => setBusquedaClientePedido(e.target.value)}
-                    placeholder="Buscar por nombre, CUIT o codigo..."
+                    placeholder="Buscar por DNI o CUIT..."
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
                   />
                   {buscandoClientePedido && (
@@ -4152,6 +4512,48 @@ const POS = () => {
           )}
         </div>
       )}
+      {/* Popup peso manual para pesables */}
+      {popupPesable && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Ingresar peso</h3>
+            <p className="text-sm text-gray-500 mb-4 truncate">{popupPesable.articulo.nombre}</p>
+            <div className="flex items-center gap-2 mb-5">
+              <input
+                autoFocus
+                type="number"
+                step="0.001"
+                min="0.001"
+                value={popupPesableKg}
+                onChange={e => setPopupPesableKg(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') confirmarPesable()
+                  if (e.key === 'Escape') { setPopupPesable(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }
+                }}
+                placeholder="0.000"
+                className="flex-1 border-2 border-gray-300 focus:border-violet-500 rounded-xl px-4 py-3 text-2xl font-mono text-center outline-none"
+              />
+              <span className="text-lg font-semibold text-gray-500">kg</span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setPopupPesable(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={!popupPesableKg || parseFloat(popupPesableKg) <= 0}
+                onClick={confirmarPesable}
+                className="flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors"
+              >
+                Agregar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pantalla roja fullscreen — artículo no encontrado */}
       {alertaBarcode && (
         <div className="fixed inset-0 z-[100] bg-red-600 flex flex-col items-center justify-center text-white" onClick={() => { setAlertaBarcode(null); stopAlertSound() }}>
@@ -4160,6 +4562,85 @@ const POS = () => {
           </svg>
           <span className="text-4xl font-black mb-3">ARTÍCULO NO ENCONTRADO</span>
           <span className="text-2xl font-mono opacity-80">{alertaBarcode}</span>
+        </div>
+      )}
+
+      {/* Pantalla amarilla fullscreen — artículo duplicado balanza */}
+      {alertaDuplicado && (
+        <div className="fixed inset-0 z-[100] bg-amber-500 flex flex-col items-center justify-center text-white"
+          tabIndex={0}
+          ref={el => el?.focus()}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+              setAlertaDuplicado(null)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+            } else if (e.key === 'Escape') {
+              setAlertaDuplicado(null)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+            }
+          }}>
+          <svg className="w-24 h-24 mb-6 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <span className="text-4xl font-black mb-3">ARTÍCULO DUPLICADO</span>
+          <span className="text-xl opacity-90 mb-2">{alertaDuplicado.articulo.nombre}</span>
+          <span className="text-2xl font-mono opacity-80 mb-8">{alertaDuplicado.pesoKg} kg</span>
+          <span className="text-xl mb-8">¿Deseas agregar igual?</span>
+          <div className="flex gap-6">
+            <button
+              onClick={() => { setAlertaDuplicado(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }}
+              className="px-10 py-4 bg-white/20 hover:bg-white/30 rounded-2xl text-2xl font-bold transition-colors"
+            >
+              No
+            </button>
+            <button
+              onClick={() => {
+                setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+                setAlertaDuplicado(null)
+                setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+              }}
+              className="px-10 py-4 bg-white text-amber-600 hover:bg-amber-50 rounded-2xl text-2xl font-bold transition-colors"
+            >
+              Sí, agregar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmación eliminación de artículo */}
+      {confirmEliminar && (
+        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
+            <div className="text-center mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-bold text-gray-800 mb-2">Eliminar artículo</h3>
+              <p className="text-sm text-gray-600">
+                Estás por eliminar <strong>{confirmEliminar.cantidad}x {confirmEliminar.nombre}</strong> del ticket.
+              </p>
+              <p className="text-xs text-red-500 font-medium mt-2">
+                Quedará registro de esta eliminación: {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} — {usuario?.nombre || 'Usuario'}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmEliminar(null)}
+                className="flex-1 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarEliminacion}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

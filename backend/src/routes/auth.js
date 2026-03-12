@@ -404,4 +404,33 @@ router.post('/setup-admin', async (req, res) => {
   }
 })
 
+// POST /api/auth/emergency-login
+// Login de emergencia sin Supabase (solo cuando no hay internet)
+// Usa un PIN configurado en variable de entorno
+router.post('/emergency-login', async (req, res) => {
+  const { pin } = req.body
+  const emergencyPin = process.env.EMERGENCY_PIN
+
+  if (!emergencyPin) {
+    return res.status(503).json({ error: 'Modo emergencia no configurado' })
+  }
+
+  if (!pin || pin !== emergencyPin) {
+    return res.status(401).json({ error: 'PIN incorrecto' })
+  }
+
+  // Devolver un token ficticio y datos mínimos para operar offline
+  res.json({
+    token: 'emergency-offline-' + Date.now(),
+    usuario: {
+      id: 'emergency',
+      username: 'emergencia',
+      rol: 'operario',
+      nombre: 'Modo Emergencia',
+      sucursal_id: null,
+    },
+    emergency: true,
+  })
+})
+
 module.exports = router
