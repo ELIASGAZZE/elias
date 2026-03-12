@@ -757,8 +757,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 >
                   {fc.nombre} {fkeyMatch && <span className="text-[9px] opacity-50 ml-1">{fkeyMatch[0]}</span>}
                 </button>
-                )}}
-              ))}
+                )
+              })}
             </div>
 
             {formaSeleccionada && (
