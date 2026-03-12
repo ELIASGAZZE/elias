@@ -105,7 +105,7 @@ router.post('/order', verificarAuth, async (req, res) => {
       type: 'point',
       external_reference: external_reference || `pos-${Date.now()}`,
       description: description || 'Venta POS',
-      expiration_time: 'PT2M',
+      expiration_time: 'PT5M',
       transactions: {
         payments: [{ amount: amount.toFixed(2) }]
       },
