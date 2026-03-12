@@ -227,7 +227,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
         } catch (err) {
           const msg = err.response?.data?.message || err.response?.data?.error || err.message
           console.error('Error cambiando posnet a modo PDV:', msg, err.response?.data)
-          setErrorModo(`No se pudo cambiar a modo PDV: ${msg}`)
+          setErrorModo(msg.includes('one pos-store') ? 'Solo 1 posnet en modo PDV por cada caja. Revisar en MP.' : `No se pudo cambiar a modo PDV: ${msg}`)
           setCambiandoModo(false)
           return // No continuar si falla el cambio de modo
         }
