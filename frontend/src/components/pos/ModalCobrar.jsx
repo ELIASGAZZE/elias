@@ -389,6 +389,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       })
     }
     setCantidadModal(null)
+    setTimeout(() => cobrarRootRef.current?.focus(), 50)
   }
 
   function borrarPagos() {
@@ -709,13 +710,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 autoFocus
                 value={cantidadModal.cantidad}
                 onChange={e => setCantidadModal(prev => ({ ...prev, cantidad: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') confirmarCantidadBilletes(); if (e.key === 'Escape') setCantidadModal(null) }}
+                onKeyDown={e => { if (e.key === 'Enter') confirmarCantidadBilletes(); if (e.key === 'Escape') { setCantidadModal(null); setTimeout(() => cobrarRootRef.current?.focus(), 50) } }}
                 className="w-full text-center text-2xl font-bold border-2 border-violet-500 rounded-lg py-2 bg-slate-800 text-white focus:outline-none focus:border-violet-400"
                 placeholder="Ej: 50"
               />
               <div className="flex gap-2 mt-4">
                 <button
-                  onClick={() => setCantidadModal(null)}
+                  onClick={() => { setCantidadModal(null); setTimeout(() => cobrarRootRef.current?.focus(), 50) }}
                   className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-2.5 rounded-lg"
                 >
                   Cancelar
