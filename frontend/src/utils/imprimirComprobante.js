@@ -220,11 +220,12 @@ export function imprimirRetiro(retiro, cierre) {
   abrirVentanaImpresion(html)
 }
 
-export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline }) {
+export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta }) {
   let html = ''
 
   html += '<div class="center titulo">PADANO SRL</div>'
   html += '<div class="center" style="font-size:12px;margin-bottom:4px">Punto de Venta</div>'
+  if (numeroVenta) html += `<div class="center bold" style="font-size:14px;margin-bottom:4px">Venta #${numeroVenta}</div>`
   html += '<div class="line-double"></div>'
 
   // Fecha y cliente

@@ -1,0 +1,479 @@
+// Servicio para crear Ventas POS en Centum ERP (sin PedidoVenta previo)
+const { generateAccessToken } = require('./syncERP')
+const { registrarLlamada } = require('./apiLogger')
+const { createClient } = require('@supabase/supabase-js')
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+
+const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+const API_KEY = process.env.CENTUM_API_KEY
+const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
+
+// Username del operador móvil configurado con División Prueba (ID 2)
+// Header: CentumSuiteOperadorMovilUser — solo para ventas en Prueba; sin header = Empresa
+const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
+
+function getHeaders({ divisionPrueba } = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
+    'CentumSuiteAccessToken': generateAccessToken(API_KEY),
+  }
+  if (divisionPrueba) {
+    headers['CentumSuiteOperadorMovilUser'] = OPERADOR_MOVIL_USER_PRUEBA
+  }
+  return headers
+}
+
+// Mapeo de medios de pago POS → IdValor Centum
+const MEDIO_A_ID_VALOR = {
+  efectivo: 1,
+  debito: 13,
+  credito: 13,
+  qr: 13,
+  cuenta_corriente: 1,
+  gift_card: 1,
+  saldo: 1,
+}
+
+/**
+ * Crea una Venta directa en Centum desde el POS (sin PedidoVenta previo).
+ * @param {Object} params
+ * @param {number} params.idCliente - IdCliente Centum
+ * @param {number} params.sucursalFisicaId - IdSucursalFisica Centum
+ * @param {number} params.idDivisionEmpresa - 2=PRUEBA, 3=EMPRESA
+ * @param {number} params.puntoVenta - Punto de venta Centum (de la caja)
+ * @param {Array} params.items - Items de la venta POS
+ * @param {Array} params.pagos - Pagos de la venta POS [{tipo, monto}]
+ * @param {number} params.total - Total de la venta
+ * @returns {Promise<Object>} Venta creada en Centum
+ */
+async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva }) {
+  const url = `${BASE_URL}/Ventas`
+  const inicio = Date.now()
+
+  const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+
+  // Factura A (RI/MT): Centum espera precios NETOS (sin IVA) y discrimina IVA
+  // Factura B (CF y otros): Centum espera precios FINALES (con IVA incluido)
+  const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+
+  // Armar artículos para Centum
+  const ventaArticulos = items.map(item => {
+    const precioConIva = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
+    const ivaTasa = parseFloat(item.iva_tasa || item.iva || item.ivaTasa || 21)
+    // Para Factura A: enviar precio neto (sin IVA). Para Factura B: enviar precio final (con IVA)
+    const precio = esFacturaA ? Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100 : precioConIva
+
+    return {
+      IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
+      Codigo: item.codigo || '',
+      Nombre: item.nombre || '',
+      Cantidad: parseFloat(item.cantidad) || 1,
+      Precio: precio,
+      PorcentajeDescuento1: 0,
+      PorcentajeDescuento2: 0,
+      PorcentajeDescuento3: 0,
+      PorcentajeDescuentoMaximo: 100,
+      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: ivaTasa },
+      ClaseDescuento: { IdClaseDescuento: 0 },
+      Comision: { IdComision: 6089, Calculada: 0 },
+      ImpuestoInterno: 0,
+    }
+  })
+
+  // Calcular subtotal de artículos (precios tal como se envían a Centum)
+  let subtotalArticulos = 0
+  for (const art of ventaArticulos) {
+    subtotalArticulos += art.Precio * (art.Cantidad || 0)
+  }
+  subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+
+  // Si hay descuento por forma de pago, ajustar el Precio de cada artículo proporcionalmente
+  // Para Factura A: convertir total POS (con IVA) a neto para comparar con precios netos
+  // Para Factura B: comparar directo (precios ya incluyen IVA)
+  const totalComparable = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
+  if (totalComparable < subtotalArticulos && subtotalArticulos > 0) {
+    const factor = totalComparable / subtotalArticulos
+    ventaArticulos.forEach(art => {
+      art.Precio = Math.round(art.Precio * factor * 100) / 100
+    })
+    // Recalcular subtotal después del ajuste
+    subtotalArticulos = 0
+    for (const art of ventaArticulos) {
+      subtotalArticulos += art.Precio * (art.Cantidad || 0)
+    }
+    subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+  }
+
+  // Importe para VentaValoresEfectivos:
+  // Centum valida que importe total de ítems ≈ importe total de valores
+  // Para Factura A: Centum suma IVA a los precios netos, así que el importe debe ser neto + IVA = total POS
+  // Para Factura B: el importe es el subtotal de artículos (ya con IVA)
+  const importeValor = esFacturaA ? total : subtotalArticulos
+
+  // Determinar IdValor según medio de pago principal
+  const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
+  const idValor = MEDIO_A_ID_VALOR[medioPrincipal] || 1
+
+  console.log(`[Centum POS] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, importeValor=${importeValor}, preciosArticulos=[${ventaArticulos.map(a => a.Precio).join(',')}]`)
+
+  const body = {
+    FechaImputacion: fechaHoy,
+    Cliente: { IdCliente: idCliente },
+    SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
+    DivisionEmpresaGrupoEconomico: { IdDivisionEmpresaGrupoEconomico: idDivisionEmpresa },
+    TipoComprobanteVenta: { IdTipoComprobanteVenta: 4 }, // Factura B
+    NumeroDocumento: { PuntoVenta: puntoVenta },
+    EsContado: true,
+    Vendedor: { IdVendedor: 2 },
+    CondicionVenta: { IdCondicionVenta: 14 },
+    Bonificacion: { IdBonificacion: 6235 },
+    VentaArticulos: ventaArticulos,
+    VentaValoresEfectivos: [{
+      IdValor: idValor,
+      Cotizacion: 1,
+      Importe: importeValor,
+    }],
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'pos',
+    })
+    throw new Error('Error al conectar con Centum ERP (Ventas POS): ' + err.message)
+  }
+
+  const texto = await response.text()
+  let data = {}
+  try { data = JSON.parse(texto) } catch { /* may not be JSON */ }
+
+  if (response.ok) {
+    registrarLlamada({
+      servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+      items_procesados: ventaArticulos.length, origen: 'pos',
+    })
+    console.log(`[Centum POS] Venta creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    return data
+  }
+
+  if (response.status === 500) {
+    // Centum a veces devuelve 500 pero crea la venta
+    console.warn(`[Centum POS] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    registrarLlamada({
+      servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
+      items_procesados: ventaArticulos.length, error_mensaje: 'HTTP 500', origen: 'pos',
+    })
+    return { _creadoConWarning: true, ...data }
+  }
+
+  registrarLlamada({
+    servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
+    estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'pos',
+  })
+  throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 500)}`)
+}
+
+/**
+ * Registra una venta POS en Centum usando los datos de la venta local.
+ * @param {Object} ventaLocal - Datos de la venta guardada en ventas_pos
+ * @param {Object} config - { sucursalFisicaId, puntoVenta }
+ * @returns {Promise<Object|null>} Resultado de Centum o null si falla
+ */
+async function registrarVentaPOSEnCentum(ventaLocal, config) {
+  try {
+    const items = typeof ventaLocal.items === 'string'
+      ? JSON.parse(ventaLocal.items)
+      : (ventaLocal.items || [])
+
+    const pagos = Array.isArray(ventaLocal.pagos) ? ventaLocal.pagos : []
+
+    // Condición IVA: usar la que viene en la venta (del frontend), fallback a DB
+    let condicionIva = ventaLocal.condicion_iva || 'CF'
+    if (!ventaLocal.condicion_iva && ventaLocal.id_cliente_centum) {
+      const { data: cliente } = await supabase
+        .from('clientes')
+        .select('condicion_iva')
+        .eq('id_centum', ventaLocal.id_cliente_centum)
+        .single()
+      condicionIva = cliente?.condicion_iva || 'CF'
+    }
+
+    // Clasificación división:
+    // - Factura A (RI/MT) → siempre EMPRESA (3)
+    // - Factura B (CF) + solo efectivo → PRUEBA (2)
+    // - Factura B (CF) + pago electrónico → EMPRESA (3)
+    const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+    const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+    const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+    const resultado = await crearVentaPOS({
+      idCliente: ventaLocal.id_cliente_centum || 2,
+      sucursalFisicaId: config.sucursalFisicaId,
+      idDivisionEmpresa,
+      puntoVenta: config.puntoVenta,
+      items,
+      pagos,
+      total: parseFloat(ventaLocal.total) || 0,
+      condicionIva,
+    })
+
+    return resultado
+  } catch (err) {
+    console.error('[Centum POS] Error al registrar venta en Centum:', err.message)
+    return null
+  }
+}
+
+/**
+ * Crea una Nota de Crédito con artículos en Centum (casos: devolución de producto, corrección de cliente).
+ * @param {Object} params
+ * @param {number} params.idCliente - IdCliente Centum del cliente original
+ * @param {number} params.sucursalFisicaId - IdSucursalFisica Centum
+ * @param {number} params.idDivisionEmpresa - 2=PRUEBA, 3=EMPRESA
+ * @param {number} params.puntoVenta - Mismo punto de venta que la factura original
+ * @param {Array} params.items - Items a incluir en la NC
+ * @param {number} params.total - Total de la NC (positivo)
+ * @param {string} params.condicionIva - Condición IVA del cliente (CF, RI, MT)
+ * @returns {Promise<Object>} NC creada en Centum
+ */
+async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva }) {
+  const url = `${BASE_URL}/Ventas`
+  const inicio = Date.now()
+
+  const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+  const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+
+  const ventaArticulos = items.map(item => {
+    const precioConIva = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
+    const ivaTasa = parseFloat(item.iva_tasa || item.iva || item.ivaTasa || 21)
+    const precio = esFacturaA ? Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100 : precioConIva
+
+    return {
+      IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
+      Codigo: item.codigo || '',
+      Nombre: item.nombre || '',
+      Cantidad: parseFloat(item.cantidad) || 1,
+      Precio: precio,
+      PorcentajeDescuento1: 0,
+      PorcentajeDescuento2: 0,
+      PorcentajeDescuento3: 0,
+      PorcentajeDescuentoMaximo: 100,
+      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: ivaTasa },
+      ClaseDescuento: { IdClaseDescuento: 0 },
+      Comision: { IdComision: 6089, Calculada: 0 },
+      ImpuestoInterno: 0,
+    }
+  })
+
+  // Calcular subtotal e importe igual que en crearVentaPOS
+  let subtotalArticulos = 0
+  for (const art of ventaArticulos) {
+    subtotalArticulos += art.Precio * (art.Cantidad || 0)
+  }
+  subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+
+  const totalComparable = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
+  if (totalComparable < subtotalArticulos && subtotalArticulos > 0) {
+    const factor = totalComparable / subtotalArticulos
+    ventaArticulos.forEach(art => {
+      art.Precio = Math.round(art.Precio * factor * 100) / 100
+    })
+    subtotalArticulos = 0
+    for (const art of ventaArticulos) {
+      subtotalArticulos += art.Precio * (art.Cantidad || 0)
+    }
+    subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+  }
+
+  const importeValor = esFacturaA ? total : subtotalArticulos
+
+  console.log(`[Centum POS NC] Preparando NC artículos: condicionIva=${condicionIva}, totalPOS=${total}, importeValor=${importeValor}, PV=${puntoVenta}`)
+
+  const body = {
+    FechaImputacion: fechaHoy,
+    Cliente: { IdCliente: idCliente },
+    SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
+    DivisionEmpresaGrupoEconomico: { IdDivisionEmpresaGrupoEconomico: idDivisionEmpresa },
+    TipoComprobanteVenta: { IdTipoComprobanteVenta: 6 }, // NCV - Nota de Crédito
+    NumeroDocumento: { PuntoVenta: puntoVenta },
+    EsContado: true,
+    Vendedor: { IdVendedor: 2 },
+    CondicionVenta: { IdCondicionVenta: 14 },
+    Bonificacion: { IdBonificacion: 6235 },
+    VentaArticulos: ventaArticulos,
+    VentaValoresEfectivos: [{
+      IdValor: 1,
+      Cotizacion: 1,
+      Importe: importeValor,
+    }],
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'pos',
+    })
+    throw new Error('Error al conectar con Centum ERP (NC POS): ' + err.message)
+  }
+
+  const texto = await response.text()
+  let data = {}
+  try { data = JSON.parse(texto) } catch { /* may not be JSON */ }
+
+  if (response.ok) {
+    registrarLlamada({
+      servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+      items_procesados: ventaArticulos.length, origen: 'pos',
+    })
+    console.log(`[Centum POS NC] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    return data
+  }
+
+  if (response.status === 500) {
+    console.warn(`[Centum POS NC] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    registrarLlamada({
+      servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
+      items_procesados: ventaArticulos.length, error_mensaje: 'HTTP 500', origen: 'pos',
+    })
+    return { _creadoConWarning: true, ...data }
+  }
+
+  registrarLlamada({
+    servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
+    estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'pos',
+  })
+  throw new Error(`Error al crear NC POS en Centum (${response.status}): ${texto.slice(0, 500)}`)
+}
+
+/**
+ * Crea una Nota de Crédito por concepto en Centum (caso: diferencia de precio de góndola).
+ * @param {Object} params
+ * @param {number} params.idCliente - IdCliente Centum
+ * @param {number} params.sucursalFisicaId - IdSucursalFisica Centum
+ * @param {number} params.idDivisionEmpresa - 2=PRUEBA, 3=EMPRESA
+ * @param {number} params.puntoVenta - Mismo punto de venta que la factura original
+ * @param {number} params.total - Importe total de la NC (positivo)
+ * @param {string} params.condicionIva - Condición IVA del cliente
+ * @param {string} [params.descripcion] - Descripción adicional del concepto
+ * @returns {Promise<Object>} NC creada en Centum
+ */
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion }) {
+  const url = `${BASE_URL}/Ventas`
+  const inicio = Date.now()
+
+  const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
+  const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+
+  // Para NC por concepto: el importe del concepto
+  // Factura A: Centum espera neto, Factura B: importe final
+  const importeConcepto = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
+  const importeValor = total // El valor efectivo siempre es el total con IVA
+
+  console.log(`[Centum POS NC Concepto] Preparando NC concepto: condicionIva=${condicionIva}, total=${total}, importeConcepto=${importeConcepto}, PV=${puntoVenta}`)
+
+  const body = {
+    FechaImputacion: fechaHoy,
+    Cliente: { IdCliente: idCliente },
+    SucursalFisica: { IdSucursalFisica: sucursalFisicaId },
+    DivisionEmpresaGrupoEconomico: { IdDivisionEmpresaGrupoEconomico: idDivisionEmpresa },
+    TipoComprobanteVenta: { IdTipoComprobanteVenta: 6 }, // NCV - Nota de Crédito
+    NumeroDocumento: { PuntoVenta: puntoVenta },
+    EsContado: true,
+    Vendedor: { IdVendedor: 2 },
+    CondicionVenta: { IdCondicionVenta: 14 },
+    Bonificacion: { IdBonificacion: 6235 },
+    VentaConceptos: [{
+      Concepto: { IdConcepto: 23 }, // DIFERENCIA EN PRECIO DE GONDOLA
+      Nombre: descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA',
+      Importe: importeConcepto,
+      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
+    }],
+    VentaValoresEfectivos: [{
+      IdValor: 1,
+      Cotizacion: 1,
+      Importe: importeValor,
+    }],
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'pos',
+    })
+    throw new Error('Error al conectar con Centum ERP (NC Concepto POS): ' + err.message)
+  }
+
+  const texto = await response.text()
+  let data = {}
+  try { data = JSON.parse(texto) } catch { /* may not be JSON */ }
+
+  if (response.ok) {
+    registrarLlamada({
+      servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+      items_procesados: 1, origen: 'pos',
+    })
+    console.log(`[Centum POS NC Concepto] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    return data
+  }
+
+  if (response.status === 500) {
+    console.warn(`[Centum POS NC Concepto] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    registrarLlamada({
+      servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
+      estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
+      items_procesados: 1, error_mensaje: 'HTTP 500', origen: 'pos',
+    })
+    return { _creadoConWarning: true, ...data }
+  }
+
+  registrarLlamada({
+    servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
+    estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'pos',
+  })
+  throw new Error(`Error al crear NC Concepto POS en Centum (${response.status}): ${texto.slice(0, 500)}`)
+}
+
+/**
+ * Extrae el PuntoVenta del comprobante Centum (ej: "B PV2-7740" → 2)
+ */
+function extraerPuntoVentaDeComprobante(comprobante) {
+  if (!comprobante) return null
+  const match = comprobante.match(/PV(\d+)/)
+  return match ? parseInt(match[1]) : null
+}
+
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante }

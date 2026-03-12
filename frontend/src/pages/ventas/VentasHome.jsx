@@ -28,7 +28,9 @@ const VentasHome = () => {
   const [ventas, setVentas] = useState([])
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
   const [busqueda, setBusqueda] = useState('')
+  const [filtroClasificacion, setFiltroClasificacion] = useState('') // '', 'EMPRESA', 'PRUEBA'
   const [cargando, setCargando] = useState(true)
+  const [reenviando, setReenviando] = useState(null) // id de venta en proceso
 
   useEffect(() => {
     cargarVentas()
@@ -46,15 +48,20 @@ const VentasHome = () => {
     }
   }
 
-  // Filtrar por búsqueda de cliente
+  // Filtrar por búsqueda de cliente y clasificación
   const ventasFiltradas = ventas.filter(v => {
-    if (!busqueda) return true
-    const term = busqueda.toLowerCase()
-    return (v.nombre_cliente || '').toLowerCase().includes(term)
+    if (busqueda) {
+      const term = busqueda.toLowerCase()
+      if (!(v.nombre_cliente || '').toLowerCase().includes(term)) return false
+    }
+    if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
+    return true
   })
 
   // Resumen del día
   const totalDia = ventasFiltradas.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
+  const totalEmpresa = ventasFiltradas.filter(v => v.clasificacion === 'EMPRESA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
+  const totalPrueba = ventasFiltradas.filter(v => v.clasificacion === 'PRUEBA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
   const desgloseMedios = {}
   ventasFiltradas.forEach(v => {
     const pagos = v.pagos || []
@@ -63,6 +70,21 @@ const VentasHome = () => {
       desgloseMedios[medio] = (desgloseMedios[medio] || 0) + (parseFloat(p.monto) || 0)
     })
   })
+
+  const reenviarCentum = async (e, ventaId) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!confirm('¿Reintentar envío a Centum? Esto genera una factura fiscal.')) return
+    setReenviando(ventaId)
+    try {
+      await api.post(`/api/pos/ventas/${ventaId}/reenviar-centum`)
+      await cargarVentas()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setReenviando(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -86,13 +108,40 @@ const VentasHome = () => {
           />
         </div>
 
+        {/* Filtro por clasificación */}
+        <div className="flex gap-2">
+          {['', 'EMPRESA', 'PRUEBA'].map(tipo => (
+            <button
+              key={tipo}
+              onClick={() => setFiltroClasificacion(tipo)}
+              className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                filtroClasificacion === tipo
+                  ? tipo === 'EMPRESA' ? 'bg-blue-600 text-white'
+                    : tipo === 'PRUEBA' ? 'bg-amber-500 text-white'
+                    : 'bg-gray-800 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {tipo || 'Todas'}
+            </button>
+          ))}
+        </div>
+
         {/* Resumen del día */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-500 uppercase">Resumen del día</h2>
             <span className="text-xs text-gray-400">{ventasFiltradas.length} venta{ventasFiltradas.length !== 1 ? 's' : ''}</span>
           </div>
-          <p className="text-2xl font-bold text-gray-800 mb-3">{formatPrecio(totalDia)}</p>
+          <p className="text-2xl font-bold text-gray-800 mb-2">{formatPrecio(totalDia)}</p>
+          <div className="flex gap-3 mb-3">
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
+              Empresa: {formatPrecio(totalEmpresa)}
+            </span>
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
+              Prueba: {formatPrecio(totalPrueba)}
+            </span>
+          </div>
           {Object.keys(desgloseMedios).length > 0 && (
             <div className="flex flex-wrap gap-2">
               {Object.entries(desgloseMedios).map(([medio, monto]) => (
@@ -126,8 +175,20 @@ const VentasHome = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
+                        {v.numero_venta && (
+                          <span className="text-sm font-bold text-blue-600">
+                            #{v.numero_venta}
+                          </span>
+                        )}
                         <span className="text-sm font-medium text-gray-800">
                           {formatHora(v.created_at)}
+                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                          v.clasificacion === 'EMPRESA'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {v.clasificacion}
                         </span>
                         {esAdmin && v.perfiles?.nombre && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
@@ -138,6 +199,21 @@ const VentasHome = () => {
                           <span className="text-xs bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded">
                             Pedido #{v.pedido.numero || '—'}
                           </span>
+                        )}
+                        {v.centum_comprobante && (
+                          <span className="text-xs bg-green-50 text-green-600 px-1.5 py-0.5 rounded">
+                            {v.centum_comprobante}
+                          </span>
+                        )}
+                        {!v.centum_sync && !v.centum_comprobante && (
+                          <button
+                            onClick={(e) => reenviarCentum(e, v.id)}
+                            disabled={reenviando === v.id}
+                            className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded hover:bg-red-100 disabled:opacity-50 transition-colors"
+                            title={v.centum_error || 'No sincronizada con Centum'}
+                          >
+                            {reenviando === v.id ? 'Enviando...' : v.centum_error ? 'Reintentar Centum' : 'Enviar a Centum'}
+                          </button>
                         )}
                       </div>
                       <p className="text-sm text-gray-500 truncate">

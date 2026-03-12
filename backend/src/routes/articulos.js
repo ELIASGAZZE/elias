@@ -400,7 +400,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 })
 
 // POST /api/articulos/sincronizar-erp
-// Admin: sincroniza artículos desde ERP Centum
+// Admin: sincroniza artículos desde ERP Centum (completa)
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual')
@@ -408,6 +408,18 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
     res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })
+  }
+})
+
+// POST /api/articulos/sincronizar-precios
+// Sync rápida: solo precios, sin códigos de barra ni relaciones sucursales
+router.post('/sincronizar-precios', verificarAuth, async (req, res) => {
+  try {
+    const resultado = await sincronizarERP('pos', { skipBarcodes: true, skipSucursales: true })
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error al sincronizar precios:', err)
+    res.status(500).json({ error: 'Error al sincronizar precios' })
   }
 })
 

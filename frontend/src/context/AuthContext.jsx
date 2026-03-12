@@ -1,7 +1,7 @@
 // Contexto de autenticación
 // Maneja el estado del usuario logueado y lo comparte con toda la app
 import React, { createContext, useContext, useState, useEffect } from 'react'
-import api from '../services/api'
+import api, { isNetworkError } from '../services/api'
 
 // Creamos el contexto
 const AuthContext = createContext(null)
@@ -35,10 +35,17 @@ export const AuthProvider = ({ children }) => {
           if (usr.rol === 'admin') {
             import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
           }
-        } catch {
-          // Token inválido: limpiamos el storage
-          localStorage.removeItem('token')
-          localStorage.removeItem('usuario')
+        } catch (err) {
+          // Si es error de red (sin internet), usar sesión cacheada en localStorage
+          if (isNetworkError(err) || err.response?.status === 503) {
+            const usr = JSON.parse(usuarioGuardado)
+            setUsuario(usr)
+            console.log('[Auth] Modo offline — sesión restaurada desde cache local')
+          } else {
+            // Token realmente inválido: limpiamos el storage
+            localStorage.removeItem('token')
+            localStorage.removeItem('usuario')
+          }
         }
       }
       setCargando(false)
@@ -64,6 +71,15 @@ export const AuthProvider = ({ children }) => {
     return data.usuario
   }
 
+  // Login de emergencia (sin internet, con PIN)
+  const loginEmergencia = async (pin) => {
+    const { data } = await api.post('/api/auth/emergency-login', { pin })
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('usuario', JSON.stringify(data.usuario))
+    setUsuario(data.usuario)
+    return data.usuario
+  }
+
   // Función de logout
   const logout = async () => {
     try {
@@ -80,6 +96,7 @@ export const AuthProvider = ({ children }) => {
     usuario,
     cargando,
     login,
+    loginEmergencia,
     logout,
     estaLogueado: !!usuario,
     esAdmin: usuario?.rol === 'admin',

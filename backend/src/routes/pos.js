@@ -4,6 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante } = require('../services/centumVentasPOS')
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
@@ -188,7 +189,7 @@ router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => 
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id } = req.body
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
@@ -250,6 +251,91 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
       if (error) throw error
       data = ventaData
+
+      // Registrar venta en Centum ERP (async, no bloquea la respuesta)
+      if (data) {
+        (async () => {
+          try {
+            console.log(`[Centum POS] Intentando registrar venta ${data.id} (caja_id=${caja_id || 'null'})`)
+            let puntoVenta, sucursalFisicaId
+
+            if (caja_id) {
+              // Obtener config de caja y sucursal
+              const { data: cajaData } = await supabase
+                .from('cajas')
+                .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+                .eq('id', caja_id)
+                .single()
+
+              puntoVenta = cajaData?.punto_venta_centum
+              sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+            }
+
+            // Fallback: si no hay caja_id o la caja no tiene config, buscar primera caja de la sucursal del cajero
+            if (!puntoVenta || !sucursalFisicaId) {
+              const sucursalId = req.perfil.sucursal_id
+              if (sucursalId) {
+                const { data: cajaFallback } = await supabase
+                  .from('cajas')
+                  .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+                  .eq('sucursal_id', sucursalId)
+                  .not('punto_venta_centum', 'is', null)
+                  .limit(1)
+                  .single()
+
+                puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
+                sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
+              }
+            }
+
+            if (!puntoVenta || !sucursalFisicaId) {
+              const errorMsg = 'Sin config Centum: no se encontró caja/sucursal con punto de venta configurado'
+              console.log(`[Centum POS] ${errorMsg}`)
+              await supabase
+                .from('ventas_pos')
+                .update({ centum_error: errorMsg })
+                .eq('id', data.id)
+              return
+            }
+
+            const resultado = await registrarVentaPOSEnCentum(data, {
+              sucursalFisicaId,
+              puntoVenta,
+            })
+
+            if (resultado) {
+              // Armar comprobante legible: "B PV9-7"
+              const numDoc = resultado.NumeroDocumento
+              const comprobante = numDoc
+                ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+                : null
+
+              // Guardar referencia de Centum en la venta local
+              await supabase
+                .from('ventas_pos')
+                .update({
+                  id_venta_centum: resultado.IdVenta || null,
+                  centum_comprobante: comprobante,
+                  centum_sync: true,
+                  centum_error: null,
+                })
+                .eq('id', data.id)
+              console.log(`[Centum POS] Venta ${data.id} registrada en Centum: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+            } else {
+              await supabase
+                .from('ventas_pos')
+                .update({ centum_error: 'Centum no retornó resultado (posible error interno)' })
+                .eq('id', data.id)
+            }
+          } catch (err) {
+            console.error(`[Centum POS] Error async al registrar venta ${data.id}:`, err.message)
+            await supabase
+              .from('ventas_pos')
+              .update({ centum_error: err.message })
+              .eq('id', data.id).catch(() => {})
+          }
+        })()
+      }
     }
 
     const ventaId = data?.id || null
@@ -403,6 +489,36 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       })
     }
 
+    // Clasificar ventas: EMPRESA o PRUEBA
+    // RI/MT (Factura A) → siempre EMPRESA
+    // CF + solo efectivo/saldo/gift_card/cta_cte → PRUEBA
+    // CF + pago electrónico → EMPRESA
+    const clienteIds = [...new Set(ventas.map(v => v.id_cliente_centum).filter(Boolean))]
+    let condicionesIva = {}
+    if (clienteIds.length > 0) {
+      const { data: clientes } = await supabase
+        .from('clientes')
+        .select('id_centum, condicion_iva')
+        .in('id_centum', clienteIds)
+      if (clientes) {
+        clientes.forEach(c => { condicionesIva[c.id_centum] = c.condicion_iva })
+      }
+    }
+    const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    ventas = ventas.map(v => {
+      const condIva = condicionesIva[v.id_cliente_centum] || 'CF'
+      const esFacturaA = condIva === 'RI' || condIva === 'MT'
+      if (esFacturaA) return { ...v, clasificacion: 'EMPRESA' }
+      const pagos = Array.isArray(v.pagos) ? v.pagos : []
+      const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+      return { ...v, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
+    })
+
+    // Filtro por clasificación
+    if (req.query.clasificacion) {
+      ventas = ventas.filter(v => v.clasificacion === req.query.clasificacion.toUpperCase())
+    }
+
     res.json({ ventas })
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
@@ -426,6 +542,18 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
     if (req.perfil.rol !== 'admin' && data.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'No tenés permiso para ver esta venta' })
     }
+
+    // Clasificar: EMPRESA o PRUEBA
+    let condIva = 'CF'
+    if (data.id_cliente_centum) {
+      const { data: cli } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', data.id_cliente_centum).single()
+      condIva = cli?.condicion_iva || 'CF'
+    }
+    const esFacturaA = condIva === 'RI' || condIva === 'MT'
+    const pagos = Array.isArray(data.pagos) ? data.pagos : []
+    const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+    data.clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
 
     res.json({ venta: data })
   } catch (err) {
@@ -582,6 +710,41 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al editar pedido:', err.message)
     res.status(500).json({ error: 'Error al editar pedido: ' + err.message })
+  }
+})
+
+// PUT /api/pos/pedidos/:id/pago — registrar pago en caja de un pedido pendiente
+router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
+  try {
+    const { total_pagado, observaciones } = req.body
+
+    const { data: pedido } = await supabase
+      .from('pedidos_pos')
+      .select('id, estado, total, total_pagado')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!pedido || pedido.estado !== 'pendiente') {
+      return res.status(404).json({ error: 'Pedido no encontrado o ya procesado' })
+    }
+
+    const nuevoTotalPagado = (parseFloat(pedido.total_pagado) || 0) + (parseFloat(total_pagado) || 0)
+
+    const { data, error } = await supabase
+      .from('pedidos_pos')
+      .update({
+        total_pagado: nuevoTotalPagado,
+        observaciones: observaciones || pedido.observaciones || 'PAGO ANTICIPADO',
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error registrando pago de pedido:', err)
+    res.status(500).json({ error: 'Error al registrar pago: ' + err.message })
   }
 })
 
@@ -940,12 +1103,85 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
 
     if (saldoErr) throw saldoErr
 
+    // Si la venta original estaba sincronizada con Centum, crear NC en Centum
+    let centumNC = null
+    if (venta.centum_sync && venta.centum_comprobante) {
+      try {
+        const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+        if (!pvOriginal) throw new Error('No se pudo extraer PuntoVenta del comprobante original')
+
+        // Buscar sucursal física
+        let sucursalFisicaId = null
+        if (venta.caja_id) {
+          const { data: cajaData } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id)')
+            .eq('id', venta.caja_id)
+            .single()
+          sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+        }
+        if (!sucursalFisicaId) {
+          const { data: cajaFallback } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id)')
+            .not('punto_venta_centum', 'is', null)
+            .limit(1)
+            .single()
+          sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+        }
+
+        // Obtener condición IVA
+        let condicionIva = 'CF'
+        if (venta.id_cliente_centum) {
+          const { data: cli } = await supabase
+            .from('clientes').select('condicion_iva')
+            .eq('id_centum', venta.id_cliente_centum).single()
+          condicionIva = cli?.condicion_iva || 'CF'
+        }
+
+        const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+        const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+        const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+        const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+        const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+        centumNC = await crearNotaCreditoPOS({
+          idCliente: venta.id_cliente_centum || 2,
+          sucursalFisicaId,
+          idDivisionEmpresa,
+          puntoVenta: pvOriginal,
+          items: itemsNC,
+          total: saldoAFavor,
+          condicionIva,
+        })
+
+        // Guardar info de NC Centum en la nota de crédito local
+        const numDoc = centumNC.NumeroDocumento
+        const comprobante = numDoc
+          ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          : null
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: centumNC.IdVenta || null,
+          centum_comprobante: comprobante,
+          centum_sync: true,
+        }).eq('id', notaCredito.id)
+
+        console.log(`[POS] NC Centum creada para devolución: ${comprobante}`)
+      } catch (centumErr) {
+        console.error('[POS] Error al crear NC en Centum (devolución):', centumErr.message)
+        await supabase.from('ventas_pos').update({
+          centum_error: centumErr.message,
+        }).eq('id', notaCredito.id)
+      }
+    }
+
     res.json({
       ok: true,
       saldo_generado: saldoAFavor,
       subtotal_devuelto: subtotalDevuelto,
       proporcion: Math.round(proporcion * 10000) / 100,
       nota_credito_id: notaCredito.id,
+      centum_nc: centumNC ? true : false,
     })
   } catch (err) {
     console.error('[POS] Error al procesar devolución:', err.message)
@@ -1027,10 +1263,126 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
 
     if (nvErr) throw nvErr
 
+    // Si la venta original estaba sincronizada con Centum, crear NC + nueva FCV
+    let centumNCOk = false, centumFCVOk = false
+    if (venta.centum_sync && venta.centum_comprobante) {
+      const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+
+      // Buscar sucursal física
+      let sucursalFisicaId = null
+      if (venta.caja_id) {
+        const { data: cajaData } = await supabase
+          .from('cajas')
+          .select('sucursales(centum_sucursal_id)')
+          .eq('id', venta.caja_id)
+          .single()
+        sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+      }
+      if (!sucursalFisicaId) {
+        const { data: cajaFallback } = await supabase
+          .from('cajas')
+          .select('sucursales(centum_sucursal_id)')
+          .not('punto_venta_centum', 'is', null)
+          .limit(1)
+          .single()
+        sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+      }
+
+      if (pvOriginal && sucursalFisicaId) {
+        // 1. NC al cliente original
+        try {
+          let condicionIvaOrig = 'CF'
+          if (venta.id_cliente_centum) {
+            const { data: cli } = await supabase
+              .from('clientes').select('condicion_iva')
+              .eq('id_centum', venta.id_cliente_centum).single()
+            condicionIvaOrig = cli?.condicion_iva || 'CF'
+          }
+          const esFacturaAOrig = condicionIvaOrig === 'RI' || condicionIvaOrig === 'MT'
+          const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+          const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+          const soloEfectivoOrig = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+          const idDivOrig = esFacturaAOrig ? 3 : (soloEfectivoOrig ? 2 : 3)
+
+          const centumNC = await crearNotaCreditoPOS({
+            idCliente: venta.id_cliente_centum || 2,
+            sucursalFisicaId,
+            idDivisionEmpresa: idDivOrig,
+            puntoVenta: pvOriginal,
+            items: itemsOriginal,
+            total: Math.abs(parseFloat(venta.total) || 0),
+            condicionIva: condicionIvaOrig,
+          })
+
+          const numDocNC = centumNC.NumeroDocumento
+          const comprobanteNC = numDocNC
+            ? `${numDocNC.LetraDocumento || ''} PV${numDocNC.PuntoVenta}-${numDocNC.Numero}`
+            : null
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: centumNC.IdVenta || null,
+            centum_comprobante: comprobanteNC,
+            centum_sync: true,
+          }).eq('id', notaCredito.id)
+          centumNCOk = true
+          console.log(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
+        } catch (centumErr) {
+          console.error('[POS] Error NC Centum (corrección cliente):', centumErr.message)
+          await supabase.from('ventas_pos').update({
+            centum_error: centumErr.message,
+          }).eq('id', notaCredito.id)
+        }
+
+        // 2. Nueva FCV al cliente correcto
+        try {
+          let condicionIvaNuevo = 'CF'
+          if (id_cliente_centum) {
+            const { data: cli } = await supabase
+              .from('clientes').select('condicion_iva')
+              .eq('id_centum', id_cliente_centum).single()
+            condicionIvaNuevo = cli?.condicion_iva || 'CF'
+          }
+          const esFacturaANuevo = condicionIvaNuevo === 'RI' || condicionIvaNuevo === 'MT'
+          const tiposEfectivo2 = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+          const soloEfectivoNuevo = pagosOriginal.length === 0 || pagosOriginal.every(p => tiposEfectivo2.includes((p.tipo || '').toLowerCase()))
+          const idDivNuevo = esFacturaANuevo ? 3 : (soloEfectivoNuevo ? 2 : 3)
+
+          const centumFCV = await crearVentaPOS({
+            idCliente: id_cliente_centum || 2,
+            sucursalFisicaId,
+            idDivisionEmpresa: idDivNuevo,
+            puntoVenta: pvOriginal,
+            items: itemsOriginal,
+            pagos: pagosOriginal,
+            total: parseFloat(venta.total) || 0,
+            condicionIva: condicionIvaNuevo,
+          })
+
+          const numDocFCV = centumFCV.NumeroDocumento
+          const comprobanteFCV = numDocFCV
+            ? `${numDocFCV.LetraDocumento || ''} PV${numDocFCV.PuntoVenta}-${numDocFCV.Numero}`
+            : null
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: centumFCV.IdVenta || null,
+            centum_comprobante: comprobanteFCV,
+            centum_sync: true,
+          }).eq('id', nuevaVenta.id)
+          centumFCVOk = true
+          console.log(`[POS] FCV Centum corrección cliente: ${comprobanteFCV}`)
+        } catch (centumErr) {
+          console.error('[POS] Error FCV Centum (corrección cliente):', centumErr.message)
+          await supabase.from('ventas_pos').update({
+            centum_error: centumErr.message,
+          }).eq('id', nuevaVenta.id)
+        }
+      }
+    }
+
     res.json({
       ok: true,
       nota_credito_id: notaCredito.id,
       nueva_venta_id: nuevaVenta.id,
+      centum_nc: centumNCOk,
+      centum_fcv: centumFCVOk,
     })
   } catch (err) {
     console.error('[POS] Error al corregir cliente:', err.message)
@@ -1119,14 +1471,220 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
 
     if (saldoErr) throw saldoErr
 
+    // Si la venta original estaba sincronizada con Centum, crear NC por concepto
+    let centumNC = null
+    if (venta.centum_sync && venta.centum_comprobante) {
+      try {
+        const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+        if (!pvOriginal) throw new Error('No se pudo extraer PuntoVenta del comprobante original')
+
+        let sucursalFisicaId = null
+        if (venta.caja_id) {
+          const { data: cajaData } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id)')
+            .eq('id', venta.caja_id)
+            .single()
+          sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+        }
+        if (!sucursalFisicaId) {
+          const { data: cajaFallback } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id)')
+            .not('punto_venta_centum', 'is', null)
+            .limit(1)
+            .single()
+          sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+        }
+
+        let condicionIva = 'CF'
+        if (venta.id_cliente_centum) {
+          const { data: cli } = await supabase
+            .from('clientes').select('condicion_iva')
+            .eq('id_centum', venta.id_cliente_centum).single()
+          condicionIva = cli?.condicion_iva || 'CF'
+        }
+
+        const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+        const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+        const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+        const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+        const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+        const descripcionItems = items_corregidos.map(ic =>
+          `${ic.cantidad}x ${ic.nombre}: $${ic.precio_cobrado} → $${ic.precio_correcto}`
+        ).join(', ')
+
+        centumNC = await crearNotaCreditoConceptoPOS({
+          idCliente: venta.id_cliente_centum || 2,
+          sucursalFisicaId,
+          idDivisionEmpresa,
+          puntoVenta: pvOriginal,
+          total: saldoAFavor,
+          condicionIva,
+          descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
+        })
+
+        const numDoc = centumNC.NumeroDocumento
+        const comprobante = numDoc
+          ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          : null
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: centumNC.IdVenta || null,
+          centum_comprobante: comprobante,
+          centum_sync: true,
+        }).eq('id', notaCredito.id)
+
+        console.log(`[POS] NC Concepto Centum creada para dif. precio: ${comprobante}`)
+      } catch (centumErr) {
+        console.error('[POS] Error NC Concepto Centum (dif. precio):', centumErr.message)
+        await supabase.from('ventas_pos').update({
+          centum_error: centumErr.message,
+        }).eq('id', notaCredito.id)
+      }
+    }
+
     res.json({
       ok: true,
       saldo_generado: saldoAFavor,
       nota_credito_id: notaCredito.id,
+      centum_nc: centumNC ? true : false,
     })
   } catch (err) {
     console.error('[POS] Error al procesar corrección de precio:', err.message)
     res.status(500).json({ error: 'Error al procesar corrección de precio' })
+  }
+})
+
+// POST /api/pos/log-eliminacion
+// Registra eliminación de artículos del ticket (auditoría anti-robo)
+router.post('/log-eliminacion', verificarAuth, async (req, res) => {
+  try {
+    const { items, usuario_nombre } = req.body
+    if (!items || !items.length) return res.status(400).json({ error: 'Items requeridos' })
+
+    const { error } = await supabase.from('pos_eliminaciones_log').insert({
+      usuario_id: req.usuario.id,
+      usuario_nombre: usuario_nombre || req.usuario.nombre || 'Desconocido',
+      items,
+      fecha: new Date().toISOString(),
+    })
+
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[POS] Error al registrar eliminación:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Reintentar envío de venta a Centum
+router.post('/ventas/:id/reenviar-centum', async (req, res) => {
+  try {
+    const ventaId = req.params.id
+
+    // Obtener la venta
+    const { data: venta, error } = await supabase
+      .from('ventas_pos')
+      .select('*')
+      .eq('id', ventaId)
+      .single()
+
+    if (error || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
+    if (venta.centum_sync) return res.status(400).json({ error: 'Esta venta ya fue sincronizada con Centum' })
+
+    // Buscar config de caja/sucursal
+    let puntoVenta, sucursalFisicaId
+
+    if (venta.caja_id) {
+      const { data: cajaData } = await supabase
+        .from('cajas')
+        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+        .eq('id', venta.caja_id)
+        .single()
+
+      puntoVenta = cajaData?.punto_venta_centum
+      sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+    }
+
+    // Fallback: buscar cualquier caja con punto_venta_centum configurado
+    if (!puntoVenta || !sucursalFisicaId) {
+      const { data: cajaFallback } = await supabase
+        .from('cajas')
+        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+        .not('punto_venta_centum', 'is', null)
+        .limit(1)
+        .single()
+
+      puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
+      sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
+    }
+
+    if (!puntoVenta || !sucursalFisicaId) {
+      return res.status(400).json({ error: 'No se encontró caja/sucursal con punto de venta Centum configurado' })
+    }
+
+    // Preparar datos igual que registrarVentaPOSEnCentum pero sin catch silencioso
+    const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
+    const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
+
+    // Obtener condición IVA del cliente
+    let condicionIva = 'CF'
+    if (venta.id_cliente_centum) {
+      const { data: cliente } = await supabase
+        .from('clientes')
+        .select('condicion_iva')
+        .eq('id_centum', venta.id_cliente_centum)
+        .single()
+      condicionIva = cliente?.condicion_iva || 'CF'
+    }
+
+    const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+    const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+    const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+    // crearVentaPOS lanza error si falla (no lo silencia como registrarVentaPOSEnCentum)
+    const resultado = await crearVentaPOS({
+      idCliente: venta.id_cliente_centum || 2,
+      sucursalFisicaId,
+      idDivisionEmpresa,
+      puntoVenta,
+      items,
+      pagos,
+      total: parseFloat(venta.total) || 0,
+      condicionIva,
+    })
+
+    const numDoc = resultado.NumeroDocumento
+    const comprobante = numDoc
+      ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+      : null
+
+    await supabase
+      .from('ventas_pos')
+      .update({
+        id_venta_centum: resultado.IdVenta || null,
+        centum_comprobante: comprobante,
+        centum_sync: true,
+        centum_error: null,
+      })
+      .eq('id', ventaId)
+
+    console.log(`[Centum POS] Reenvío venta ${ventaId} OK: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+    return res.json({ ok: true, comprobante, idVentaCentum: resultado.IdVenta })
+
+  } catch (err) {
+    console.error(`[Centum POS] Error reenvío venta ${req.params.id}:`, err.message)
+
+    try {
+      await supabase
+        .from('ventas_pos')
+        .update({ centum_error: err.message })
+        .eq('id', req.params.id)
+    } catch (_) { /* ignorar error al guardar */ }
+
+    res.status(500).json({ error: err.message })
   }
 })
 
