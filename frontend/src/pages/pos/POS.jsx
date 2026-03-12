@@ -2644,14 +2644,17 @@ const POS = () => {
               </div>
             )}
 
-            {/* Teclado virtual */}
-            {mostrarTeclado && (
+          </div>
+
+          {/* Teclado virtual — debajo del buscador y resultados */}
+          {mostrarTeclado && (
+            <div className="mb-3">
               <TecladoVirtual
                 valor={busquedaArt}
                 onChange={(v) => { setBusquedaArt(v); setBusquedaIdx(-1) }}
               />
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Grilla de favoritos (siempre visible) */}
           <div className="flex-1 overflow-y-auto">

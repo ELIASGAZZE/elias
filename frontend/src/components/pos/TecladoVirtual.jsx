@@ -17,7 +17,7 @@ const LAYOUTS = {
   ],
 }
 
-export default function TecladoVirtual({ valor, onChange, onEnter }) {
+export default function TecladoVirtual({ valor, onChange }) {
   const [mayus, setMayus] = useState(false)
   const layout = mayus ? LAYOUTS.upper : LAYOUTS.lower
 
@@ -34,9 +34,9 @@ export default function TecladoVirtual({ valor, onChange, onEnter }) {
   }
 
   return (
-    <div className="bg-gray-100 rounded-xl p-2 shadow-inner mt-2 select-none">
+    <div className="bg-gray-100 rounded-2xl p-3 shadow-inner select-none">
       {layout.map((row, ri) => (
-        <div key={ri} className="flex justify-center gap-1 mb-1">
+        <div key={ri} className="flex justify-center gap-1.5 mb-1.5">
           {row.map((key) => {
             const isSpecial = key === '⇧' || key === '⌫'
             const isSpace = key === 'espacio'
@@ -47,13 +47,13 @@ export default function TecladoVirtual({ valor, onChange, onEnter }) {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleKey(key)}
                 className={`
-                  rounded-lg font-mono text-sm font-semibold
+                  rounded-xl font-mono text-lg font-semibold
                   active:scale-95 transition-transform
                   ${isSpace
-                    ? 'flex-1 bg-white border border-gray-300 py-3 text-gray-400'
+                    ? 'flex-1 bg-white border border-gray-300 py-4 text-gray-400 text-base'
                     : isSpecial
-                      ? 'px-3 py-2.5 bg-gray-300 text-gray-700 min-w-[40px]'
-                      : 'px-2.5 py-2.5 bg-white border border-gray-300 text-gray-800 min-w-[32px] hover:bg-gray-50'
+                      ? 'px-5 py-3.5 bg-gray-300 text-gray-700 min-w-[48px] text-base'
+                      : 'px-4 py-3.5 bg-white border border-gray-300 text-gray-800 min-w-[40px] hover:bg-gray-50'
                   }
                   ${key === '⇧' && mayus ? 'bg-violet-200 border-violet-400' : ''}
                 `}
@@ -64,18 +64,6 @@ export default function TecladoVirtual({ valor, onChange, onEnter }) {
           })}
         </div>
       ))}
-      {onEnter && (
-        <div className="flex justify-center mt-1">
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onEnter}
-            className="px-6 py-2.5 bg-violet-600 text-white rounded-lg font-semibold text-sm active:scale-95 transition-transform"
-          >
-            BUSCAR
-          </button>
-        </div>
-      )}
     </div>
   )
 }
