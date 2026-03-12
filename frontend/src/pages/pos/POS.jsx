@@ -1870,22 +1870,6 @@ const POS = () => {
 
   // Pantallas de configuración de terminal (antes del POS principal)
   if (necesitaConfig) {
-    if (!esAdmin) {
-      return (
-        <div className="h-screen bg-gray-100 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 text-center">
-            <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-gray-800">Terminal no configurado</h2>
-            <p className="text-sm text-gray-400 mt-2">Un administrador debe configurar la sucursal y caja de esta PC antes de usar el POS.</p>
-            <a href="/apps" className="inline-block mt-6 text-violet-600 hover:text-violet-700 text-sm font-medium">Volver al menu</a>
-          </div>
-        </div>
-      )
-    }
     return <ConfigurarTerminal onConfigurar={handleConfigurarTerminal} configActual={null} />
   }
 
