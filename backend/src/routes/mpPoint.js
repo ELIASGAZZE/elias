@@ -97,7 +97,7 @@ async function cancelarOrdenesPendientes(deviceId) {
 
 router.post('/order', verificarAuth, async (req, res) => {
   try {
-    const { device_id, amount, external_reference, description } = req.body
+    const { device_id, amount, external_reference, description, payment_type } = req.body
     if (!device_id || !amount) return res.status(400).json({ error: 'device_id y amount requeridos' })
     if (amount < 15) return res.status(400).json({ error: 'El monto mínimo es $15.00' })
 
@@ -114,6 +114,11 @@ router.post('/order', verificarAuth, async (req, res) => {
           print_on_terminal: 'no_ticket',
         },
       },
+    }
+
+    // Si se especifica tipo de pago, agregarlo a la config
+    if (payment_type) {
+      orderBody.config.payment_method = { default_type: payment_type }
     }
 
     let idempotencyKey = `pos-order-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`

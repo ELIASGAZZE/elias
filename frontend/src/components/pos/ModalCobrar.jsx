@@ -150,7 +150,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const vuelto = Math.max(0, totalPagado - totalEfectivoConGC)
 
   // Mercado Pago Point — funciones (Orders API: tarjeta + QR)
-  async function iniciarPagoMP() {
+  async function iniciarPagoMP(paymentType) {
     const montoACobrar = restante > 0 ? restante : totalEfectivoConGC
     if (montoACobrar <= 0) return
 
@@ -168,12 +168,15 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       }
       setMpDeviceId(deviceId)
 
-      const { data } = await api.post('/api/mp-point/order', {
+      const orderBody = {
         device_id: deviceId,
         amount: montoACobrar,
         external_reference: `pos-${Date.now()}`,
         description: 'Venta POS',
-      })
+      }
+      if (paymentType) orderBody.payment_type = paymentType
+
+      const { data } = await api.post('/api/mp-point/order', orderBody)
 
       setMpIntentId(data.id) // order ID
       setMpMontoIntent(montoACobrar)
@@ -728,13 +731,24 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         <div>
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Posnet MP</h3>
           {!mpEstado && (
-            <button
-              onClick={iniciarPagoMP}
-              disabled={restante <= 0 && totalEfectivoConGC <= 0}
-              className="w-full py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
-            >
-              Cobrar {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)} con Posnet
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => iniciarPagoMP('credit_card')}
+                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+              >
+                <span className="block text-xs opacity-70">Tarjeta</span>
+                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+              </button>
+              <button
+                onClick={() => iniciarPagoMP('qr')}
+                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+              >
+                <span className="block text-xs opacity-70">QR</span>
+                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+              </button>
+            </div>
           )}
           {mpEstado === 'creando' && (
             <div className="bg-sky-900/40 rounded-xl p-4 text-center">
