@@ -257,18 +257,20 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         (async () => {
           try {
             console.log(`[Centum POS] Intentando registrar venta ${data.id} (caja_id=${caja_id || 'null'})`)
-            let puntoVenta, sucursalFisicaId
+            let puntoVenta, sucursalFisicaId, centumOperadorEmpresa, centumOperadorPrueba
 
             if (caja_id) {
               // Obtener config de caja y sucursal
               const { data: cajaData } = await supabase
                 .from('cajas')
-                .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+                .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
                 .eq('id', caja_id)
                 .single()
 
               puntoVenta = cajaData?.punto_venta_centum
               sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+              centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+              centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
             }
 
             // Fallback: si no hay caja_id o la caja no tiene config, buscar primera caja de la sucursal del cajero
@@ -277,7 +279,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
               if (sucursalId) {
                 const { data: cajaFallback } = await supabase
                   .from('cajas')
-                  .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+                  .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
                   .eq('sucursal_id', sucursalId)
                   .not('punto_venta_centum', 'is', null)
                   .limit(1)
@@ -285,6 +287,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
                 puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
                 sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
+                centumOperadorEmpresa = centumOperadorEmpresa || cajaFallback?.sucursales?.centum_operador_empresa
+                centumOperadorPrueba = centumOperadorPrueba || cajaFallback?.sucursales?.centum_operador_prueba
               }
             }
 
@@ -301,6 +305,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             const resultado = await registrarVentaPOSEnCentum(data, {
               sucursalFisicaId,
               puntoVenta,
+              centum_operador_empresa: centumOperadorEmpresa,
+              centum_operador_prueba: centumOperadorPrueba,
             })
 
             if (resultado) {
@@ -1594,30 +1600,34 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
     if (venta.centum_sync) return res.status(400).json({ error: 'Esta venta ya fue sincronizada con Centum' })
 
     // Buscar config de caja/sucursal
-    let puntoVenta, sucursalFisicaId
+    let puntoVenta, sucursalFisicaId, centumOperadorEmpresa, centumOperadorPrueba
 
     if (venta.caja_id) {
       const { data: cajaData } = await supabase
         .from('cajas')
-        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
         .eq('id', venta.caja_id)
         .single()
 
       puntoVenta = cajaData?.punto_venta_centum
       sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+      centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+      centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
     }
 
     // Fallback: buscar cualquier caja con punto_venta_centum configurado
     if (!puntoVenta || !sucursalFisicaId) {
       const { data: cajaFallback } = await supabase
         .from('cajas')
-        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id)')
+        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
         .not('punto_venta_centum', 'is', null)
         .limit(1)
         .single()
 
       puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
       sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
+      centumOperadorEmpresa = centumOperadorEmpresa || cajaFallback?.sucursales?.centum_operador_empresa
+      centumOperadorPrueba = centumOperadorPrueba || cajaFallback?.sucursales?.centum_operador_prueba
     }
 
     if (!puntoVenta || !sucursalFisicaId) {
@@ -1644,6 +1654,11 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
     const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
 
+    // Obtener operador móvil según división
+    const operadorMovilUser = idDivisionEmpresa === 2
+      ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+      : (centumOperadorEmpresa || null)
+
     // crearVentaPOS lanza error si falla (no lo silencia como registrarVentaPOSEnCentum)
     const resultado = await crearVentaPOS({
       idCliente: venta.id_cliente_centum || 2,
@@ -1654,6 +1669,7 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
       pagos,
       total: parseFloat(venta.total) || 0,
       condicionIva,
+      operadorMovilUser,
     })
 
     const numDoc = resultado.NumeroDocumento

@@ -93,6 +93,8 @@ const AdminConfiguracion = () => {
   const [editandoSucursalId, setEditandoSucursalId] = useState(null)
   const [editandoSucursalNombre, setEditandoSucursalNombre] = useState('')
   const [editandoSucursalCentumId, setEditandoSucursalCentumId] = useState('')
+  const [editandoOperadorEmpresa, setEditandoOperadorEmpresa] = useState('')
+  const [editandoOperadorPrueba, setEditandoOperadorPrueba] = useState('')
 
   // Rubros
   const [rubros, setRubros] = useState([])
@@ -269,12 +271,16 @@ const AdminConfiguracion = () => {
     setEditandoSucursalId(sucursal.id)
     setEditandoSucursalNombre(sucursal.nombre)
     setEditandoSucursalCentumId(sucursal.centum_sucursal_id || '')
+    setEditandoOperadorEmpresa(sucursal.centum_operador_empresa || '')
+    setEditandoOperadorPrueba(sucursal.centum_operador_prueba || '')
   }
 
   const cancelarEdicionSucursal = () => {
     setEditandoSucursalId(null)
     setEditandoSucursalNombre('')
     setEditandoSucursalCentumId('')
+    setEditandoOperadorEmpresa('')
+    setEditandoOperadorPrueba('')
   }
 
   const guardarEdicionSucursal = async (id) => {
@@ -283,10 +289,14 @@ const AdminConfiguracion = () => {
       await api.put(`/api/sucursales/${id}`, {
         nombre: editandoSucursalNombre.trim(),
         centum_sucursal_id: editandoSucursalCentumId || null,
+        centum_operador_empresa: editandoOperadorEmpresa || null,
+        centum_operador_prueba: editandoOperadorPrueba || null,
       })
       setEditandoSucursalId(null)
       setEditandoSucursalNombre('')
       setEditandoSucursalCentumId('')
+      setEditandoOperadorEmpresa('')
+      setEditandoOperadorPrueba('')
       await cargarSucursales()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar sucursal')
@@ -1443,42 +1453,58 @@ const AdminConfiguracion = () => {
                   {sucursales.map(sucursal => (
                     <div key={sucursal.id} className="flex items-center justify-between gap-2 py-2.5">
                       {editandoSucursalId === sucursal.id ? (
-                        <div className="flex items-center gap-2 flex-1">
-                          <input
-                            type="text"
-                            value={editandoSucursalNombre}
-                            onChange={(e) => setEditandoSucursalNombre(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
-                              if (e.key === 'Escape') cancelarEdicionSucursal()
-                            }}
-                            autoFocus
-                            placeholder="Nombre"
-                            className="campo-form text-sm flex-1"
-                          />
-                          <input
-                            type="number"
-                            value={editandoSucursalCentumId}
-                            onChange={(e) => setEditandoSucursalCentumId(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
-                              if (e.key === 'Escape') cancelarEdicionSucursal()
-                            }}
-                            placeholder="ID Sucursal Centum"
-                            className="campo-form text-sm w-40"
-                          />
-                          <button
-                            onClick={() => guardarEdicionSucursal(sucursal.id)}
-                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            OK
-                          </button>
-                          <button
-                            onClick={cancelarEdicionSucursal}
-                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            X
-                          </button>
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editandoSucursalNombre}
+                              onChange={(e) => setEditandoSucursalNombre(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
+                                if (e.key === 'Escape') cancelarEdicionSucursal()
+                              }}
+                              autoFocus
+                              placeholder="Nombre"
+                              className="campo-form text-sm flex-1"
+                            />
+                            <input
+                              type="number"
+                              value={editandoSucursalCentumId}
+                              onChange={(e) => setEditandoSucursalCentumId(e.target.value)}
+                              placeholder="ID Sucursal Centum"
+                              className="campo-form text-sm w-40"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editandoOperadorEmpresa}
+                              onChange={(e) => setEditandoOperadorEmpresa(e.target.value)}
+                              placeholder="Operador Empresa"
+                              className="campo-form text-sm flex-1"
+                            />
+                            <input
+                              type="text"
+                              value={editandoOperadorPrueba}
+                              onChange={(e) => setEditandoOperadorPrueba(e.target.value)}
+                              placeholder="Operador Prueba"
+                              className="campo-form text-sm flex-1"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => guardarEdicionSucursal(sucursal.id)}
+                              className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              onClick={cancelarEdicionSucursal}
+                              className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -1490,7 +1516,11 @@ const AdminConfiguracion = () => {
                               {sucursal.nombre}
                             </p>
                             {sucursal.centum_sucursal_id && (
-                              <p className="text-xs text-gray-400">Centum ID: {sucursal.centum_sucursal_id}</p>
+                              <p className="text-xs text-gray-400">
+                                Centum ID: {sucursal.centum_sucursal_id}
+                                {sucursal.centum_operador_empresa && <span className="ml-2">| Emp: {sucursal.centum_operador_empresa}</span>}
+                                {sucursal.centum_operador_prueba && <span className="ml-2">| Prueba: {sucursal.centum_operador_prueba}</span>}
+                              </p>
                             )}
                           </div>
                           <button

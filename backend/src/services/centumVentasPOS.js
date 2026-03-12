@@ -8,18 +8,17 @@ const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.
 const API_KEY = process.env.CENTUM_API_KEY
 const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 
-// Username del operador móvil configurado con División Prueba (ID 2)
-// Header: CentumSuiteOperadorMovilUser — solo para ventas en Prueba; sin header = Empresa
+// Fallback: operador de env var (para backwards compat)
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
-function getHeaders({ divisionPrueba } = {}) {
+function getHeaders({ operadorMovilUser } = {}) {
   const headers = {
     'Content-Type': 'application/json',
     'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
     'CentumSuiteAccessToken': generateAccessToken(API_KEY),
   }
-  if (divisionPrueba) {
-    headers['CentumSuiteOperadorMovilUser'] = OPERADOR_MOVIL_USER_PRUEBA
+  if (operadorMovilUser) {
+    headers['CentumSuiteOperadorMovilUser'] = operadorMovilUser
   }
   return headers
 }
@@ -47,7 +46,7 @@ const MEDIO_A_ID_VALOR = {
  * @param {number} params.total - Total de la venta
  * @returns {Promise<Object>} Venta creada en Centum
  */
-async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva }) {
+async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva, operadorMovilUser }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -140,7 +139,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
     })
   } catch (err) {
@@ -219,6 +218,11 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
     const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
 
+    // Obtener operador móvil de la sucursal según división
+    const operadorMovilUser = idDivisionEmpresa === 2
+      ? (config.centum_operador_prueba || OPERADOR_MOVIL_USER_PRUEBA)
+      : (config.centum_operador_empresa || null)
+
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,
       sucursalFisicaId: config.sucursalFisicaId,
@@ -228,6 +232,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       pagos,
       total: parseFloat(ventaLocal.total) || 0,
       condicionIva,
+      operadorMovilUser,
     })
 
     return resultado
@@ -249,7 +254,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
  * @param {string} params.condicionIva - Condición IVA del cliente (CF, RI, MT)
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva }) {
+async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -325,7 +330,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
     })
   } catch (err) {
@@ -381,7 +386,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
  * @param {string} [params.descripcion] - Descripción adicional del concepto
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion }) {
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -423,7 +428,7 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: getHeaders({ divisionPrueba: idDivisionEmpresa === 2 }),
+      headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
     })
   } catch (err) {
