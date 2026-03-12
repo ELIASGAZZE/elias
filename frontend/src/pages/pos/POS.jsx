@@ -1404,8 +1404,11 @@ const POS = () => {
         }
         return
       }
-      // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys
-      if (mostrarCobrar) return
+      // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys pero bloquear defaults del browser
+      if (mostrarCobrar) {
+        if (e.key.startsWith('F') && e.key.length <= 3) e.preventDefault()
+        return
+      }
 
       const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
 
