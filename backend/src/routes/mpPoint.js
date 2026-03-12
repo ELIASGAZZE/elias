@@ -116,9 +116,10 @@ router.post('/order', verificarAuth, async (req, res) => {
     if (!device_id || !amount) return res.status(400).json({ error: 'device_id y amount requeridos' })
     if (amount < 15) return res.status(400).json({ error: 'El monto mínimo es $15.00' })
 
+    const extRef = external_reference || `pos-${Date.now()}`
     const orderBody = {
       type: 'point',
-      external_reference: external_reference || `pos-${Date.now()}`,
+      external_reference: extRef,
       description: description || 'Venta POS',
       expiration_time: 'PT5M',
       transactions: {
@@ -128,6 +129,7 @@ router.post('/order', verificarAuth, async (req, res) => {
         point: {
           terminal_id: device_id,
           print_on_terminal: 'no_ticket',
+          ticket_number: extRef,
         },
       },
     }
