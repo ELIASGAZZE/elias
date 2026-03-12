@@ -208,8 +208,25 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const sucursalSeleccionada = sucursales.find(s => s.id === sucursalId)
   const cajaSeleccionada = cajas.find(c => c.id === cajaId)
 
-  const confirmar = () => {
+  const [cambiandoModo, setCambiandoModo] = useState(false)
+
+  const confirmar = async () => {
     if (!sucursalId || !cajaId) return
+
+    // Si seleccionó un posnet, cambiar a modo PDV automáticamente
+    if (mpDeviceId) {
+      const device = devices.find(d => d.id === mpDeviceId)
+      if (device && device.operating_mode !== 'PDV') {
+        setCambiandoModo(true)
+        try {
+          await api.patch(`/api/mp-point/devices/${mpDeviceId}`, { operating_mode: 'PDV' })
+        } catch (err) {
+          console.error('Error cambiando posnet a modo PDV:', err.message)
+        }
+        setCambiandoModo(false)
+      }
+    }
+
     onConfigurar({
       sucursal_id: sucursalId,
       sucursal_nombre: sucursalSeleccionada?.nombre || '',
@@ -300,10 +317,10 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
 
         <button
           onClick={confirmar}
-          disabled={!sucursalId || !cajaId}
+          disabled={!sucursalId || !cajaId || cambiandoModo}
           className="w-full mt-6 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors"
         >
-          Guardar configuracion
+          {cambiandoModo ? 'Configurando posnet...' : 'Guardar configuracion'}
         </button>
 
         {configActual && (

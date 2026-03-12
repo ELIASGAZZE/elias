@@ -16,6 +16,30 @@ function mpHeaders(idempotencyKey) {
   return h
 }
 
+// PATCH /api/mp-point/devices/:id — cambiar modo operativo del dispositivo
+router.patch('/devices/:id', verificarAuth, async (req, res) => {
+  try {
+    const { operating_mode } = req.body
+    if (!operating_mode) return res.status(400).json({ error: 'operating_mode requerido' })
+
+    const resp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, {
+      method: 'PATCH',
+      headers: mpHeaders(),
+      body: JSON.stringify({ operating_mode }),
+    })
+    const data = await resp.json()
+    if (!resp.ok) {
+      console.error('[MP Point] Error cambiando modo:', data)
+      return res.status(resp.status).json(data)
+    }
+    console.log(`[MP Point] Device ${req.params.id} cambiado a modo ${operating_mode}`)
+    res.json(data)
+  } catch (err) {
+    console.error('[MP Point] Error cambiando modo:', err.message)
+    res.status(500).json({ error: 'Error al cambiar modo del dispositivo' })
+  }
+})
+
 // GET /api/mp-point/devices — listar dispositivos (sin auth para config terminal)
 router.get('/devices', async (req, res) => {
   try {
