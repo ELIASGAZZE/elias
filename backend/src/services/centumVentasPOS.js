@@ -223,6 +223,8 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       ? (config.centum_operador_prueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (config.centum_operador_empresa || null)
 
+    console.log(`[Centum POS] División=${idDivisionEmpresa}, operador=${operadorMovilUser}, sucursalFisica=${config.sucursalFisicaId}, PV=${config.puntoVenta}, configEmpresa=${config.centum_operador_empresa}, configPrueba=${config.centum_operador_prueba}`)
+
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,
       sucursalFisicaId: config.sucursalFisicaId,
