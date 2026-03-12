@@ -59,13 +59,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const mpTimeoutRef = useRef(null)
   const cobrarRootRef = useRef(null)
 
-  // Auto-focus el div root para que capture teclas (también al cerrar modal cantidad)
-  useEffect(() => {
-    if (!cantidadModal) {
-      setTimeout(() => cobrarRootRef.current?.focus(), 50)
-    }
-  }, [cantidadModal])
-
   // Cleanup polling + timeout on unmount, y cancelar orden si hay una pendiente
   useEffect(() => {
     return () => {
@@ -380,6 +373,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }
 
   const [cantidadModal, setCantidadModal] = React.useState(null) // { valor, cantidad }
+
+  // Auto-focus el div root para que capture teclas (también al cerrar modal cantidad)
+  useEffect(() => {
+    if (!cantidadModal) {
+      setTimeout(() => cobrarRootRef.current?.focus(), 50)
+    }
+  }, [cantidadModal])
 
   function confirmarCantidadBilletes() {
     const cant = parseInt(cantidadModal.cantidad)
