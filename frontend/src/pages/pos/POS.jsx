@@ -1388,6 +1388,20 @@ const POS = () => {
       if (mostrarCancelar) {
         if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
         if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
+        if (e.key === 'Enter' && cancelarPasoConfirm) {
+          e.preventDefault()
+          const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
+          api.post('/api/auditoria/cancelacion', {
+            motivo: motivoFinal,
+            items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+            subtotal,
+            total,
+            cliente_nombre: cliente?.nombre || null,
+            caja_id: terminalConfig?.caja_id || null,
+            sucursal_id: terminalConfig?.sucursal_id || null,
+          }).catch(err => console.error('Error registrando cancelación:', err))
+          limpiarVenta(); setMostrarCancelar(false)
+        }
         // Flechas arriba/abajo para seleccionar motivo
         if (!cancelarPasoConfirm && document.activeElement?.tagName !== 'TEXTAREA') {
           const motivos = [
