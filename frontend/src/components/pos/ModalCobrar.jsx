@@ -23,6 +23,10 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
+// Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
+const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100 }
+const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
+
 const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta }) => {
   const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
@@ -62,10 +66,23 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }, [])
 
   useEffect(() => {
-    cargarConfig()
+    // Cargar cache primero (instantáneo), luego refrescar desde API en background
+    async function cargarDesdeCache() {
+      try {
+        const [cachedDens, cachedFcs] = await Promise.all([getDenominaciones(), getFormasCobroDB()])
+        if (cachedDens.length > 0) {
+          setDenominaciones(cachedDens.filter(d => d.activo !== false).sort((a, b) => Number(a.valor) - Number(b.valor)))
+        }
+        if (cachedFcs.length > 0) {
+          setFormasCobro(cachedFcs.filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo'))
+        }
+      } catch {}
+    }
+    cargarDesdeCache()
+    cargarConfigDesdeAPI()
   }, [])
 
-  async function cargarConfig() {
+  async function cargarConfigDesdeAPI() {
     try {
       const [denRes, fcRes, promosRes] = await Promise.all([
         api.get('/api/denominaciones'),
@@ -81,7 +98,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       const fcs = (fcRes.data.formas_cobro || fcRes.data || [])
         .filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo')
       setFormasCobro(fcs)
-      // Guardar todas las formas de cobro (sin filtrar efectivo) para offline
       const fcsAll = (fcRes.data.formas_cobro || fcRes.data || []).filter(f => f.activo !== false)
       guardarFormasCobro(fcsAll).catch(() => {})
 
@@ -90,19 +106,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setPromosPago(promos)
     } catch (err) {
       console.error('Error cargando config cobro:', err)
-      // Fallback a IndexedDB si es error de red
-      if (isNetworkError(err)) {
-        try {
-          const cachedDens = await getDenominaciones()
-          if (cachedDens.length > 0) {
-            setDenominaciones(cachedDens.filter(d => d.activo !== false).sort((a, b) => Number(a.valor) - Number(b.valor)))
-          }
-          const cachedFcs = await getFormasCobroDB()
-          if (cachedFcs.length > 0) {
-            setFormasCobro(cachedFcs.filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo'))
-          }
-        } catch {}
-      }
     }
   }
 
@@ -534,10 +537,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setGuardando(false)
     }
   }
-
-  // Mapeo de F-keys: F3-F9 = billetes, F1/F2 = posnet, F10-F12 = formas de cobro
-  const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100 }
-  const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
   // Track último billete seleccionado con F-key para Enter = abrir modal cantidad
   const [ultimoFKeyBillete, setUltimoFKeyBillete] = useState(null)
