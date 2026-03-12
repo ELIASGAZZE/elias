@@ -30,20 +30,20 @@ const PRINT_STYLES = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Courier New', Courier, monospace;
-    font-size: 16px;
+    font-size: 22px;
     width: 302px;
     padding: 8px;
-    line-height: 1.5;
+    line-height: 1.4;
   }
   .center { text-align: center; }
   .bold { font-weight: bold; }
-  .titulo { font-size: 20px; font-weight: bold; }
-  .total { font-size: 18px; font-weight: bold; }
-  .seccion { font-size: 14px; font-weight: bold; margin-top: 4px; }
+  .titulo { font-size: 28px; font-weight: bold; }
+  .total { font-size: 26px; font-weight: bold; }
+  .seccion { font-size: 20px; font-weight: bold; margin-top: 4px; }
   .line { border-top: 1px dashed #000; margin: 6px 0; }
   .line-double { border-top: 2px solid #000; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; }
-  .firma { margin-top: 24px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 14px; }
+  .firma { margin-top: 24px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 20px; }
 `
 
 function abrirVentanaImpresion(html) {
@@ -229,21 +229,21 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
   let html = ''
 
   html += '<div class="center titulo">PADANO SRL</div>'
-  html += '<div class="center" style="font-size:12px;margin-bottom:4px">Punto de Venta</div>'
+  html += '<div class="center" style="font-size:18px;margin-bottom:4px">Punto de Venta</div>'
   if (numeroVenta) html += `<div class="center bold" style="font-size:14px;margin-bottom:4px">Venta #${numeroVenta}</div>`
   html += '<div class="line-double"></div>'
 
   // Fecha y cliente
   const ahora = new Date()
-  html += `<div style="font-size:13px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
-  if (cliente?.razon_social) html += `<div style="font-size:13px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
+  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+  if (cliente?.razon_social) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
   html += '<div class="line"></div>'
 
   // Items
   items.forEach(item => {
     const lineTotal = item.precio_unitario * item.cantidad
-    html += `<div style="font-size:13px">${escapeHtml(item.nombre)}</div>`
-    html += `<div class="row" style="font-size:13px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
+    html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
+    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
   })
 
   html += '<div class="line"></div>'
@@ -254,14 +254,14 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
   // Descuentos promos
   if (promosAplicadas && promosAplicadas.length > 0) {
     promosAplicadas.forEach(p => {
-      html += `<div class="row" style="font-size:13px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
     })
   }
 
   // Descuentos forma de pago
   if (descuentosPorForma && descuentosPorForma.length > 0) {
     descuentosPorForma.forEach(d => {
-      html += `<div class="row" style="font-size:13px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
     })
   }
 
@@ -277,7 +277,7 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
   if (pagos && pagos.length > 0) {
     const resumen = pagos.reduce((acc, p) => { acc[p.tipo] = (acc[p.tipo] || 0) + p.monto; return acc }, {})
     Object.entries(resumen).forEach(([tipo, monto]) => {
-      html += `<div class="row" style="font-size:13px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
   }
 
@@ -288,14 +288,14 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
 
   if (esOffline) {
     html += '<div class="line"></div>'
-    html += '<div class="center" style="font-size:12px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
+    html += '<div class="center" style="font-size:18px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
   }
 
   html += '<div class="line-double"></div>'
-  html += '<div class="center" style="font-size:12px;margin-top:8px">Gracias por su compra</div>'
+  html += '<div class="center" style="font-size:18px;margin-top:8px">Gracias por su compra</div>'
   html += '<div class="line"></div>'
-  html += '<div class="center" style="font-size:10px;margin-top:4px;line-height:1.4">Este ticket no es un comprobante fiscal.</div>'
-  html += '<div class="center" style="font-size:10px;line-height:1.4">El comprobante oficial (AFIP/ARCA) sera enviado por correo electronico a la direccion proporcionada al cajero.</div>'
+  html += '<div class="center" style="font-size:16px;margin-top:4px;line-height:1.4">Este ticket no es un comprobante fiscal.</div>'
+  html += '<div class="center" style="font-size:16px;line-height:1.4">El comprobante oficial (AFIP/ARCA) sera enviado por correo electronico a la direccion proporcionada al cajero.</div>'
 
   abrirVentanaImpresion(html)
 }

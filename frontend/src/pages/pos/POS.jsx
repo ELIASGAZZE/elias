@@ -7,6 +7,7 @@ import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
 import NuevoClienteModal from '../../components/NuevoClienteModal'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
+import TecladoVirtual from '../../components/pos/TecladoVirtual'
 import api, { isNetworkError } from '../../services/api'
 import useOnlineStatus from '../../hooks/useOnlineStatus'
 import { guardarArticulos, getArticulos, guardarPromociones, getPromociones, guardarClientes, getClientes } from '../../services/offlineDB'
@@ -706,6 +707,7 @@ const POS = () => {
   const [sincronizandoERP, setSincronizandoERP] = useState(false)
   const [busquedaArt, setBusquedaArt] = useState('')
   const [busquedaIdx, setBusquedaIdx] = useState(-1) // índice seleccionado en dropdown
+  const [mostrarTeclado, setMostrarTeclado] = useState(false)
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
   const [alertaDuplicado, setAlertaDuplicado] = useState(null) // duplicado (balanza o barcode)
   const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
@@ -2569,11 +2571,22 @@ const POS = () => {
               value={busquedaArt}
               onChange={handleBusquedaChange}
               onKeyDown={handleBusquedaKeyDown}
-              className="w-full bg-white border rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm"
+              className="w-full bg-white border rounded-xl pl-10 pr-12 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm"
               autoFocus
             />
+            {/* Botón teclado virtual */}
+            <button
+              type="button"
+              onClick={() => setMostrarTeclado(v => !v)}
+              className={`absolute right-2 top-1.5 p-1.5 rounded-lg transition-colors z-10 ${mostrarTeclado ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+              title="Teclado virtual"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V6.75zM6 8.25h.01M6 12h.01M6 15.75h12M9.75 8.25h.01M13.5 8.25h.01M17.25 8.25h.01M9.75 12h.01M13.5 12h.01M17.25 12h.01" />
+              </svg>
+            </button>
             {cargandoArticulos && (
-              <div className="absolute right-3 top-3 text-gray-500 text-xs z-10">Cargando...</div>
+              <div className="absolute right-10 top-3 text-gray-500 text-xs z-10">Cargando...</div>
             )}
 
             {/* Dropdown de resultados de búsqueda */}
@@ -2629,6 +2642,14 @@ const POS = () => {
                   })
                 )}
               </div>
+            )}
+
+            {/* Teclado virtual */}
+            {mostrarTeclado && (
+              <TecladoVirtual
+                valor={busquedaArt}
+                onChange={(v) => { setBusquedaArt(v); setBusquedaIdx(-1) }}
+              />
             )}
           </div>
 
