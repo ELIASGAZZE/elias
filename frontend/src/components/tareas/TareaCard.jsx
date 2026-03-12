@@ -22,15 +22,23 @@ const TareaCard = ({ tarea, onCompletar }) => {
             <p className="text-sm text-gray-500 mb-2">{tarea.descripcion}</p>
           )}
           <div className="flex items-center gap-3 text-xs text-gray-400">
-            <span>Programada: {formatFecha(tarea.fecha_programada)}</span>
-            <span>Cada {tarea.frecuencia_dias} días</span>
-            {tarea.dia_preferencia && <span>({tarea.dia_preferencia})</span>}
+            {tarea.repetitiva ? (
+              <>
+                <span>{tarea.subtareas.length} subtarea{tarea.subtareas.length > 1 ? 's' : ''}</span>
+                {tarea.ejecuciones_hoy > 0 && (
+                  <span className="text-orange-600 font-medium">
+                    Completada {tarea.ejecuciones_hoy}x hoy
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span>Programada: {formatFecha(tarea.fecha_programada)}</span>
+                <span>Cada {tarea.frecuencia_dias} días</span>
+                {tarea.dia_preferencia && <span>({tarea.dia_preferencia})</span>}
+              </>
+            )}
           </div>
-          {tarea.subtareas && tarea.subtareas.length > 0 && (
-            <p className="text-xs text-gray-400 mt-1">
-              {tarea.subtareas.length} subtarea{tarea.subtareas.length > 1 ? 's' : ''}
-            </p>
-          )}
         </div>
         <button
           onClick={() => onCompletar(tarea)}

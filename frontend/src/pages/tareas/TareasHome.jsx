@@ -63,13 +63,6 @@ const TareasHome = () => {
       )}
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <h2 className="text-lg font-bold text-gray-800 mb-4">
-          Tareas pendientes
-          {pendientes.length > 0 && (
-            <span className="ml-2 text-sm font-normal text-gray-500">({pendientes.length})</span>
-          )}
-        </h2>
-
         {cargando ? (
           <div className="text-center py-12 text-gray-400">Cargando...</div>
         ) : pendientes.length === 0 ? (
@@ -81,15 +74,49 @@ const TareasHome = () => {
             <p className="text-sm text-gray-400 mt-1">Todas las tareas al dia</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {pendientes.map(tarea => (
-              <TareaCard
-                key={tarea.tarea_config_id}
-                tarea={tarea}
-                onCompletar={setTareaActiva}
-              />
-            ))}
-          </div>
+          <>
+            {/* Tareas únicas */}
+            {pendientes.filter(t => !t.repetitiva).length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-3">
+                  Tareas unicas
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    ({pendientes.filter(t => !t.repetitiva).length})
+                  </span>
+                </h2>
+                <div className="space-y-3">
+                  {pendientes.filter(t => !t.repetitiva).map(tarea => (
+                    <TareaCard
+                      key={tarea.tarea_config_id}
+                      tarea={tarea}
+                      onCompletar={setTareaActiva}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tareas repetitivas */}
+            {pendientes.filter(t => t.repetitiva).length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-3">
+                  Tareas repetitivas
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    ({pendientes.filter(t => t.repetitiva).length})
+                  </span>
+                </h2>
+                <div className="space-y-3">
+                  {pendientes.filter(t => t.repetitiva).map(tarea => (
+                    <TareaCard
+                      key={tarea.tarea_config_id}
+                      tarea={tarea}
+                      onCompletar={setTareaActiva}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

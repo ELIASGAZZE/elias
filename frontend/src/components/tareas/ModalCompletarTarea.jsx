@@ -16,10 +16,10 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
       .then(r => setEmpleados(r.data))
       .catch(() => {})
 
-    // Inicializar subtareas todas marcadas
+    // Inicializar subtareas todas desmarcadas
     if (tarea.subtareas) {
       const initial = {}
-      tarea.subtareas.forEach(s => { initial[s.id] = true })
+      tarea.subtareas.forEach(s => { initial[s.id] = false })
       setSubtareasState(initial)
     }
   }, [tarea])

@@ -65,6 +65,12 @@ async function obtenerTareasPendientes(sucursalId) {
   const pendientes = []
 
   for (const config of configsActivas) {
+    const subtareasActivas = (config.tarea.subtareas || [])
+      .filter(s => s.activo)
+      .sort((a, b) => a.orden - b.orden)
+
+    const esRepetitiva = subtareasActivas.length > 0
+
     // Buscar última ejecución de esta config
     const { data: ultimaEjecucion } = await supabase
       .from('ejecuciones_tarea')
@@ -78,6 +84,38 @@ async function obtenerTareasPendientes(sucursalId) {
     const proximaFecha = calcularProximaFecha(config, ultimaFecha)
     proximaFecha.setHours(0, 0, 0, 0)
 
+    // Tareas repetitivas: siempre aparecen si fecha_inicio <= hoy
+    if (esRepetitiva) {
+      const fechaInicio = new Date(config.fecha_inicio)
+      fechaInicio.setHours(0, 0, 0, 0)
+      if (fechaInicio > hoy) continue
+
+      // Contar ejecuciones de hoy
+      const { count: ejecucionesHoy } = await supabase
+        .from('ejecuciones_tarea')
+        .select('id', { count: 'exact', head: true })
+        .eq('tarea_config_id', config.id)
+        .eq('fecha_ejecucion', hoyStr)
+
+      pendientes.push({
+        tarea_config_id: config.id,
+        tarea_id: config.tarea.id,
+        nombre: config.tarea.nombre,
+        descripcion: config.tarea.descripcion,
+        enlace_manual: config.tarea.enlace_manual,
+        frecuencia_dias: config.frecuencia_dias,
+        dia_preferencia: config.dia_preferencia,
+        fecha_programada: hoyStr,
+        atrasada: false,
+        dias_atraso: 0,
+        subtareas: subtareasActivas,
+        repetitiva: true,
+        ejecuciones_hoy: ejecucionesHoy || 0,
+      })
+      continue
+    }
+
+    // Tareas únicas: lógica original
     // Si la proxima fecha es en el futuro, no es pendiente
     if (proximaFecha > hoy) continue
 
@@ -86,9 +124,6 @@ async function obtenerTareasPendientes(sucursalId) {
 
     // Es pendiente
     const atrasada = proximaFecha < hoy
-    const subtareasActivas = (config.tarea.subtareas || [])
-      .filter(s => s.activo)
-      .sort((a, b) => a.orden - b.orden)
 
     pendientes.push({
       tarea_config_id: config.id,
@@ -101,7 +136,9 @@ async function obtenerTareasPendientes(sucursalId) {
       fecha_programada: proximaFecha.toISOString().split('T')[0],
       atrasada,
       dias_atraso: atrasada ? Math.floor((hoy - proximaFecha) / (1000 * 60 * 60 * 24)) : 0,
-      subtareas: subtareasActivas,
+      subtareas: [],
+      repetitiva: false,
+      ejecuciones_hoy: 0,
     })
   }
 
