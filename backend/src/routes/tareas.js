@@ -31,7 +31,7 @@ router.get('/', verificarAuth, async (req, res) => {
 // POST /api/tareas — Crear tarea + subtareas opcionales
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { nombre, descripcion, enlace_manual, subtareas } = req.body
+    const { nombre, descripcion, enlace_manual, subtareas, checklist_imprimible } = req.body
 
     if (!nombre || !nombre.trim()) {
       return res.status(400).json({ error: 'El nombre de la tarea es requerido' })
@@ -40,7 +40,12 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
     // Crear tarea
     const { data: tarea, error } = await supabase
       .from('tareas')
-      .insert({ nombre: nombre.trim(), descripcion: descripcion?.trim() || null, enlace_manual: enlace_manual?.trim() || null })
+      .insert({
+        nombre: nombre.trim(),
+        descripcion: descripcion?.trim() || null,
+        enlace_manual: enlace_manual?.trim() || null,
+        checklist_imprimible: checklist_imprimible?.trim() || null,
+      })
       .select()
       .single()
 
@@ -77,13 +82,14 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, descripcion, enlace_manual, activo } = req.body
+    const { nombre, descripcion, enlace_manual, activo, checklist_imprimible } = req.body
 
     const updates = {}
     if (nombre !== undefined) updates.nombre = nombre.trim()
     if (descripcion !== undefined) updates.descripcion = descripcion?.trim() || null
     if (enlace_manual !== undefined) updates.enlace_manual = enlace_manual?.trim() || null
     if (activo !== undefined) updates.activo = activo
+    if (checklist_imprimible !== undefined) updates.checklist_imprimible = checklist_imprimible?.trim() || null
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No se enviaron campos para actualizar' })
@@ -293,6 +299,123 @@ router.delete('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al eliminar config:', err)
     res.status(500).json({ error: 'Error al eliminar configuración' })
+  }
+})
+
+// ── Panel general: todas las sucursales (admin/gestor) ─────────────────────
+
+// GET /api/tareas/panel-general — Estado de todas las tareas en todas las sucursales
+router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const hoy = new Date()
+    hoy.setHours(0, 0, 0, 0)
+    const hoyStr = hoy.toISOString().split('T')[0]
+
+    // Traer TODAS las configs activas con tarea y sucursal
+    const { data: configs, error: errCfg } = await supabase
+      .from('tareas_config_sucursal')
+      .select('*, tarea:tareas(id, nombre, descripcion, activo), sucursal:sucursales(id, nombre)')
+      .eq('activo', true)
+
+    if (errCfg) throw errCfg
+    if (!configs || configs.length === 0) return res.json([])
+
+    const configsActivas = configs.filter(c => c.tarea && c.tarea.activo)
+
+    // Traer todas las ejecuciones de hoy de una sola vez
+    const { data: ejecucionesHoy, error: errEj } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, tarea_config_id, fecha_ejecucion, completada_por:perfiles(nombre), created_at')
+      .eq('fecha_ejecucion', hoyStr)
+
+    if (errEj) throw errEj
+
+    const ejMap = {}
+    for (const ej of (ejecucionesHoy || [])) {
+      ejMap[ej.tarea_config_id] = ej
+    }
+
+    // Para cada config, obtener última ejecución para calcular si está pendiente hoy
+    // Traer últimas ejecuciones de cada config (más eficiente: una sola query)
+    const configIds = configsActivas.map(c => c.id)
+    const { data: ultimasEjecuciones, error: errUlt } = await supabase
+      .from('ejecuciones_tarea')
+      .select('tarea_config_id, fecha_ejecucion')
+      .in('tarea_config_id', configIds)
+      .order('fecha_ejecucion', { ascending: false })
+
+    if (errUlt) throw errUlt
+
+    // Mapear última ejecución por config
+    const ultimaMap = {}
+    for (const ej of (ultimasEjecuciones || [])) {
+      if (!ultimaMap[ej.tarea_config_id]) {
+        ultimaMap[ej.tarea_config_id] = ej.fecha_ejecucion
+      }
+    }
+
+    // Importar lógica del scheduler
+    const { calcularProximaFecha } = require('../services/tareasScheduler')
+
+    // Construir resultado agrupado por sucursal
+    const porSucursal = {}
+
+    for (const config of configsActivas) {
+      const sucNombre = config.sucursal?.nombre || 'Sin sucursal'
+      const sucId = config.sucursal?.id || config.sucursal_id
+
+      if (!porSucursal[sucId]) {
+        porSucursal[sucId] = {
+          sucursal_id: sucId,
+          sucursal_nombre: sucNombre,
+          tareas: [],
+        }
+      }
+
+      const ultimaFecha = ultimaMap[config.id] || null
+      const proximaFecha = calcularProximaFecha(config, ultimaFecha)
+      proximaFecha.setHours(0, 0, 0, 0)
+
+      // Determinar si debía hacerse hoy o antes
+      const debiaHacerse = proximaFecha <= hoy
+      // Si no reprogramar y ya pasó, no aplica
+      if (!config.reprogramar_siguiente && proximaFecha < hoy) continue
+
+      if (!debiaHacerse) continue // No toca hoy, skip
+
+      const ejecucion = ejMap[config.id]
+      const completada = !!ejecucion
+      const atrasada = proximaFecha < hoy
+
+      porSucursal[sucId].tareas.push({
+        tarea_config_id: config.id,
+        tarea_id: config.tarea.id,
+        nombre: config.tarea.nombre,
+        descripcion: config.tarea.descripcion,
+        frecuencia_dias: config.frecuencia_dias,
+        fecha_programada: proximaFecha.toISOString().split('T')[0],
+        completada,
+        atrasada,
+        dias_atraso: atrasada ? Math.floor((hoy - proximaFecha) / (1000 * 60 * 60 * 24)) : 0,
+        completada_por: ejecucion?.completada_por?.nombre || null,
+        hora_completada: ejecucion?.created_at || null,
+      })
+    }
+
+    // Convertir a array y ordenar: sucursales con pendientes primero
+    const resultado = Object.values(porSucursal)
+      .map(s => ({
+        ...s,
+        total: s.tareas.length,
+        completadas: s.tareas.filter(t => t.completada).length,
+        pendientes: s.tareas.filter(t => !t.completada).length,
+      }))
+      .sort((a, b) => b.pendientes - a.pendientes || a.sucursal_nombre.localeCompare(b.sucursal_nombre))
+
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error panel general:', err)
+    res.status(500).json({ error: 'Error al obtener panel general' })
   }
 })
 

@@ -43,6 +43,7 @@ import DetalleVenta from './pages/ventas/DetalleVenta'
 import TareasHome from './pages/tareas/TareasHome'
 import TareasAdmin from './pages/tareas/TareasAdmin'
 import TareasAnalytics from './pages/tareas/TareasAnalytics'
+import TareasPanel from './pages/tareas/TareasPanel'
 
 // Páginas de la app Auditoría
 import AuditoriaHome from './pages/auditoria/AuditoriaHome'
@@ -224,6 +225,11 @@ const App = () => {
           <Route path="/tareas/admin" element={
             <RutaProtegida soloAdmin>
               <TareasAdmin />
+            </RutaProtegida>
+          } />
+          <Route path="/tareas/panel" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <TareasPanel />
             </RutaProtegida>
           } />
           <Route path="/tareas/analytics" element={

@@ -28,6 +28,7 @@ const TareasAdmin = () => {
   const [formDescripcion, setFormDescripcion] = useState('')
   const [formEnlace, setFormEnlace] = useState('')
   const [formSubtareas, setFormSubtareas] = useState([])
+  const [formChecklist, setFormChecklist] = useState('')
 
   // Form config
   const [cfgSucursalId, setCfgSucursalId] = useState('')
@@ -79,6 +80,7 @@ const TareasAdmin = () => {
     setFormNombre(tarea?.nombre || '')
     setFormDescripcion(tarea?.descripcion || '')
     setFormEnlace(tarea?.enlace_manual || '')
+    setFormChecklist(tarea?.checklist_imprimible || '')
     setFormSubtareas(tarea?.subtareas?.filter(s => s.activo).map(s => s.nombre) || [''])
     setMostrarFormTarea(true)
     setError('')
@@ -94,6 +96,7 @@ const TareasAdmin = () => {
           nombre: formNombre,
           descripcion: formDescripcion,
           enlace_manual: formEnlace,
+          checklist_imprimible: formChecklist,
         })
         // Actualizar subtareas: borrar las que ya no están, crear las nuevas
         const existentes = editandoTarea.subtareas || []
@@ -120,6 +123,7 @@ const TareasAdmin = () => {
           nombre: formNombre,
           descripcion: formDescripcion,
           enlace_manual: formEnlace,
+          checklist_imprimible: formChecklist,
           subtareas: formSubtareas.filter(n => n.trim()).map((n, i) => ({ nombre: n, orden: i })),
         })
       }
@@ -201,6 +205,75 @@ const TareasAdmin = () => {
     }
   }
 
+  // ── Imprimir checklist para comandera 80mm ─────────────────────────────────
+
+  const imprimirChecklist = (tarea) => {
+    const items = (tarea.checklist_imprimible || '').split('\n').filter(l => l.trim())
+    if (items.length === 0) return alert('Esta tarea no tiene checklist cargado')
+
+    const fecha = new Date().toLocaleDateString('es-AR')
+    const win = window.open('', '_blank', 'width=320,height=600')
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  @page { margin: 0; size: 80mm auto; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padding: 4mm; }
+  h1 { font-size: 14px; text-align: center; border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 6px; }
+  .fecha { text-align: center; font-size: 10px; margin-bottom: 8px; }
+  .item { display: flex; align-items: flex-start; gap: 4px; margin-bottom: 6px; line-height: 1.3; }
+  .check { flex-shrink: 0; width: 14px; height: 14px; border: 1.5px solid #000; margin-top: 1px; }
+  .texto { flex: 1; }
+  .firma { margin-top: 16px; border-top: 1px dashed #000; padding-top: 8px; }
+  .linea { border-bottom: 1px solid #000; height: 20px; margin-top: 12px; }
+  .label { font-size: 10px; margin-top: 2px; }
+  @media print { body { width: 72mm; } }
+</style></head><body>
+  <h1>${tarea.nombre}</h1>
+  <div class="fecha">${fecha}</div>
+  ${items.map(item => `<div class="item"><div class="check"></div><div class="texto">${item.replace(/^\d+[\).\-]\s*/, '')}</div></div>`).join('')}
+  <div class="firma">
+    <div class="linea"></div>
+    <div class="label">Responsable</div>
+    <div class="linea"></div>
+    <div class="label">Observaciones</div>
+  </div>
+  <script>window.onload=()=>{window.print()}<\/script>
+</body></html>`)
+    win.document.close()
+  }
+
+  // ── Asignar tarea a TODAS las sucursales ──────────────────────────────────
+
+  const asignarTodasSucursales = async () => {
+    if (!tareaActiva) return
+    if (!confirm(`Asignar "${tareaActiva.nombre}" a TODAS las sucursales?`)) return
+
+    setGuardando(true)
+    try {
+      const sucursalesNoConfiguradas = sucursales.filter(
+        s => !configs.some(c => (c.sucursal?.id || c.sucursal_id) === s.id)
+      )
+      if (sucursalesNoConfiguradas.length === 0) {
+        alert('Ya está asignada a todas las sucursales')
+        return
+      }
+      for (const suc of sucursalesNoConfiguradas) {
+        await api.post(`/api/tareas/${tareaActiva.id}/config`, {
+          sucursal_id: suc.id,
+          frecuencia_dias: cfgFrecuencia || 7,
+          dia_preferencia: cfgDia || null,
+          reprogramar_siguiente: cfgReprogramar,
+          fecha_inicio: cfgFechaInicio,
+        })
+      }
+      seleccionarTarea(tareaActiva)
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al asignar')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
   // ── Subtareas form helpers ──────────────────────────────────────────────────
 
   const addSubtarea = () => setFormSubtareas(prev => [...prev, ''])
@@ -242,11 +315,16 @@ const TareasAdmin = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-gray-800 truncate">{tarea.nombre}</p>
-                        {tarea.subtareas && tarea.subtareas.filter(s => s.activo).length > 0 && (
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {tarea.subtareas.filter(s => s.activo).length} subtareas
-                          </p>
-                        )}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {tarea.subtareas && tarea.subtareas.filter(s => s.activo).length > 0 && (
+                            <span className="text-xs text-gray-400">
+                              {tarea.subtareas.filter(s => s.activo).length} subtareas
+                            </span>
+                          )}
+                          {tarea.checklist_imprimible && (
+                            <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">checklist</span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
                         <button
@@ -283,12 +361,30 @@ const TareasAdmin = () => {
                     <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
                       Config: {tareaActiva.nombre}
                     </h3>
-                    <button
-                      onClick={() => abrirFormConfig()}
-                      className="text-sm px-3 py-1 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors font-medium"
-                    >
-                      + Sucursal
-                    </button>
+                    <div className="flex gap-1">
+                      {tareaActiva.checklist_imprimible && (
+                        <button
+                          onClick={() => imprimirChecklist(tareaActiva)}
+                          className="text-sm px-3 py-1 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
+                          title="Imprimir checklist para comandera 80mm"
+                        >
+                          Imprimir
+                        </button>
+                      )}
+                      <button
+                        onClick={asignarTodasSucursales}
+                        disabled={guardando}
+                        className="text-sm px-3 py-1 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors font-medium disabled:opacity-50"
+                      >
+                        + Todas
+                      </button>
+                      <button
+                        onClick={() => abrirFormConfig()}
+                        className="text-sm px-3 py-1 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors font-medium"
+                      >
+                        + Sucursal
+                      </button>
+                    </div>
                   </div>
 
                   {cargandoConfigs ? (
@@ -384,6 +480,17 @@ const TareasAdmin = () => {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                   placeholder="https://..."
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Checklist imprimible (comandera 80mm)</label>
+                <textarea
+                  value={formChecklist}
+                  onChange={e => setFormChecklist(e.target.value)}
+                  rows={4}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono"
+                  placeholder={"Ej:\n1) Limpiar piso\n2) Limpiar vidrios\n3) Desinfectar mesadas"}
+                />
+                <p className="text-xs text-gray-400 mt-1">Un item por linea. Se imprime como checklist con casillas.</p>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">

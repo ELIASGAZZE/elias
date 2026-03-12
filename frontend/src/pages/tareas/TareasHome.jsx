@@ -39,6 +39,12 @@ const TareasHome = () => {
       {/* Botones admin/gestor */}
       {(esAdmin || esGestor) && (
         <div className="bg-white border-b border-gray-200 px-4 py-2 flex gap-2">
+          <Link
+            to="/tareas/panel"
+            className="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
+          >
+            Panel general
+          </Link>
           {esAdmin && (
             <Link
               to="/tareas/admin"
