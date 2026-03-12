@@ -1250,6 +1250,20 @@ const POS = () => {
         setBusquedaArt('')
         return
       }
+
+      // Detectar entrada rápida de scanner (no numérica, ej: QR con URL)
+      const dt = Date.now() - ultimoInputRef.current.time
+      const esScanner = dt < 80 && valor.length > 6
+
+      if (esScanner) {
+        // Scanner envió algo no numérico (QR, URL, etc.) — mostrar alerta
+        setAlertaBarcode(valor)
+        playAlertSound()
+        setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
+        setBusquedaArt('')
+        return
+      }
+
       // Si hay exactamente un resultado de búsqueda por texto, agregarlo
       if (resultadosBusqueda.length === 1) {
         agregarAlCarrito(resultadosBusqueda[0])
