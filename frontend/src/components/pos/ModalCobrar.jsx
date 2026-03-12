@@ -573,13 +573,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
     if (enInput) return
 
-    // Backspace = Deshacer último pago
-    if (e.key === 'Backspace' && pagos.length > 0) {
-      e.preventDefault()
-      borrarUltimoPago()
-    }
-    // Delete = Borrar todo
-    if (e.key === 'Delete') {
+    // Backspace = Borrar todo
+    if (e.key === 'Backspace') {
       e.preventDefault()
       borrarPagos()
     }
@@ -683,14 +678,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               onClick={borrarUltimoPago}
               className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-3 rounded-xl transition-colors"
             >
-              Deshacer <span className="text-[9px] opacity-50">Backspace</span>
+              Deshacer
             </button>
           )}
           <button
             onClick={borrarPagos}
             className={`${pagos.length > 0 ? 'flex-1' : 'w-full'} bg-red-500/80 hover:bg-red-500 text-white font-medium text-sm py-3 rounded-xl transition-colors`}
           >
-            Borrar todo <span className="text-[9px] opacity-50">Supr</span>
+            Borrar todo <span className="text-[9px] opacity-50">Backspace</span>
           </button>
         </div>
 
