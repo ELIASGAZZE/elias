@@ -215,7 +215,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
 
     // Si seleccionó un posnet, cambiar a modo PDV automáticamente
     if (mpDeviceId) {
-      const device = devices.find(d => d.id === mpDeviceId)
+      const device = mpDevices.find(d => d.id === mpDeviceId)
       if (device && device.operating_mode !== 'PDV') {
         setCambiandoModo(true)
         try {
