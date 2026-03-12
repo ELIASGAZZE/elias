@@ -29,6 +29,7 @@ const cierresPosRoutes = require('./routes/cierresPos')
 const retirosPosRoutes = require('./routes/retirosPos')
 const gastosPosRoutes = require('./routes/gastosPos')
 const giftCardsRoutes = require('./routes/giftcards')
+const tareasRoutes = require('./routes/tareas')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -77,6 +78,7 @@ app.use('/api/cierres-pos', cierresPosRoutes)
 app.use('/api', retirosPosRoutes)
 app.use('/api', gastosPosRoutes)
 app.use('/api/gift-cards', giftCardsRoutes)
+app.use('/api/tareas', tareasRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

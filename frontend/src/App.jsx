@@ -43,6 +43,11 @@ import PedidosPOS from './pages/pos/PedidosPOS'
 import VentasHome from './pages/ventas/VentasHome'
 import DetalleVenta from './pages/ventas/DetalleVenta'
 
+// Páginas de la app Tareas
+import TareasHome from './pages/tareas/TareasHome'
+import TareasAdmin from './pages/tareas/TareasAdmin'
+import TareasAnalytics from './pages/tareas/TareasAnalytics'
+
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
@@ -212,6 +217,23 @@ const App = () => {
           <Route path="/delivery/:id" element={
             <RutaProtegida>
               <DetalleDelivery />
+            </RutaProtegida>
+          } />
+
+          {/* App: Tareas */}
+          <Route path="/tareas" element={
+            <RutaProtegida>
+              <TareasHome />
+            </RutaProtegida>
+          } />
+          <Route path="/tareas/admin" element={
+            <RutaProtegida soloAdmin>
+              <TareasAdmin />
+            </RutaProtegida>
+          } />
+          <Route path="/tareas/analytics" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <TareasAnalytics />
             </RutaProtegida>
           } />
 
