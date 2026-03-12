@@ -1226,6 +1226,7 @@ const POS = () => {
 
   // Detectar entrada rápida tipo escáner de barras
   const ultimoInputRef = useRef({ time: 0, buffer: '' })
+  const scannerProcesadoRef = useRef(false)
 
   const handleBusquedaChange = useCallback((e) => {
     const valor = e.target.value
@@ -1238,6 +1239,7 @@ const POS = () => {
 
     // Si el valor tiene 8+ dígitos y llegó rápido (< 50ms entre chars) o fue pegado
     if (/^\d{8,}$/.test(valor.trim()) && (dt < 50 || valor.length > 8)) {
+      scannerProcesadoRef.current = true
       // Dar un pequeño delay para que el scanner termine de escribir
       setTimeout(() => {
         if (!buscarPorBarcode(valor.trim())) {
@@ -1252,6 +1254,13 @@ const POS = () => {
 
   const handleBusquedaKeyDown = useCallback((e) => {
     if (e.key === 'Enter') {
+      // Si el scanner ya procesó este código, ignorar el Enter del scanner
+      if (scannerProcesadoRef.current) {
+        e.preventDefault()
+        scannerProcesadoRef.current = false
+        setBusquedaArt('')
+        return
+      }
       const valor = busquedaArt.trim()
       // Si es un código numérico largo, buscar como barcode
       if (/^\d{4,}$/.test(valor)) {
