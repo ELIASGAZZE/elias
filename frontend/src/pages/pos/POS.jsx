@@ -891,6 +891,7 @@ const POS = () => {
   })
 
   const inputBusquedaRef = useRef(null)
+  const inputClienteRef = useRef(null)
 
   // Refocus al buscador tras cualquier click (excepto otros inputs)
   const handlePOSClick = useCallback((e) => {
@@ -1390,6 +1391,50 @@ const POS = () => {
       if (mostrarCobrar) return
 
       const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
+
+      // F1 = Cambiar cliente
+      if (e.key === 'F1') {
+        e.preventDefault()
+        setVistaActiva('venta')
+        setTimeout(() => inputClienteRef.current?.focus(), 50)
+      }
+      // F2 = Foco buscador artículos
+      if (e.key === 'F2') {
+        e.preventDefault()
+        setVistaActiva('venta')
+        setTimeout(() => { inputBusquedaRef.current?.focus(); inputBusquedaRef.current?.select() }, 50)
+      }
+      // F3 = Tab Pedidos
+      if (e.key === 'F3') {
+        e.preventDefault()
+        setVistaActiva('pedidos')
+      }
+      // F4 = Tab Saldos
+      if (e.key === 'F4') {
+        e.preventDefault()
+        setVistaActiva('saldos')
+      }
+      // F5 = Sincronizar precios
+      if (e.key === 'F5') {
+        e.preventDefault()
+        sincronizarPrecios()
+      }
+      // F6 = Tab Gift Cards
+      if (e.key === 'F6') {
+        e.preventDefault()
+        setVistaActiva('giftcards')
+      }
+      // F7 = Alternar ticket 1/2
+      if (e.key === 'F7') {
+        e.preventDefault()
+        setTicketActivo(prev => prev === 0 ? 1 : 0)
+        setBusquedaArt(''); setBusquedaCliente('')
+      }
+      // F8 = Problema
+      if (e.key === 'F8') {
+        e.preventDefault()
+        setMostrarProblema(true)
+      }
       // F9 = Cancelar venta
       if (e.key === 'F9' && tieneItems) {
         e.preventDefault()
@@ -1405,10 +1450,16 @@ const POS = () => {
         e.preventDefault()
         setMostrarCobrar(true)
       }
+      // + / - = Cantidad último item (solo si no hay foco en input)
+      if ((e.key === '+' || e.key === '-') && carrito.length > 0 && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault()
+        const ultimo = carrito[carrito.length - 1]
+        cambiarCantidad(ultimo.articulo.id, e.key === '+' ? 1 : -1, ultimo.articulo.esPesable)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito.length, giftCardsEnVenta.length, pedidoEnProceso])
+  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -1992,7 +2043,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Pedidos
+              Pedidos <span className="text-[9px] opacity-60 ml-1">F3</span>
             </button>
 
             {/* Tab Saldos */}
@@ -2004,7 +2055,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Saldos
+              Saldos <span className="text-[9px] opacity-60 ml-1">F4</span>
             </button>
 
             {/* Tab Gift Cards */}
@@ -2016,7 +2067,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Gift Cards
+              Gift Cards <span className="text-[9px] opacity-60 ml-1">F6</span>
             </button>
           </div>
 
@@ -2033,7 +2084,7 @@ const POS = () => {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
               </svg>
-              PROBLEMA
+              PROBLEMA <span className="text-[9px] opacity-70">F8</span>
             </button>
             <a
               href={`/cajas-pos/cierre/${cierreActivo?.id}/cerrar`}
@@ -2049,7 +2100,7 @@ const POS = () => {
               onClick={sincronizarPrecios}
               disabled={sincronizandoERP}
               className="text-violet-400 hover:text-white p-1 rounded transition-colors disabled:opacity-50"
-              title="Sincronizar precios desde Centum"
+              title="Sincronizar precios desde Centum (F5)"
             >
               <svg className={`w-3.5 h-3.5 ${sincronizandoERP ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.016 4.66v4.993" />
@@ -2156,7 +2207,7 @@ const POS = () => {
                         : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                   }`}
                 >
-                  Ticket {idx + 1}
+                  Ticket {idx + 1} <span className="text-[9px] opacity-50">F7</span>
                   {items > 0 && (
                     <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       activo ? 'bg-violet-100 text-violet-700' : 'bg-amber-200 text-amber-800'
@@ -2241,8 +2292,9 @@ const POS = () => {
                 </div>
                 <div className="relative mt-2">
                   <input
+                    ref={inputClienteRef}
                     type="text"
-                    placeholder="Cambiar cliente…"
+                    placeholder="Cambiar cliente… (F1)"
                     value={busquedaCliente}
                     onChange={e => setBusquedaCliente(e.target.value)}
                     className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
@@ -2490,7 +2542,7 @@ const POS = () => {
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
                   title="F9"
                 >
-                  Cancelar
+                  Cancelar <span className="text-[9px] opacity-70">F9</span>
                 </button>
                 {/* Si está editando un pedido: botón guardar cambios */}
                 {pedidoEnProceso && pedidoEnProceso.editando && (
@@ -2511,14 +2563,14 @@ const POS = () => {
                       className="px-3 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold rounded-lg transition-colors"
                       title="F10"
                     >
-                      {guardandoPedido ? 'Guardando...' : 'Es pedido'}
+                      {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
                     <button
                       onClick={() => setMostrarCobrar(true)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
                       title="F11"
                     >
-                      Cobrar {formatPrecio(totalConGiftCards)}
+                      Cobrar {formatPrecio(totalConGiftCards)} <span className="text-[9px] opacity-70">F11</span>
                     </button>
                   </>
                 )}
@@ -2567,7 +2619,7 @@ const POS = () => {
             <input
               ref={inputBusquedaRef}
               type="text"
-              placeholder="Buscar por nombre, código o escanear..."
+              placeholder="Buscar por nombre, código o escanear... (F2)"
               value={busquedaArt}
               onChange={handleBusquedaChange}
               onKeyDown={handleBusquedaKeyDown}
