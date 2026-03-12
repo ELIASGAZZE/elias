@@ -151,8 +151,11 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     })
 
     if (authError) {
-      console.error('Error creando usuario en Auth:', authError.message)
-      return res.status(500).json({ error: 'Error al crear usuario' })
+      console.error('Error creando usuario en Auth:', authError.message, authError.status)
+      const msg = authError.message?.includes('already been registered')
+        ? `El email ya existe en el sistema. Puede que "${usernameLimpio}" haya sido creado antes.`
+        : authError.message || 'Error al crear usuario'
+      return res.status(500).json({ error: msg })
     }
 
     // Crear perfil
