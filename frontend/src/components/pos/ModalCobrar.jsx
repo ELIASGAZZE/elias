@@ -234,8 +234,16 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               }
               setMpEstado('aprobado')
             } else {
-              setMpError('Pago finalizado pero sin ID')
-              setMpEstado('error')
+              // Orden procesada pero sin pago aprobado → rechazado
+              const detail = order.transactions?.payments?.[0]?.status_detail || ''
+              const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+                : detail.includes('expired') ? 'Tarjeta vencida'
+                : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+                : detail.includes('blocked') ? 'Tarjeta bloqueada'
+                : detail ? `Rechazado: ${detail}`
+                : 'Pago rechazado'
+              setMpEstado('cancelado')
+              setMpError(motivo)
             }
           } else if (state === 'canceled' || state === 'expired' || state === 'reverted') {
             clearInterval(mpPollingRef.current)
@@ -243,6 +251,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
             if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
             setMpEstado('cancelado')
             setMpError('Pago cancelado en el posnet')
+            setMpShowProblema(false)
+          } else if (state === 'rejected' || state === 'failed' || state === 'refunded') {
+            clearInterval(mpPollingRef.current)
+            mpPollingRef.current = null
+            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+            const detail = order.transactions?.payments?.[0]?.status_detail || ''
+            const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+              : detail.includes('expired') ? 'Tarjeta vencida'
+              : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+              : detail.includes('blocked') ? 'Tarjeta bloqueada'
+              : 'Pago rechazado'
+            setMpEstado('cancelado')
+            setMpError(motivo)
             setMpShowProblema(false)
           }
         } catch (err) {
