@@ -74,7 +74,7 @@ const TareasHome = () => {
             <p className="text-sm text-gray-400 mt-1">Todas las tareas al dia</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-2 gap-6">
             {/* Tareas únicas */}
             <div>
               <h2 className="text-lg font-bold text-gray-800 mb-3">
