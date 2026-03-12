@@ -197,6 +197,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         try {
           const { data: order } = await api.get(`/api/mp-point/order/${data.id}`)
           const state = order.status
+          console.log('[MP Point] Polling:', state, JSON.stringify(order.transactions?.payments?.map(p => ({ status: p.status, detail: p.status_detail }))))
 
           if (state === 'processing') {
             setMpEstado('procesando')
