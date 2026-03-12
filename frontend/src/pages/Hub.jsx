@@ -84,6 +84,7 @@ const APPS = [
     descripcion: 'Tareas operativas por sucursal',
     path: '/tareas',
     color: 'bg-orange-600',
+    dev: true,
     icono: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -124,7 +125,9 @@ const APPS_ADMIN = [
 const Hub = () => {
   const { usuario, logout, esAdmin } = useAuth()
 
-  const appsVisibles = esAdmin ? [...APPS, ...APPS_ADMIN] : APPS
+  const showDev = import.meta.env.VITE_SHOW_DEV_APPS === 'true'
+  const appsBase = showDev ? APPS : APPS.filter(a => !a.dev)
+  const appsVisibles = esAdmin ? [...appsBase, ...APPS_ADMIN] : appsBase
 
   return (
     <div className="min-h-screen bg-gray-100">
