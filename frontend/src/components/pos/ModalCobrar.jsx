@@ -358,65 +358,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       return acc
     }, {})
 
-  // Atajos de teclado globales del modal de cobro
-  useEffect(() => {
-    const handler = (e) => {
-      // No interceptar si hay modal de cantidad abierto
-      if (cantidadModal) return
-      // No interceptar si hay un input con foco (salvo Escape/Enter especiales)
-      const enInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
-
-      // Escape = Cerrar modal
-      if (e.key === 'Escape' && !guardando) {
-        e.preventDefault()
-        onCerrar()
-        return
-      }
-      // Enter = Confirmar venta (solo si monto suficiente y no en input)
-      if (e.key === 'Enter' && montoSuficiente && !guardando && !enInput) {
-        e.preventDefault()
-        confirmarVenta()
-        return
-      }
-      // No interceptar teclas si estamos en un input
-      if (enInput) return
-
-      // Backspace = Deshacer último pago
-      if (e.key === 'Backspace' && pagos.length > 0) {
-        e.preventDefault()
-        borrarUltimoPago()
-      }
-      // Delete = Borrar todo
-      if (e.key === 'Delete') {
-        e.preventDefault()
-        borrarPagos()
-      }
-      // F1-F4 = Seleccionar forma de pago (otros medios)
-      if (e.key === 'F1' && formasCobro.length >= 1) {
-        e.preventDefault()
-        setFormaSeleccionada(formasCobro[0])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
-      }
-      if (e.key === 'F2' && formasCobro.length >= 2) {
-        e.preventDefault()
-        setFormaSeleccionada(formasCobro[1])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
-      }
-      if (e.key === 'F3' && formasCobro.length >= 3) {
-        e.preventDefault()
-        setFormaSeleccionada(formasCobro[2])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
-      }
-      if (e.key === 'F4' && formasCobro.length >= 4) {
-        e.preventDefault()
-        setFormaSeleccionada(formasCobro[3])
-        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante])
-
   function agregarBillete(valor, cantidad = 1) {
     const nuevos = Array.from({ length: cantidad }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
     setPagos(prev => [...prev, ...nuevos])
@@ -593,6 +534,63 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setGuardando(false)
     }
   }
+
+  // Atajos de teclado globales del modal de cobro
+  useEffect(() => {
+    const handler = (e) => {
+      // No interceptar si hay modal de cantidad abierto
+      if (cantidadModal) return
+      const enInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
+
+      // Escape = Cerrar modal
+      if (e.key === 'Escape' && !guardando) {
+        e.preventDefault()
+        onCerrar()
+        return
+      }
+      // Enter = Confirmar venta (solo si monto suficiente y no en input)
+      if (e.key === 'Enter' && montoSuficiente && !guardando && !enInput) {
+        e.preventDefault()
+        confirmarVenta()
+        return
+      }
+      if (enInput) return
+
+      // Backspace = Deshacer último pago
+      if (e.key === 'Backspace' && pagos.length > 0) {
+        e.preventDefault()
+        borrarUltimoPago()
+      }
+      // Delete = Borrar todo
+      if (e.key === 'Delete') {
+        e.preventDefault()
+        borrarPagos()
+      }
+      // F1-F4 = Seleccionar forma de pago (otros medios)
+      if (e.key === 'F1' && formasCobro.length >= 1) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[0])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F2' && formasCobro.length >= 2) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[1])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F3' && formasCobro.length >= 3) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[2])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+      if (e.key === 'F4' && formasCobro.length >= 4) {
+        e.preventDefault()
+        setFormaSeleccionada(formasCobro[3])
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante])
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row">
