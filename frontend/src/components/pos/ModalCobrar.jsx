@@ -56,6 +56,12 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [mpMontoIntent, setMpMontoIntent] = useState(0)
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
+  const cobrarRootRef = useRef(null)
+
+  // Auto-focus el div root para que capture teclas
+  useEffect(() => {
+    setTimeout(() => cobrarRootRef.current?.focus(), 100)
+  }, [])
 
   // Cleanup polling + timeout on unmount, y cancelar orden si hay una pendiente
   useEffect(() => {
@@ -542,83 +548,79 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [ultimoFKeyBillete, setUltimoFKeyBillete] = useState(null)
 
   // Atajos de teclado globales del modal de cobro
-  useEffect(() => {
-    const handler = (e) => {
-      // No interceptar si hay modal de cantidad abierto
-      if (cantidadModal) return
-      const enInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
+  // Se usa onKeyDown en el div root para capturar antes que el browser
+  function handleCobrarKeyDown(e) {
+    // No interceptar si hay modal de cantidad abierto
+    if (cantidadModal) return
+    const enInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
 
-      // Escape = Cerrar modal
-      if (e.key === 'Escape' && !guardando) {
-        e.preventDefault()
-        onCerrar()
-        return
-      }
-      // Enter: si hay billete pendiente → abrir modal cantidad, sino confirmar venta
-      if (e.key === 'Enter' && !enInput) {
-        e.preventDefault()
-        if (ultimoFKeyBillete) {
-          setCantidadModal({ valor: ultimoFKeyBillete, cantidad: '' })
-          setUltimoFKeyBillete(null)
-        } else if (montoSuficiente && !guardando) {
-          confirmarVenta()
-        }
-        return
-      }
-      if (enInput) return
-
-      // Backspace = Deshacer último pago
-      if (e.key === 'Backspace' && pagos.length > 0) {
-        e.preventDefault()
-        borrarUltimoPago()
-      }
-      // Delete = Borrar todo
-      if (e.key === 'Delete') {
-        e.preventDefault()
-        borrarPagos()
-      }
-
-      // F1 = Tarjeta (posnet MP)
-      if (e.key === 'F1') {
-        e.preventDefault()
+    // Escape = Cerrar modal
+    if (e.key === 'Escape' && !guardando) {
+      e.preventDefault()
+      onCerrar()
+      return
+    }
+    // Enter: si hay billete pendiente → abrir modal cantidad, sino confirmar venta
+    if (e.key === 'Enter' && !enInput) {
+      e.preventDefault()
+      if (ultimoFKeyBillete) {
+        setCantidadModal({ valor: ultimoFKeyBillete, cantidad: '' })
         setUltimoFKeyBillete(null)
-        iniciarPagoMP('credit_card')
+      } else if (montoSuficiente && !guardando) {
+        confirmarVenta()
       }
-      // F2 = QR (posnet MP)
-      if (e.key === 'F2') {
-        e.preventDefault()
-        setUltimoFKeyBillete(null)
-        iniciarPagoMP('qr')
-      }
+      return
+    }
+    if (enInput) return
 
-      // F3-F9 = Billetes
-      const valorBillete = FKEY_BILLETES[e.key]
-      if (valorBillete) {
-        e.preventDefault()
-        agregarBillete(valorBillete)
-        setUltimoFKeyBillete(valorBillete)
-        // Limpiar después de 2 segundos si no se aprieta Enter
-        setTimeout(() => setUltimoFKeyBillete(prev => prev === valorBillete ? null : prev), 2000)
-      }
+    // Backspace = Deshacer último pago
+    if (e.key === 'Backspace' && pagos.length > 0) {
+      e.preventDefault()
+      borrarUltimoPago()
+    }
+    // Delete = Borrar todo
+    if (e.key === 'Delete') {
+      e.preventDefault()
+      borrarPagos()
+    }
 
-      // F10-F12 = Formas de cobro (Transferencia, Payway, Rappi)
-      const nombreForma = FKEY_FORMAS[e.key]
-      if (nombreForma) {
-        e.preventDefault()
-        setUltimoFKeyBillete(null)
-        const fc = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
-        if (fc) {
-          setFormaSeleccionada(fc)
-          setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
-        }
+    // F1 = Tarjeta (posnet MP)
+    if (e.key === 'F1') {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      iniciarPagoMP('credit_card')
+    }
+    // F2 = QR (posnet MP)
+    if (e.key === 'F2') {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      iniciarPagoMP('qr')
+    }
+
+    // F3-F9 = Billetes
+    const valorBillete = FKEY_BILLETES[e.key]
+    if (valorBillete) {
+      e.preventDefault()
+      agregarBillete(valorBillete)
+      setUltimoFKeyBillete(valorBillete)
+      setTimeout(() => setUltimoFKeyBillete(prev => prev === valorBillete ? null : prev), 2000)
+    }
+
+    // F10-F12 = Formas de cobro (Transferencia, Payway, Rappi)
+    const nombreForma = FKEY_FORMAS[e.key]
+    if (nombreForma) {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      const found = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
+      if (found) {
+        setFormaSeleccionada(found)
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [cantidadModal, guardando, montoSuficiente, pagos.length, formasCobro, restante, ultimoFKeyBillete])
+  }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row">
+    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row outline-none" onKeyDown={handleCobrarKeyDown} tabIndex={-1} ref={cobrarRootRef}>
 
       {/* ====== IZQUIERDA: Denominaciones ====== */}
       <div className="flex-1 p-5 flex flex-col min-w-0 relative">
