@@ -2646,8 +2646,8 @@ const POS = () => {
 
           </div>
 
-          {/* Grilla de favoritos (siempre visible) */}
-          <div className="flex-1 overflow-y-auto">
+          {/* Grilla de favoritos (oculta si teclado virtual abierto) */}
+          <div className={`flex-1 overflow-y-auto ${mostrarTeclado ? 'hidden' : ''}`}>
             {cargandoArticulos ? (
               <div className="flex items-center justify-center py-20 text-gray-500">
                 <svg className="animate-spin w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24">
