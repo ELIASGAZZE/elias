@@ -314,6 +314,31 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
       // Mostrar mensaje para que cancelen manualmente en el posnet
       setMpEstado('cancelando')
+
+      // Polling para detectar cuando la orden se cancela/expira en el posnet
+      mpPollingRef.current = setInterval(async () => {
+        try {
+          const { data: order } = await api.get(`/api/mp-point/order/${orderId}`)
+          if (order.status === 'canceled' || order.status === 'expired' || order.status === 'processed') {
+            clearInterval(mpPollingRef.current)
+            mpPollingRef.current = null
+            if (order.status === 'processed') {
+              // Se completó mientras cancelábamos
+              await detectarPagoCompletado(orderId, monto)
+            } else {
+              setMpEstado(null)
+              setMpIntentId(null)
+              setMpError('')
+              setMpPaymentId(null)
+            }
+          }
+        } catch {}
+      }, 3000)
+
+      // Timeout del polling de cancelación: 2 minutos
+      mpTimeoutRef.current = setTimeout(() => {
+        if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+      }, 120000)
     } else {
       setMpEstado(null)
       setMpIntentId(null)

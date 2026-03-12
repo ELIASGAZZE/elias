@@ -183,8 +183,14 @@ router.post('/order/:id/cancel', verificarAuth, async (req, res) => {
     })
     if (resp.status === 200 || resp.status === 204) return res.json({ ok: true })
     const data = await resp.json()
+    const errorCode = data.errors?.[0]?.code
     // Si ya estaba cancelada, no es error
-    if (data.errors?.[0]?.code === 'order_already_canceled') return res.json({ ok: true })
+    if (errorCode === 'order_already_canceled') return res.json({ ok: true })
+    // Si está at_terminal, no se puede cancelar desde API — informar al frontend
+    if (errorCode === 'cannot_cancel_order') {
+      console.log(`[MP Point] Orden ${req.params.id} en terminal, no se puede cancelar desde API`)
+      return res.json({ ok: false, at_terminal: true, message: 'La orden está en el posnet. Cancelala desde el dispositivo.' })
+    }
     if (!resp.ok) return res.status(resp.status).json(data)
     res.json({ ok: true, ...data })
   } catch (err) {
