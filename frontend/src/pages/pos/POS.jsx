@@ -705,6 +705,7 @@ const POS = () => {
   const [cargandoArticulos, setCargandoArticulos] = useState(false)
   const [sincronizandoERP, setSincronizandoERP] = useState(false)
   const [busquedaArt, setBusquedaArt] = useState('')
+  const [busquedaIdx, setBusquedaIdx] = useState(-1) // índice seleccionado en dropdown
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
   const [alertaDuplicado, setAlertaDuplicado] = useState(null) // duplicado (balanza o barcode)
   const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
@@ -1240,10 +1241,29 @@ const POS = () => {
   const handleBusquedaChange = useCallback((e) => {
     const valor = e.target.value
     setBusquedaArt(valor)
+    setBusquedaIdx(-1)
     ultimoInputRef.current.time = Date.now()
   }, [])
 
   const handleBusquedaKeyDown = useCallback((e) => {
+    // Navegación con flechas en dropdown de resultados
+    if (e.key === 'ArrowDown' && resultadosBusqueda.length > 0) {
+      e.preventDefault()
+      setBusquedaIdx(prev => prev < resultadosBusqueda.length - 1 ? prev + 1 : 0)
+      return
+    }
+    if (e.key === 'ArrowUp' && resultadosBusqueda.length > 0) {
+      e.preventDefault()
+      setBusquedaIdx(prev => prev > 0 ? prev - 1 : resultadosBusqueda.length - 1)
+      return
+    }
+    if (e.key === 'Escape' && busquedaArt.trim()) {
+      e.preventDefault()
+      setBusquedaArt('')
+      setBusquedaIdx(-1)
+      return
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault()
       // Leer valor directo del input (no del state que puede estar desactualizado)
@@ -1258,6 +1278,7 @@ const POS = () => {
           setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
         }
         setBusquedaArt('')
+        setBusquedaIdx(-1)
         return
       }
 
@@ -1266,11 +1287,19 @@ const POS = () => {
       const esScanner = dt < 80 && valor.length > 6
 
       if (esScanner) {
-        // Scanner envió algo no numérico (QR, URL, etc.) — mostrar alerta
         setAlertaBarcode(valor)
         playAlertSound()
         setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
         setBusquedaArt('')
+        setBusquedaIdx(-1)
+        return
+      }
+
+      // Si hay un item seleccionado con flechas, agregarlo
+      if (busquedaIdx >= 0 && busquedaIdx < resultadosBusqueda.length) {
+        agregarAlCarrito(resultadosBusqueda[busquedaIdx])
+        setBusquedaArt('')
+        setBusquedaIdx(-1)
         return
       }
 
@@ -1278,9 +1307,10 @@ const POS = () => {
       if (resultadosBusqueda.length === 1) {
         agregarAlCarrito(resultadosBusqueda[0])
         setBusquedaArt('')
+        setBusquedaIdx(-1)
       }
     }
-  }, [buscarPorBarcode, resultadosBusqueda, agregarAlCarrito])
+  }, [buscarPorBarcode, resultadosBusqueda, agregarAlCarrito, busquedaIdx, busquedaArt])
 
   const cambiarCantidad = useCallback((articuloId, delta, esPesable) => {
     const paso = esPesable ? 0.1 : 1
@@ -2529,16 +2559,18 @@ const POS = () => {
                     Sin resultados para "{busquedaArt}"
                   </div>
                 ) : (
-                  resultadosBusqueda.map(art => {
+                  resultadosBusqueda.map((art, idx) => {
                     const precioFinal = calcularPrecioConDescuentosBase(art)
                     const enCarrito = carrito.find(i => i.articulo.id === art.id)
                     const esFav = favoritos.includes(art.id)
+                    const seleccionado = idx === busquedaIdx
                     return (
                       <div
                         key={art.id}
-                        onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); inputBusquedaRef.current?.focus() }}
+                        ref={seleccionado ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                        onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); setBusquedaIdx(-1); inputBusquedaRef.current?.focus() }}
                         className={`flex items-center justify-between px-4 py-2.5 cursor-pointer border-b last:border-b-0 transition-colors ${
-                          enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
+                          seleccionado ? 'bg-violet-100' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
                         }`}
                       >
                         <button
