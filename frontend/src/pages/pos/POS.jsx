@@ -1305,26 +1305,6 @@ const POS = () => {
 
   const [confirmEliminar, setConfirmEliminar] = useState(null) // { articuloId, nombre, cantidad }
 
-  // Atajos de teclado para modales (Enter=confirmar, Escape=cancelar)
-  useEffect(() => {
-    const handler = (e) => {
-      // Modal eliminar artículo
-      if (confirmEliminar) {
-        if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() }
-        if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) }
-        return
-      }
-      // Modal cancelar venta
-      if (mostrarCancelar) {
-        if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
-        if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
-        return
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro])
-
   const quitarDelCarrito = useCallback((articuloId) => {
     setCarrito(prev => {
       const item = prev.find(i => i.articulo.id === articuloId)
@@ -1349,6 +1329,24 @@ const POS = () => {
       console.error('Error registrando eliminación:', err)
     }
   }, [confirmEliminar, usuario])
+
+  // Atajos de teclado para modales (Enter=confirmar, Escape=cancelar)
+  useEffect(() => {
+    const handler = (e) => {
+      if (confirmEliminar) {
+        if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() }
+        if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) }
+        return
+      }
+      if (mostrarCancelar) {
+        if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
+        if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
+        return
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
