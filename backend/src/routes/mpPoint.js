@@ -22,14 +22,26 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
     const { operating_mode } = req.body
     if (!operating_mode) return res.status(400).json({ error: 'operating_mode requerido' })
 
-    const resp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, {
+    // Intentar con endpoint integration-api (usado para devices GET)
+    let resp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, {
       method: 'PATCH',
       headers: mpHeaders(),
       body: JSON.stringify({ operating_mode }),
     })
+
+    // Si falla, intentar con endpoint alternativo /point/integrations/
+    if (!resp.ok && resp.status === 404) {
+      console.log('[MP Point] Endpoint integration-api no encontrado, probando /point/integrations/')
+      resp = await fetch(`https://api.mercadopago.com/point/integrations/devices/${req.params.id}`, {
+        method: 'PATCH',
+        headers: mpHeaders(),
+        body: JSON.stringify({ operating_mode }),
+      })
+    }
+
     const data = await resp.json()
     if (!resp.ok) {
-      console.error('[MP Point] Error cambiando modo:', data)
+      console.error('[MP Point] Error cambiando modo:', resp.status, data)
       return res.status(resp.status).json(data)
     }
     console.log(`[MP Point] Device ${req.params.id} cambiado a modo ${operating_mode}`)

@@ -209,9 +209,11 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const cajaSeleccionada = cajas.find(c => c.id === cajaId)
 
   const [cambiandoModo, setCambiandoModo] = useState(false)
+  const [errorModo, setErrorModo] = useState('')
 
   const confirmar = async () => {
     if (!sucursalId || !cajaId) return
+    setErrorModo('')
 
     // Si seleccionó un posnet, cambiar a modo PDV automáticamente
     if (mpDeviceId) {
@@ -219,9 +221,14 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       if (device && device.operating_mode !== 'PDV') {
         setCambiandoModo(true)
         try {
-          await api.patch(`/api/mp-point/devices/${mpDeviceId}`, { operating_mode: 'PDV' })
+          const resp = await api.patch(`/api/mp-point/devices/${mpDeviceId}`, { operating_mode: 'PDV' })
+          console.log('[MP Point] Modo cambiado a PDV:', resp.data)
         } catch (err) {
-          console.error('Error cambiando posnet a modo PDV:', err.message)
+          const msg = err.response?.data?.message || err.response?.data?.error || err.message
+          console.error('Error cambiando posnet a modo PDV:', msg, err.response?.data)
+          setErrorModo(`No se pudo cambiar a modo PDV: ${msg}`)
+          setCambiandoModo(false)
+          return // No continuar si falla el cambio de modo
         }
         setCambiandoModo(false)
       }
@@ -311,7 +318,8 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
               />
             )}
-            <p className="text-xs text-gray-400 mt-1">Solo dispositivos en modo PDV aceptan pagos automáticos</p>
+            <p className="text-xs text-gray-400 mt-1">Al guardar, el posnet se configurará automáticamente en modo PDV</p>
+            {errorModo && <p className="text-xs text-red-500 mt-1 font-medium">{errorModo}</p>}
           </div>
         </div>
 
