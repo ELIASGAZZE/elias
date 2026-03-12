@@ -62,7 +62,7 @@ const TareasHome = () => {
         </div>
       )}
 
-      <div className="max-w-2xl mx-auto px-4 py-6">
+      <div className="max-w-6xl mx-auto px-4 py-6">
         {cargando ? (
           <div className="text-center py-12 text-gray-400">Cargando...</div>
         ) : pendientes.length === 0 ? (
@@ -74,49 +74,53 @@ const TareasHome = () => {
             <p className="text-sm text-gray-400 mt-1">Todas las tareas al dia</p>
           </div>
         ) : (
-          <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Tareas únicas */}
-            {pendientes.filter(t => !t.repetitiva).length > 0 && (
-              <div className="mb-6">
-                <h2 className="text-lg font-bold text-gray-800 mb-3">
-                  Tareas unicas
-                  <span className="ml-2 text-sm font-normal text-gray-500">
-                    ({pendientes.filter(t => !t.repetitiva).length})
-                  </span>
-                </h2>
-                <div className="space-y-3">
-                  {pendientes.filter(t => !t.repetitiva).map(tarea => (
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 mb-3">
+                Tareas unicas
+                <span className="ml-2 text-sm font-normal text-gray-500">
+                  ({pendientes.filter(t => !t.repetitiva).length})
+                </span>
+              </h2>
+              <div className="space-y-3">
+                {pendientes.filter(t => !t.repetitiva).length === 0 ? (
+                  <p className="text-sm text-gray-400 py-4">Sin tareas unicas pendientes</p>
+                ) : (
+                  pendientes.filter(t => !t.repetitiva).map(tarea => (
                     <TareaCard
                       key={tarea.tarea_config_id}
                       tarea={tarea}
                       onCompletar={setTareaActiva}
                     />
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
-            )}
+            </div>
 
             {/* Tareas repetitivas */}
-            {pendientes.filter(t => t.repetitiva).length > 0 && (
-              <div className="mb-6">
-                <h2 className="text-lg font-bold text-gray-800 mb-3">
-                  Tareas repetitivas
-                  <span className="ml-2 text-sm font-normal text-gray-500">
-                    ({pendientes.filter(t => t.repetitiva).length})
-                  </span>
-                </h2>
-                <div className="space-y-3">
-                  {pendientes.filter(t => t.repetitiva).map(tarea => (
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 mb-3">
+                Tareas repetitivas
+                <span className="ml-2 text-sm font-normal text-gray-500">
+                  ({pendientes.filter(t => t.repetitiva).length})
+                </span>
+              </h2>
+              <div className="space-y-3">
+                {pendientes.filter(t => t.repetitiva).length === 0 ? (
+                  <p className="text-sm text-gray-400 py-4">Sin tareas repetitivas</p>
+                ) : (
+                  pendientes.filter(t => t.repetitiva).map(tarea => (
                     <TareaCard
                       key={tarea.tarea_config_id}
                       tarea={tarea}
                       onCompletar={setTareaActiva}
                     />
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
-            )}
-          </>
+            </div>
+          </div>
         )}
       </div>
 
