@@ -31,6 +31,7 @@ const VentasHome = () => {
   const [filtroClasificacion, setFiltroClasificacion] = useState('') // '', 'EMPRESA', 'PRUEBA'
   const [cargando, setCargando] = useState(true)
   const [reenviando, setReenviando] = useState(null) // id de venta en proceso
+  const [reenvioMasivo, setReenvioMasivo] = useState(false)
 
   useEffect(() => {
     cargarVentas()
@@ -84,6 +85,25 @@ const VentasHome = () => {
     } finally {
       setReenviando(null)
     }
+  }
+
+  const reenviarTodasCentum = async () => {
+    const pendientes = ventas.filter(v => !v.centum_sync && !v.centum_comprobante)
+    if (pendientes.length === 0) return
+    if (!confirm(`¿Reintentar ${pendientes.length} venta(s) en Centum? Esto genera facturas fiscales.`)) return
+    setReenvioMasivo(true)
+    let ok = 0, fail = 0
+    for (const v of pendientes) {
+      try {
+        await api.post(`/api/pos/ventas/${v.id}/reenviar-centum`)
+        ok++
+      } catch {
+        fail++
+      }
+    }
+    await cargarVentas()
+    setReenvioMasivo(false)
+    alert(`Listo: ${ok} enviada(s), ${fail} fallida(s)`)
   }
 
   return (
@@ -152,6 +172,20 @@ const VentasHome = () => {
             </div>
           )}
         </div>
+
+        {/* Botón reintentar todas en Centum */}
+        {ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (
+          <button
+            onClick={reenviarTodasCentum}
+            disabled={reenvioMasivo}
+            className="w-full bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-medium text-sm py-2.5 rounded-xl transition-colors disabled:opacity-50"
+          >
+            {reenvioMasivo
+              ? 'Enviando a Centum...'
+              : `Reintentar Centum (${ventas.filter(v => !v.centum_sync && !v.centum_comprobante).length} pendientes)`
+            }
+          </button>
+        )}
 
         {/* Lista de ventas */}
         {cargando ? (
