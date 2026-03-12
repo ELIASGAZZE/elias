@@ -1222,7 +1222,7 @@ const POS = () => {
       // Detectar duplicado: mismo barcode escaneado rápido (< 3 seg)
       const ahora = Date.now()
       const ultimo = ultimoBarcodeRef.current
-      if (ultimo.codigo === codigo && (ahora - ultimo.time) < 3000) {
+      if (ultimo.codigo === codigo && (ahora - ultimo.time) < 1500) {
         setAlertaDuplicado({ articulo: encontrado, cantidad: 1 })
         setBusquedaArt('')
         return true
