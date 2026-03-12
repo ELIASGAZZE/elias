@@ -708,6 +708,7 @@ const POS = () => {
   const [busquedaArt, setBusquedaArt] = useState('')
   const [busquedaIdx, setBusquedaIdx] = useState(-1) // índice seleccionado en dropdown
   const [mostrarTeclado, setMostrarTeclado] = useState(false)
+  const [carritoIdx, setCarritoIdx] = useState(-1) // índice seleccionado en carrito (-1 = no seleccionado, foco en buscador)
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
   const [alertaDuplicado, setAlertaDuplicado] = useState(null) // duplicado (balanza o barcode)
   const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
@@ -1362,6 +1363,8 @@ const POS = () => {
     const { articuloId, nombre, cantidad } = confirmEliminar
     setCarrito(prev => prev.filter(i => i.articulo.id !== articuloId))
     setConfirmEliminar(null)
+    setCarritoIdx(-1)
+    setTimeout(() => inputBusquedaRef.current?.focus(), 50)
     try {
       await api.post('/api/pos/log-eliminacion', {
         usuario_nombre: usuario?.nombre || 'Desconocido',
@@ -1385,6 +1388,13 @@ const POS = () => {
       if (mostrarCancelar) {
         if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
         if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
+        // Flechas arriba/abajo para seleccionar motivo
+        if (!cancelarPasoConfirm && document.activeElement?.tagName !== 'TEXTAREA') {
+          const motivos = ['error_precio', 'cliente_no_quiere', 'producto_defectuoso', 'otro']
+          const idxActual = motivos.indexOf(cancelarMotivo)
+          if (e.key === 'ArrowDown') { e.preventDefault(); setCancelarMotivo(motivos[Math.min(idxActual + 1, motivos.length - 1)]) }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setCancelarMotivo(motivos[Math.max(idxActual - 1, 0)]) }
+        }
         return
       }
       // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys
@@ -1450,16 +1460,52 @@ const POS = () => {
         e.preventDefault()
         setMostrarCobrar(true)
       }
-      // + / - = Cantidad último item (solo si no hay foco en input)
+      // + / - = Cantidad del item seleccionado (o último) (solo si no hay foco en input)
       if ((e.key === '+' || e.key === '-') && carrito.length > 0 && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
         e.preventDefault()
-        const ultimo = carrito[carrito.length - 1]
-        cambiarCantidad(ultimo.articulo.id, e.key === '+' ? 1 : -1, ultimo.articulo.esPesable)
+        const idx = carritoIdx >= 0 && carritoIdx < carrito.length ? carritoIdx : carrito.length - 1
+        const item = carrito[idx]
+        cambiarCantidad(item.articulo.id, e.key === '+' ? 1 : -1, item.articulo.esPesable)
+      }
+
+      // Flecha izquierda = entrar al carrito (seleccionar último item)
+      if (e.key === 'ArrowLeft' && carrito.length > 0 && document.activeElement?.tagName !== 'TEXTAREA') {
+        // Solo si el cursor está al inicio del input de búsqueda o no hay texto
+        const input = inputBusquedaRef.current
+        if (input && document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === 0) {
+          e.preventDefault()
+          input.blur()
+          setCarritoIdx(carrito.length - 1)
+        } else if (document.activeElement?.tagName !== 'INPUT') {
+          e.preventDefault()
+          setCarritoIdx(carrito.length - 1)
+        }
+      }
+      // Flecha derecha = volver al buscador
+      if (e.key === 'ArrowRight' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(-1)
+        setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+      }
+      // Flechas arriba/abajo = navegar carrito (solo si estamos en modo carrito)
+      if (e.key === 'ArrowUp' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(prev => Math.max(0, prev - 1))
+      }
+      if (e.key === 'ArrowDown' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(prev => Math.min(carrito.length - 1, prev + 1))
+      }
+      // Delete = eliminar item seleccionado del carrito
+      if (e.key === 'Delete' && carritoIdx >= 0 && carritoIdx < carrito.length && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault()
+        const item = carrito[carritoIdx]
+        quitarDelCarrito(item.articulo.id)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad])
+  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad, carritoIdx, quitarDelCarrito])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -2363,14 +2409,15 @@ const POS = () => {
               </div>
             ) : (
               <div className="divide-y">
-                {carrito.map(item => {
+                {carrito.map((item, itemIdx) => {
                   const precioOriginal = calcularPrecioConDescuentosBase(item.articulo)
                   const precioUnit = item.precioOverride != null ? item.precioOverride : precioOriginal
                   const lineTotal = precioUnit * item.cantidad
                   const tieneOverride = item.precioOverride != null
                   const estaEditando = editandoPrecio === item.articulo.id
+                  const seleccionadoEnCarrito = carritoIdx === itemIdx
                   return (
-                    <div key={item.articulo.id} className="px-3 py-2 hover:bg-gray-50/80">
+                    <div key={item.articulo.id} className={`px-3 py-2 ${seleccionadoEnCarrito ? 'bg-violet-100 border-l-4 border-l-violet-600' : 'hover:bg-gray-50/80'}`} ref={seleccionadoEnCarrito ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium text-gray-800 truncate flex-1">{item.articulo.nombre}</span>
                         <span className="text-sm font-bold text-gray-800 flex-shrink-0">{formatPrecio(lineTotal)}</span>
