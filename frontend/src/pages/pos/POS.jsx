@@ -1496,8 +1496,8 @@ const POS = () => {
         e.preventDefault()
         setCarritoIdx(prev => Math.min(carrito.length - 1, prev + 1))
       }
-      // Delete = eliminar item seleccionado del carrito
-      if (e.key === 'Delete' && carritoIdx >= 0 && carritoIdx < carrito.length && document.activeElement?.tagName !== 'INPUT') {
+      // Backspace = eliminar item seleccionado del carrito
+      if (e.key === 'Backspace' && carritoIdx >= 0 && carritoIdx < carrito.length && document.activeElement?.tagName !== 'INPUT') {
         e.preventDefault()
         const item = carrito[carritoIdx]
         quitarDelCarrito(item.articulo.id)
