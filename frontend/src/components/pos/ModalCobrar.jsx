@@ -930,18 +930,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               </div>
               <button
                 onClick={async () => {
-                  // Limpiar órdenes pendientes del device y reintentar
+                  // Limpiar órdenes pendientes del device y volver a mostrar opciones
                   if (mpDeviceId) {
-                    setMpEstado('creando')
-                    setMpError('')
                     try { await api.post(`/api/mp-point/devices/${mpDeviceId}/clear`) } catch {}
                   }
                   setMpEstado(null)
                   setMpError('')
-                  // Reintentar automáticamente el mismo tipo de pago
-                  if (mpUltimoPaymentType) {
-                    setTimeout(() => iniciarPagoMP(mpUltimoPaymentType), 300)
-                  }
+                  setMpIntentId(null)
+                  setMpPaymentId(null)
                 }}
                 className="w-full py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white/80"
               >
