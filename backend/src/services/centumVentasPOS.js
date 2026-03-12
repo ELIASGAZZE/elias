@@ -232,8 +232,8 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
 
     return resultado
   } catch (err) {
-    console.error('[Centum POS] Error al registrar venta en Centum:', err.message)
-    return null
+    console.error('[Centum POS] Error al registrar venta en Centum:', err.message, err.stack)
+    throw err // propagar para que pos.js guarde el error real en centum_error
   }
 }
 
