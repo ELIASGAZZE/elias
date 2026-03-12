@@ -49,6 +49,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   // Mercado Pago Point
   const [mpEstado, setMpEstado] = useState(null) // null | 'creando' | 'esperando' | 'procesando' | 'aprobado' | 'error' | 'cancelado'
+  const [mpShowProblema, setMpShowProblema] = useState(false)
   const [mpIntentId, setMpIntentId] = useState(null)
   const [mpDeviceId, setMpDeviceId] = useState(null)
   const [mpError, setMpError] = useState('')
@@ -190,18 +191,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMpMontoIntent(montoACobrar)
       setMpEstado('esperando')
 
-      // Timeout: cancelar automáticamente después de 2 minutos
-      mpTimeoutRef.current = setTimeout(() => {
-        if (mpPollingRef.current) {
-          clearInterval(mpPollingRef.current)
-          mpPollingRef.current = null
-        }
-        mpTimeoutRef.current = null
-        api.post(`/api/mp-point/order/${data.id}/cancel`).catch(() => {})
-        setMpEstado('cancelado')
-        setMpError('Tiempo agotado (2 min). Se canceló la orden en el posnet.')
-      }, 120000)
-
       // Polling estado de la orden cada 3 segundos
       mpPollingRef.current = setInterval(async () => {
         try {
@@ -253,6 +242,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
             if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
             setMpEstado('cancelado')
             setMpError('Pago cancelado en el posnet')
+            setMpShowProblema(false)
           }
         } catch (err) {
           console.error('[MP Point] Error polling:', err.message)
@@ -307,52 +297,40 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     return false
   }
 
-  async function cancelarPagoMP() {
+  // "Tengo problema" — resolver cobro MP con problema
+  function resolverProblemaMP(tipoProblema) {
+    // Limpiar polling
     if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
     if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
-    const orderId = mpIntentId
     const monto = mpMontoIntent
-    if (orderId) {
-      // Verificar si el pago ya se completó antes de cancelar
-      const yaCompletado = await detectarPagoCompletado(orderId, monto)
-      if (yaCompletado) return
 
-      // Intentar cancelar la orden en MP
-      try { await api.post(`/api/mp-point/order/${orderId}/cancel`) } catch {}
-
-      // Mostrar mensaje para que cancelen manualmente en el posnet
-      setMpEstado('cancelando')
-
-      // Polling para detectar cuando la orden se cancela/expira en el posnet
-      mpPollingRef.current = setInterval(async () => {
-        try {
-          const { data: order } = await api.get(`/api/mp-point/order/${orderId}`)
-          if (order.status === 'canceled' || order.status === 'expired' || order.status === 'processed') {
-            clearInterval(mpPollingRef.current)
-            mpPollingRef.current = null
-            if (order.status === 'processed') {
-              // Se completó mientras cancelábamos
-              await detectarPagoCompletado(orderId, monto)
-            } else {
-              setMpEstado(null)
-              setMpIntentId(null)
-              setMpError('')
-              setMpPaymentId(null)
-            }
-          }
-        } catch {}
-      }, 3000)
-
-      // Timeout del polling de cancelación: 2 minutos
-      mpTimeoutRef.current = setTimeout(() => {
-        if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
-      }, 120000)
-    } else {
-      setMpEstado(null)
-      setMpIntentId(null)
-      setMpError('')
-      setMpPaymentId(null)
+    if (tipoProblema === 'cobro_sin_confirmar') {
+      // Opción 1: El cobro se realizó en el posnet pero el sistema no lo detectó
+      setPagos(prev => [...prev, {
+        tipo: 'Posnet MP',
+        monto,
+        detalle: {
+          mp_order_id: mpIntentId,
+          mp_problema: 'cobro_sin_confirmar',
+          mp_problema_desc: 'Cobro realizado en posnet pero no confirmado por el sistema',
+        }
+      }])
+    } else if (tipoProblema === 'posnet_manual') {
+      // Opción 2: No llegó al posnet, se cobra en posnet manual (fuera del sistema)
+      setPagos(prev => [...prev, {
+        tipo: 'Posnet MP',
+        monto,
+        detalle: {
+          mp_order_id: mpIntentId,
+          mp_problema: 'posnet_manual',
+          mp_problema_desc: 'Cobrado en posnet manual (fuera del sistema)',
+        }
+      }])
     }
+
+    setMpEstado('aprobado')
+    setMpIntentId(null)
+    setMpError('')
   }
 
   // Conteo de billetes por denominación para efectivo
@@ -568,9 +546,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (cantidadModal) return
     const enInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
 
-    // Escape = Cerrar modal
+    // Escape = Cerrar modal (bloqueado si hay cobro MP en curso)
     if (e.key === 'Escape' && !guardando) {
       e.preventDefault()
+      if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) return
       onCerrar()
       return
     }
@@ -638,17 +617,18 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest">Efectivo</h3>
           <button
-            onClick={async () => {
-              if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando')) {
-                // Verificar si el pago se completó antes de cerrar
-                await cancelarPagoMP()
-                // Si cancelarPagoMP detectó un pago aprobado, no cerrar
-                // (el estado cambió a 'aprobado' adentro)
+            onClick={() => {
+              if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) {
+                // No cerrar mientras hay un cobro MP en curso
                 return
               }
               onCerrar()
             }}
-            className="text-white/40 hover:text-white/80 transition-colors flex items-center gap-1.5"
+            className={`transition-colors flex items-center gap-1.5 ${
+              mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')
+                ? 'text-white/10 cursor-not-allowed'
+                : 'text-white/40 hover:text-white/80'
+            }`}
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -883,7 +863,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               <p className="text-sky-300 text-sm font-medium">Enviando al posnet...</p>
             </div>
           )}
-          {(mpEstado === 'esperando' || mpEstado === 'procesando') && (
+          {(mpEstado === 'esperando' || mpEstado === 'procesando') && !mpShowProblema && (
             <div className="bg-sky-900/40 rounded-xl p-4 text-center">
               <div className="animate-pulse">
                 <svg className="w-10 h-10 text-sky-400 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -893,12 +873,40 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 <p className="text-sky-300/70 text-xs mt-1">
                   {mpEstado === 'esperando' ? 'Esperando pago en el posnet...' : 'Procesando pago...'}
                 </p>
+                <p className="text-sky-300/40 text-[10px] mt-1">Para cancelar, hacelo desde el posnet</p>
               </div>
               <button
-                onClick={cancelarPagoMP}
-                className="mt-3 text-red-400 hover:text-red-300 text-xs font-medium underline"
+                onClick={() => setMpShowProblema(true)}
+                className="mt-3 text-amber-400 hover:text-amber-300 text-xs font-medium underline"
               >
-                Cancelar
+                Tengo problema
+              </button>
+            </div>
+          )}
+          {(mpEstado === 'esperando' || mpEstado === 'procesando') && mpShowProblema && (
+            <div className="bg-amber-900/30 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-amber-300 text-sm font-bold">Seleccioná el problema:</p>
+                <button
+                  onClick={() => setMpShowProblema(false)}
+                  className="text-white/40 hover:text-white/70 text-xs"
+                >
+                  Volver
+                </button>
+              </div>
+              <button
+                onClick={() => { setMpShowProblema(false); resolverProblemaMP('cobro_sin_confirmar') }}
+                className="w-full text-left bg-amber-800/40 hover:bg-amber-800/60 rounded-lg p-3 transition-colors"
+              >
+                <p className="text-amber-200 text-sm font-semibold">El cobro se realizó en el posnet</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">Pero el sistema no lo detectó. Guardar la venta igual.</p>
+              </button>
+              <button
+                onClick={() => { setMpShowProblema(false); resolverProblemaMP('posnet_manual') }}
+                className="w-full text-left bg-amber-800/40 hover:bg-amber-800/60 rounded-lg p-3 transition-colors"
+              >
+                <p className="text-amber-200 text-sm font-semibold">No aparece en el posnet</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">Lo cobro en posnet manual (fuera del sistema).</p>
               </button>
             </div>
           )}
@@ -908,21 +916,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
               <p className="text-emerald-300 text-sm font-bold">Pago aprobado - {formatPrecio(mpMontoIntent)}</p>
-            </div>
-          )}
-          {mpEstado === 'cancelando' && (
-            <div className="bg-amber-900/40 rounded-xl p-4 text-center space-y-3">
-              <svg className="w-8 h-8 text-amber-400 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-              </svg>
-              <p className="text-amber-300 text-sm font-bold">Cancelar cobro en el posnet</p>
-              <p className="text-amber-300/70 text-xs">Presioná el botón rojo en el posnet para cancelar la operación</p>
-              <button
-                onClick={() => { setMpEstado(null); setMpIntentId(null); setMpError(''); setMpPaymentId(null) }}
-                className="w-full py-2 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 text-white/80"
-              >
-                Listo
-              </button>
             </div>
           )}
           {(mpEstado === 'error' || mpEstado === 'cancelado') && (
