@@ -706,8 +706,9 @@ const POS = () => {
   const [sincronizandoERP, setSincronizandoERP] = useState(false)
   const [busquedaArt, setBusquedaArt] = useState('')
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
-  const [alertaDuplicado, setAlertaDuplicado] = useState(null) // pesable duplicado
+  const [alertaDuplicado, setAlertaDuplicado] = useState(null) // duplicado (balanza o barcode)
   const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
+  const ultimoBarcodeRef = useRef({ codigo: null, time: 0 }) // último barcode normal escaneado
   const [popupPesable, setPopupPesable] = useState(null) // { articulo } — pedir peso manual
   const [popupPesableKg, setPopupPesableKg] = useState('')
 
@@ -1217,6 +1218,15 @@ const POS = () => {
       encontrado = articulos.find(a => a.codigo === codigo)
     }
     if (encontrado) {
+      // Detectar duplicado: mismo barcode escaneado rápido (< 3 seg)
+      const ahora = Date.now()
+      const ultimo = ultimoBarcodeRef.current
+      if (ultimo.codigo === codigo && (ahora - ultimo.time) < 3000) {
+        setAlertaDuplicado({ articulo: encontrado, cantidad: 1 })
+        setBusquedaArt('')
+        return true
+      }
+      ultimoBarcodeRef.current = { codigo, time: ahora }
       agregarAlCarrito(encontrado)
       setBusquedaArt('')
       return true
@@ -4591,14 +4601,18 @@ const POS = () => {
         </div>
       )}
 
-      {/* Pantalla amarilla fullscreen — artículo duplicado balanza */}
+      {/* Pantalla amarilla fullscreen — artículo duplicado (balanza o barcode) */}
       {alertaDuplicado && (
         <div className="fixed inset-0 z-[100] bg-amber-500 flex flex-col items-center justify-center text-white"
           tabIndex={0}
           ref={el => el?.focus()}
           onKeyDown={e => {
             if (e.key === 'Enter') {
-              setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+              if (alertaDuplicado.pesoKg) {
+                setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+              } else {
+                agregarAlCarrito(alertaDuplicado.articulo)
+              }
               setAlertaDuplicado(null)
               setTimeout(() => inputBusquedaRef.current?.focus(), 50)
             } else if (e.key === 'Escape') {
@@ -4611,7 +4625,12 @@ const POS = () => {
           </svg>
           <span className="text-4xl font-black mb-3">ARTÍCULO DUPLICADO</span>
           <span className="text-xl opacity-90 mb-2">{alertaDuplicado.articulo.nombre}</span>
-          <span className="text-2xl font-mono opacity-80 mb-8">{alertaDuplicado.pesoKg} kg</span>
+          {alertaDuplicado.pesoKg && (
+            <span className="text-2xl font-mono opacity-80 mb-8">{alertaDuplicado.pesoKg} kg</span>
+          )}
+          {alertaDuplicado.cantidad && !alertaDuplicado.pesoKg && (
+            <span className="text-2xl font-mono opacity-80 mb-8">x{alertaDuplicado.cantidad}</span>
+          )}
           <span className="text-xl mb-8">¿Deseas agregar igual?</span>
           <div className="flex gap-6">
             <button
@@ -4622,7 +4641,11 @@ const POS = () => {
             </button>
             <button
               onClick={() => {
-                setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+                if (alertaDuplicado.pesoKg) {
+                  setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+                } else {
+                  agregarAlCarrito(alertaDuplicado.articulo)
+                }
                 setAlertaDuplicado(null)
                 setTimeout(() => inputBusquedaRef.current?.focus(), 50)
               }}
