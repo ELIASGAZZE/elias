@@ -156,6 +156,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   // Mercado Pago Point — funciones (Orders API: tarjeta + QR)
   async function iniciarPagoMP(paymentType) {
+    // No iniciar si ya hay un pago MP en curso
+    if (mpEstado && mpEstado !== 'error' && mpEstado !== 'cancelado' && mpEstado !== 'aprobado') return
     const montoACobrar = restante > 0 ? restante : totalEfectivoConGC
     if (montoACobrar <= 0) return
 
@@ -245,7 +247,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               setMpError('Pago finalizado pero sin ID')
               setMpEstado('error')
             }
-          } else if (state === 'canceled' || state === 'expired') {
+          } else if (state === 'canceled' || state === 'expired' || state === 'reverted') {
             clearInterval(mpPollingRef.current)
             mpPollingRef.current = null
             if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
@@ -591,14 +593,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       borrarPagos()
     }
 
-    // F1 = Tarjeta (posnet MP)
-    if (e.key === 'F1') {
+    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP en curso
+    if (e.key === 'F1' && !mpEstado) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
       iniciarPagoMP('credit_card')
     }
-    // F2 = QR (posnet MP)
-    if (e.key === 'F2') {
+    // F2 = QR (posnet MP) — solo si no hay pago MP en curso
+    if (e.key === 'F2' && !mpEstado) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
       iniciarPagoMP('qr')
