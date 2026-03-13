@@ -5,9 +5,11 @@ import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
-const formatHora = (fecha) => {
+const formatFechaHora = (fecha) => {
   if (!fecha) return ''
-  return new Date(fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  const d = new Date(fecha)
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) +
+    ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
 const formatPrecio = (precio) => {
@@ -285,7 +287,7 @@ const VentasHome = () => {
                           </span>
                         )}
                         <span className="text-sm font-medium text-gray-800">
-                          {formatHora(v.created_at)}
+                          {formatFechaHora(v.created_at)}
                         </span>
                         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                           v.clasificacion === 'EMPRESA'
@@ -294,16 +296,12 @@ const VentasHome = () => {
                         }`}>
                           {v.clasificacion}
                         </span>
-                        {v.sucursales?.nombre && (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
-                            {v.sucursales.nombre}
-                          </span>
-                        )}
-                        {v.cajas?.nombre && (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
-                            {v.cajas.nombre}
-                          </span>
-                        )}
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
+                          {v.sucursales?.nombre || 'Sin sucursal'}
+                        </span>
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
+                          {v.cajas?.nombre || 'Sin caja'}
+                        </span>
                         {esAdmin && v.perfiles?.nombre && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
                             {v.perfiles.nombre}
