@@ -126,8 +126,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     const porcentaje = reglas.valor || 0
     const montoPagado = resumenPagos[nombreForma] || 0
     if (montoPagado <= 0 || porcentaje <= 0) return null
-    // Base = lo efectivamente pagado en esta forma, sin exceder el total de la venta
-    const baseDescuento = Math.min(total, montoPagado)
+    // Si se paga solo con esta forma (ej: solo efectivo), descuento sobre el total completo
+    // Si es pago mixto (ej: efectivo + tarjeta), descuento solo sobre lo pagado en esta forma
+    const soloEstaForma = pagos.every(p => (p.tipo || '').toLowerCase() === (nombreForma || '').toLowerCase())
+    const baseDescuento = soloEstaForma ? total : Math.min(total, montoPagado)
     return {
       promoId: promo.id,
       promoNombre: promo.nombre,
