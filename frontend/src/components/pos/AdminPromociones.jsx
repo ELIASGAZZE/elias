@@ -116,11 +116,27 @@ const AdminPromociones = () => {
         const { data } = await api.get('/api/pos/articulos', { params: { buscar: busqueda.trim() } })
         const items = data.articulos || []
         const terminos = busqueda.toLowerCase().trim().split(/\s+/)
-        const filtrados = items.filter(a => {
+        let filtrados = items.filter(a => {
           const texto = `${a.codigo} ${a.nombre} ${a.rubro?.nombre || ''} ${a.subRubro?.nombre || ''}`.toLowerCase()
           return terminos.every(t => texto.includes(t))
-        }).slice(0, 20)
-        setResultados(filtrados)
+        })
+        // En modo rubro/subrubro: filtrar los que tienen dato y deduplicar
+        if (tipoEntidad === 'rubro') {
+          const vistos = new Set()
+          filtrados = filtrados.filter(a => {
+            if (!a.rubro?.id || vistos.has(a.rubro.id)) return false
+            vistos.add(a.rubro.id)
+            return true
+          })
+        } else if (tipoEntidad === 'subrubro') {
+          const vistos = new Set()
+          filtrados = filtrados.filter(a => {
+            if (!a.subRubro?.id || vistos.has(a.subRubro.id)) return false
+            vistos.add(a.subRubro.id)
+            return true
+          })
+        }
+        setResultados(filtrados.slice(0, 20))
       } catch (err) {
         console.error('Error buscando artículos:', err)
       } finally {
@@ -129,7 +145,7 @@ const AdminPromociones = () => {
     }, 500)
 
     return () => clearTimeout(timeout)
-  }, [busqueda])
+  }, [busqueda, tipoEntidad])
 
   const resetForm = () => {
     setForm({
@@ -671,6 +687,7 @@ const AdminPromociones = () => {
                     type="button"
                     onClick={() => {
                       setTipoEntidad(te.value)
+                      setResultados([])
                       if (te.value === 'todos') {
                         setForm(prev => ({ ...prev, aplicar_a: [{ tipo: 'todos' }] }))
                       }
@@ -724,7 +741,7 @@ const AdminPromociones = () => {
                   type="text"
                   value={busqueda}
                   onChange={e => setBusqueda(e.target.value)}
-                  placeholder="Buscar artículo por nombre o código..."
+                  placeholder={tipoEntidad === 'rubro' ? 'Buscar por nombre de rubro o artículo...' : tipoEntidad === 'subrubro' ? 'Buscar por nombre de subrubro o artículo...' : 'Buscar artículo por nombre o código...'}
                   className="campo-form text-sm"
                 />
                 {buscando && <span className="absolute right-3 top-2.5 text-xs text-gray-400">Buscando...</span>}
@@ -733,19 +750,30 @@ const AdminPromociones = () => {
                   <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
                     {resultados.map(item => (
                       <button
-                        key={item.id}
+                        key={tipoEntidad === 'rubro' ? `r-${item.rubro?.id}` : tipoEntidad === 'subrubro' ? `sr-${item.subRubro?.id}` : item.id}
                         type="button"
                         onClick={() => agregarEntidad(item)}
                         className="w-full text-left px-3 py-2 hover:bg-violet-50 text-sm border-b last:border-b-0"
                       >
-                        <span className="font-medium">{item.nombre}</span>
-                        {item.rubro?.nombre && (
-                          <span className="text-gray-400 text-xs ml-2">
-                            {item.rubro.nombre}
-                            {item.subRubro?.nombre && ` / ${item.subRubro.nombre}`}
-                          </span>
+                        {tipoEntidad === 'rubro' ? (
+                          <span className="font-medium">{item.rubro?.nombre}</span>
+                        ) : tipoEntidad === 'subrubro' ? (
+                          <>
+                            <span className="font-medium">{item.subRubro?.nombre}</span>
+                            <span className="text-gray-400 text-xs ml-2">(Rubro: {item.rubro?.nombre || '—'})</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium">{item.nombre}</span>
+                            {item.rubro?.nombre && (
+                              <span className="text-gray-400 text-xs ml-2">
+                                {item.rubro.nombre}
+                                {item.subRubro?.nombre && ` / ${item.subRubro.nombre}`}
+                              </span>
+                            )}
+                            <span className="text-gray-400 text-xs ml-2">{formatPrecio(item.precio)}</span>
+                          </>
                         )}
-                        <span className="text-gray-400 text-xs ml-2">{formatPrecio(item.precio)}</span>
                       </button>
                     ))}
                   </div>
