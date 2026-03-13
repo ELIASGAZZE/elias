@@ -295,8 +295,13 @@ const VentasHome = () => {
                           {v.clasificacion}
                         </span>
                         {v.sucursales?.nombre && (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
                             {v.sucursales.nombre}
+                          </span>
+                        )}
+                        {v.cajas?.nombre && (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
+                            {v.cajas.nombre}
                           </span>
                         )}
                         {esAdmin && v.perfiles?.nombre && (

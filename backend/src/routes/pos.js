@@ -434,7 +434,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   try {
     let query = supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), cajas:caja_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .order('created_at', { ascending: false })
 
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
@@ -533,7 +533,7 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), cajas:caja_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .eq('id', req.params.id)
       .single()
 
