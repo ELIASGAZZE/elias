@@ -30,6 +30,7 @@ const VentasHome = () => {
   const [busqueda, setBusqueda] = useState('')
   const [filtroClasificacion, setFiltroClasificacion] = useState('') // '', 'EMPRESA', 'PRUEBA'
   const [filtroTipo, setFiltroTipo] = useState('') // '', 'venta', 'nota_credito'
+  const [filtroCentum, setFiltroCentum] = useState('') // '', 'sin_centum'
   const [filtroSucursal, setFiltroSucursal] = useState('')
   const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -66,6 +67,7 @@ const VentasHome = () => {
     if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
     if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
     if (filtroSucursal && v.sucursal_id !== filtroSucursal) return false
+    if (filtroCentum === 'sin_centum' && (v.centum_sync || v.centum_comprobante)) return false
     return true
   })
 
@@ -189,6 +191,17 @@ const VentasHome = () => {
               <option key={s.id} value={s.id}>{s.nombre}</option>
             ))}
           </select>
+          <div className="w-px bg-gray-300 mx-1" />
+          <button
+            onClick={() => setFiltroCentum(filtroCentum === 'sin_centum' ? '' : 'sin_centum')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filtroCentum === 'sin_centum'
+                ? 'bg-red-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Sin Centum
+          </button>
         </div>
 
         {/* Resumen del día */}

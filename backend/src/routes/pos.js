@@ -1110,6 +1110,10 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
     const proporcion = subtotalDevuelto / subtotalVenta
     const saldoAFavor = Math.round(proporcion * totalVenta * 100) / 100
 
+    if (saldoAFavor <= 0) {
+      return res.status(400).json({ error: 'El importe de la devolución es $0. No se puede generar una nota de crédito con importe cero.' })
+    }
+
     // Armar items de la nota de crédito (con precio proporcional al descuento)
     const factorDescuento = subtotalVenta > 0 ? totalVenta / subtotalVenta : 1
     const itemsNC = items_devueltos.map(dev => {
