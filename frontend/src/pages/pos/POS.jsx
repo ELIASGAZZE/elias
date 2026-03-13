@@ -3270,7 +3270,7 @@ const POS = () => {
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium text-gray-800 truncate">{item.nombre}</div>
                               <div className="text-xs text-gray-400">
-                                {item.cantidad}x {formatPrecio(item.precioUnitario || item.precio)} = {formatPrecio((item.precioUnitario || item.precio) * item.cantidad)}
+                                {item.cantidad}x {formatPrecio(item.precio_unitario || item.precioUnitario || item.precio)} = {formatPrecio((item.precio_unitario || item.precioUnitario || item.precio) * item.cantidad)}
                               </div>
                             </div>
                           </div>
@@ -3549,7 +3549,7 @@ const POS = () => {
               const detalleItems = indices.map(idx => {
                 const item = items[idx]
                 const cant = problemaItemsSel[idx]
-                const precioUnit = item.precioUnitario || item.precio || 0
+                const precioUnit = item.precio_unitario || item.precioUnitario || item.precio || 0
                 const sub = precioUnit * cant
                 subtotalDevuelto += sub
                 return { ...item, cantDevolver: cant, subtotal: sub, descripcion: problemaDescripciones[idx] }
@@ -3989,7 +3989,7 @@ const POS = () => {
                   <div className="flex-1 overflow-y-auto min-h-0 max-h-80 space-y-3">
                     {indices.map(idx => {
                       const item = items[idx]
-                      const precioOriginal = item.precioUnitario || item.precio || 0
+                      const precioOriginal = item.precio_unitario || item.precioUnitario || item.precio || 0
                       const precioCorr = problemaPreciosCorregidos[idx]
                       const diferencia = precioCorr !== undefined && precioCorr !== '' ? (precioOriginal - parseFloat(precioCorr)) * (problemaItemsSel[idx] || 1) : null
                       return (
@@ -4070,7 +4070,7 @@ const POS = () => {
               const detalleItems = indices.map(idx => {
                 const item = items[idx]
                 const cant = problemaItemsSel[idx] || 1
-                const precioCobrado = item.precioUnitario || item.precio || 0
+                const precioCobrado = item.precio_unitario || item.precioUnitario || item.precio || 0
                 const precioGondola = parseFloat(problemaPreciosCorregidos[idx]) || 0
                 const dif = (precioCobrado - precioGondola) * cant
                 totalDiferencia += dif
