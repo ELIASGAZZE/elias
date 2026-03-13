@@ -329,11 +329,12 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
   }
 
   // Agregar referencia al comprobante original (requerido para NC en Centum)
+  // El campo correcto es "Referencia" (string), NO "NumeroReferencia" (objeto)
   if (comprobanteOriginal) {
     const ref = extraerPuntoVentaDeComprobante(comprobanteOriginal)
     if (ref) {
-      body.NumeroReferencia = { PuntoVenta: ref.puntoVenta, Numero: ref.numero }
-      console.log(`[Centum POS NC] Referencia: PV=${ref.puntoVenta}, Num=${ref.numero}`)
+      body.Referencia = String(ref.numero)
+      console.log(`[Centum POS NC] Referencia: ${ref.numero} (de comprobante ${comprobanteOriginal})`)
     }
   }
 
@@ -427,7 +428,7 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
   if (comprobanteOriginal) {
     const ref = extraerPuntoVentaDeComprobante(comprobanteOriginal)
     if (ref) {
-      body.NumeroReferencia = { PuntoVenta: ref.puntoVenta, Numero: ref.numero }
+      body.Referencia = String(ref.numero)
     }
   }
 
