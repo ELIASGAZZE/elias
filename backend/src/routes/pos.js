@@ -1202,7 +1202,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: venta.sucursal_id,
+        sucursal_id: req.perfil.sucursal_id || venta.sucursal_id,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -subtotalDevuelto,
@@ -1570,7 +1570,7 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: venta.sucursal_id,
+        sucursal_id: req.perfil.sucursal_id || venta.sucursal_id,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -diferenciaTotal,
