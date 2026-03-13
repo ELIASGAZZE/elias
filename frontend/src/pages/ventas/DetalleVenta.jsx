@@ -1,6 +1,6 @@
 // Detalle de una venta POS
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
@@ -75,7 +75,6 @@ const DetalleVenta = () => {
     try {
       const { data } = await api.post(`/api/pos/ventas/${id}/reenviar-centum`)
       setReenvioMsg(`Enviado OK: ${data.comprobante || 'Sin comprobante'}`)
-      // Recargar venta para actualizar estado
       const { data: updated } = await api.get(`/api/pos/ventas/${id}`)
       setVenta(updated.venta)
     } catch (err) {
@@ -92,11 +91,61 @@ const DetalleVenta = () => {
   const pagos = venta.pagos || []
   const descFormaPago = venta.descuento_forma_pago
 
+  const esNC = venta.tipo === 'nota_credito'
+  const relacionadas = venta.ventas_relacionadas || []
+  const ncsHijas = relacionadas.filter(v => v.tipo === 'nota_credito')
+  const ventasHijas = relacionadas.filter(v => v.tipo === 'venta')
+  const movSaldo = venta.movimiento_saldo
+  const ventaNuevaCorreccion = venta.venta_nueva_correccion
+
+  // Determinar tipo de incidente para NC
+  let tipoIncidente = null
+  if (esNC && movSaldo) {
+    const motivo = (movSaldo.motivo || '').toLowerCase()
+    if (motivo.includes('devolución') || motivo.includes('devolucion')) tipoIncidente = 'devolucion'
+    else if (motivo.includes('diferencia de precio') || motivo.includes('góndola') || motivo.includes('gondola')) tipoIncidente = 'diferencia_precio'
+  } else if (esNC && ventaNuevaCorreccion) {
+    tipoIncidente = 'correccion_cliente'
+  } else if (esNC) {
+    tipoIncidente = 'nota_credito'
+  }
+
+  // Para ventas originales que tuvieron incidentes
+  const tieneIncidentes = ncsHijas.length > 0 || ventasHijas.length > 0
+
+  const INCIDENTE_LABELS = {
+    devolucion: 'Devolución de producto',
+    diferencia_precio: 'Diferencia de precio',
+    correccion_cliente: 'Corrección de cliente',
+    nota_credito: 'Nota de crédito',
+  }
+  const INCIDENTE_COLORS = {
+    devolucion: 'bg-orange-100 text-orange-700 border-orange-200',
+    diferencia_precio: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+    correccion_cliente: 'bg-purple-100 text-purple-700 border-purple-200',
+    nota_credito: 'bg-red-100 text-red-700 border-red-200',
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar sinTabs titulo="Detalle Venta" volverA="/ventas" />
 
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+
+        {/* Badge NC / Incidente */}
+        {esNC && (
+          <div className={`rounded-xl border p-4 ${INCIDENTE_COLORS[tipoIncidente] || 'bg-red-50 text-red-700 border-red-200'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-lg font-bold">NOTA DE CREDITO #{venta.numero_venta || venta.id}</span>
+            </div>
+            {tipoIncidente && (
+              <span className="text-sm font-medium">
+                Motivo: {INCIDENTE_LABELS[tipoIncidente] || tipoIncidente}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Info general */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Informacion general</h2>
@@ -190,6 +239,136 @@ const DetalleVenta = () => {
           )}
         </div>
 
+        {/* Venta origen (si es NC o venta de corrección) */}
+        {venta.venta_origen && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Venta original</h2>
+            <Link
+              to={`/ventas/${venta.venta_origen.id}`}
+              className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+            >
+              <div>
+                <span className="text-sm font-medium text-gray-800">
+                  Venta #{venta.venta_origen.numero_venta || venta.venta_origen.id}
+                </span>
+                <span className="text-xs text-gray-500 ml-2">
+                  {venta.venta_origen.nombre_cliente || 'Consumidor Final'}
+                </span>
+                {venta.venta_origen.centum_comprobante && (
+                  <span className="text-xs text-green-600 ml-2">{venta.venta_origen.centum_comprobante}</span>
+                )}
+              </div>
+              <div className="text-right">
+                <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.venta_origen.total)}</span>
+                <span className="text-xs text-gray-400 block">{formatFechaHora(venta.venta_origen.created_at)}</span>
+              </div>
+            </Link>
+          </div>
+        )}
+
+        {/* Detalle del incidente (para NCs) */}
+        {esNC && movSaldo && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Detalle del incidente</h2>
+            <div className="space-y-3">
+              <div>
+                <span className="text-xs text-gray-500 uppercase">Motivo</span>
+                <p className="text-sm text-gray-800 mt-0.5">{movSaldo.motivo}</p>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+                <div>
+                  <span className="text-xs text-emerald-600 uppercase font-medium">Saldo generado</span>
+                  <p className="text-sm text-gray-700 mt-0.5">
+                    A favor de: <span className="font-medium">{movSaldo.nombre_cliente || 'Cliente'}</span>
+                  </p>
+                </div>
+                <span className="text-lg font-bold text-emerald-700">{formatPrecio(movSaldo.monto)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Corrección de cliente: venta nueva */}
+        {esNC && ventaNuevaCorreccion && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Corrección de cliente</h2>
+            <p className="text-sm text-gray-600 mb-3">
+              Se anuló la venta original y se generó una nueva al cliente correcto:
+            </p>
+            <Link
+              to={`/ventas/${ventaNuevaCorreccion.id}`}
+              className="flex items-center justify-between p-3 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-100 transition-colors"
+            >
+              <div>
+                <span className="text-sm font-medium text-purple-800">
+                  Nueva Venta #{ventaNuevaCorreccion.numero_venta || ventaNuevaCorreccion.id}
+                </span>
+                <span className="text-xs text-purple-600 ml-2">
+                  {ventaNuevaCorreccion.nombre_cliente || 'Cliente'}
+                </span>
+                {ventaNuevaCorreccion.centum_comprobante && (
+                  <span className="text-xs text-green-600 ml-2">{ventaNuevaCorreccion.centum_comprobante}</span>
+                )}
+              </div>
+              <span className="text-sm font-medium text-purple-700">{formatPrecio(ventaNuevaCorreccion.total)}</span>
+            </Link>
+          </div>
+        )}
+
+        {/* Incidentes de la venta original (NCs hijas, ventas de corrección) */}
+        {tieneIncidentes && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">
+              Incidentes ({ncsHijas.length + ventasHijas.length})
+            </h2>
+            <div className="space-y-2">
+              {ncsHijas.map(nc => (
+                <Link
+                  key={nc.id}
+                  to={`/ventas/${nc.id}`}
+                  className="flex items-center justify-between p-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-100 transition-colors"
+                >
+                  <div>
+                    <span className="text-xs font-medium text-red-600 uppercase">Nota de Crédito</span>
+                    <span className="text-sm font-medium text-gray-800 ml-2">
+                      #{nc.numero_venta || nc.id}
+                    </span>
+                    {nc.centum_comprobante && (
+                      <span className="text-xs text-green-600 ml-2">{nc.centum_comprobante}</span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-red-600">{formatPrecio(nc.total)}</span>
+                    <span className="text-xs text-gray-400 block">{formatFechaHora(nc.created_at)}</span>
+                  </div>
+                </Link>
+              ))}
+              {ventasHijas.map(v => (
+                <Link
+                  key={v.id}
+                  to={`/ventas/${v.id}`}
+                  className="flex items-center justify-between p-3 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-100 transition-colors"
+                >
+                  <div>
+                    <span className="text-xs font-medium text-purple-600 uppercase">Venta corregida</span>
+                    <span className="text-sm font-medium text-gray-800 ml-2">
+                      #{v.numero_venta || v.id}
+                    </span>
+                    <span className="text-xs text-gray-500 ml-2">{v.nombre_cliente}</span>
+                    {v.centum_comprobante && (
+                      <span className="text-xs text-green-600 ml-2">{v.centum_comprobante}</span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-gray-700">{formatPrecio(v.total)}</span>
+                    <span className="text-xs text-gray-400 block">{formatFechaHora(v.created_at)}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Items */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items ({items.length})</h2>
@@ -200,17 +379,29 @@ const DetalleVenta = () => {
               const subtotal = precioUnit * cant
 
               return (
-                <div key={i} className="py-2 flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-800 font-medium truncate">{item.nombre || item.codigo}</p>
-                    <p className="text-xs text-gray-400">
-                      {item.codigo && `${item.codigo} — `}
-                      {cant} x {formatPrecio(precioUnit)}
-                    </p>
+                <div key={i} className="py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-800 font-medium truncate">{item.nombre || item.codigo}</p>
+                      <p className="text-xs text-gray-400">
+                        {item.codigo && `${item.codigo} — `}
+                        {cant} x {formatPrecio(precioUnit)}
+                      </p>
+                    </div>
+                    <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                      {formatPrecio(subtotal)}
+                    </span>
                   </div>
-                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    {formatPrecio(subtotal)}
-                  </span>
+                  {item.descripcionProblema && (
+                    <p className="text-xs text-orange-600 mt-1 italic">
+                      {item.descripcionProblema}
+                    </p>
+                  )}
+                  {item.precio_cobrado != null && item.precio_correcto != null && (
+                    <p className="text-xs text-yellow-600 mt-1">
+                      Cobrado: {formatPrecio(item.precio_cobrado)} / Precio correcto: {formatPrecio(item.precio_correcto)}
+                    </p>
+                  )}
                 </div>
               )
             })}

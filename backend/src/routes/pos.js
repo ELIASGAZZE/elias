@@ -580,6 +580,46 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
       data.cajas = caja ? { nombre: caja.nombre } : null
     }
 
+    // Info del incidente: venta origen, NCs hijas, movimiento de saldo, venta nueva (corrección)
+    // 1. Si esta venta tiene venta_origen_id → traer la venta original
+    if (data.venta_origen_id) {
+      const { data: origen } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+        .eq('id', data.venta_origen_id)
+        .single()
+      data.venta_origen = origen || null
+    }
+
+    // 2. Traer NCs y ventas hijas (creadas a partir de esta venta)
+    const { data: hijas } = await supabase
+      .from('ventas_pos')
+      .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+      .eq('venta_origen_id', data.id)
+      .order('created_at', { ascending: true })
+    data.ventas_relacionadas = hijas || []
+
+    // 3. Movimiento de saldo asociado a esta venta (si es NC de devolución o dif. precio)
+    if (data.tipo === 'nota_credito') {
+      const { data: movSaldo } = await supabase
+        .from('movimientos_saldo_pos')
+        .select('id, monto, motivo, nombre_cliente, id_cliente_centum, created_at')
+        .eq('venta_pos_id', data.id)
+        .single()
+      data.movimiento_saldo = movSaldo || null
+
+      // Si es NC de corrección cliente, buscar la venta nueva (hermana con tipo=venta y mismo venta_origen_id)
+      if (data.venta_origen_id && !movSaldo) {
+        const { data: ventaNueva } = await supabase
+          .from('ventas_pos')
+          .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+          .eq('venta_origen_id', data.venta_origen_id)
+          .eq('tipo', 'venta')
+          .single()
+        data.venta_nueva_correccion = ventaNueva || null
+      }
+    }
+
     res.json({ venta: data })
   } catch (err) {
     console.error('[POS] Error al obtener detalle de venta:', err.message)
