@@ -434,7 +434,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   try {
     let query = supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), cajas:caja_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .order('created_at', { ascending: false })
 
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
@@ -491,6 +491,15 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       })
     }
 
+    // Lookup nombres de cajas (no hay FK en Supabase)
+    const cajaIds = [...new Set(ventas.map(v => v.caja_id).filter(Boolean))]
+    let cajasMap = {}
+    if (cajaIds.length > 0) {
+      const { data: cajasData } = await supabase.from('cajas').select('id, nombre').in('id', cajaIds)
+      if (cajasData) cajasData.forEach(c => { cajasMap[c.id] = c.nombre })
+    }
+    ventas = ventas.map(v => ({ ...v, cajas: v.caja_id && cajasMap[v.caja_id] ? { nombre: cajasMap[v.caja_id] } : null }))
+
     // Clasificar ventas: EMPRESA o PRUEBA
     // RI/MT (Factura A) → siempre EMPRESA
     // CF + solo efectivo/saldo/gift_card/cta_cte → PRUEBA
@@ -533,7 +542,7 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), cajas:caja_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .eq('id', req.params.id)
       .single()
 
@@ -556,6 +565,12 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
     const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
     data.clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
+
+    // Lookup caja (no hay FK)
+    if (data.caja_id) {
+      const { data: caja } = await supabase.from('cajas').select('nombre').eq('id', data.caja_id).single()
+      data.cajas = caja ? { nombre: caja.nombre } : null
+    }
 
     res.json({ venta: data })
   } catch (err) {
