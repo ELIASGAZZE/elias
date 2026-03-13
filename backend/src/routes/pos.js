@@ -440,10 +440,11 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
     const numFactura = req.query.numero_factura?.trim()
     if (numFactura) {
-      // numero_venta es integer, centum_comprobante es text
+      // numero_venta es integer, centum_comprobante es texto tipo "B PV2-7740"
       const esNumero = /^\d+$/.test(numFactura)
       if (esNumero) {
-        query = query.or(`numero_venta.eq.${numFactura},centum_comprobante.ilike.%${numFactura}%`)
+        // Buscar nro exacto en POS, o que el comprobante Centum termine con ese número (después del guión)
+        query = query.or(`numero_venta.eq.${numFactura},centum_comprobante.ilike.%-${numFactura}`)
       } else {
         query = query.ilike('centum_comprobante', `%${numFactura}%`)
       }
