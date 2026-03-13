@@ -1799,18 +1799,39 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
       ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (centumOperadorEmpresa || null)
 
-    // crearVentaPOS lanza error si falla (no lo silencia como registrarVentaPOSEnCentum)
-    const resultado = await crearVentaPOS({
-      idCliente: venta.id_cliente_centum || 2,
-      sucursalFisicaId,
-      idDivisionEmpresa,
-      puntoVenta,
-      items,
-      pagos,
-      total: parseFloat(venta.total) || 0,
-      condicionIva,
-      operadorMovilUser,
-    })
+    let resultado
+    if (venta.tipo === 'nota_credito') {
+      // NC: enviar con valores positivos (abs), Centum maneja el signo por tipo comprobante
+      const itemsPositivos = items.map(it => ({
+        ...it,
+        precio_unitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+        precioUnitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+        precio: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+        cantidad: Math.abs(parseFloat(it.cantidad || 1)),
+      }))
+      resultado = await crearNotaCreditoPOS({
+        idCliente: venta.id_cliente_centum || 2,
+        sucursalFisicaId,
+        idDivisionEmpresa,
+        puntoVenta,
+        items: itemsPositivos,
+        total: Math.abs(parseFloat(venta.total) || 0),
+        condicionIva,
+        operadorMovilUser,
+      })
+    } else {
+      resultado = await crearVentaPOS({
+        idCliente: venta.id_cliente_centum || 2,
+        sucursalFisicaId,
+        idDivisionEmpresa,
+        puntoVenta,
+        items,
+        pagos,
+        total: parseFloat(venta.total) || 0,
+        condicionIva,
+        operadorMovilUser,
+      })
+    }
 
     const numDoc = resultado.NumeroDocumento
     const comprobante = numDoc
