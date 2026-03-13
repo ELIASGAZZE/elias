@@ -223,12 +223,20 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       }
     }
 
+    // Determinar sucursal desde la caja (no del perfil del cajero)
+    let sucursalDeCaja = null
+    if (caja_id) {
+      const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalDeCaja = cajaInfo?.sucursal_id || null
+    }
+
     // Si solo hay gift cards (sin artículos), no crear ventas_pos
     let data = null
     if (tieneItems) {
       const insertData = {
         cajero_id: req.perfil.id,
-        sucursal_id: req.perfil.sucursal_id || null,
+        sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
+        caja_id: caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || null,
         subtotal: subtotal || 0,

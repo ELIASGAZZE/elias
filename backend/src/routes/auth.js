@@ -114,10 +114,6 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
   }
 
-  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
-  }
-
   if (password.length < 8) {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
   }
@@ -201,10 +197,6 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
 
   if (!['admin', 'operario', 'gestor'].includes(rol)) {
     return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
-  }
-
-  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
   if (password && password.length < 8) {
