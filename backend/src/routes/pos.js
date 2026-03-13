@@ -1037,7 +1037,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
     for (const dev of items_devueltos) {
       const itemOriginal = itemsVenta[dev.indice]
       if (!itemOriginal) continue
-      const precioUnit = itemOriginal.precioUnitario || itemOriginal.precio || 0
+      const precioUnit = itemOriginal.precio_unitario || itemOriginal.precioUnitario || itemOriginal.precio || 0
       subtotalDevuelto += precioUnit * dev.cantidad
     }
 
@@ -1057,7 +1057,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
     const factorDescuento = subtotalVenta > 0 ? totalVenta / subtotalVenta : 1
     const itemsNC = items_devueltos.map(dev => {
       const itemOriginal = itemsVenta[dev.indice] || {}
-      const precioOriginal = itemOriginal.precioUnitario || itemOriginal.precio || 0
+      const precioOriginal = itemOriginal.precio_unitario || itemOriginal.precioUnitario || itemOriginal.precio || 0
       return {
         ...itemOriginal,
         cantidad: dev.cantidad,

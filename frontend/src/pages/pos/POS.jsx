@@ -12,6 +12,7 @@ import api, { isNetworkError } from '../../services/api'
 import useOnlineStatus from '../../hooks/useOnlineStatus'
 import { guardarArticulos, getArticulos, guardarPromociones, getPromociones, guardarClientes, getClientes } from '../../services/offlineDB'
 import { syncVentasPendientes } from '../../services/offlineSync'
+import { imprimirTicketDevolucion } from '../../utils/imprimirComprobante'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -3660,18 +3661,35 @@ const POS = () => {
                       onClick={async () => {
                         setProblemaConfirmando(true)
                         try {
+                          const tipoProblemaLabel = problemaSeleccionado === 'cantidad_mal' ? 'Cantidad mal facturada' : problemaSeleccionado === 'cambio' ? 'Cambio de producto' : 'Producto en mal estado'
+                          const itemsDevueltos = indices.map(idx => ({
+                            indice: idx,
+                            nombre: items[idx].nombre,
+                            cantidad: problemaItemsSel[idx],
+                            descripcion: problemaDescripciones[idx]?.trim() || undefined,
+                          }))
                           const { data } = await api.post('/api/pos/devolucion', {
                             venta_id: problemaVentaSel.id,
                             id_cliente_centum: problemaCliente.id_centum,
                             nombre_cliente: problemaCliente.razon_social,
-                            tipo_problema: problemaSeleccionado === 'cantidad_mal' ? 'Cantidad mal facturada' : problemaSeleccionado === 'cambio' ? 'Cambio de producto' : 'Producto en mal estado',
+                            tipo_problema: tipoProblemaLabel,
                             observacion: problemaObservacion.trim() || undefined,
-                            items_devueltos: indices.map(idx => ({
-                              indice: idx,
-                              nombre: items[idx].nombre,
-                              cantidad: problemaItemsSel[idx],
-                              descripcion: problemaDescripciones[idx]?.trim() || undefined,
+                            items_devueltos: itemsDevueltos,
+                          })
+                          // Imprimir 2 tickets: cliente + cajero
+                          imprimirTicketDevolucion({
+                            items: itemsDevueltos.map(d => ({
+                              nombre: d.nombre,
+                              cantidad: d.cantidad,
+                              precio: (items[d.indice].precio_unitario || items[d.indice].precioUnitario || items[d.indice].precio || 0),
+                              descripcion: d.descripcion,
                             })),
+                            cliente: problemaCliente.razon_social,
+                            saldoAFavor: data.saldo_generado,
+                            tipoProblema: tipoProblemaLabel,
+                            observacion: problemaObservacion.trim() || undefined,
+                            ventaOriginal: { numero: problemaVentaSel.numero_venta, comprobante: problemaVentaSel.centum_comprobante },
+                            numeroNC: data.nota_credito_id,
                           })
                           alert(`Devolución registrada. Se generó un saldo a favor de ${formatPrecio(data.saldo_generado)} para ${problemaCliente.razon_social}`)
                           cerrarModalProblema()

@@ -299,3 +299,63 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
 
   abrirVentanaImpresion(html)
 }
+
+/**
+ * Imprime 2 tickets de devolución: uno para el cliente (comprobante de saldo) y otro para el cajero (con firma del cliente).
+ */
+export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProblema, observacion, ventaOriginal, numeroNC }) {
+  function buildTicket(copia) {
+    let html = ''
+
+    html += '<div class="center titulo">PADANO SRL</div>'
+    html += `<div class="center bold" style="font-size:20px;margin-bottom:4px">${copia === 'cajero' ? 'DEVOLUCION - COPIA CAJERO' : 'COMPROBANTE DE DEVOLUCION'}</div>`
+    html += '<div class="line-double"></div>'
+
+    const ahora = new Date()
+    html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+
+    if (cliente) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente)}</div>`
+
+    if (ventaOriginal) {
+      html += `<div style="font-size:20px">Venta original: #${escapeHtml(String(ventaOriginal.numero || ''))}${ventaOriginal.comprobante ? ' (' + escapeHtml(ventaOriginal.comprobante) + ')' : ''}</div>`
+    }
+
+    if (numeroNC) html += `<div style="font-size:20px">Nota credito: #${escapeHtml(String(numeroNC))}</div>`
+
+    if (tipoProblema) html += `<div style="font-size:20px">Motivo: ${escapeHtml(tipoProblema)}</div>`
+
+    html += '<div class="line"></div>'
+    html += '<div class="seccion">PRODUCTOS DEVUELTOS</div>'
+    items.forEach(item => {
+      const lineTotal = (item.precio || 0) * (item.cantidad || 1)
+      html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
+      html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio)}</span><span>${formatMonto(lineTotal)}</span></div>`
+      if (item.descripcion) html += `<div style="font-size:18px;padding-left:8px;font-style:italic">"${escapeHtml(item.descripcion)}"</div>`
+    })
+
+    html += '<div class="line-double"></div>'
+    html += `<div class="row total"><span>SALDO A FAVOR</span><span>${formatMonto(saldoAFavor)}</span></div>`
+    html += '<div class="line-double"></div>'
+
+    if (observacion) {
+      html += `<div style="font-size:18px">Obs: ${escapeHtml(observacion)}</div>`
+      html += '<div class="line"></div>'
+    }
+
+    if (copia === 'cajero') {
+      html += '<div class="firma">Firma cliente: _______________</div>'
+      html += '<div style="text-align:center;font-size:18px;margin-top:4px">Aclaracion: _______________</div>'
+      html += '<div style="text-align:center;font-size:18px;margin-top:4px">DNI: _______________</div>'
+    } else {
+      html += '<div class="center" style="font-size:18px;margin-top:8px">Este saldo queda disponible para su proxima compra.</div>'
+      html += '<div class="center" style="font-size:16px;margin-top:4px">Conserve este comprobante.</div>'
+    }
+
+    return html
+  }
+
+  abrirVentanaImpresion(buildTicket('cliente'))
+  setTimeout(() => {
+    abrirVentanaImpresion(buildTicket('cajero'))
+  }, 1500)
+}
