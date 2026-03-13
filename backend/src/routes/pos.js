@@ -564,6 +564,59 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   }
 })
 
+// DELETE /api/pos/ventas/:id — eliminar venta no sincronizada con Centum (solo admin)
+router.delete('/ventas/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { data: venta, error: ventaErr } = await supabase
+      .from('ventas_pos')
+      .select('id, centum_sync, centum_comprobante, tipo, venta_origen_id')
+      .eq('id', req.params.id)
+      .single()
+
+    if (ventaErr || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
+
+    if (venta.centum_sync || venta.centum_comprobante) {
+      return res.status(400).json({ error: 'No se puede eliminar una venta ya sincronizada con Centum' })
+    }
+
+    // Si es una NC, eliminar también el movimiento de saldo asociado
+    if (venta.tipo === 'nota_credito') {
+      await supabase
+        .from('movimientos_saldo_pos')
+        .delete()
+        .eq('venta_pos_id', venta.id)
+    }
+
+    // Eliminar NC hijas que tampoco estén sincronizadas
+    const { data: ncHijas } = await supabase
+      .from('ventas_pos')
+      .select('id, centum_sync, centum_comprobante')
+      .eq('venta_origen_id', venta.id)
+      .eq('tipo', 'nota_credito')
+
+    if (ncHijas) {
+      for (const nc of ncHijas) {
+        if (!nc.centum_sync && !nc.centum_comprobante) {
+          await supabase.from('movimientos_saldo_pos').delete().eq('venta_pos_id', nc.id)
+          await supabase.from('ventas_pos').delete().eq('id', nc.id)
+        }
+      }
+    }
+
+    const { error: delErr } = await supabase
+      .from('ventas_pos')
+      .delete()
+      .eq('id', req.params.id)
+
+    if (delErr) throw delErr
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[POS] Error al eliminar venta:', err.message)
+    res.status(500).json({ error: 'Error al eliminar venta' })
+  }
+})
+
 // GET /api/pos/ventas/:id/devoluciones — cantidades ya devueltas por item
 router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
   try {

@@ -1,6 +1,6 @@
 // Detalle de una venta POS
 import React, { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
@@ -27,12 +27,14 @@ const MEDIOS_LABELS = {
 
 const DetalleVenta = () => {
   const { id } = useParams()
+  const navigate = useNavigate()
   const { esAdmin } = useAuth()
   const [venta, setVenta] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [reenviando, setReenviando] = useState(false)
   const [reenvioMsg, setReenvioMsg] = useState('')
+  const [eliminando, setEliminando] = useState(false)
 
   useEffect(() => {
     const cargar = async () => {
@@ -150,7 +152,7 @@ const DetalleVenta = () => {
 
           {/* Botón reintentar Centum */}
           {!venta.centum_sync && !venta.centum_comprobante && (
-            <div className="mt-3 pt-3 border-t border-gray-100">
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
               <button
                 onClick={reenviarCentum}
                 disabled={reenviando}
@@ -162,6 +164,27 @@ const DetalleVenta = () => {
                 <p className={`text-xs mt-2 ${reenvioMsg.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
                   {reenvioMsg}
                 </p>
+              )}
+              {esAdmin && (
+                <button
+                  onClick={async () => {
+                    if (!confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) return
+                    setEliminando(true)
+                    try {
+                      await api.delete(`/api/pos/ventas/${id}`)
+                      alert('Venta eliminada')
+                      navigate('/ventas')
+                    } catch (err) {
+                      alert('Error: ' + (err.response?.data?.error || err.message))
+                    } finally {
+                      setEliminando(false)
+                    }
+                  }}
+                  disabled={eliminando}
+                  className="w-full text-sm font-medium py-2 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                >
+                  {eliminando ? 'Eliminando...' : 'Eliminar venta'}
+                </button>
               )}
             </div>
           )}
