@@ -440,7 +440,13 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
     const numFactura = req.query.numero_factura?.trim()
     if (numFactura) {
-      query = query.or(`numero_venta.ilike.%${numFactura}%,centum_comprobante.ilike.%${numFactura}%`)
+      // numero_venta es integer, centum_comprobante es text
+      const esNumero = /^\d+$/.test(numFactura)
+      if (esNumero) {
+        query = query.or(`numero_venta.eq.${numFactura},centum_comprobante.ilike.%${numFactura}%`)
+      } else {
+        query = query.ilike('centum_comprobante', `%${numFactura}%`)
+      }
       query = query.limit(50)
     }
     // Filtro por fecha (siempre se aplica salvo que venga buscar por cliente o nro factura)
