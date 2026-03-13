@@ -1297,10 +1297,11 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
           idCliente: venta.id_cliente_centum || 2,
           sucursalFisicaId,
           idDivisionEmpresa,
-          puntoVenta: pvOriginal,
+          puntoVenta: pvOriginal.puntoVenta,
           items: itemsNC,
           total: saldoAFavor,
           condicionIva,
+          comprobanteOriginal: venta.centum_comprobante,
         })
 
         // Guardar info de NC Centum en la nota de crédito local
@@ -1459,10 +1460,11 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             idCliente: venta.id_cliente_centum || 2,
             sucursalFisicaId,
             idDivisionEmpresa: idDivOrig,
-            puntoVenta: pvOriginal,
+            puntoVenta: pvOriginal.puntoVenta,
             items: itemsOriginal,
             total: Math.abs(parseFloat(venta.total) || 0),
             condicionIva: condicionIvaOrig,
+            comprobanteOriginal: venta.centum_comprobante,
           })
 
           const numDocNC = centumNC.NumeroDocumento
@@ -1678,10 +1680,11 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
           idCliente: venta.id_cliente_centum || 2,
           sucursalFisicaId,
           idDivisionEmpresa,
-          puntoVenta: pvOriginal,
+          puntoVenta: pvOriginal.puntoVenta,
           total: saldoAFavor,
           condicionIva,
           descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
+          comprobanteOriginal: venta.centum_comprobante,
         })
 
         const numDoc = centumNC.NumeroDocumento
@@ -1812,6 +1815,18 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
         precio: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
         cantidad: Math.abs(parseFloat(it.cantidad || 1)),
       }))
+
+      // Obtener comprobante original para NumeroReferencia
+      let comprobanteOriginal = null
+      if (venta.venta_origen_id) {
+        const { data: ventaOrigen } = await supabase
+          .from('ventas_pos')
+          .select('centum_comprobante')
+          .eq('id', venta.venta_origen_id)
+          .single()
+        comprobanteOriginal = ventaOrigen?.centum_comprobante || null
+      }
+
       resultado = await crearNotaCreditoPOS({
         idCliente: venta.id_cliente_centum || 2,
         sucursalFisicaId,
@@ -1821,6 +1836,7 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
         total: Math.abs(parseFloat(venta.total) || 0),
         condicionIva,
         operadorMovilUser,
+        comprobanteOriginal,
       })
     } else {
       resultado = await crearVentaPOS({

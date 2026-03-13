@@ -256,7 +256,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
  * @param {string} params.condicionIva - Condición IVA del cliente (CF, RI, MT)
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser }) {
+async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser, comprobanteOriginal }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -328,6 +328,15 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
     }],
   }
 
+  // Agregar referencia al comprobante original (requerido para NC en Centum)
+  if (comprobanteOriginal) {
+    const ref = extraerPuntoVentaDeComprobante(comprobanteOriginal)
+    if (ref) {
+      body.NumeroReferencia = { PuntoVenta: ref.puntoVenta, Numero: ref.numero }
+      console.log(`[Centum POS NC] Referencia: PV=${ref.puntoVenta}, Num=${ref.numero}`)
+    }
+  }
+
   let response
   try {
     response = await fetch(url, {
@@ -388,7 +397,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
  * @param {string} [params.descripcion] - Descripción adicional del concepto
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser }) {
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -413,18 +422,26 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
     Vendedor: { IdVendedor: 2 },
     CondicionVenta: { IdCondicionVenta: 14 },
     Bonificacion: { IdBonificacion: 6235 },
-    VentaConceptos: [{
-      Concepto: { IdConcepto: 23 }, // DIFERENCIA EN PRECIO DE GONDOLA
-      Nombre: descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA',
-      Importe: importeConcepto,
-      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
-    }],
-    VentaValoresEfectivos: [{
-      IdValor: 1,
-      Cotizacion: 1,
-      Importe: importeValor,
-    }],
   }
+
+  if (comprobanteOriginal) {
+    const ref = extraerPuntoVentaDeComprobante(comprobanteOriginal)
+    if (ref) {
+      body.NumeroReferencia = { PuntoVenta: ref.puntoVenta, Numero: ref.numero }
+    }
+  }
+
+  body.VentaConceptos = [{
+    Concepto: { IdConcepto: 23 }, // DIFERENCIA EN PRECIO DE GONDOLA
+    Nombre: descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA',
+    Importe: importeConcepto,
+    CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
+  }]
+  body.VentaValoresEfectivos = [{
+    IdValor: 1,
+    Cotizacion: 1,
+    Importe: importeValor,
+  }]
 
   let response
   try {
@@ -479,8 +496,13 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
  */
 function extraerPuntoVentaDeComprobante(comprobante) {
   if (!comprobante) return null
-  const match = comprobante.match(/PV(\d+)/)
-  return match ? parseInt(match[1]) : null
+  const match = comprobante.match(/PV(\d+)-(\d+)/)
+  if (!match) {
+    // Fallback: solo PV sin número
+    const pvMatch = comprobante.match(/PV(\d+)/)
+    return pvMatch ? { puntoVenta: parseInt(pvMatch[1]), numero: 0 } : null
+  }
+  return { puntoVenta: parseInt(match[1]), numero: parseInt(match[2]) }
 }
 
 module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante }
