@@ -809,6 +809,7 @@ const POS = () => {
   const [problemaSeleccionado, setProblemaSeleccionado] = useState(null)
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
   const [problemaBusqueda, setProblemaBusqueda] = useState('')
+  const [problemaBusFactura, setProblemaBusFactura] = useState('')
   const [problemaFecha, setProblemaFecha] = useState(new Date().toISOString().split('T')[0])
   const [problemaBusArticulo, setProblemaBusArticulo] = useState('')
   const [problemaSucursal, setProblemaSucursal] = useState('')
@@ -840,6 +841,7 @@ const POS = () => {
     setProblemaSeleccionado(null)
     setProblemaPaso(0)
     setProblemaBusqueda('')
+    setProblemaBusFactura('')
     setProblemaBusArticulo('')
     setProblemaSucursal('')
     setProblemaFecha(new Date().toISOString().split('T')[0])
@@ -867,12 +869,18 @@ const POS = () => {
     const fecha = overrides.fecha ?? problemaFecha
     const articulo = overrides.articulo ?? problemaBusArticulo
     const sucId = overrides.sucursal_id ?? problemaSucursal
+    const numFactura = overrides.numero_factura ?? problemaBusFactura
     setProblemaBuscando(true)
     try {
-      const params = { fecha }
-      if (cliente && cliente.trim().length >= 2) params.buscar = cliente.trim()
-      if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
-      if (sucId) params.sucursal_id = sucId
+      const params = {}
+      if (numFactura && numFactura.trim().length >= 1) {
+        params.numero_factura = numFactura.trim()
+      } else {
+        params.fecha = fecha
+        if (cliente && cliente.trim().length >= 2) params.buscar = cliente.trim()
+        if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
+        if (sucId) params.sucursal_id = sucId
+      }
       const { data } = await api.get('/api/pos/ventas', { params })
       setProblemaVentas(data.ventas || [])
     } catch {
@@ -3021,6 +3029,27 @@ const POS = () => {
               <div className="p-5 flex flex-col min-h-0 flex-1">
                 {/* Filtros */}
                 <div className="space-y-2 mb-3 flex-shrink-0">
+                  {/* Fila 0: Buscar por N° Factura */}
+                  <div>
+                    <label className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">N° Factura (POS o Centum)</label>
+                    <input
+                      type="text"
+                      value={problemaBusFactura}
+                      onChange={e => {
+                        setProblemaBusFactura(e.target.value)
+                        if (e.target.value.trim()) {
+                          setProblemaBusqueda('')
+                          setProblemaBusArticulo('')
+                          setProblemaSucursal('')
+                        }
+                        buscarVentasProblemaDebounced({ numero_factura: e.target.value })
+                      }}
+                      placeholder="Ej: 1234 o B PV2-7740"
+                      autoFocus
+                      className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                  </div>
+                  {!problemaBusFactura.trim() && <>
                   {/* Fila 1: Fecha + Cliente */}
                   <div className="flex gap-2">
                     <div className="flex-shrink-0">
@@ -3046,7 +3075,6 @@ const POS = () => {
                           buscarVentasProblemaDebounced({ buscar: e.target.value })
                         }}
                         placeholder="Nombre del cliente..."
-                        autoFocus
                         className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       />
                     </div>
@@ -3083,6 +3111,7 @@ const POS = () => {
                       </select>
                     </div>
                   </div>
+                  </>}
                 </div>
 
                 {/* Contador resultados */}
@@ -3125,6 +3154,7 @@ const POS = () => {
                           <div className="text-xs text-gray-400">
                             {fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })}{' '}
                             {fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                            {v.centum_comprobante && <span className="text-violet-500 font-medium"> · {v.centum_comprobante}</span>}
                             {v.sucursales?.nombre && <span> · {v.sucursales.nombre}</span>}
                             {v.perfiles?.nombre && <span> · {v.perfiles.nombre}</span>}
                           </div>
@@ -3154,7 +3184,7 @@ const POS = () => {
                 {/* Botones */}
                 <div className="flex gap-3 mt-4 flex-shrink-0">
                   <button
-                    onClick={() => { setProblemaPaso(0); setProblemaBusqueda(''); setProblemaBusArticulo(''); setProblemaSucursal(''); setProblemaVentas([]); setProblemaVentaSel(null) }}
+                    onClick={() => { setProblemaPaso(0); setProblemaBusqueda(''); setProblemaBusFactura(''); setProblemaBusArticulo(''); setProblemaSucursal(''); setProblemaVentas([]); setProblemaVentaSel(null) }}
                     className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                   >
                     Volver

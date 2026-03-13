@@ -451,22 +451,30 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
       .order('created_at', { ascending: false })
 
-    // Filtro por fecha (siempre se aplica salvo que venga buscar por cliente)
-    const buscar = req.query.buscar?.trim()
-    if (buscar) {
-      query = query.ilike('nombre_cliente', `%${buscar}%`)
-      // Si además viene fecha, aplicarla también
-      if (req.query.fecha) {
-        const desde = `${req.query.fecha}T00:00:00`
-        const hasta = `${req.query.fecha}T23:59:59`
+    // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
+    const numFactura = req.query.numero_factura?.trim()
+    if (numFactura) {
+      query = query.or(`numero_venta.ilike.%${numFactura}%,centum_comprobante.ilike.%${numFactura}%`)
+      query = query.limit(50)
+    }
+    // Filtro por fecha (siempre se aplica salvo que venga buscar por cliente o nro factura)
+    else {
+      const buscar = req.query.buscar?.trim()
+      if (buscar) {
+        query = query.ilike('nombre_cliente', `%${buscar}%`)
+        // Si además viene fecha, aplicarla también
+        if (req.query.fecha) {
+          const desde = `${req.query.fecha}T00:00:00`
+          const hasta = `${req.query.fecha}T23:59:59`
+          query = query.gte('created_at', desde).lte('created_at', hasta)
+        }
+        query = query.limit(50)
+      } else {
+        const fecha = req.query.fecha || new Date().toISOString().split('T')[0]
+        const desde = `${fecha}T00:00:00`
+        const hasta = `${fecha}T23:59:59`
         query = query.gte('created_at', desde).lte('created_at', hasta)
       }
-      query = query.limit(50)
-    } else {
-      const fecha = req.query.fecha || new Date().toISOString().split('T')[0]
-      const desde = `${fecha}T00:00:00`
-      const hasta = `${fecha}T23:59:59`
-      query = query.gte('created_at', desde).lte('created_at', hasta)
     }
 
     // No-admin solo ve sus ventas
