@@ -273,27 +273,13 @@ router.post('/ventas', verificarAuth, async (req, res) => {
               centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
             }
 
-            // Fallback: si no hay caja_id o la caja no tiene config, buscar primera caja de la sucursal del cajero
             if (!puntoVenta || !sucursalFisicaId) {
-              const sucursalId = req.perfil.sucursal_id
-              if (sucursalId) {
-                const { data: cajaFallback } = await supabase
-                  .from('cajas')
-                  .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-                  .eq('sucursal_id', sucursalId)
-                  .not('punto_venta_centum', 'is', null)
-                  .limit(1)
-                  .single()
-
-                puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
-                sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
-                centumOperadorEmpresa = centumOperadorEmpresa || cajaFallback?.sucursales?.centum_operador_empresa
-                centumOperadorPrueba = centumOperadorPrueba || cajaFallback?.sucursales?.centum_operador_prueba
-              }
-            }
-
-            if (!puntoVenta || !sucursalFisicaId) {
-              const errorMsg = 'Sin config Centum: no se encontró caja/sucursal con punto de venta configurado'
+              const falta = !caja_id
+                ? 'La venta no tiene caja asignada'
+                : !puntoVenta
+                  ? 'La caja no tiene punto de venta Centum configurado'
+                  : 'La sucursal no tiene ID de sucursal física Centum configurado'
+              const errorMsg = `Sin config Centum: ${falta}. Configure el punto de venta en la caja y reenvíe manualmente.`
               console.log(`[Centum POS] ${errorMsg}`)
               await supabase
                 .from('ventas_pos')
@@ -1623,23 +1609,13 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
       centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
     }
 
-    // Fallback: buscar cualquier caja con punto_venta_centum configurado
     if (!puntoVenta || !sucursalFisicaId) {
-      const { data: cajaFallback } = await supabase
-        .from('cajas')
-        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-        .not('punto_venta_centum', 'is', null)
-        .limit(1)
-        .single()
-
-      puntoVenta = puntoVenta || cajaFallback?.punto_venta_centum
-      sucursalFisicaId = sucursalFisicaId || cajaFallback?.sucursales?.centum_sucursal_id
-      centumOperadorEmpresa = centumOperadorEmpresa || cajaFallback?.sucursales?.centum_operador_empresa
-      centumOperadorPrueba = centumOperadorPrueba || cajaFallback?.sucursales?.centum_operador_prueba
-    }
-
-    if (!puntoVenta || !sucursalFisicaId) {
-      return res.status(400).json({ error: 'No se encontró caja/sucursal con punto de venta Centum configurado' })
+      const falta = !venta.caja_id
+        ? 'La venta no tiene caja asignada'
+        : !puntoVenta
+          ? 'La caja no tiene punto de venta Centum configurado'
+          : 'La sucursal no tiene ID de sucursal física Centum configurado'
+      return res.status(400).json({ error: `${falta}. Configure el punto de venta en la caja y reintente.` })
     }
 
     // Preparar datos igual que registrarVentaPOSEnCentum pero sin catch silencioso
