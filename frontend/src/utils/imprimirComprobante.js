@@ -303,7 +303,7 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
 /**
  * Imprime 2 tickets de devolución: uno para el cliente (comprobante de saldo) y otro para el cajero (con firma del cliente).
  */
-export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProblema, observacion, ventaOriginal, numeroNC }) {
+export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProblema, observacion, ventaOriginal, numeroNC, huboDescuento, subtotalDevuelto }) {
   function buildTicket(copia) {
     let html = ''
 
@@ -326,12 +326,24 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
 
     html += '<div class="line"></div>'
     html += '<div class="seccion">PRODUCTOS DEVUELTOS</div>'
+
+    let totalItems = 0
     items.forEach(item => {
-      const lineTotal = (item.precio || 0) * (item.cantidad || 1)
+      const precioPagado = item.precioPagado || item.precio || 0
+      const lineTotal = precioPagado * (item.cantidad || 1)
+      totalItems += lineTotal
       html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
-      html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio)}</span><span>${formatMonto(lineTotal)}</span></div>`
+      html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(precioPagado)}</span><span>${formatMonto(lineTotal)}</span></div>`
       if (item.descripcion) html += `<div style="font-size:18px;padding-left:8px;font-style:italic">"${escapeHtml(item.descripcion)}"</div>`
     })
+
+    html += '<div class="line"></div>'
+
+    if (huboDescuento && subtotalDevuelto) {
+      html += `<div class="row" style="font-size:20px"><span>Precio de lista</span><span>${formatMonto(subtotalDevuelto)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>Importe abonado (c/desc.)</span><span>${formatMonto(saldoAFavor)}</span></div>`
+      html += '<div class="line"></div>'
+    }
 
     html += '<div class="line-double"></div>'
     html += `<div class="row total"><span>SALDO A FAVOR</span><span>${formatMonto(saldoAFavor)}</span></div>`

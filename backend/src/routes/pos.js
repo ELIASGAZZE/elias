@@ -1329,7 +1329,10 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       subtotal_devuelto: subtotalDevuelto,
       proporcion: Math.round(proporcion * 10000) / 100,
       nota_credito_id: notaCredito.id,
+      numero_nc: notaCredito.numero_venta,
       centum_nc: centumNC ? true : false,
+      items_nc: itemsNC,
+      factor_descuento: Math.round(factorDescuento * 10000) / 10000,
     })
   } catch (err) {
     console.error('[POS] Error al procesar devolución:', err.message)

@@ -3697,19 +3697,24 @@ const POS = () => {
                             caja_id: terminalConfig?.caja_id || null,
                           })
                           // Imprimir 2 tickets: cliente + cajero
+                          // Usar items_nc del backend (tienen precio con descuento aplicado)
+                          const itemsTicket = (data.items_nc || []).map(it => ({
+                            nombre: it.nombre,
+                            cantidad: it.cantidad,
+                            precioOriginal: it.precio_unitario || it.precioUnitario || it.precio || 0,
+                            precioPagado: it.precioUnitario || it.precio || 0,
+                            descripcion: it.descripcionProblema,
+                          }))
                           imprimirTicketDevolucion({
-                            items: itemsDevueltos.map(d => ({
-                              nombre: d.nombre,
-                              cantidad: d.cantidad,
-                              precio: (items[d.indice].precio_unitario || items[d.indice].precioUnitario || items[d.indice].precio || 0),
-                              descripcion: d.descripcion,
-                            })),
+                            items: itemsTicket,
                             cliente: problemaCliente.razon_social,
                             saldoAFavor: data.saldo_generado,
                             tipoProblema: tipoProblemaLabel,
                             observacion: problemaObservacion.trim() || undefined,
                             ventaOriginal: { numero: problemaVentaSel.numero_venta, comprobante: problemaVentaSel.centum_comprobante },
-                            numeroNC: data.nota_credito_id,
+                            numeroNC: data.numero_nc,
+                            huboDescuento: data.factor_descuento < 0.999,
+                            subtotalDevuelto: data.subtotal_devuelto,
                           })
                           alert(`Devolución registrada. Se generó un saldo a favor de ${formatPrecio(data.saldo_generado)} para ${problemaCliente.razon_social}`)
                           cerrarModalProblema()
