@@ -368,11 +368,6 @@ const AdminConfiguracion = () => {
       return
     }
 
-    if ((nuevoUsuario.rol === 'operario' || nuevoUsuario.rol === 'gestor') && !nuevoUsuario.sucursal_id) {
-      setMensajeUsuario('Seleccioná una sucursal')
-      return
-    }
-
     setCreandoUsuario(true)
     setMensajeUsuario('')
 
@@ -427,10 +422,6 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('El usuario es requerido')
       return
     }
-    if ((editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && !editUsuarioData.sucursal_id) {
-      setMensajeEditUsuario('Seleccioná una sucursal')
-      return
-    }
     if (editUsuarioData.password && editUsuarioData.password.length < 6) {
       setMensajeEditUsuario('La contraseña debe tener al menos 6 caracteres')
       return
@@ -464,16 +455,11 @@ const AdminConfiguracion = () => {
       setMensajeEmpleado('Ingresá el código del empleado')
       return
     }
-    if (!nuevoEmpleado.sucursal_id) {
-      setMensajeEmpleado('Seleccioná una sucursal')
-      return
-    }
-
     setCreandoEmpleado(true)
     setMensajeEmpleado('')
 
     try {
-      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), sucursal_id: nuevoEmpleado.sucursal_id, codigo: nuevoEmpleado.codigo.trim() })
+      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim() })
       setMensajeEmpleado('ok:Empleado creado correctamente')
       setNuevoEmpleado({ nombre: '', sucursal_id: '', codigo: '' })
       await cargarEmpleados()
@@ -500,7 +486,6 @@ const AdminConfiguracion = () => {
     try {
       await api.put(`/api/empleados/${id}`, {
         nombre: editandoEmpleadoData.nombre.trim(),
-        sucursal_id: editandoEmpleadoData.sucursal_id,
         codigo: editandoEmpleadoData.codigo.trim(),
       })
       setEditandoEmpleadoId(null)
@@ -871,16 +856,6 @@ const AdminConfiguracion = () => {
               placeholder="Código único del empleado"
               className="campo-form text-sm"
             />
-            <select
-              value={nuevoEmpleado.sucursal_id}
-              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, sucursal_id: e.target.value }))}
-              className="campo-form text-sm"
-            >
-              <option value="">Seleccioná una sucursal</option>
-              {sucursales.map(s => (
-                <option key={s.id} value={s.id}>{s.nombre}</option>
-              ))}
-            </select>
             <button type="submit" disabled={creandoEmpleado} className="btn-primario">
               {creandoEmpleado ? 'Creando...' : 'Crear empleado'}
             </button>
@@ -924,15 +899,6 @@ const AdminConfiguracion = () => {
                             placeholder="Código"
                             className="campo-form text-sm w-28"
                           />
-                          <select
-                            value={editandoEmpleadoData.sucursal_id}
-                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, sucursal_id: e.target.value }))}
-                            className="campo-form text-sm"
-                          >
-                            {sucursales.map(s => (
-                              <option key={s.id} value={s.id}>{s.nombre}</option>
-                            ))}
-                          </select>
                           <button
                             onClick={() => guardarEdicionEmpleado(empleado.id)}
                             className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
@@ -956,7 +922,6 @@ const AdminConfiguracion = () => {
                               {empleado.nombre}
                               {empleado.codigo && <span className="text-xs text-gray-400 ml-2">[{empleado.codigo}]</span>}
                             </p>
-                            <p className="text-xs text-gray-400 truncate">{empleado.sucursales?.nombre || 'Sin sucursal'}</p>
                           </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             <BotonActivo activo={empleado.activo} onClick={() => toggleActivoEmpleado(empleado)} />
