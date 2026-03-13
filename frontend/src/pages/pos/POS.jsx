@@ -820,6 +820,7 @@ const POS = () => {
   const [problemaVentaSel, setProblemaVentaSel] = useState(null)
   const [problemaItemsSel, setProblemaItemsSel] = useState({}) // { idx: cantDevolver }
   const [problemaDescripciones, setProblemaDescripciones] = useState({}) // { idx: 'texto' }
+  const [problemaYaDevuelto, setProblemaYaDevuelto] = useState({}) // { idx: cantDevueltaPrevia }
   const [problemaCliente, setProblemaCliente] = useState(null) // cliente identificado
   const [problemaBusCliente, setProblemaBusCliente] = useState('')
   const [problemaClientesRes, setProblemaClientesRes] = useState([])
@@ -856,6 +857,7 @@ const POS = () => {
     setProblemaCrearCliente(false)
     setProblemaObservacion('')
     setProblemaPreciosCorregidos({})
+    setProblemaYaDevuelto({})
   }
 
   function buscarVentasProblemaDebounced(overrides = {}) {
@@ -3140,7 +3142,13 @@ const POS = () => {
                       return (
                         <button
                           key={v.id}
-                          onClick={() => setProblemaVentaSel(v)}
+                          onClick={() => {
+                            setProblemaVentaSel(v)
+                            // Consultar items ya devueltos de esta venta
+                            api.get(`/api/pos/ventas/${v.id}/devoluciones`).then(r => {
+                              setProblemaYaDevuelto(r.data?.ya_devuelto || {})
+                            }).catch(() => setProblemaYaDevuelto({}))
+                          }
                           className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${
                             sel ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'
                           }`}
@@ -3241,17 +3249,22 @@ const POS = () => {
                     {items.map((item, idx) => {
                       const cantSel = problemaItemsSel[idx] || 0
                       const selected = cantSel > 0
-                      const cantMax = item.cantidad || 1
+                      const cantYaDevuelta = problemaYaDevuelto[idx] || 0
+                      const cantDisponible = (item.cantidad || 1) - cantYaDevuelta
+                      const cantMax = cantDisponible
+                      const totalmenteDevuelto = cantDisponible <= 0
                       return (
                         <div
                           key={idx}
                           className={`px-4 py-3 rounded-xl border-2 transition-all ${
-                            selected ? 'border-red-500 bg-red-50' : 'border-gray-200'
+                            totalmenteDevuelto ? 'border-gray-200 bg-gray-100 opacity-50' : selected ? 'border-red-500 bg-red-50' : 'border-gray-200'
                           }`}
                         >
                           <div className="flex items-center gap-3">
                             <button
+                              disabled={totalmenteDevuelto}
                               onClick={() => {
+                                if (totalmenteDevuelto) return
                                 setProblemaItemsSel(prev => {
                                   const copy = { ...prev }
                                   if (selected) { delete copy[idx] } else { copy[idx] = 1 }
@@ -3259,20 +3272,26 @@ const POS = () => {
                                 })
                               }}
                               className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                                selected ? 'bg-red-500 border-red-500' : 'border-gray-300'
+                                totalmenteDevuelto ? 'border-gray-300 bg-gray-200' : selected ? 'bg-red-500 border-red-500' : 'border-gray-300'
                               }`}
                             >
-                              {selected && (
+                              {selected && !totalmenteDevuelto && (
                                 <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
                               )}
                             </button>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-gray-800 truncate">{item.nombre}</div>
+                              <div className={`text-sm font-medium truncate ${totalmenteDevuelto ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{item.nombre}</div>
                               <div className="text-xs text-gray-400">
                                 {item.cantidad}x {formatPrecio(item.precio_unitario || item.precioUnitario || item.precio)} = {formatPrecio((item.precio_unitario || item.precioUnitario || item.precio) * item.cantidad)}
                               </div>
+                              {totalmenteDevuelto && (
+                                <div className="text-xs text-red-500 font-medium mt-0.5">Ya devuelto</div>
+                              )}
+                              {cantYaDevuelta > 0 && !totalmenteDevuelto && (
+                                <div className="text-xs text-amber-600 font-medium mt-0.5">Ya devuelto: {cantYaDevuelta} — disponible: {cantDisponible}</div>
+                              )}
                             </div>
                           </div>
                           {selected && cantMax > 1 && (

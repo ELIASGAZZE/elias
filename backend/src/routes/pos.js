@@ -564,6 +564,34 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/pos/ventas/:id/devoluciones — cantidades ya devueltas por item
+router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
+  try {
+    const { data: ncPrevias } = await supabase
+      .from('ventas_pos')
+      .select('items')
+      .eq('venta_origen_id', req.params.id)
+      .eq('tipo', 'nota_credito')
+
+    const yaDevuelto = {} // { indice: cantidadDevuelta }
+    if (ncPrevias) {
+      for (const nc of ncPrevias) {
+        const ncItems = typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || [])
+        for (const ncItem of ncItems) {
+          if (ncItem.indice_original != null) {
+            yaDevuelto[ncItem.indice_original] = (yaDevuelto[ncItem.indice_original] || 0) + (ncItem.cantidad || 0)
+          }
+        }
+      }
+    }
+
+    res.json({ ya_devuelto: yaDevuelto })
+  } catch (err) {
+    console.error('[POS] Error al obtener devoluciones:', err.message)
+    res.status(500).json({ error: 'Error al obtener devoluciones' })
+  }
+})
+
 // ============ PEDIDOS POS ============
 
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
@@ -1031,12 +1059,41 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Venta no encontrada' })
     }
 
-    // Calcular subtotal de items devueltos (valor a precio de la venta, sin descuentos)
+    // Verificar items ya devueltos en NC previas de esta venta
+    const { data: ncPrevias } = await supabase
+      .from('ventas_pos')
+      .select('items')
+      .eq('venta_origen_id', venta_id)
+      .eq('tipo', 'nota_credito')
+
+    // Acumular cantidades ya devueltas por índice
+    const yaDevuelto = {} // { indice: cantidadDevuelta }
+    if (ncPrevias) {
+      for (const nc of ncPrevias) {
+        const ncItems = typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || [])
+        for (const ncItem of ncItems) {
+          if (ncItem.indice_original != null) {
+            yaDevuelto[ncItem.indice_original] = (yaDevuelto[ncItem.indice_original] || 0) + (ncItem.cantidad || 0)
+          }
+        }
+      }
+    }
+
+    // Calcular subtotal de items devueltos, validando que no se excedan cantidades
     const itemsVenta = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
     let subtotalDevuelto = 0
     for (const dev of items_devueltos) {
       const itemOriginal = itemsVenta[dev.indice]
       if (!itemOriginal) continue
+      const cantOriginal = itemOriginal.cantidad || 1
+      const cantYaDevuelta = yaDevuelto[dev.indice] || 0
+      const cantDisponible = cantOriginal - cantYaDevuelta
+      if (cantDisponible <= 0) {
+        return res.status(400).json({ error: `"${itemOriginal.nombre}" ya fue devuelto en su totalidad` })
+      }
+      if (dev.cantidad > cantDisponible) {
+        return res.status(400).json({ error: `"${itemOriginal.nombre}": solo quedan ${cantDisponible} unidad(es) por devolver (ya se devolvieron ${cantYaDevuelta})` })
+      }
       const precioUnit = itemOriginal.precio_unitario || itemOriginal.precioUnitario || itemOriginal.precio || 0
       subtotalDevuelto += precioUnit * dev.cantidad
     }
@@ -1060,6 +1117,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       const precioOriginal = itemOriginal.precio_unitario || itemOriginal.precioUnitario || itemOriginal.precio || 0
       return {
         ...itemOriginal,
+        indice_original: dev.indice,
         cantidad: dev.cantidad,
         precioUnitario: Math.round(precioOriginal * factorDescuento * 100) / 100,
         precio: Math.round(precioOriginal * factorDescuento * 100) / 100,
