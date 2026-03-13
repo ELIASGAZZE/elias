@@ -628,6 +628,7 @@ const POS = () => {
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
+  const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF' }
 
@@ -1032,51 +1033,45 @@ const POS = () => {
   }, [cliente.id_centum])
 
   async function seleccionarCliente(cli) {
-    // Verificar en Centum que el cliente esté activo
+    if (seleccionandoCliente) return // evitar doble click
+    setSeleccionandoCliente(true)
+    // Cerrar lista y limpiar búsqueda inmediatamente para dar feedback visual
+    setClientesCentum([])
+    setBusquedaCliente('')
+    // Setear cliente con datos locales al instante (se actualiza luego con refresh)
+    const clienteLocal = {
+      id_centum: cli.id_centum || 0,
+      codigo: cli.codigo || '',
+      razon_social: cli.razon_social || 'Consumidor Final',
+      lista_precio_id: cli.lista_precio_id || 1,
+      email: cli.email || '',
+      celular: cli.celular || '',
+      condicion_iva: cli.condicion_iva || 'CF',
+    }
+    setCliente(clienteLocal)
+
+    // Verificar en Centum que el cliente esté activo (en background)
     if (cli.id_centum) {
       try {
         const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`)
-        // Usar datos actualizados de Centum
-        setCliente({
-          id_centum: cli.id_centum,
-          codigo: data.codigo || cli.codigo || '',
-          razon_social: data.razon_social || cli.razon_social,
-          lista_precio_id: cli.lista_precio_id || 1,
-          email: data.email || cli.email || '',
-          celular: data.celular || cli.celular || '',
-          condicion_iva: data.condicion_iva || cli.condicion_iva || 'CF',
-        })
+        // Actualizar con datos frescos de Centum
+        setCliente(prev => ({
+          ...prev,
+          codigo: data.codigo || prev.codigo,
+          razon_social: data.razon_social || prev.razon_social,
+          email: data.email || prev.email,
+          celular: data.celular || prev.celular,
+          condicion_iva: data.condicion_iva || prev.condicion_iva,
+        }))
       } catch (err) {
         if (err.response?.status === 410) {
           alert('Este cliente está desactivado en Centum y no se puede usar.')
-          setClientesCentum(prev => prev.filter(c => c.id_centum !== cli.id_centum))
-          setBusquedaCliente('')
-          return
+          setCliente({ ...CLIENTE_DEFAULT })
         }
-        // Si falla la verificación (sin conexión a BI), usar datos locales
-        setCliente({
-          id_centum: cli.id_centum,
-          codigo: cli.codigo || '',
-          razon_social: cli.razon_social,
-          lista_precio_id: cli.lista_precio_id || 1,
-          email: cli.email || '',
-          celular: cli.celular || '',
-          condicion_iva: cli.condicion_iva || 'CF',
-        })
+        // Si falla la verificación, ya tiene los datos locales cargados
       }
-    } else {
-      setCliente({
-        id_centum: 0,
-        codigo: '',
-        razon_social: cli.razon_social || 'Consumidor Final',
-        lista_precio_id: 1,
-        email: '',
-        celular: '',
-        condicion_iva: 'CF',
-      })
     }
-    setBusquedaCliente('')
-    setClientesCentum([])
+    setSeleccionandoCliente(false)
   }
 
   async function guardarContactoCliente() {
@@ -2371,6 +2366,12 @@ const POS = () => {
                   />
                   {buscandoClientes && (
                     <div className="absolute right-2 top-1 text-gray-500 text-[10px]">Buscando...</div>
+                  )}
+                  {seleccionandoCliente && (
+                    <div className="absolute right-2 top-1 text-violet-600 text-[10px] flex items-center gap-1">
+                      <div className="animate-spin h-3 w-3 border-2 border-violet-400 border-t-transparent rounded-full" />
+                      Verificando...
+                    </div>
                   )}
                   {clientesCentum.length > 0 && (
                     <div className="absolute z-20 w-full bg-white border rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
