@@ -1816,26 +1816,55 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
         cantidad: Math.abs(parseFloat(it.cantidad || 1)),
       }))
 
-      // Obtener comprobante original para NumeroReferencia
+      // NC en Centum debe ser espejo de la factura original: mismo cliente y misma división
       let comprobanteOriginal = null
+      let idClienteNC = venta.id_cliente_centum || 2
+      let condicionIvaNC = condicionIva
+      let idDivisionNC = idDivisionEmpresa
+      let operadorNC = operadorMovilUser
+
       if (venta.venta_origen_id) {
         const { data: ventaOrigen } = await supabase
           .from('ventas_pos')
-          .select('centum_comprobante')
+          .select('centum_comprobante, id_cliente_centum, pagos')
           .eq('id', venta.venta_origen_id)
           .single()
         comprobanteOriginal = ventaOrigen?.centum_comprobante || null
+
+        if (ventaOrigen) {
+          // Usar cliente de la venta original
+          idClienteNC = ventaOrigen.id_cliente_centum || 2
+
+          // Obtener condición IVA del cliente original
+          let condIvaOrig = 'CF'
+          if (ventaOrigen.id_cliente_centum) {
+            const { data: cliOrig } = await supabase
+              .from('clientes').select('condicion_iva')
+              .eq('id_centum', ventaOrigen.id_cliente_centum).single()
+            condIvaOrig = cliOrig?.condicion_iva || 'CF'
+          }
+          condicionIvaNC = condIvaOrig
+
+          // Recalcular división según venta original
+          const esFacturaAOrig = condIvaOrig === 'RI' || condIvaOrig === 'MT'
+          const pagosOrig = Array.isArray(ventaOrigen.pagos) ? ventaOrigen.pagos : []
+          const soloEfectivoOrig = pagosOrig.length === 0 || pagosOrig.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+          idDivisionNC = esFacturaAOrig ? 3 : (soloEfectivoOrig ? 2 : 3)
+          operadorNC = idDivisionNC === 2
+            ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+            : (centumOperadorEmpresa || null)
+        }
       }
 
       resultado = await crearNotaCreditoPOS({
-        idCliente: venta.id_cliente_centum || 2,
+        idCliente: idClienteNC,
         sucursalFisicaId,
-        idDivisionEmpresa,
+        idDivisionEmpresa: idDivisionNC,
         puntoVenta,
         items: itemsPositivos,
         total: Math.abs(parseFloat(venta.total) || 0),
-        condicionIva,
-        operadorMovilUser,
+        condicionIva: condicionIvaNC,
+        operadorMovilUser: operadorNC,
         comprobanteOriginal,
       })
     } else {
