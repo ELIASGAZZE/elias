@@ -1258,27 +1258,33 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
         const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
         if (!pvOriginal) throw new Error('No se pudo extraer PuntoVenta del comprobante original')
 
-        // Buscar sucursal física
+        // Buscar sucursal física y operadores
         let sucursalFisicaId = null
+        let centumOperadorEmpresa = null
+        let centumOperadorPrueba = null
         if (venta.caja_id) {
           const { data: cajaData } = await supabase
             .from('cajas')
-            .select('sucursales(centum_sucursal_id)')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
             .eq('id', venta.caja_id)
             .single()
           sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+          centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+          centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
         }
         if (!sucursalFisicaId) {
           const { data: cajaFallback } = await supabase
             .from('cajas')
-            .select('sucursales(centum_sucursal_id)')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
             .not('punto_venta_centum', 'is', null)
             .limit(1)
             .single()
           sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+          if (!centumOperadorEmpresa) centumOperadorEmpresa = cajaFallback?.sucursales?.centum_operador_empresa
+          if (!centumOperadorPrueba) centumOperadorPrueba = cajaFallback?.sucursales?.centum_operador_prueba
         }
 
-        // Obtener condición IVA
+        // Obtener condición IVA del cliente de la venta original
         let condicionIva = 'CF'
         if (venta.id_cliente_centum) {
           const { data: cli } = await supabase
@@ -1293,6 +1299,10 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
         const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
         const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
 
+        const operadorMovilUser = idDivisionEmpresa === 2
+          ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+          : (centumOperadorEmpresa || null)
+
         centumNC = await crearNotaCreditoPOS({
           idCliente: venta.id_cliente_centum || 2,
           sucursalFisicaId,
@@ -1301,6 +1311,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
           items: itemsNC,
           total: saldoAFavor,
           condicionIva,
+          operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
         })
 
@@ -1420,24 +1431,30 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
     if (venta.centum_sync && venta.centum_comprobante) {
       const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
 
-      // Buscar sucursal física
+      // Buscar sucursal física y operadores
       let sucursalFisicaId = null
+      let centumOperadorEmpresa = null
+      let centumOperadorPrueba = null
       if (venta.caja_id) {
         const { data: cajaData } = await supabase
           .from('cajas')
-          .select('sucursales(centum_sucursal_id)')
+          .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
           .eq('id', venta.caja_id)
           .single()
         sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+        centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+        centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
       }
       if (!sucursalFisicaId) {
         const { data: cajaFallback } = await supabase
           .from('cajas')
-          .select('sucursales(centum_sucursal_id)')
+          .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
           .not('punto_venta_centum', 'is', null)
           .limit(1)
           .single()
         sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+        if (!centumOperadorEmpresa) centumOperadorEmpresa = cajaFallback?.sucursales?.centum_operador_empresa
+        if (!centumOperadorPrueba) centumOperadorPrueba = cajaFallback?.sucursales?.centum_operador_prueba
       }
 
       if (pvOriginal && sucursalFisicaId) {
@@ -1456,6 +1473,10 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
           const soloEfectivoOrig = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
           const idDivOrig = esFacturaAOrig ? 3 : (soloEfectivoOrig ? 2 : 3)
 
+          const operadorMovilUser = idDivOrig === 2
+            ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+            : (centumOperadorEmpresa || null)
+
           const centumNC = await crearNotaCreditoPOS({
             idCliente: venta.id_cliente_centum || 2,
             sucursalFisicaId,
@@ -1464,6 +1485,7 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             items: itemsOriginal,
             total: Math.abs(parseFloat(venta.total) || 0),
             condicionIva: condicionIvaOrig,
+            operadorMovilUser,
             comprobanteOriginal: venta.centum_comprobante,
           })
 
@@ -1499,15 +1521,20 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
           const soloEfectivoNuevo = pagosOriginal.length === 0 || pagosOriginal.every(p => tiposEfectivo2.includes((p.tipo || '').toLowerCase()))
           const idDivNuevo = esFacturaANuevo ? 3 : (soloEfectivoNuevo ? 2 : 3)
 
+          const operadorMovilUserNuevo = idDivNuevo === 2
+            ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+            : (centumOperadorEmpresa || null)
+
           const centumFCV = await crearVentaPOS({
             idCliente: id_cliente_centum || 2,
             sucursalFisicaId,
             idDivisionEmpresa: idDivNuevo,
-            puntoVenta: pvOriginal,
+            puntoVenta: pvOriginal.puntoVenta,
             items: itemsOriginal,
             pagos: pagosOriginal,
             total: parseFloat(venta.total) || 0,
             condicionIva: condicionIvaNuevo,
+            operadorMovilUser: operadorMovilUserNuevo,
           })
 
           const numDocFCV = centumFCV.NumeroDocumento
@@ -1640,22 +1667,28 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
         if (!pvOriginal) throw new Error('No se pudo extraer PuntoVenta del comprobante original')
 
         let sucursalFisicaId = null
+        let centumOperadorEmpresa = null
+        let centumOperadorPrueba = null
         if (venta.caja_id) {
           const { data: cajaData } = await supabase
             .from('cajas')
-            .select('sucursales(centum_sucursal_id)')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
             .eq('id', venta.caja_id)
             .single()
           sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+          centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+          centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
         }
         if (!sucursalFisicaId) {
           const { data: cajaFallback } = await supabase
             .from('cajas')
-            .select('sucursales(centum_sucursal_id)')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
             .not('punto_venta_centum', 'is', null)
             .limit(1)
             .single()
           sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+          if (!centumOperadorEmpresa) centumOperadorEmpresa = cajaFallback?.sucursales?.centum_operador_empresa
+          if (!centumOperadorPrueba) centumOperadorPrueba = cajaFallback?.sucursales?.centum_operador_prueba
         }
 
         let condicionIva = 'CF'
@@ -1672,6 +1705,10 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
         const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
         const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
 
+        const operadorMovilUser = idDivisionEmpresa === 2
+          ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+          : (centumOperadorEmpresa || null)
+
         const descripcionItems = items_corregidos.map(ic =>
           `${ic.cantidad}x ${ic.nombre}: $${ic.precio_cobrado} → $${ic.precio_correcto}`
         ).join(', ')
@@ -1684,6 +1721,7 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
           total: saldoAFavor,
           condicionIva,
           descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
+          operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
         })
 
