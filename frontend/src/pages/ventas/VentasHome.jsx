@@ -29,6 +29,9 @@ const VentasHome = () => {
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
   const [busqueda, setBusqueda] = useState('')
   const [filtroClasificacion, setFiltroClasificacion] = useState('') // '', 'EMPRESA', 'PRUEBA'
+  const [filtroTipo, setFiltroTipo] = useState('') // '', 'venta', 'nota_credito'
+  const [filtroSucursal, setFiltroSucursal] = useState('')
+  const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(true)
   const [reenviando, setReenviando] = useState(null) // id de venta en proceso
   const [reenvioMasivo, setReenvioMasivo] = useState(false)
@@ -36,6 +39,10 @@ const VentasHome = () => {
   useEffect(() => {
     cargarVentas()
   }, [fecha])
+
+  useEffect(() => {
+    api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
+  }, [])
 
   const cargarVentas = async () => {
     setCargando(true)
@@ -49,18 +56,25 @@ const VentasHome = () => {
     }
   }
 
-  // Filtrar por búsqueda de cliente y clasificación
+  // Filtrar por búsqueda de cliente, clasificación, tipo y sucursal
   const ventasFiltradas = ventas.filter(v => {
     if (busqueda) {
       const term = busqueda.toLowerCase()
       if (!(v.nombre_cliente || '').toLowerCase().includes(term)) return false
     }
     if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
+    if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
+    if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
+    if (filtroSucursal && v.sucursal_id !== filtroSucursal) return false
     return true
   })
 
   // Resumen del día
-  const totalDia = ventasFiltradas.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
+  const soloVentas = ventasFiltradas.filter(v => v.tipo !== 'nota_credito')
+  const soloNC = ventasFiltradas.filter(v => v.tipo === 'nota_credito')
+  const totalVentas = soloVentas.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
+  const totalNC = soloNC.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
+  const totalDia = totalVentas + totalNC
   const totalEmpresa = ventasFiltradas.filter(v => v.clasificacion === 'EMPRESA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
   const totalPrueba = ventasFiltradas.filter(v => v.clasificacion === 'PRUEBA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
   const desgloseMedios = {}
@@ -128,11 +142,29 @@ const VentasHome = () => {
           />
         </div>
 
-        {/* Filtro por clasificación */}
-        <div className="flex gap-2">
+        {/* Filtros */}
+        <div className="flex flex-wrap gap-2">
+          {/* Tipo: Venta / NC */}
+          {['', 'venta', 'nota_credito'].map(tipo => (
+            <button
+              key={`tipo-${tipo}`}
+              onClick={() => setFiltroTipo(tipo)}
+              className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                filtroTipo === tipo
+                  ? tipo === 'nota_credito' ? 'bg-red-600 text-white'
+                    : tipo === 'venta' ? 'bg-emerald-600 text-white'
+                    : 'bg-gray-800 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {tipo === 'nota_credito' ? 'Notas de crédito' : tipo === 'venta' ? 'Ventas' : 'Todas'}
+            </button>
+          ))}
+          <div className="w-px bg-gray-300 mx-1" />
+          {/* Clasificación: Empresa / Prueba */}
           {['', 'EMPRESA', 'PRUEBA'].map(tipo => (
             <button
-              key={tipo}
+              key={`clas-${tipo}`}
               onClick={() => setFiltroClasificacion(tipo)}
               className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
                 filtroClasificacion === tipo
@@ -145,16 +177,36 @@ const VentasHome = () => {
               {tipo || 'Todas'}
             </button>
           ))}
+          <div className="w-px bg-gray-300 mx-1" />
+          {/* Sucursal */}
+          <select
+            value={filtroSucursal}
+            onChange={e => setFiltroSucursal(e.target.value)}
+            className="text-xs px-3 py-1.5 rounded-full font-medium bg-gray-100 text-gray-600 border-none focus:ring-2 focus:ring-rose-500"
+          >
+            <option value="">Todas las sucursales</option>
+            {sucursales.map(s => (
+              <option key={s.id} value={s.id}>{s.nombre}</option>
+            ))}
+          </select>
         </div>
 
         {/* Resumen del día */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-500 uppercase">Resumen del día</h2>
-            <span className="text-xs text-gray-400">{ventasFiltradas.length} venta{ventasFiltradas.length !== 1 ? 's' : ''}</span>
+            <span className="text-xs text-gray-400">{soloVentas.length} venta{soloVentas.length !== 1 ? 's' : ''}{soloNC.length > 0 ? ` · ${soloNC.length} NC` : ''}</span>
           </div>
           <p className="text-2xl font-bold text-gray-800 mb-2">{formatPrecio(totalDia)}</p>
-          <div className="flex gap-3 mb-3">
+          <div className="flex flex-wrap gap-2 mb-3">
+            <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
+              Ventas: {formatPrecio(totalVentas)}
+            </span>
+            {soloNC.length > 0 && (
+              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
+                NC: {formatPrecio(totalNC)}
+              </span>
+            )}
             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
               Empresa: {formatPrecio(totalEmpresa)}
             </span>
@@ -208,9 +260,14 @@ const VentasHome = () => {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        {v.tipo === 'nota_credito' ? (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-red-100 text-red-700">NC</span>
+                        ) : (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-emerald-100 text-emerald-700">Venta</span>
+                        )}
                         {v.numero_venta && (
-                          <span className="text-sm font-bold text-blue-600">
+                          <span className={`text-sm font-bold ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-blue-600'}`}>
                             #{v.numero_venta}
                           </span>
                         )}
@@ -224,6 +281,11 @@ const VentasHome = () => {
                         }`}>
                           {v.clasificacion}
                         </span>
+                        {v.sucursales?.nombre && (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
+                            {v.sucursales.nombre}
+                          </span>
+                        )}
                         {esAdmin && v.perfiles?.nombre && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
                             {v.perfiles.nombre}
@@ -264,7 +326,7 @@ const VentasHome = () => {
                       )}
                     </div>
                     <div className="text-right ml-3">
-                      <span className="text-base font-semibold text-gray-800">{formatPrecio(v.total)}</span>
+                      <span className={`text-base font-semibold ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>{formatPrecio(v.total)}</span>
                     </div>
                   </div>
                 </Link>
