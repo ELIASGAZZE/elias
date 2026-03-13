@@ -104,7 +104,7 @@ router.post('/promociones', verificarAuth, soloAdmin, async (req, res) => {
     if (!nombre || !tipo || !reglas) {
       return res.status(400).json({ error: 'nombre, tipo y reglas son requeridos' })
     }
-    if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago'].includes(tipo)) {
+    if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago', 'condicional'].includes(tipo)) {
       return res.status(400).json({ error: 'tipo inválido' })
     }
 
@@ -138,7 +138,7 @@ router.put('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     if (nombre !== undefined) updates.nombre = nombre
     if (tipo !== undefined) {
-      if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago'].includes(tipo)) {
+      if (!['porcentaje', 'monto_fijo', 'nxm', 'combo', 'forma_pago', 'condicional'].includes(tipo)) {
         return res.status(400).json({ error: 'tipo inválido' })
       }
       updates.tipo = tipo

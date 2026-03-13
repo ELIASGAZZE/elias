@@ -7,6 +7,7 @@ const TIPOS = [
   { value: 'nxm', label: 'NxM' },
   { value: 'combo', label: 'Combo' },
   { value: 'forma_pago', label: 'Desc. forma de pago' },
+  { value: 'condicional', label: 'Condicional (A → B)' },
 ]
 
 const TIPO_BADGE_COLORS = {
@@ -15,6 +16,7 @@ const TIPO_BADGE_COLORS = {
   nxm: 'bg-purple-50 text-purple-700',
   combo: 'bg-emerald-50 text-emerald-700',
   forma_pago: 'bg-cyan-50 text-cyan-700',
+  condicional: 'bg-pink-50 text-pink-700',
 }
 
 const TIPO_ENTIDAD = [
@@ -58,6 +60,11 @@ const AdminPromociones = () => {
     articulos_combo: [], // [{ id, nombre, cantidad }]
     // forma_pago
     forma_cobro_nombre: '',
+    // condicional
+    articulo_condicion: null, // { id, nombre, codigo }
+    articulo_beneficio: null, // { id, nombre, codigo }
+    tipo_descuento: 'porcentaje',
+    buscando_campo: null, // 'condicion' | 'beneficio'
   })
 
   // Buscador de artículos
@@ -131,6 +138,7 @@ const AdminPromociones = () => {
       llevar: '3', pagar: '2',
       precio_combo: '', articulos_combo: [],
       forma_cobro_nombre: '',
+      articulo_condicion: null, articulo_beneficio: null, tipo_descuento: 'porcentaje', buscando_campo: null,
     })
     setBusqueda('')
     setResultados([])
@@ -160,6 +168,10 @@ const AdminPromociones = () => {
       precio_combo: reglas.precio_combo != null ? String(reglas.precio_combo) : '',
       articulos_combo: reglas.articulos || [],
       forma_cobro_nombre: reglas.forma_cobro_nombre || '',
+      articulo_condicion: reglas.articulo_condicion || null,
+      articulo_beneficio: reglas.articulo_beneficio || null,
+      tipo_descuento: reglas.tipo_descuento || 'porcentaje',
+      buscando_campo: null,
     })
     setEditandoId(promo.id)
     setMostrarForm(true)
@@ -196,6 +208,14 @@ const AdminPromociones = () => {
       case 'forma_pago':
         return {
           forma_cobro_nombre,
+          valor: parseFloat(valor) || 0,
+        }
+      case 'condicional':
+        return {
+          articulo_condicion: form.articulo_condicion,
+          cantidad_minima: parseInt(cantidad_minima) || 1,
+          articulo_beneficio: form.articulo_beneficio,
+          tipo_descuento: form.tipo_descuento,
           valor: parseFloat(valor) || 0,
         }
       default:
@@ -238,6 +258,20 @@ const AdminPromociones = () => {
       }
       if (!reglas.valor || reglas.valor <= 0) {
         setMensaje('El porcentaje debe ser mayor a 0')
+        return
+      }
+    }
+    if (form.tipo === 'condicional') {
+      if (!reglas.articulo_condicion) {
+        setMensaje('Seleccioná el artículo condición')
+        return
+      }
+      if (!reglas.articulo_beneficio) {
+        setMensaje('Seleccioná el artículo beneficio')
+        return
+      }
+      if (!reglas.valor || reglas.valor <= 0) {
+        setMensaje('El valor del descuento debe ser mayor a 0')
         return
       }
     }
@@ -514,8 +548,117 @@ const AdminPromociones = () => {
             </div>
           )}
 
-          {/* Buscador de entidades / artículos (no aplica a forma_pago) */}
-          {form.tipo !== 'forma_pago' && <div className="border-t border-violet-200 pt-3">
+          {form.tipo === 'condicional' && (
+            <div className="space-y-3">
+              {/* Artículo condición */}
+              <div>
+                <label className="text-xs text-gray-500 font-medium">Artículo condición (el que debe comprar)</label>
+                {form.articulo_condicion ? (
+                  <div className="flex items-center gap-2 bg-pink-50 border border-pink-200 rounded-lg px-3 py-2 mt-1">
+                    <span className="flex-1 text-sm text-gray-700">{form.articulo_condicion.nombre}</span>
+                    <button type="button" onClick={() => setForm(prev => ({ ...prev, articulo_condicion: null }))} className="text-pink-400 hover:text-pink-600">&times;</button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <input
+                      type="text"
+                      value={form.buscando_campo === 'condicion' ? busqueda : ''}
+                      onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'condicion' }))}
+                      onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'condicion' })); setBusqueda(e.target.value) }}
+                      placeholder="Buscar artículo condición..."
+                      className="campo-form text-sm"
+                    />
+                    {form.buscando_campo === 'condicion' && resultados.length > 0 && (
+                      <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                        {resultados.map(item => (
+                          <button key={item.id} type="button" onClick={() => { setForm(prev => ({ ...prev, articulo_condicion: { id: item.id, nombre: item.nombre, codigo: item.codigo }, buscando_campo: null })); setBusqueda(''); setResultados([]) }} className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b last:border-b-0">
+                            <span className="font-medium">{item.nombre}</span>
+                            <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Cantidad mínima */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-500">Cantidad mínima</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.cantidad_minima}
+                    onChange={e => setForm(prev => ({ ...prev, cantidad_minima: e.target.value }))}
+                    className="campo-form text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Artículo beneficio */}
+              <div>
+                <label className="text-xs text-gray-500 font-medium">Artículo beneficio (al que se aplica el descuento)</label>
+                {form.articulo_beneficio ? (
+                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mt-1">
+                    <span className="flex-1 text-sm text-gray-700">{form.articulo_beneficio.nombre}</span>
+                    <button type="button" onClick={() => setForm(prev => ({ ...prev, articulo_beneficio: null }))} className="text-green-400 hover:text-green-600">&times;</button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <input
+                      type="text"
+                      value={form.buscando_campo === 'beneficio' ? busqueda : ''}
+                      onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'beneficio' }))}
+                      onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'beneficio' })); setBusqueda(e.target.value) }}
+                      placeholder="Buscar artículo beneficio..."
+                      className="campo-form text-sm"
+                    />
+                    {form.buscando_campo === 'beneficio' && resultados.length > 0 && (
+                      <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                        {resultados.map(item => (
+                          <button key={item.id} type="button" onClick={() => { setForm(prev => ({ ...prev, articulo_beneficio: { id: item.id, nombre: item.nombre, codigo: item.codigo }, buscando_campo: null })); setBusqueda(''); setResultados([]) }} className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm border-b last:border-b-0">
+                            <span className="font-medium">{item.nombre}</span>
+                            <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Tipo y valor de descuento */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs text-gray-500">Tipo descuento</label>
+                  <select
+                    value={form.tipo_descuento}
+                    onChange={e => setForm(prev => ({ ...prev, tipo_descuento: e.target.value }))}
+                    className="campo-form text-sm"
+                  >
+                    <option value="porcentaje">Porcentaje (%)</option>
+                    <option value="monto_fijo">Monto ($)</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-gray-500">Valor</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step={form.tipo_descuento === 'porcentaje' ? '1' : '0.01'}
+                    value={form.valor}
+                    onChange={e => setForm(prev => ({ ...prev, valor: e.target.value }))}
+                    placeholder={form.tipo_descuento === 'porcentaje' ? 'Ej: 50' : 'Ej: 500'}
+                    className="campo-form text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Buscador de entidades / artículos (no aplica a forma_pago ni condicional) */}
+          {form.tipo !== 'forma_pago' && form.tipo !== 'condicional' && <div className="border-t border-violet-200 pt-3">
             <label className="text-xs text-gray-500 font-medium">
               {form.tipo === 'combo' ? 'Artículos del combo' : 'Aplica a'}
             </label>
@@ -645,11 +788,14 @@ const AdminPromociones = () => {
             else if (promo.tipo === 'nxm') detalle = `${reglas.llevar}x${reglas.pagar}`
             else if (promo.tipo === 'combo') detalle = `Combo ${formatPrecio(reglas.precio_combo)}`
             else if (promo.tipo === 'forma_pago') detalle = `${reglas.valor}% off en ${reglas.forma_cobro_nombre}`
+            else if (promo.tipo === 'condicional') detalle = `${reglas.cantidad_minima || 1}x ${reglas.articulo_condicion?.nombre || '?'} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off en ${reglas.articulo_beneficio?.nombre || '?'}`
 
             const entidades = promo.tipo === 'combo'
               ? (reglas.articulos || []).map(a => a.nombre).join(', ')
               : promo.tipo === 'forma_pago'
               ? reglas.forma_cobro_nombre || ''
+              : promo.tipo === 'condicional'
+              ? `${reglas.articulo_condicion?.nombre || '?'} → ${reglas.articulo_beneficio?.nombre || '?'}`
               : (reglas.aplicar_a || []).map(a => a.tipo === 'todos' ? 'Todos' : a.nombre).join(', ')
 
             return (
@@ -658,7 +804,7 @@ const AdminPromociones = () => {
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-gray-800 truncate">{promo.nombre}</p>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TIPO_BADGE_COLORS[promo.tipo] || 'bg-gray-100 text-gray-600'}`}>
-                      {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo === 'forma_pago' ? 'F. Pago' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
+                      {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo === 'forma_pago' ? 'F. Pago' : promo.tipo === 'condicional' ? 'A→B' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 truncate">{detalle} — {entidades || 'Sin destino'}</p>

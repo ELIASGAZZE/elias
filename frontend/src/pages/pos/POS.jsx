@@ -143,6 +143,37 @@ function calcularPromocionesLocales(carrito, promociones) {
         })
         break
       }
+
+      case 'condicional': {
+        const artCond = reglas.articulo_condicion
+        const artBenef = reglas.articulo_beneficio
+        if (!artCond || !artBenef) break
+        const itemCondicion = carrito.find(i => i.articulo.id === artCond.id)
+        if (!itemCondicion) break
+        const cantMin = reglas.cantidad_minima || 1
+        if (itemCondicion.cantidad < cantMin) break
+        const itemBeneficio = carrito.find(i => i.articulo.id === artBenef.id)
+        if (!itemBeneficio) break
+        const vecesCondicion = Math.floor(itemCondicion.cantidad / cantMin)
+        const cantBeneficiada = Math.min(vecesCondicion, itemBeneficio.cantidad)
+        const precioBenef = calcularPrecioConDescuentosBase(itemBeneficio.articulo)
+        let descuento = 0
+        if (reglas.tipo_descuento === 'porcentaje') {
+          descuento = precioBenef * cantBeneficiada * ((reglas.valor || 0) / 100)
+        } else {
+          descuento = Math.min(reglas.valor || 0, precioBenef) * cantBeneficiada
+        }
+        if (descuento <= 0) break
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'condicional',
+          detalle: `${cantMin}x ${artCond.nombre} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off en ${artBenef.nombre}`,
+          descuento,
+          itemsAfectados: [artCond.id, artBenef.id],
+        })
+        break
+      }
     }
   }
 
