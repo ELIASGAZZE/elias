@@ -1934,17 +1934,38 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
         }
       }
 
-      resultado = await crearNotaCreditoPOS({
-        idCliente: idClienteNC,
-        sucursalFisicaId,
-        idDivisionEmpresa: idDivisionNC,
-        puntoVenta,
-        items: itemsPositivos,
-        total: Math.abs(parseFloat(venta.total) || 0),
-        condicionIva: condicionIvaNC,
-        operadorMovilUser: operadorNC,
-        comprobanteOriginal,
-      })
+      // Detectar si es NC por concepto (diferencia de precio) o NC con artículos
+      const esNCConcepto = items.some(it => it.precio_cobrado != null && it.precio_correcto != null)
+
+      if (esNCConcepto) {
+        // NC por concepto: diferencia de precio
+        const descripcionItems = items.map(it =>
+          `${it.cantidad || 1}x ${it.nombre}: $${it.precio_cobrado} → $${it.precio_correcto}`
+        ).join(', ')
+        resultado = await crearNotaCreditoConceptoPOS({
+          idCliente: idClienteNC,
+          sucursalFisicaId,
+          idDivisionEmpresa: idDivisionNC,
+          puntoVenta,
+          total: Math.abs(parseFloat(venta.total) || 0),
+          condicionIva: condicionIvaNC,
+          descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
+          operadorMovilUser: operadorNC,
+          comprobanteOriginal,
+        })
+      } else {
+        resultado = await crearNotaCreditoPOS({
+          idCliente: idClienteNC,
+          sucursalFisicaId,
+          idDivisionEmpresa: idDivisionNC,
+          puntoVenta,
+          items: itemsPositivos,
+          total: Math.abs(parseFloat(venta.total) || 0),
+          condicionIva: condicionIvaNC,
+          operadorMovilUser: operadorNC,
+          comprobanteOriginal,
+        })
+      }
     } else {
       resultado = await crearVentaPOS({
         idCliente: venta.id_cliente_centum || 2,
