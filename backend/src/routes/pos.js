@@ -449,24 +449,19 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       }
       query = query.limit(50)
     }
-    // Filtro por fecha (siempre se aplica salvo que venga buscar por cliente o nro factura)
+    // Filtros normales (fecha, cliente, etc.)
     else {
       const buscar = req.query.buscar?.trim()
       if (buscar) {
         query = query.ilike('nombre_cliente', `%${buscar}%`)
-        // Si además viene fecha, aplicarla también
-        if (req.query.fecha) {
-          const desde = `${req.query.fecha}T00:00:00`
-          const hasta = `${req.query.fecha}T23:59:59`
-          query = query.gte('created_at', desde).lte('created_at', hasta)
-        }
-        query = query.limit(50)
-      } else {
-        const fecha = req.query.fecha || new Date().toISOString().split('T')[0]
-        const desde = `${fecha}T00:00:00`
-        const hasta = `${fecha}T23:59:59`
+      }
+      // Aplicar fecha si viene (ya no es obligatoria)
+      if (req.query.fecha) {
+        const desde = `${req.query.fecha}T00:00:00`
+        const hasta = `${req.query.fecha}T23:59:59`
         query = query.gte('created_at', desde).lte('created_at', hasta)
       }
+      query = query.limit(50)
     }
 
     // No-admin solo ve sus ventas

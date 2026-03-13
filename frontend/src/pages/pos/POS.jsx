@@ -810,7 +810,7 @@ const POS = () => {
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
   const [problemaBusqueda, setProblemaBusqueda] = useState('')
   const [problemaBusFactura, setProblemaBusFactura] = useState('')
-  const [problemaFecha, setProblemaFecha] = useState(new Date().toISOString().split('T')[0])
+  const [problemaFecha, setProblemaFecha] = useState('')
   const [problemaBusArticulo, setProblemaBusArticulo] = useState('')
   const [problemaSucursal, setProblemaSucursal] = useState('')
   const [problemaSucursales, setProblemaSucursales] = useState([])
@@ -844,7 +844,7 @@ const POS = () => {
     setProblemaBusFactura('')
     setProblemaBusArticulo('')
     setProblemaSucursal('')
-    setProblemaFecha(new Date().toISOString().split('T')[0])
+    setProblemaFecha('')
     setProblemaVentas([])
     setProblemaVentaSel(null)
     setProblemaItemsSel({})
@@ -876,7 +876,7 @@ const POS = () => {
       if (numFactura && numFactura.trim().length >= 1) {
         params.numero_factura = numFactura.trim()
       } else {
-        params.fecha = fecha
+        if (fecha) params.fecha = fecha
         if (cliente && cliente.trim().length >= 2) params.buscar = cliente.trim()
         if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
         if (sucId) params.sucursal_id = sucId
@@ -3060,7 +3060,7 @@ const POS = () => {
                         onChange={e => {
                           const f = e.target.value
                           setProblemaFecha(f)
-                          buscarVentasProblemaDebounced({ fecha: f })
+                          buscarVentasProblemaDebounced({ fecha: f || '' })
                         }}
                         className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       />
