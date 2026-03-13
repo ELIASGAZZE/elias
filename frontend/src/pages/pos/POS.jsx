@@ -3148,7 +3148,7 @@ const POS = () => {
                             api.get(`/api/pos/ventas/${v.id}/devoluciones`).then(r => {
                               setProblemaYaDevuelto(r.data?.ya_devuelto || {})
                             }).catch(() => setProblemaYaDevuelto({}))
-                          }
+                          }}
                           className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${
                             sel ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'
                           }`}
