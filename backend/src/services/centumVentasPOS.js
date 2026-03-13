@@ -434,6 +434,7 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
 
   body.VentaConceptos = [{
     IdConcepto: 25, // DIFERENCIA EN PRECIO DE GONDOLA
+    Codigo: '23',
     Nombre: descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA',
     Cantidad: 1,
     Precio: importeConcepto,
