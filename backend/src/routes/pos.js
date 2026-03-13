@@ -1110,10 +1110,17 @@ router.put('/ventas/:id/cliente', verificarAuth, async (req, res) => {
 // POST /api/pos/devolucion — registra devolución y genera saldo a favor
 router.post('/devolucion', verificarAuth, async (req, res) => {
   try {
-    const { venta_id, id_cliente_centum, nombre_cliente, items_devueltos, tipo_problema, observacion } = req.body
+    const { venta_id, id_cliente_centum, nombre_cliente, items_devueltos, tipo_problema, observacion, caja_id } = req.body
 
     if (!venta_id || !id_cliente_centum || !items_devueltos?.length) {
       return res.status(400).json({ error: 'Datos incompletos' })
+    }
+
+    // Determinar sucursal desde la caja actual (donde se procesa la devolución)
+    let sucursalNC = null
+    if (caja_id) {
+      const { data: cajaData } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalNC = cajaData?.sucursal_id || null
     }
 
     // Obtener la venta original
@@ -1202,7 +1209,8 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: req.perfil.sucursal_id || venta.sucursal_id,
+        sucursal_id: sucursalNC || venta.sucursal_id,
+        caja_id: caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -subtotalDevuelto,
@@ -1525,10 +1533,17 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
 // POST /api/pos/devolucion-precio — diferencia de precio → NC + saldo
 router.post('/devolucion-precio', verificarAuth, async (req, res) => {
   try {
-    const { venta_id, id_cliente_centum, nombre_cliente, items_corregidos, observacion } = req.body
+    const { venta_id, id_cliente_centum, nombre_cliente, items_corregidos, observacion, caja_id } = req.body
 
     if (!venta_id || !id_cliente_centum || !items_corregidos?.length) {
       return res.status(400).json({ error: 'Datos incompletos' })
+    }
+
+    // Determinar sucursal desde la caja actual
+    let sucursalNC = null
+    if (caja_id) {
+      const { data: cajaData } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalNC = cajaData?.sucursal_id || null
     }
 
     // Obtener venta original
@@ -1570,7 +1585,8 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: req.perfil.sucursal_id || venta.sucursal_id,
+        sucursal_id: sucursalNC || venta.sucursal_id,
+        caja_id: caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -diferenciaTotal,

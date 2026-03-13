@@ -3694,6 +3694,7 @@ const POS = () => {
                             tipo_problema: tipoProblemaLabel,
                             observacion: problemaObservacion.trim() || undefined,
                             items_devueltos: itemsDevueltos,
+                            caja_id: terminalConfig?.caja_id || null,
                           })
                           // Imprimir 2 tickets: cliente + cajero
                           imprimirTicketDevolucion({
@@ -4256,6 +4257,7 @@ const POS = () => {
                               precio_cobrado: d.precioCobrado,
                               precio_correcto: d.precioGondola,
                             })),
+                            caja_id: terminalConfig?.caja_id || null,
                           })
                           alert(`Corrección registrada. Se generó un saldo a favor de ${formatPrecio(data.saldo_generado)} para ${problemaCliente.razon_social}`)
                           cerrarModalProblema()
