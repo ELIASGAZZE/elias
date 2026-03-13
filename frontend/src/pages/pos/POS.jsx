@@ -4034,7 +4034,8 @@ const POS = () => {
                       const item = items[idx]
                       const precioOriginal = item.precio_unitario || item.precioUnitario || item.precio || 0
                       const precioCorr = problemaPreciosCorregidos[idx]
-                      const diferencia = precioCorr !== undefined && precioCorr !== '' ? (precioOriginal - parseFloat(precioCorr)) * (problemaItemsSel[idx] || 1) : null
+                      const cantItem = item.cantidad || 1
+                      const diferencia = precioCorr !== undefined && precioCorr !== '' ? (precioOriginal - parseFloat(precioCorr)) * cantItem : null
                       return (
                         <div key={idx} className="bg-white rounded-xl border border-gray-200 p-4">
                           <div className="text-sm font-semibold text-gray-800 mb-2">{item.nombre}</div>
@@ -4112,7 +4113,7 @@ const POS = () => {
               let totalDiferencia = 0
               const detalleItems = indices.map(idx => {
                 const item = items[idx]
-                const cant = problemaItemsSel[idx] || 1
+                const cant = item.cantidad || 1
                 const precioCobrado = item.precio_unitario || item.precioUnitario || item.precio || 0
                 const precioGondola = parseFloat(problemaPreciosCorregidos[idx]) || 0
                 const dif = (precioCobrado - precioGondola) * cant
@@ -4200,7 +4201,7 @@ const POS = () => {
                           <div className="space-y-2">
                             {detalleItems.map((d, i) => (
                               <div key={i} className="bg-gray-50 rounded-lg px-3 py-2">
-                                <div className="text-sm font-medium text-gray-800">{d.cantidad > 1 ? `${d.cantidad}x ` : ''}{d.nombre}</div>
+                                <div className="text-sm font-medium text-gray-800">{d.cantidad !== 1 ? `${d.cantidad}x ` : ''}{d.nombre}</div>
                                 <div className="flex items-center gap-2 mt-1 text-xs">
                                   <span className="text-red-600">Cobrado: {formatPrecio(d.precioCobrado)}</span>
                                   <span className="text-gray-400">→</span>
