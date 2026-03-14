@@ -923,12 +923,8 @@ const POS = () => {
   // Carrito mobile toggle
   const [carritoVisible, setCarritoVisible] = useState(false)
 
-  // Favoritos (persistidos en localStorage)
-  const [favoritos, setFavoritos] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('pos_favoritos') || '[]')
-    } catch { return [] }
-  })
+  // Favoritos (globales desde DB)
+  const [favoritos, setFavoritos] = useState([])
 
   const inputBusquedaRef = useRef(null)
   const inputClienteRef = useRef(null)
@@ -945,12 +941,22 @@ const POS = () => {
     }, 0)
   }, [])
 
-  // Cargar promos, artículos y clientes al montar (1 sola vez)
+  // Cargar promos, artículos, clientes y favoritos al montar (1 sola vez)
   useEffect(() => {
     cargarPromociones()
     cargarArticulos()
     cargarClientesCache()
+    cargarFavoritos()
   }, [])
+
+  async function cargarFavoritos() {
+    try {
+      const { data } = await api.get('/api/pos/favoritos')
+      setFavoritos(data.articulo_ids || [])
+    } catch (err) {
+      console.error('Error cargando favoritos:', err)
+    }
+  }
 
   async function cargarPromociones() {
     setCargandoPromos(true)
@@ -1147,17 +1153,20 @@ const POS = () => {
     return map
   }, [rubros])
 
-  // Toggle favorito
+  // Toggle favorito (solo admin, guarda en DB global)
   const toggleFavorito = useCallback((articuloId, e) => {
     e.stopPropagation()
+    if (!esAdmin) return
     setFavoritos(prev => {
       const next = prev.includes(articuloId)
         ? prev.filter(id => id !== articuloId)
         : [...prev, articuloId]
-      localStorage.setItem('pos_favoritos', JSON.stringify(next))
+      api.post('/api/pos/favoritos', { articulo_ids: next }).catch(err => {
+        console.error('Error guardando favoritos:', err)
+      })
       return next
     })
-  }, [])
+  }, [esAdmin])
 
   // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
@@ -3038,6 +3047,7 @@ const POS = () => {
                           seleccionado ? 'bg-violet-200 border-l-4 border-l-violet-600' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
                         }`}
                       >
+                        {esAdmin && (
                         <button
                           onClick={(e) => toggleFavorito(art.id, e)}
                           className={`mr-3 flex-shrink-0 transition-colors ${
@@ -3048,6 +3058,7 @@ const POS = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                           </svg>
                         </button>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-800 truncate">{art.nombre}</div>
                           <div className="text-xs text-gray-500 truncate">

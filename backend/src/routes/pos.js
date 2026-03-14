@@ -2795,4 +2795,46 @@ router.get('/bloqueos/verificar', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/pos/favoritos — obtener lista global de favoritos
+router.get('/favoritos', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('favoritos_pos')
+      .select('articulo_ids')
+      .eq('id', 1)
+      .single()
+
+    if (error || !data) {
+      return res.json({ articulo_ids: [] })
+    }
+
+    res.json({ articulo_ids: data.articulo_ids || [] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/pos/favoritos — guardar lista global de favoritos (solo admin)
+router.post('/favoritos', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { articulo_ids } = req.body
+
+    if (!Array.isArray(articulo_ids)) {
+      return res.status(400).json({ error: 'articulo_ids debe ser un array' })
+    }
+
+    const { data, error } = await supabase
+      .from('favoritos_pos')
+      .upsert({ id: 1, articulo_ids }, { onConflict: 'id' })
+      .select('articulo_ids')
+      .single()
+
+    if (error) throw error
+
+    res.json({ articulo_ids: data.articulo_ids })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
