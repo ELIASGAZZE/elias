@@ -926,6 +926,10 @@ const POS = () => {
   // Carrito mobile toggle
   const [carritoVisible, setCarritoVisible] = useState(false)
 
+  // Modo empleado (cuenta corriente)
+  const [empleadoActivo, setEmpleadoActivo] = useState(null) // { id, nombre, codigo }
+  const [descuentosEmpleado, setDescuentosEmpleado] = useState({}) // { rubroNombre: porcentaje }
+
   // Favoritos (globales desde DB)
   const [favoritos, setFavoritos] = useState([])
 
@@ -1170,6 +1174,16 @@ const POS = () => {
       return next
     })
   }, [esAdmin])
+
+  // Precio con descuento empleado (si modo empleado activo)
+  const precioConDescEmpleado = useCallback((articulo) => {
+    const precioBase = calcularPrecioConDescuentosBase(articulo)
+    if (!empleadoActivo) return precioBase
+    const rubroNombre = articulo.rubro?.nombre || ''
+    const descPct = descuentosEmpleado[rubroNombre] || 0
+    if (descPct <= 0) return precioBase
+    return Math.round(precioBase * (1 - descPct / 100) * 100) / 100
+  }, [empleadoActivo, descuentosEmpleado])
 
   // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
@@ -1548,7 +1562,7 @@ const POS = () => {
   const { subtotal, descuentoTotal, total, promosAplicadas } = useMemo(() => {
     let sub = 0
     for (const item of carrito) {
-      const precioBase = item.precioOverride != null ? item.precioOverride : calcularPrecioConDescuentosBase(item.articulo)
+      const precioBase = item.precioOverride != null ? item.precioOverride : precioConDescEmpleado(item.articulo)
       sub += precioBase * item.cantidad
     }
 
@@ -1813,7 +1827,7 @@ const POS = () => {
         id_articulo: i.articulo.id,
         codigo: i.articulo.codigo,
         nombre: i.articulo.nombre,
-        precio_unitario: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        precio_unitario: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
         cantidad: i.cantidad,
         iva_tasa: i.articulo.iva?.tasa || 21,
         rubro: i.articulo.rubro?.nombre || null,
@@ -2071,7 +2085,7 @@ const POS = () => {
         id: i.articulo.id,
         codigo: i.articulo.codigo,
         nombre: i.articulo.nombre,
-        precio: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        precio: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
         rubro: i.articulo.rubro?.nombre || null,
@@ -2176,7 +2190,7 @@ const POS = () => {
         id: i.articulo.id,
         codigo: i.articulo.codigo,
         nombre: i.articulo.nombre,
-        precio: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        precio: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
         rubro: i.articulo.rubro?.nombre || null,
@@ -2343,18 +2357,29 @@ const POS = () => {
             <span className="bg-violet-700 text-violet-100 px-1.5 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
             <span className="text-violet-300">|</span>
             <span className="text-violet-300">{usuario?.nombre}</span>
-            <button
-              onClick={() => { if (carrito.length > 0) setMostrarVentaEmpleado(true) }}
-              className={`px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 ${
-                carrito.length > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-orange-900/30 text-orange-300/50 cursor-not-allowed'
-              }`}
-              title="Venta a empleado (cta cte)"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-              </svg>
-              Empleado
-            </button>
+            {empleadoActivo ? (
+              <button
+                onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]); }}
+                className="bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 animate-pulse"
+                title="Desactivar modo empleado"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                </svg>
+                {empleadoActivo.nombre} ✕
+              </button>
+            ) : (
+              <button
+                onClick={() => setMostrarVentaEmpleado(true)}
+                className="bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
+                title="Venta a empleado (cta cte)"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                </svg>
+                Empleado
+              </button>
+            )}
             <button
               onClick={() => setMostrarProblema(true)}
               className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
@@ -2753,16 +2778,26 @@ const POS = () => {
             )}
           </div>
 
+          {/* Banner modo empleado */}
+          {empleadoActivo && (
+            <div className="bg-orange-500 text-white px-3 py-1.5 flex items-center justify-between text-sm font-medium">
+              <span>Retiro empleado: {empleadoActivo.nombre}</span>
+              <button onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]) }} className="text-orange-200 hover:text-white text-xs underline">
+                Cancelar
+              </button>
+            </div>
+          )}
+
           {/* Items del carrito */}
           <div className="flex-1 overflow-y-auto">
             {carrito.length === 0 ? (
               <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                Carrito vacío
+                {empleadoActivo ? 'Agregá artículos para el retiro' : 'Carrito vacío'}
               </div>
             ) : (
               <div className="divide-y">
                 {carrito.map((item, itemIdx) => {
-                  const precioOriginal = calcularPrecioConDescuentosBase(item.articulo)
+                  const precioOriginal = precioConDescEmpleado(item.articulo)
                   const precioUnit = item.precioOverride != null ? item.precioOverride : precioOriginal
                   const lineTotal = precioUnit * item.cantidad
                   const tieneOverride = item.precioOverride != null
@@ -2954,7 +2989,7 @@ const POS = () => {
                   </button>
                 )}
                 {/* Si NO hay pedido en proceso: botones normales */}
-                {!pedidoEnProceso && (
+                {!pedidoEnProceso && !empleadoActivo && (
                   <>
                     <button
                       onClick={handleEsPedido}
@@ -2972,6 +3007,15 @@ const POS = () => {
                       Cobrar {formatPrecio(totalConGiftCards)} <span className="text-[9px] opacity-70">F11</span>
                     </button>
                   </>
+                )}
+                {/* Modo empleado activo: botón registrar retiro */}
+                {!pedidoEnProceso && empleadoActivo && (
+                  <button
+                    onClick={() => setMostrarVentaEmpleado(true)}
+                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                  >
+                    Registrar retiro {formatPrecio(totalConGiftCards)}
+                  </button>
                 )}
                 {/* Si hay pedido en proceso NO pagado y NO editando: cobrar primero */}
                 {pedidoEnProceso && !pedidoEnProceso.editando && !pedidoEnProceso.esPagado && (
@@ -3049,7 +3093,7 @@ const POS = () => {
                   </div>
                 ) : (
                   resultadosBusqueda.map((art, idx) => {
-                    const precioFinal = calcularPrecioConDescuentosBase(art)
+                    const precioFinal = precioConDescEmpleado(art)
                     const enCarrito = carrito.find(i => i.articulo.id === art.id)
                     const esFav = favoritos.includes(art.id)
                     const seleccionado = idx === busquedaIdx
@@ -3133,7 +3177,7 @@ const POS = () => {
                 </div>
 
                 {articulosFavoritos.map(art => {
-                  const precioFinal = calcularPrecioConDescuentosBase(art)
+                  const precioFinal = precioConDescEmpleado(art)
                   const enCarrito = carrito.find(i => i.articulo.id === art.id)
                   const color = rubroColorMap[art.rubro?.nombre] || TILE_COLORS[0]
 
@@ -4662,19 +4706,29 @@ const POS = () => {
         />
       )}
 
-      {/* Modal venta empleado */}
-      {mostrarVentaEmpleado && carrito.length > 0 && (
+      {/* Modal venta empleado — seleccionar o confirmar */}
+      {mostrarVentaEmpleado && (
         <ModalVentaEmpleado
+          mode={empleadoActivo ? 'confirmar' : 'seleccionar'}
           carrito={carrito}
-          calcularPrecioConDescuentosBase={calcularPrecioConDescuentosBase}
+          empleadoActivo={empleadoActivo}
+          descuentosEmpleado={descuentosEmpleado}
+          precioConDescEmpleado={precioConDescEmpleado}
           terminalConfig={terminalConfig}
           onCerrar={() => setMostrarVentaEmpleado(false)}
+          onEmpleadoSeleccionado={(emp, descs) => {
+            setEmpleadoActivo(emp)
+            setDescuentosEmpleado(descs)
+            setMostrarVentaEmpleado(false)
+          }}
           onExito={() => {
             setMostrarVentaEmpleado(false)
             setCarrito([])
             setCliente({ ...CLIENTE_DEFAULT })
             setBusquedaArt('')
             setGiftCardsEnVenta([])
+            setEmpleadoActivo(null)
+            setDescuentosEmpleado({})
           }}
         />
       )}

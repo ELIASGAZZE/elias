@@ -23,13 +23,14 @@ const AdminDescuentosEmpleados = () => {
     setCargando(true)
     try {
       const [rubrosRes, descRes, empRes] = await Promise.all([
-        api.get('/api/rubros'),
+        api.get('/api/cuenta-empleados/rubros'),
         api.get('/api/cuenta-empleados/descuentos'),
         api.get('/api/cuenta-empleados/topes'),
       ])
 
       const rubrosData = rubrosRes.data || []
       setRubros(rubrosData)
+
 
       // Mapear descuentos existentes
       const descMap = {}
@@ -54,7 +55,7 @@ const AdminDescuentosEmpleados = () => {
         .filter(r => descuentos[r.nombre] != null && descuentos[r.nombre] !== '')
         .map(r => ({
           rubro: r.nombre,
-          rubro_id_centum: r.id_centum || null,
+          rubro_id_centum: r.rubro_id_centum || null,
           porcentaje: parseFloat(descuentos[r.nombre]) || 0,
         }))
 

@@ -13,7 +13,6 @@ const PRINT_STYLES = `
   .bold { font-weight: bold; }
   .titulo { font-size: 28px; font-weight: bold; }
   .total { font-size: 26px; font-weight: bold; }
-  .seccion { font-size: 20px; font-weight: bold; margin-top: 4px; }
   .line { border-top: 1px dashed #000; margin: 6px 0; }
   .line-double { border-top: 2px solid #000; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; }
@@ -37,7 +36,7 @@ function imprimirHTML(html) {
   }, 100)
 }
 
-function imprimirComprobantes(empleado, items, total) {
+export function imprimirComprobantesEmpleado(empleado, items, total) {
   const ahora = new Date()
   const fecha = `${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`
 
@@ -51,12 +50,12 @@ function imprimirComprobantes(empleado, items, total) {
     html += '<div class="line"></div>'
 
     items.forEach(item => {
-      const lineTotal = (item.precio_final || item.precio_original) * item.cantidad
+      const lineTotal = (item.precio_final || item.precio_original || item.precio) * item.cantidad
       html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
       if (item.descuento_pct > 0) {
         html += `<div class="row" style="font-size:18px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_original)} (-${item.descuento_pct}%)</span><span>${formatMonto(lineTotal)}</span></div>`
       } else {
-        html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_final)}</span><span>${formatMonto(lineTotal)}</span></div>`
+        html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_final || item.precio)}</span><span>${formatMonto(lineTotal)}</span></div>`
       }
     })
 
@@ -77,43 +76,38 @@ function imprimirComprobantes(empleado, items, total) {
     return html
   }
 
-  // Imprimir comprobante del empleado primero, luego el de firma
   imprimirHTML(buildTicket('empleado'))
   setTimeout(() => imprimirHTML(buildTicket('firma')), 1500)
 }
 
-const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar, onExito, terminalConfig }) => {
-  const [paso, setPaso] = useState('codigo') // 'codigo' | 'resumen' | 'confirmar' | 'guardando'
+/**
+ * Modal con dos modos:
+ * - mode='seleccionar': pide código de empleado para activar modo empleado (antes de agregar artículos)
+ * - mode='confirmar': muestra resumen y pide confirmación (cuando el carrito tiene items)
+ */
+const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, onCerrar, onEmpleadoSeleccionado, onExito, terminalConfig }) => {
   const [codigoEmpleado, setCodigoEmpleado] = useState('')
-  const [empleado, setEmpleado] = useState(null)
   const [error, setError] = useState('')
-  const [descuentos, setDescuentos] = useState({}) // { rubroNombre: porcentaje }
   const [codigoConfirm, setCodigoConfirm] = useState('')
+  const [paso, setPaso] = useState(mode === 'confirmar' ? 'resumen' : 'codigo')
+  const [guardando, setGuardando] = useState(false)
   const inputRef = useRef(null)
   const inputConfirmRef = useRef(null)
-
-  useEffect(() => {
-    // Cargar descuentos por rubro
-    api.get('/api/cuenta-empleados/descuentos').then(({ data }) => {
-      const map = {}
-      ;(data || []).forEach(d => { map[d.rubro] = d.porcentaje })
-      setDescuentos(map)
-    }).catch(() => {})
-  }, [])
 
   useEffect(() => {
     if (paso === 'codigo') setTimeout(() => inputRef.current?.focus(), 100)
     if (paso === 'confirmar') setTimeout(() => inputConfirmRef.current?.focus(), 100)
   }, [paso])
 
-  // Items con descuento empleado aplicado
-  const itemsConDescuento = useMemo(() => {
+  // Items con info de descuento para el resumen
+  const itemsResumen = useMemo(() => {
+    if (!carrito || carrito.length === 0) return []
     return carrito.map(item => {
       const art = item.articulo
-      const precioBase = calcularPrecioConDescuentosBase(art)
+      const precioBase = (art.precio || 0) * (1 - (art.descuento1 || 0) / 100) * (1 - (art.descuento2 || 0) / 100) * (1 - (art.descuento3 || 0) / 100)
       const rubroNombre = art.rubro?.nombre || ''
-      const descPct = descuentos[rubroNombre] || 0
-      const precioFinal = descPct > 0 ? Math.round(precioBase * (1 - descPct / 100) * 100) / 100 : precioBase
+      const descPct = descuentosEmpleado?.[rubroNombre] || 0
+      const precioFinal = precioConDescEmpleado ? precioConDescEmpleado(art) : precioBase
 
       return {
         articulo_id: art.id,
@@ -122,18 +116,18 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
         nombre: art.nombre,
         rubro: rubroNombre,
         cantidad: item.cantidad,
-        precio_original: precioBase,
+        precio_original: Math.round(precioBase * 100) / 100,
         descuento_pct: descPct,
-        precio_final: precioFinal,
+        precio_final: Math.round(precioFinal * 100) / 100,
         subtotal: Math.round(precioFinal * item.cantidad * 100) / 100,
         iva_tasa: art.iva_tasa || 21,
       }
     })
-  }, [carrito, descuentos, calcularPrecioConDescuentosBase])
+  }, [carrito, descuentosEmpleado, precioConDescEmpleado])
 
-  const totalConDescuento = useMemo(() =>
-    itemsConDescuento.reduce((s, i) => s + i.subtotal, 0),
-    [itemsConDescuento]
+  const totalFinal = useMemo(() =>
+    itemsResumen.reduce((s, i) => s + i.subtotal, 0),
+    [itemsResumen]
   )
 
   const validarEmpleado = async () => {
@@ -144,8 +138,11 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
     }
     try {
       const { data } = await api.get(`/api/empleados/por-codigo/${codigoEmpleado.trim()}`)
-      setEmpleado(data)
-      setPaso('resumen')
+      // Cargar descuentos
+      const { data: descs } = await api.get('/api/cuenta-empleados/descuentos')
+      const map = {}
+      ;(descs || []).forEach(d => { map[d.rubro] = d.porcentaje })
+      onEmpleadoSeleccionado({ ...data, codigo: codigoEmpleado.trim() }, map)
     } catch (err) {
       setError(err.response?.data?.error || 'Empleado no encontrado')
     }
@@ -153,28 +150,26 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
 
   const confirmarVenta = async () => {
     setError('')
-    if (codigoConfirm.trim() !== codigoEmpleado.trim()) {
+    if (codigoConfirm.trim() !== empleadoActivo?.codigo) {
       setError('El código no coincide')
       return
     }
 
-    setPaso('guardando')
+    setGuardando(true)
     try {
       const { data } = await api.post('/api/cuenta-empleados/ventas', {
-        codigo_empleado: codigoEmpleado.trim(),
-        items: itemsConDescuento,
-        total: totalConDescuento,
-        sucursal_id: terminalConfig?.sucursalId || null,
-        caja_id: terminalConfig?.cajaId || null,
+        codigo_empleado: empleadoActivo.codigo,
+        items: itemsResumen,
+        total: totalFinal,
+        sucursal_id: terminalConfig?.sucursal_id || null,
+        caja_id: terminalConfig?.caja_id || null,
       })
 
-      // Imprimir 2 comprobantes
-      imprimirComprobantes(data.empleado || empleado, itemsConDescuento, totalConDescuento)
-
+      imprimirComprobantesEmpleado(data.empleado || empleadoActivo, itemsResumen, totalFinal)
       onExito(data)
     } catch (err) {
       setError(err.response?.data?.error || 'Error al guardar la venta')
-      setPaso('confirmar')
+      setGuardando(false)
     }
   }
 
@@ -190,15 +185,17 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
               </svg>
             </div>
-            <h3 className="font-semibold text-gray-800">Venta a empleado</h3>
+            <h3 className="font-semibold text-gray-800">
+              {mode === 'seleccionar' ? 'Seleccionar empleado' : 'Confirmar retiro'}
+            </h3>
           </div>
           <button onClick={onCerrar} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
 
-        {/* Paso 1: Código empleado */}
+        {/* Modo seleccionar: solo pide código */}
         {paso === 'codigo' && (
           <div className="p-4 space-y-4">
-            <p className="text-sm text-gray-600">Ingresá el código del empleado para aplicar descuentos y registrar a cuenta corriente.</p>
+            <p className="text-sm text-gray-600">Ingresá el código del empleado. Los precios se ajustarán con los descuentos configurados.</p>
             <div>
               <label className="text-xs font-medium text-gray-500 mb-1 block">Código empleado</label>
               <input
@@ -217,13 +214,13 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
               onClick={validarEmpleado}
               className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-lg transition-colors"
             >
-              Validar
+              Activar modo empleado
             </button>
           </div>
         )}
 
-        {/* Paso 2: Resumen con descuentos */}
-        {paso === 'resumen' && empleado && (
+        {/* Modo confirmar: resumen */}
+        {paso === 'resumen' && (
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {/* Info empleado */}
             <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 flex items-center gap-2">
@@ -231,14 +228,14 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
               </svg>
               <div>
-                <p className="text-sm font-semibold text-gray-800">{empleado.nombre}</p>
-                <p className="text-xs text-gray-500">Código: {codigoEmpleado}</p>
+                <p className="text-sm font-semibold text-gray-800">{empleadoActivo?.nombre}</p>
+                <p className="text-xs text-gray-500">Código: {empleadoActivo?.codigo}</p>
               </div>
             </div>
 
             {/* Items */}
             <div className="space-y-1">
-              {itemsConDescuento.map((item, idx) => (
+              {itemsResumen.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-b-0">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-gray-800 truncate">{item.nombre}</p>
@@ -260,33 +257,25 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
             {/* Total */}
             <div className="bg-gray-50 rounded-lg px-3 py-2.5 flex items-center justify-between">
               <span className="font-semibold text-gray-700">Total a cta. cte.</span>
-              <span className="text-lg font-bold text-orange-600">{formatPrecio(totalConDescuento)}</span>
+              <span className="text-lg font-bold text-orange-600">{formatPrecio(totalFinal)}</span>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setPaso('codigo'); setError('') }}
-                className="flex-1 text-sm py-2.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-              >
-                Volver
-              </button>
-              <button
-                onClick={() => { setPaso('confirmar'); setError('') }}
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-lg transition-colors"
-              >
-                Confirmar
-              </button>
-            </div>
+            <button
+              onClick={() => { setPaso('confirmar'); setError('') }}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-lg transition-colors"
+            >
+              Confirmar retiro
+            </button>
           </div>
         )}
 
-        {/* Paso 3: Confirmación con código */}
+        {/* Confirmación con código */}
         {paso === 'confirmar' && (
           <div className="p-4 space-y-4">
             <p className="text-sm text-gray-600">
-              Para confirmar el retiro de <strong>{formatPrecio(totalConDescuento)}</strong>, el empleado <strong>{empleado?.nombre}</strong> debe ingresar su código nuevamente.
+              Para confirmar el retiro de <strong>{formatPrecio(totalFinal)}</strong>, el empleado <strong>{empleadoActivo?.nombre}</strong> debe ingresar su código nuevamente.
             </p>
             <div>
               <label className="text-xs font-medium text-gray-500 mb-1 block">Código empleado (confirmación)</label>
@@ -311,19 +300,12 @@ const ModalVentaEmpleado = ({ carrito, calcularPrecioConDescuentosBase, onCerrar
               </button>
               <button
                 onClick={confirmarVenta}
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-lg transition-colors"
+                disabled={guardando}
+                className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg transition-colors"
               >
-                Confirmar retiro
+                {guardando ? 'Guardando...' : 'Confirmar retiro'}
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Paso 4: Guardando */}
-        {paso === 'guardando' && (
-          <div className="p-8 flex flex-col items-center gap-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600" />
-            <p className="text-sm text-gray-600">Registrando venta a cuenta corriente...</p>
           </div>
         )}
       </div>
