@@ -22,15 +22,16 @@ const AdminDescuentosEmpleados = () => {
   async function cargarDatos() {
     setCargando(true)
     try {
+      // Cargar cada recurso independientemente para que un error no bloquee los demás
       const [rubrosRes, descRes, empRes] = await Promise.all([
-        api.get('/api/cuenta-empleados/rubros'),
-        api.get('/api/cuenta-empleados/descuentos'),
-        api.get('/api/cuenta-empleados/topes'),
+        api.get('/api/cuenta-empleados/rubros').catch(err => { console.error('Error rubros:', err); return { data: [] } }),
+        api.get('/api/cuenta-empleados/descuentos').catch(err => { console.error('Error descuentos:', err); return { data: [] } }),
+        api.get('/api/cuenta-empleados/topes').catch(err => { console.error('Error topes:', err); return { data: [] } }),
       ])
 
       const rubrosData = rubrosRes.data || []
+      console.log('Rubros cargados:', rubrosData.length, rubrosData)
       setRubros(rubrosData)
-
 
       // Mapear descuentos existentes
       const descMap = {}
