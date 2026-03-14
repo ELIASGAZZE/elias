@@ -46,6 +46,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
       usuario: {
         id: data.user.id,
         username: perfil.username,
@@ -56,6 +57,32 @@ router.post('/login', async (req, res) => {
     })
   } catch (err) {
     console.error('Error en login:', err)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+})
+
+// POST /api/auth/refresh
+// Renueva el access token usando el refresh token
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refresh_token } = req.body
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'refresh_token requerido' })
+    }
+
+    const clienteAuth = crearClienteAuth()
+    const { data, error } = await clienteAuth.auth.refreshSession({ refresh_token })
+
+    if (error || !data.session) {
+      return res.status(401).json({ error: 'No se pudo renovar la sesión' })
+    }
+
+    res.json({
+      token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    })
+  } catch (err) {
+    console.error('Error en refresh:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 })

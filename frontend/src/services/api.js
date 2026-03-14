@@ -6,6 +6,21 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001',
 })
 
+// Flag para evitar múltiples refreshes simultáneos
+let isRefreshing = false
+let failedQueue = []
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error)
+    } else {
+      prom.resolve(token)
+    }
+  })
+  failedQueue = []
+}
+
 // Interceptor de request: adjunta el token JWT automáticamente en cada request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
@@ -15,19 +30,91 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Interceptor de response: si el token expiró, redirige al login
+// Interceptor de response: si el token expiró, intenta renovar con refresh token
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && !error.config?._skipAuthRedirect) {
-      // Token expirado o inválido: limpiamos sesión y redirigimos
-      localStorage.removeItem('token')
-      localStorage.removeItem('usuario')
-      window.location.href = '/login'
+  async (error) => {
+    const originalRequest = error.config
+
+    // Si es 401 y no es un retry ni un request de auth
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest._skipAuthRedirect &&
+      !originalRequest.url?.includes('/api/auth/refresh') &&
+      !originalRequest.url?.includes('/api/auth/login')
+    ) {
+      const refreshToken = localStorage.getItem('refresh_token')
+
+      if (!refreshToken) {
+        // Sin refresh token: cerrar sesión
+        localStorage.removeItem('token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('usuario')
+        window.location.href = '/login'
+        return Promise.reject(error)
+      }
+
+      if (isRefreshing) {
+        // Ya hay un refresh en curso: encolar este request
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject })
+        }).then(token => {
+          originalRequest.headers.Authorization = `Bearer ${token}`
+          return api(originalRequest)
+        }).catch(err => Promise.reject(err))
+      }
+
+      originalRequest._retry = true
+      isRefreshing = true
+
+      try {
+        const { data } = await axios.post(
+          `${api.defaults.baseURL}/api/auth/refresh`,
+          { refresh_token: refreshToken }
+        )
+
+        localStorage.setItem('token', data.token)
+        localStorage.setItem('refresh_token', data.refresh_token)
+
+        processQueue(null, data.token)
+
+        originalRequest.headers.Authorization = `Bearer ${data.token}`
+        return api(originalRequest)
+      } catch (refreshError) {
+        processQueue(refreshError, null)
+        // Refresh falló: cerrar sesión
+        localStorage.removeItem('token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('usuario')
+        window.location.href = '/login'
+        return Promise.reject(refreshError)
+      } finally {
+        isRefreshing = false
+      }
     }
+
     return Promise.reject(error)
   }
 )
+
+// Refresh preventivo cada 45 minutos (token expira en 1 hora)
+setInterval(async () => {
+  const refreshToken = localStorage.getItem('refresh_token')
+  const token = localStorage.getItem('token')
+  if (!refreshToken || !token) return
+
+  try {
+    const { data } = await axios.post(
+      `${api.defaults.baseURL}/api/auth/refresh`,
+      { refresh_token: refreshToken }
+    )
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('refresh_token', data.refresh_token)
+  } catch {
+    // Si falla el refresh preventivo, no hacemos nada — el interceptor lo maneja después
+  }
+}, 45 * 60 * 1000)
 
 export function isNetworkError(err) {
   return !err.response && (err.code === 'ERR_NETWORK' || err.message === 'Network Error')

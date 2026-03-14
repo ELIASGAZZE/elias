@@ -58,8 +58,9 @@ export const AuthProvider = ({ children }) => {
   const login = async (username, password) => {
     const { data } = await api.post('/api/auth/login', { username, password })
 
-    // Guardamos el token y los datos del usuario en localStorage
+    // Guardamos el token, refresh token y los datos del usuario en localStorage
     localStorage.setItem('token', data.token)
+    localStorage.setItem('refresh_token', data.refresh_token)
     localStorage.setItem('usuario', JSON.stringify(data.usuario))
     setUsuario(data.usuario)
 
@@ -88,6 +89,7 @@ export const AuthProvider = ({ children }) => {
       // Aunque falle el request, limpiamos la sesión local
     }
     localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
     localStorage.removeItem('usuario')
     setUsuario(null)
   }
