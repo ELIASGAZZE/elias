@@ -116,7 +116,7 @@ const TareasPanel = () => {
 }
 
 const SucursalCard = ({ sucursal }) => {
-  const [expandida, setExpandida] = useState(sucursal.pendientes > 0)
+  const [expandida, setExpandida] = useState(false)
   const pct = sucursal.total > 0 ? Math.round((sucursal.completadas / sucursal.total) * 100) : 0
   const todoCompleto = sucursal.pendientes === 0
 

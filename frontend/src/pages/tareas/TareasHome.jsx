@@ -36,33 +36,44 @@ const TareasHome = () => {
     <div className="min-h-screen bg-gray-100">
       <Navbar titulo="Tareas" sinTabs />
 
-      {/* Botones admin/gestor */}
-      {(esAdmin || esGestor) && (
-        <div className="bg-white border-b border-gray-200 px-4 py-2 flex gap-2">
-          <Link
-            to="/tareas/panel"
-            className="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
-          >
-            Panel general
-          </Link>
-          {esAdmin && (
+      {/* Nav tabs */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2">
+        <span className="text-sm px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg font-medium">
+          Pendientes
+        </span>
+        <Link
+          to="/tareas/equipo"
+          className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
+        >
+          Equipo
+        </Link>
+        {(esAdmin || esGestor) && (
+          <>
             <Link
-              to="/tareas/admin"
-              className="text-sm px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors font-medium"
+              to="/tareas/panel"
+              className="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
             >
-              Configurar
+              Panel general
             </Link>
-          )}
+            <Link
+              to="/tareas/analytics"
+              className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
+            >
+              Analisis
+            </Link>
+          </>
+        )}
+        {esAdmin && (
           <Link
-            to="/tareas/analytics"
-            className="text-sm px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors font-medium"
+            to="/tareas/admin"
+            className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
           >
-            Analisis
+            Configurar
           </Link>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="px-6 py-6" style={{ height: 'calc(100vh - 110px)' }}>
         {cargando ? (
           <div className="text-center py-12 text-gray-400">Cargando...</div>
         ) : pendientes.length === 0 ? (
@@ -74,16 +85,16 @@ const TareasHome = () => {
             <p className="text-sm text-gray-400 mt-1">Todas las tareas al dia</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', height: '100%' }}>
             {/* Tareas únicas */}
-            <div>
+            <div className="flex flex-col h-full">
               <h2 className="text-lg font-bold text-gray-800 mb-3">
                 Tareas unicas
                 <span className="ml-2 text-sm font-normal text-gray-500">
                   ({pendientes.filter(t => !t.repetitiva).length})
                 </span>
               </h2>
-              <div className="space-y-3">
+              <div className="flex-1 space-y-3 overflow-y-auto">
                 {pendientes.filter(t => !t.repetitiva).length === 0 ? (
                   <p className="text-sm text-gray-400 py-4">Sin tareas unicas pendientes</p>
                 ) : (
@@ -92,6 +103,7 @@ const TareasHome = () => {
                       key={tarea.tarea_config_id}
                       tarea={tarea}
                       onCompletar={setTareaActiva}
+                      grande
                     />
                   ))
                 )}
@@ -99,14 +111,14 @@ const TareasHome = () => {
             </div>
 
             {/* Tareas repetitivas */}
-            <div>
+            <div className="flex flex-col h-full">
               <h2 className="text-lg font-bold text-gray-800 mb-3">
                 Tareas repetitivas
                 <span className="ml-2 text-sm font-normal text-gray-500">
                   ({pendientes.filter(t => t.repetitiva).length})
                 </span>
               </h2>
-              <div className="space-y-3">
+              <div className="flex-1 space-y-3 overflow-y-auto">
                 {pendientes.filter(t => t.repetitiva).length === 0 ? (
                   <p className="text-sm text-gray-400 py-4">Sin tareas repetitivas</p>
                 ) : (
@@ -115,6 +127,7 @@ const TareasHome = () => {
                       key={tarea.tarea_config_id}
                       tarea={tarea}
                       onCompletar={setTareaActiva}
+                      grande
                     />
                   ))
                 )}

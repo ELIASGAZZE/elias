@@ -27,8 +27,10 @@ CREATE TABLE tareas_config_sucursal (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tarea_id UUID NOT NULL REFERENCES tareas(id) ON DELETE CASCADE,
   sucursal_id UUID NOT NULL REFERENCES sucursales(id) ON DELETE CASCADE,
-  frecuencia_dias INT NOT NULL DEFAULT 7,
-  dia_preferencia TEXT, -- 'lunes','martes',...'domingo' (nullable)
+  tipo TEXT NOT NULL DEFAULT 'frecuencia', -- 'dia_fijo' o 'frecuencia'
+  frecuencia_dias INT NOT NULL DEFAULT 7,  -- frecuencia: cada N dias; dia_fijo: 7/14/21/30 (periodo)
+  dias_semana JSONB,                       -- dia_fijo: ["martes","jueves"] (nullable para frecuencia)
+  dia_preferencia TEXT,                     -- DEPRECADO, mantener por compat
   reprogramar_siguiente BOOLEAN NOT NULL DEFAULT true,
   fecha_inicio DATE NOT NULL DEFAULT CURRENT_DATE,
   activo BOOLEAN NOT NULL DEFAULT true,

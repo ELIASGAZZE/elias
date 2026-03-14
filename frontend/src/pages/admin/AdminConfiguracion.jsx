@@ -71,6 +71,7 @@ const TITULOS_SECCION = {
   rubros: 'Rubros',
   sucursales: 'Sucursales',
   promociones: 'Promociones POS',
+  'bloqueos-pedidos': 'Bloqueos de Pedidos',
 }
 
 const AdminConfiguracion = () => {
@@ -1534,6 +1535,9 @@ const AdminConfiguracion = () => {
           <AdminPromociones />
         </div>}
 
+        {/* ===== BLOQUEOS DE PEDIDOS ===== */}
+        {seccion === 'bloqueos-pedidos' && <SeccionBloqueosPedidos />}
+
       </div>
 
       {/* ===== MODAL EDITAR USUARIO ===== */}
@@ -1625,6 +1629,188 @@ const AdminConfiguracion = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+const TURNOS_OPT = [
+  { value: 'todo', label: 'Todo el día' },
+  { value: 'AM', label: 'AM (9-13hs)' },
+  { value: 'PM', label: 'PM (17-21hs)' },
+]
+const APLICA_OPT = [
+  { value: 'todos', label: 'Delivery y Retiro' },
+  { value: 'delivery', label: 'Solo Delivery' },
+  { value: 'retiro', label: 'Solo Retiro' },
+]
+
+function SeccionBloqueosPedidos() {
+  const [bloqueos, setBloqueos] = useState([])
+  const [cargando, setCargando] = useState(true)
+  const [tipo, setTipo] = useState('semanal')
+  const [diaSemana, setDiaSemana] = useState(1)
+  const [fecha, setFecha] = useState('')
+  const [turno, setTurno] = useState('todo')
+  const [aplicaA, setAplicaA] = useState('todos')
+  const [motivo, setMotivo] = useState('')
+  const [guardando, setGuardando] = useState(false)
+
+  useEffect(() => {
+    cargar()
+  }, [])
+
+  async function cargar() {
+    setCargando(true)
+    try {
+      const { data } = await api.get('/api/pos/bloqueos')
+      setBloqueos(data || [])
+    } catch (err) {
+      console.error('Error cargando bloqueos:', err)
+    } finally {
+      setCargando(false)
+    }
+  }
+
+  async function crear(e) {
+    e.preventDefault()
+    setGuardando(true)
+    try {
+      const body = { tipo, turno, aplica_a: aplicaA, motivo: motivo.trim() || null }
+      if (tipo === 'semanal') body.dia_semana = parseInt(diaSemana)
+      if (tipo === 'fecha') {
+        if (!fecha) { alert('Seleccioná una fecha'); setGuardando(false); return }
+        body.fecha = fecha
+      }
+      await api.post('/api/pos/bloqueos', body)
+      setMotivo('')
+      setFecha('')
+      cargar()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function eliminar(id) {
+    if (!confirm('¿Eliminar este bloqueo?')) return
+    try {
+      await api.delete(`/api/pos/bloqueos/${id}`)
+      cargar()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
+  const semanales = bloqueos.filter(b => b.tipo === 'semanal')
+  const porFecha = bloqueos.filter(b => b.tipo === 'fecha')
+
+  return (
+    <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+      {/* Formulario */}
+      <form onSubmit={crear} className="space-y-3">
+        <div className="flex items-center gap-2">
+          <select value={tipo} onChange={e => setTipo(e.target.value)} className="campo-form text-sm flex-1">
+            <option value="semanal">Día de la semana (recurrente)</option>
+            <option value="fecha">Fecha específica</option>
+          </select>
+          {tipo === 'semanal' ? (
+            <select value={diaSemana} onChange={e => setDiaSemana(e.target.value)} className="campo-form text-sm flex-1">
+              {DIAS_SEMANA.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+          ) : (
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} className="campo-form text-sm flex-1" />
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={turno} onChange={e => setTurno(e.target.value)} className="campo-form text-sm flex-1">
+            {TURNOS_OPT.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <select value={aplicaA} onChange={e => setAplicaA(e.target.value)} className="campo-form text-sm flex-1">
+            {APLICA_OPT.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>
+        </div>
+        <input
+          type="text"
+          value={motivo}
+          onChange={e => setMotivo(e.target.value)}
+          placeholder="Motivo (opcional, ej: Feriado, Sucursal cerrada)"
+          className="campo-form text-sm w-full"
+        />
+        <button type="submit" disabled={guardando} className="btn-primario">
+          {guardando ? 'Guardando...' : 'Agregar bloqueo'}
+        </button>
+      </form>
+
+      {/* Lista */}
+      {cargando ? (
+        <div className="flex justify-center py-6">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600" />
+        </div>
+      ) : bloqueos.length === 0 ? (
+        <p className="text-gray-400 text-sm text-center py-6">No hay bloqueos configurados</p>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {/* Semanales */}
+          {semanales.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Recurrentes (semanal)</h4>
+              <div className="space-y-1">
+                {semanales.map(b => (
+                  <div key={b.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-gray-700">{DIAS_SEMANA[b.dia_semana]}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.turno === 'todo' ? 'bg-red-100 text-red-700' : b.turno === 'AM' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
+                      }`}>
+                        {b.turno === 'todo' ? 'Todo el día' : b.turno}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.aplica_a === 'todos' ? 'bg-gray-100 text-gray-600' : b.aplica_a === 'delivery' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {b.aplica_a === 'todos' ? 'Delivery + Retiro' : b.aplica_a === 'delivery' ? 'Delivery' : 'Retiro'}
+                      </span>
+                      {b.motivo && <span className="text-gray-400 text-xs">— {b.motivo}</span>}
+                    </div>
+                    <button onClick={() => eliminar(b.id)} className="text-red-400 hover:text-red-600 text-xs font-medium">Eliminar</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Por fecha */}
+          {porFecha.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Fechas específicas</h4>
+              <div className="space-y-1">
+                {porFecha.map(b => (
+                  <div key={b.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-gray-700">
+                        {new Date(b.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.turno === 'todo' ? 'bg-red-100 text-red-700' : b.turno === 'AM' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
+                      }`}>
+                        {b.turno === 'todo' ? 'Todo el día' : b.turno}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.aplica_a === 'todos' ? 'bg-gray-100 text-gray-600' : b.aplica_a === 'delivery' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {b.aplica_a === 'todos' ? 'Delivery + Retiro' : b.aplica_a === 'delivery' ? 'Delivery' : 'Retiro'}
+                      </span>
+                      {b.motivo && <span className="text-gray-400 text-xs">— {b.motivo}</span>}
+                    </div>
+                    <button onClick={() => eliminar(b.id)} className="text-red-400 hover:text-red-600 text-xs font-medium">Eliminar</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

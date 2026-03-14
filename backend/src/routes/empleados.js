@@ -59,7 +59,7 @@ router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
 // Admin: crea un nuevo empleado
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { nombre, sucursal_id, codigo } = req.body
+    const { nombre, sucursal_id, codigo, fecha_cumpleanos } = req.body
 
     if (!nombre || !nombre.trim()) {
       return res.status(400).json({ error: 'El nombre del empleado es requerido' })
@@ -73,9 +73,12 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(400).json({ error: 'El código del empleado es requerido' })
     }
 
+    const insert = { nombre: nombre.trim(), sucursal_id, codigo: codigo.trim() }
+    if (fecha_cumpleanos !== undefined) insert.fecha_cumpleanos = fecha_cumpleanos || null
+
     const { data, error } = await supabase
       .from('empleados')
-      .insert({ nombre: nombre.trim(), sucursal_id, codigo: codigo.trim() })
+      .insert(insert)
       .select('*, sucursales(id, nombre)')
       .single()
 
@@ -97,13 +100,14 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, sucursal_id, activo, codigo } = req.body
+    const { nombre, sucursal_id, activo, codigo, fecha_cumpleanos } = req.body
 
     const updates = {}
     if (nombre !== undefined) updates.nombre = nombre.trim()
     if (sucursal_id !== undefined) updates.sucursal_id = sucursal_id
     if (activo !== undefined) updates.activo = activo
     if (codigo !== undefined) updates.codigo = codigo.trim()
+    if (fecha_cumpleanos !== undefined) updates.fecha_cumpleanos = fecha_cumpleanos || null
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No se enviaron campos para actualizar' })

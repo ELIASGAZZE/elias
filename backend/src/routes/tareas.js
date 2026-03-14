@@ -226,7 +226,7 @@ router.get('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
 // POST /api/tareas/:tareaId/config
 router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { sucursal_id, frecuencia_dias, dia_preferencia, reprogramar_siguiente, fecha_inicio } = req.body
+    const { sucursal_id, tipo, frecuencia_dias, dias_semana, dia_preferencia, reprogramar_siguiente, fecha_inicio } = req.body
 
     if (!sucursal_id) {
       return res.status(400).json({ error: 'La sucursal es requerida' })
@@ -235,7 +235,9 @@ router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
     const insert = {
       tarea_id: req.params.tareaId,
       sucursal_id,
+      tipo: tipo || 'frecuencia',
       frecuencia_dias: frecuencia_dias || 7,
+      dias_semana: dias_semana || null,
       dia_preferencia: dia_preferencia || null,
       reprogramar_siguiente: reprogramar_siguiente !== false,
       fecha_inicio: fecha_inicio || new Date().toISOString().split('T')[0],
@@ -263,9 +265,11 @@ router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
 // PUT /api/tareas/config/:id
 router.put('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { frecuencia_dias, dia_preferencia, reprogramar_siguiente, fecha_inicio, activo } = req.body
+    const { tipo, frecuencia_dias, dias_semana, dia_preferencia, reprogramar_siguiente, fecha_inicio, activo } = req.body
     const updates = {}
+    if (tipo !== undefined) updates.tipo = tipo
     if (frecuencia_dias !== undefined) updates.frecuencia_dias = frecuencia_dias
+    if (dias_semana !== undefined) updates.dias_semana = dias_semana
     if (dia_preferencia !== undefined) updates.dia_preferencia = dia_preferencia || null
     if (reprogramar_siguiente !== undefined) updates.reprogramar_siguiente = reprogramar_siguiente
     if (fecha_inicio !== undefined) updates.fecha_inicio = fecha_inicio
@@ -425,11 +429,20 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
 router.get('/pendientes', verificarAuth, async (req, res) => {
   try {
     const sucursalId = req.perfil.rol === 'admin'
-      ? req.query.sucursal_id || req.perfil.sucursal_id
+      ? req.query.sucursal_id || req.perfil.sucursal_id || null
       : req.perfil.sucursal_id
 
-    if (!sucursalId) {
+    if (!sucursalId && req.perfil.rol !== 'admin') {
       return res.status(400).json({ error: 'Sucursal no determinada' })
+    }
+
+    // Admin sin sucursal: traer pendientes de todas las sucursales
+    if (!sucursalId) {
+      const { data: sucursales } = await supabase.from('sucursales').select('id')
+      const todas = await Promise.all(
+        (sucursales || []).map(s => obtenerTareasPendientes(s.id))
+      )
+      return res.json(todas.flat())
     }
 
     const pendientes = await obtenerTareasPendientes(sucursalId)
@@ -546,10 +559,10 @@ router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, async (req, re
     const { data: configs, error: errConfigs } = await configQuery
     if (errConfigs) throw errConfigs
 
-    // Obtener ejecuciones en rango
+    // Obtener ejecuciones en rango con detalle
     let ejQuery = supabase
       .from('ejecuciones_tarea')
-      .select('id, tarea_config_id, fecha_programada, fecha_ejecucion')
+      .select('id, tarea_config_id, fecha_programada, fecha_ejecucion, completada_por:perfiles(nombre)')
       .gte('fecha_ejecucion', fechaDesde)
       .lte('fecha_ejecucion', fechaHasta)
 
@@ -560,41 +573,89 @@ router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, async (req, re
     const totalEjecutadas = ejecuciones.length
     const totalConfigs = configs.length
 
+    // Calcular total esperado: cuántas ejecuciones debería haber por config en el rango
+    const dDesde = new Date(fechaDesde)
+    const dHasta = new Date(fechaHasta)
+    let totalEsperadas = 0
+
     // Agrupar ejecuciones por sucursal
     const porSucursal = {}
     for (const config of configs) {
       const sucNombre = config.sucursal?.nombre || 'Sin sucursal'
-      if (!porSucursal[sucNombre]) porSucursal[sucNombre] = { ejecutadas: 0, configs: 0 }
+      if (!porSucursal[sucNombre]) porSucursal[sucNombre] = { ejecutadas: 0, esperadas: 0, a_tiempo: 0, atrasadas: 0, configs: 0 }
       porSucursal[sucNombre].configs++
+
+      // Calcular cuántas veces debía ejecutarse en el rango
+      const inicio = new Date(config.fecha_inicio)
+      const desde = inicio > dDesde ? inicio : dDesde
+      if (desde > dHasta) continue
+      const diasEnRango = Math.floor((dHasta - desde) / (1000 * 60 * 60 * 24)) + 1
+      const esperadas = Math.max(1, Math.floor(diasEnRango / (config.frecuencia_dias || 7)))
+      totalEsperadas += esperadas
+      porSucursal[sucNombre].esperadas += esperadas
     }
     for (const ej of ejecuciones) {
       const config = configs.find(c => c.id === ej.tarea_config_id)
       if (config) {
         const sucNombre = config.sucursal?.nombre || 'Sin sucursal'
-        if (porSucursal[sucNombre]) porSucursal[sucNombre].ejecutadas++
+        if (porSucursal[sucNombre]) {
+          porSucursal[sucNombre].ejecutadas++
+          if (ej.fecha_programada && ej.fecha_ejecucion > ej.fecha_programada) {
+            porSucursal[sucNombre].atrasadas++
+          } else {
+            porSucursal[sucNombre].a_tiempo++
+          }
+        }
       }
     }
 
-    // Contar a_tiempo vs atrasadas
+    // Clasificar a_tiempo vs atrasadas con detalle
     let a_tiempo = 0
     let atrasadas = 0
+    const detalle_a_tiempo = []
+    const detalle_atrasadas = []
+
+    // Mapa config -> info para enriquecer detalle
+    const configMap = {}
+    for (const c of configs) {
+      configMap[c.id] = { tarea: c.tarea?.nombre, sucursal: c.sucursal?.nombre }
+    }
+
     for (const ej of ejecuciones) {
+      const info = configMap[ej.tarea_config_id] || {}
+      const item = {
+        tarea: info.tarea || 'Tarea',
+        sucursal: info.sucursal || '',
+        fecha_ejecucion: ej.fecha_ejecucion,
+        fecha_programada: ej.fecha_programada,
+        completada_por: ej.completada_por?.nombre || null,
+      }
       if (ej.fecha_programada && ej.fecha_ejecucion > ej.fecha_programada) {
         atrasadas++
+        const diffDias = Math.ceil((new Date(ej.fecha_ejecucion) - new Date(ej.fecha_programada)) / (1000 * 60 * 60 * 24))
+        detalle_atrasadas.push({ ...item, dias_atraso: diffDias })
       } else {
         a_tiempo++
+        detalle_a_tiempo.push(item)
       }
     }
 
     res.json({
       periodo: { desde: fechaDesde, hasta: fechaHasta },
       total_ejecutadas: totalEjecutadas,
+      total_esperadas: totalEsperadas,
       total_configs_activas: totalConfigs,
       a_tiempo,
       atrasadas,
+      detalle_a_tiempo,
+      detalle_atrasadas,
       por_sucursal: Object.entries(porSucursal).map(([nombre, v]) => ({
         sucursal: nombre,
         ejecutadas: v.ejecutadas,
+        esperadas: v.esperadas,
+        no_ejecutadas: Math.max(0, v.esperadas - v.ejecutadas),
+        a_tiempo: v.a_tiempo,
+        atrasadas: v.atrasadas,
         configs_activas: v.configs,
       })),
     })
@@ -659,7 +720,7 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     const fechaHasta = hasta || new Date().toISOString().split('T')[0]
 
-    // Traer ejecuciones con empleados
+    // Traer ejecuciones con empleados y config de tarea
     let ejQuery = supabase
       .from('ejecuciones_tarea')
       .select('id, tarea_config_id, fecha_ejecucion, ejecuciones_empleados(empleado:empleados(id, nombre))')
@@ -669,30 +730,47 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
     const { data: ejecuciones, error } = await ejQuery
     if (error) throw error
 
+    // Traer nombres de tareas por config
+    const configIds = [...new Set(ejecuciones.map(e => e.tarea_config_id))]
+    const { data: configsData } = await supabase
+      .from('tareas_config_sucursal')
+      .select('id, sucursal_id, tarea:tareas(nombre)')
+      .in('id', configIds.length > 0 ? configIds : ['none'])
+
+    const configNombreMap = {}
+    for (const c of (configsData || [])) {
+      configNombreMap[c.id] = c.tarea?.nombre || 'Tarea'
+    }
+
     // Filtrar por sucursal si se pide
     let ejecsFiltradas = ejecuciones
     if (sucursal_id) {
-      const { data: configIds } = await supabase
-        .from('tareas_config_sucursal')
-        .select('id')
-        .eq('sucursal_id', sucursal_id)
-      const ids = (configIds || []).map(c => c.id)
+      const ids = (configsData || []).filter(c => c.sucursal_id === sucursal_id).map(c => c.id)
       ejecsFiltradas = ejecuciones.filter(e => ids.includes(e.tarea_config_id))
     }
 
-    // Contar por empleado
+    // Contar por empleado + detalle de tareas
     const conteo = {}
     for (const ej of ejecsFiltradas) {
+      const nombreTarea = configNombreMap[ej.tarea_config_id] || 'Tarea'
       for (const ee of (ej.ejecuciones_empleados || [])) {
         const emp = ee.empleado
         if (emp) {
-          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0 }
+          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0, tareas: {} }
           conteo[emp.id].cantidad++
+          conteo[emp.id].tareas[nombreTarea] = (conteo[emp.id].tareas[nombreTarea] || 0) + 1
         }
       }
     }
 
-    const ranking = Object.values(conteo).sort((a, b) => b.cantidad - a.cantidad)
+    const ranking = Object.values(conteo)
+      .map(e => ({
+        ...e,
+        tareas: Object.entries(e.tareas)
+          .map(([nombre, cantidad]) => ({ nombre, cantidad }))
+          .sort((a, b) => b.cantidad - a.cantidad),
+      }))
+      .sort((a, b) => b.cantidad - a.cantidad)
     res.json(ranking)
   } catch (err) {
     console.error('Error analytics por-empleado:', err)
@@ -703,12 +781,14 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
 // GET /api/tareas/analytics/incumplimiento
 router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    const { sucursal_id } = req.query
+    const { sucursal_id, desde, hasta } = req.query
+    const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
 
     // Obtener todas las configs activas
     let configQuery = supabase
       .from('tareas_config_sucursal')
-      .select('id, tarea:tareas(nombre), sucursal:sucursales(nombre), frecuencia_dias')
+      .select('id, tarea:tareas(nombre), sucursal:sucursales(nombre), frecuencia_dias, fecha_inicio')
       .eq('activo', true)
 
     if (sucursal_id) configQuery = configQuery.eq('sucursal_id', sucursal_id)
@@ -716,25 +796,87 @@ router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, async (
     const { data: configs, error: errConfigs } = await configQuery
     if (errConfigs) throw errConfigs
 
-    // Para cada config, contar ejecuciones totales
-    const resultado = []
-    for (const config of configs) {
-      const { count } = await supabase
-        .from('ejecuciones_tarea')
-        .select('id', { count: 'exact', head: true })
-        .eq('tarea_config_id', config.id)
+    // Traer ejecuciones en rango
+    const configIds = configs.map(c => c.id)
+    const { data: ejecuciones } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, tarea_config_id, fecha_programada, fecha_ejecucion, calificacion')
+      .in('tarea_config_id', configIds.length > 0 ? configIds : ['none'])
+      .gte('fecha_ejecucion', fechaDesde)
+      .lte('fecha_ejecucion', fechaHasta)
 
-      resultado.push({
+    // Agrupar ejecuciones por config
+    const ejPorConfig = {}
+    for (const ej of (ejecuciones || [])) {
+      if (!ejPorConfig[ej.tarea_config_id]) ejPorConfig[ej.tarea_config_id] = []
+      ejPorConfig[ej.tarea_config_id].push(ej)
+    }
+
+    const dDesde = new Date(fechaDesde)
+    const dHasta = new Date(fechaHasta)
+
+    const resultado = configs.map(config => {
+      const inicio = new Date(config.fecha_inicio)
+      const desde = inicio > dDesde ? inicio : dDesde
+      const diasEnRango = Math.max(1, Math.floor((dHasta - desde) / (1000 * 60 * 60 * 24)) + 1)
+      const esperadas = Math.max(1, Math.floor(diasEnRango / (config.frecuencia_dias || 7)))
+
+      const ejecs = ejPorConfig[config.id] || []
+      const ejecutadas = ejecs.length
+      const atrasadas = ejecs.filter(e => e.fecha_programada && e.fecha_ejecucion > e.fecha_programada).length
+      const a_tiempo = ejecutadas - atrasadas
+
+      const califs = ejecs.filter(e => e.calificacion > 0).map(e => e.calificacion)
+      const promCalif = califs.length > 0 ? Math.round((califs.reduce((s, c) => s + c, 0) / califs.length) * 10) / 10 : null
+
+      const cumplimiento = esperadas > 0 ? Math.round((ejecutadas / esperadas) * 100) : 0
+
+      return {
         tarea: config.tarea?.nombre,
         sucursal: config.sucursal?.nombre,
         frecuencia_dias: config.frecuencia_dias,
-        total_ejecuciones: count || 0,
-      })
+        esperadas,
+        ejecutadas,
+        a_tiempo,
+        atrasadas,
+        no_ejecutadas: Math.max(0, esperadas - ejecutadas),
+        cumplimiento: Math.min(cumplimiento, 100),
+        promedio_calificacion: promCalif,
+      }
+    })
+
+    // Si no se filtra por sucursal, agrupar por tarea
+    let final
+    if (sucursal_id) {
+      final = resultado
+    } else {
+      const agrupado = {}
+      for (const r of resultado) {
+        const key = r.tarea
+        if (!agrupado[key]) {
+          agrupado[key] = { tarea: r.tarea, sucursal: 'Todas', frecuencia_dias: r.frecuencia_dias, esperadas: 0, ejecutadas: 0, a_tiempo: 0, atrasadas: 0, no_ejecutadas: 0, sum_calif: 0, count_calif: 0 }
+        }
+        agrupado[key].esperadas += r.esperadas
+        agrupado[key].ejecutadas += r.ejecutadas
+        agrupado[key].a_tiempo += r.a_tiempo
+        agrupado[key].atrasadas += r.atrasadas
+        agrupado[key].no_ejecutadas += r.no_ejecutadas
+        if (r.promedio_calificacion) {
+          agrupado[key].sum_calif += r.promedio_calificacion * r.ejecutadas
+          agrupado[key].count_calif += r.ejecutadas
+        }
+      }
+      final = Object.values(agrupado).map(r => ({
+        ...r,
+        cumplimiento: r.esperadas > 0 ? Math.min(100, Math.round((r.ejecutadas / r.esperadas) * 100)) : 0,
+        promedio_calificacion: r.count_calif > 0 ? Math.round((r.sum_calif / r.count_calif) * 10) / 10 : null,
+      }))
+      // Limpiar campos internos
+      final.forEach(r => { delete r.sum_calif; delete r.count_calif })
     }
 
-    // Ordenar por menor cumplimiento
-    resultado.sort((a, b) => a.total_ejecuciones - b.total_ejecuciones)
-    res.json(resultado)
+    final.sort((a, b) => a.cumplimiento - b.cumplimiento)
+    res.json(final)
   } catch (err) {
     console.error('Error analytics incumplimiento:', err)
     res.status(500).json({ error: 'Error al obtener incumplimiento' })
@@ -784,6 +926,371 @@ router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, 
   } catch (err) {
     console.error('Error analytics historial:', err)
     res.status(500).json({ error: 'Error al obtener historial' })
+  }
+})
+
+// ── Ranking de empleados ─────────────────────────────────────────────────────
+
+// GET /api/tareas/ranking?periodo=mensual|anual&mes=2026-03
+router.get('/ranking', verificarAuth, async (req, res) => {
+  try {
+    const { periodo, mes } = req.query
+    const hoy = new Date()
+
+    let fechaDesde, fechaHasta, etiqueta
+    if (periodo === 'anual') {
+      const anio = mes ? mes.split('-')[0] : hoy.getFullYear().toString()
+      fechaDesde = `${anio}-01-01`
+      fechaHasta = `${anio}-12-31`
+      etiqueta = anio
+    } else {
+      // mensual por defecto
+      const ref = mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`
+      const [y, m] = ref.split('-')
+      fechaDesde = `${y}-${m}-01`
+      const ultimo = new Date(parseInt(y), parseInt(m), 0).getDate()
+      fechaHasta = `${y}-${m}-${String(ultimo).padStart(2, '0')}`
+      const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+      etiqueta = `${meses[parseInt(m) - 1]} ${y}`
+    }
+
+    // Traer ejecuciones en rango con empleados y calificación
+    const { data: ejecuciones, error: errEj } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, calificacion, ejecuciones_empleados(empleado_id)')
+      .gte('fecha_ejecucion', fechaDesde)
+      .lte('fecha_ejecucion', fechaHasta)
+
+    if (errEj) throw errEj
+
+    // Traer empleados activos con fecha de cumpleaños
+    const { data: empleados, error: errEmp } = await supabase
+      .from('empleados')
+      .select('id, nombre, fecha_cumpleanos')
+      .eq('activo', true)
+      .order('nombre')
+
+    if (errEmp) throw errEmp
+
+    // Calcular score por empleado: total_tareas y suma de calificaciones
+    const scoreMap = {}
+    for (const ej of (ejecuciones || [])) {
+      const calif = ej.calificacion || 0
+      for (const ee of (ej.ejecuciones_empleados || [])) {
+        if (!scoreMap[ee.empleado_id]) {
+          scoreMap[ee.empleado_id] = { tareas: 0, suma_calif: 0, count_calif: 0 }
+        }
+        scoreMap[ee.empleado_id].tareas++
+        if (calif > 0) {
+          scoreMap[ee.empleado_id].suma_calif += calif
+          scoreMap[ee.empleado_id].count_calif++
+        }
+      }
+    }
+
+    // Construir ranking
+    const ranking = empleados.map(emp => {
+      const s = scoreMap[emp.id] || { tareas: 0, suma_calif: 0, count_calif: 0 }
+      const promedio = s.count_calif > 0 ? s.suma_calif / s.count_calif : 0
+      // Score = promedio calificación × cantidad de tareas
+      const score = Math.round(promedio * s.tareas * 10) / 10
+      return {
+        id: emp.id,
+        nombre: emp.nombre,
+        fecha_cumpleanos: emp.fecha_cumpleanos,
+        tareas: s.tareas,
+        promedio_calificacion: Math.round(promedio * 10) / 10,
+        score,
+      }
+    }).sort((a, b) => b.score - a.score)
+
+    res.json({ periodo: periodo || 'mensual', etiqueta, desde: fechaDesde, hasta: fechaHasta, ranking })
+  } catch (err) {
+    console.error('Error ranking:', err)
+    res.status(500).json({ error: 'Error al obtener ranking' })
+  }
+})
+
+// GET /api/tareas/analytics/tarea-detalle?tarea_id=...&desde=...&hasta=...&sucursal_id=...
+router.get('/analytics/tarea-detalle', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { tarea_id, desde, hasta, sucursal_id } = req.query
+    if (!tarea_id) return res.status(400).json({ error: 'tarea_id es requerido' })
+
+    const fechaDesde = desde || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+
+    // Configs de esta tarea
+    let cfgQuery = supabase
+      .from('tareas_config_sucursal')
+      .select('id, sucursal_id, frecuencia_dias')
+      .eq('tarea_id', tarea_id)
+      .eq('activo', true)
+    if (sucursal_id) cfgQuery = cfgQuery.eq('sucursal_id', sucursal_id)
+
+    const { data: configs } = await cfgQuery
+    const cfgIds = (configs || []).map(c => c.id)
+    if (cfgIds.length === 0) return res.json({ ejecuciones: [], timeline: [], empleados: [], subtareas_cumplimiento: [] })
+
+    // Ejecuciones en rango
+    const { data: ejecuciones } = await supabase
+      .from('ejecuciones_tarea')
+      .select(`
+        id, tarea_config_id, fecha_programada, fecha_ejecucion, calificacion, observaciones, created_at,
+        completada_por:perfiles(nombre),
+        ejecuciones_empleados(empleado:empleados(id, nombre)),
+        ejecuciones_subtareas(subtarea:subtareas(id, nombre), completada)
+      `)
+      .in('tarea_config_id', cfgIds)
+      .gte('fecha_ejecucion', fechaDesde)
+      .lte('fecha_ejecucion', fechaHasta)
+      .order('fecha_ejecucion', { ascending: true })
+
+    // 1. Timeline: por fecha, calificación + puntualidad
+    const timeline = (ejecuciones || []).map(ej => {
+      const atrasada = ej.fecha_programada && ej.fecha_ejecucion > ej.fecha_programada
+      const diasAtraso = atrasada ? Math.ceil((new Date(ej.fecha_ejecucion) - new Date(ej.fecha_programada)) / (1000 * 60 * 60 * 24)) : 0
+      return {
+        fecha: ej.fecha_ejecucion,
+        calificacion: ej.calificacion || null,
+        puntualidad: atrasada ? 'atrasada' : 'a_tiempo',
+        dias_atraso: diasAtraso,
+        completada_por: ej.completada_por?.nombre || null,
+        observaciones: ej.observaciones || null,
+      }
+    })
+
+    // 2. Evolución calificación por fecha (promedio si hay varias el mismo día)
+    const califPorDia = {}
+    for (const ej of (ejecuciones || [])) {
+      if (!ej.calificacion) continue
+      if (!califPorDia[ej.fecha_ejecucion]) califPorDia[ej.fecha_ejecucion] = { sum: 0, count: 0 }
+      califPorDia[ej.fecha_ejecucion].sum += ej.calificacion
+      califPorDia[ej.fecha_ejecucion].count++
+    }
+    const evolucion_calificacion = Object.entries(califPorDia)
+      .map(([fecha, v]) => ({ fecha, calificacion: Math.round((v.sum / v.count) * 10) / 10 }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha))
+
+    // 3. Evolución puntualidad por fecha
+    const puntPorDia = {}
+    for (const ej of (ejecuciones || [])) {
+      const dia = ej.fecha_ejecucion
+      if (!puntPorDia[dia]) puntPorDia[dia] = { fecha: dia, a_tiempo: 0, atrasadas: 0 }
+      if (ej.fecha_programada && ej.fecha_ejecucion > ej.fecha_programada) {
+        puntPorDia[dia].atrasadas++
+      } else {
+        puntPorDia[dia].a_tiempo++
+      }
+    }
+    const evolucion_puntualidad = Object.values(puntPorDia).sort((a, b) => a.fecha.localeCompare(b.fecha))
+
+    // 4. Concentración de empleados
+    const empConteo = {}
+    for (const ej of (ejecuciones || [])) {
+      for (const ee of (ej.ejecuciones_empleados || [])) {
+        const emp = ee.empleado
+        if (emp) {
+          if (!empConteo[emp.id]) empConteo[emp.id] = { nombre: emp.nombre, cantidad: 0 }
+          empConteo[emp.id].cantidad++
+        }
+      }
+    }
+    const totalEjecuciones = (ejecuciones || []).length
+    const empleados = Object.values(empConteo)
+      .map(e => ({ ...e, porcentaje: totalEjecuciones > 0 ? Math.round((e.cantidad / totalEjecuciones) * 100) : 0 }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+
+    // 5. Cumplimiento de subtareas
+    const subConteo = {}
+    for (const ej of (ejecuciones || [])) {
+      for (const es of (ej.ejecuciones_subtareas || [])) {
+        const nombre = es.subtarea?.nombre || 'Subtarea'
+        const id = es.subtarea?.id || nombre
+        if (!subConteo[id]) subConteo[id] = { nombre, completadas: 0, total: 0 }
+        subConteo[id].total++
+        if (es.completada) subConteo[id].completadas++
+      }
+    }
+    const subtareas_cumplimiento = Object.values(subConteo)
+      .map(s => ({ ...s, porcentaje: s.total > 0 ? Math.round((s.completadas / s.total) * 100) : 0 }))
+      .sort((a, b) => a.porcentaje - b.porcentaje)
+
+    // 6. Resumen rápido
+    const califs = (ejecuciones || []).filter(e => e.calificacion).map(e => e.calificacion)
+    const totalAtrasadas = (ejecuciones || []).filter(e => e.fecha_programada && e.fecha_ejecucion > e.fecha_programada).length
+
+    const resumen = {
+      total_ejecuciones: totalEjecuciones,
+      a_tiempo: totalEjecuciones - totalAtrasadas,
+      atrasadas: totalAtrasadas,
+      promedio_calificacion: califs.length > 0 ? Math.round((califs.reduce((s, c) => s + c, 0) / califs.length) * 10) / 10 : null,
+      mejor_calificacion: califs.length > 0 ? Math.max(...califs) : null,
+      peor_calificacion: califs.length > 0 ? Math.min(...califs) : null,
+    }
+
+    res.json({
+      resumen,
+      evolucion_calificacion,
+      evolucion_puntualidad,
+      empleados,
+      subtareas_cumplimiento,
+      ejecuciones: timeline,
+    })
+  } catch (err) {
+    console.error('Error analytics tarea-detalle:', err)
+    res.status(500).json({ error: 'Error al obtener detalle de tarea' })
+  }
+})
+
+// GET /api/tareas/analytics/calidad — Análisis de calidad/calificaciones
+router.get('/analytics/calidad', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { desde, hasta, sucursal_id } = req.query
+    const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+
+    // Traer ejecuciones con calificación, observaciones, empleados, tarea
+    let cfgFilter = supabase
+      .from('tareas_config_sucursal')
+      .select('id, tarea:tareas(nombre), sucursal:sucursales(nombre)')
+      .eq('activo', true)
+    if (sucursal_id) cfgFilter = cfgFilter.eq('sucursal_id', sucursal_id)
+    const { data: configs } = await cfgFilter
+    const cfgIds = (configs || []).map(c => c.id)
+    if (cfgIds.length === 0) return res.json({ distribucion: [], evolucion: [], peores_tareas: [], peores_empleados: [], observaciones_criticas: [], tendencia: null })
+
+    const cfgMap = {}
+    for (const c of configs) cfgMap[c.id] = { tarea: c.tarea?.nombre, sucursal: c.sucursal?.nombre }
+
+    const { data: ejecuciones } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, tarea_config_id, fecha_ejecucion, calificacion, observaciones, completada_por:perfiles(nombre), ejecuciones_empleados(empleado:empleados(id, nombre))')
+      .in('tarea_config_id', cfgIds)
+      .gte('fecha_ejecucion', fechaDesde)
+      .lte('fecha_ejecucion', fechaHasta)
+      .order('fecha_ejecucion', { ascending: true })
+
+    const ejecs = ejecuciones || []
+    const conCalif = ejecs.filter(e => e.calificacion > 0)
+
+    // 1. Distribución de calificaciones (1-5)
+    const distribucion = [1, 2, 3, 4, 5].map(n => ({
+      estrellas: n,
+      cantidad: conCalif.filter(e => e.calificacion === n).length,
+    }))
+
+    // 2. Evolución promedio por semana
+    const porSemana = {}
+    for (const ej of conCalif) {
+      const d = new Date(ej.fecha_ejecucion)
+      // Agrupar por semana (lunes)
+      const day = d.getDay()
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+      const lunes = new Date(d.setDate(diff))
+      const key = lunes.toISOString().split('T')[0]
+      if (!porSemana[key]) porSemana[key] = { fecha: key, sum: 0, count: 0 }
+      porSemana[key].sum += ej.calificacion
+      porSemana[key].count++
+    }
+    const evolucion = Object.values(porSemana)
+      .map(s => ({ fecha: s.fecha, promedio: Math.round((s.sum / s.count) * 10) / 10, cantidad: s.count }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha))
+
+    // 3. Peores tareas (promedio calificación más bajo)
+    const porTarea = {}
+    for (const ej of conCalif) {
+      const info = cfgMap[ej.tarea_config_id]
+      const key = info?.tarea || 'Tarea'
+      if (!porTarea[key]) porTarea[key] = { tarea: key, sum: 0, count: 0, bajas: 0, observaciones_count: 0 }
+      porTarea[key].sum += ej.calificacion
+      porTarea[key].count++
+      if (ej.calificacion <= 2) porTarea[key].bajas++
+      if (ej.observaciones) porTarea[key].observaciones_count++
+    }
+    const peores_tareas = Object.values(porTarea)
+      .map(t => ({
+        tarea: t.tarea,
+        promedio: Math.round((t.sum / t.count) * 10) / 10,
+        total: t.count,
+        bajas: t.bajas,
+        con_observaciones: t.observaciones_count,
+      }))
+      .sort((a, b) => a.promedio - b.promedio)
+
+    // 4. Empleados con peores calificaciones
+    const porEmpleado = {}
+    for (const ej of conCalif) {
+      for (const ee of (ej.ejecuciones_empleados || [])) {
+        const emp = ee.empleado
+        if (!emp) continue
+        if (!porEmpleado[emp.id]) porEmpleado[emp.id] = { nombre: emp.nombre, sum: 0, count: 0, bajas: 0 }
+        porEmpleado[emp.id].sum += ej.calificacion
+        porEmpleado[emp.id].count++
+        if (ej.calificacion <= 2) porEmpleado[emp.id].bajas++
+      }
+    }
+    const peores_empleados = Object.values(porEmpleado)
+      .map(e => ({
+        nombre: e.nombre,
+        promedio: Math.round((e.sum / e.count) * 10) / 10,
+        total: e.count,
+        bajas: e.bajas,
+        pct_bajas: e.count > 0 ? Math.round((e.bajas / e.count) * 100) : 0,
+      }))
+      .sort((a, b) => a.promedio - b.promedio)
+
+    // 5. Observaciones de ejecuciones con calificación baja (<=2)
+    const observaciones_criticas = ejecs
+      .filter(e => e.calificacion && e.calificacion <= 2 && e.observaciones)
+      .map(e => ({
+        fecha: e.fecha_ejecucion,
+        tarea: cfgMap[e.tarea_config_id]?.tarea || 'Tarea',
+        sucursal: cfgMap[e.tarea_config_id]?.sucursal || '',
+        calificacion: e.calificacion,
+        observaciones: e.observaciones,
+        completada_por: e.completada_por?.nombre || null,
+        empleados: (e.ejecuciones_empleados || []).map(ee => ee.empleado?.nombre).filter(Boolean),
+      }))
+      .sort((a, b) => b.fecha.localeCompare(a.fecha))
+      .slice(0, 20)
+
+    // 6. Tendencia (comparar primera mitad vs segunda mitad del periodo)
+    let tendencia = null
+    if (conCalif.length >= 4) {
+      const mitad = Math.floor(conCalif.length / 2)
+      const primera = conCalif.slice(0, mitad)
+      const segunda = conCalif.slice(mitad)
+      const prom1 = primera.reduce((s, e) => s + e.calificacion, 0) / primera.length
+      const prom2 = segunda.reduce((s, e) => s + e.calificacion, 0) / segunda.length
+      const diff = Math.round((prom2 - prom1) * 10) / 10
+      tendencia = {
+        primera_mitad: Math.round(prom1 * 10) / 10,
+        segunda_mitad: Math.round(prom2 * 10) / 10,
+        diferencia: diff,
+        direccion: diff > 0.2 ? 'mejorando' : diff < -0.2 ? 'empeorando' : 'estable',
+      }
+    }
+
+    // 7. Promedio general
+    const promedio_general = conCalif.length > 0
+      ? Math.round((conCalif.reduce((s, e) => s + e.calificacion, 0) / conCalif.length) * 10) / 10
+      : null
+
+    res.json({
+      promedio_general,
+      total_calificadas: conCalif.length,
+      total_sin_calificar: ejecs.length - conCalif.length,
+      distribucion,
+      evolucion,
+      peores_tareas,
+      peores_empleados,
+      observaciones_criticas,
+      tendencia,
+    })
+  } catch (err) {
+    console.error('Error analytics calidad:', err)
+    res.status(500).json({ error: 'Error al obtener análisis de calidad' })
   }
 })
 

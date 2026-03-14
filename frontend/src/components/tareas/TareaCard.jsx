@@ -1,13 +1,13 @@
 // Card de tarea pendiente con badge a tiempo/atrasada
 import React from 'react'
 
-const TareaCard = ({ tarea, onCompletar }) => {
+const TareaCard = ({ tarea, onCompletar, grande }) => {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+    <div className={`bg-white rounded-xl border border-gray-200 shadow-sm ${grande ? 'p-6' : 'p-4'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-semibold text-gray-800 truncate">{tarea.nombre}</h3>
+            <h3 className={`font-semibold text-gray-800 truncate ${grande ? 'text-lg' : ''}`}>{tarea.nombre}</h3>
             {tarea.atrasada ? (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700 whitespace-nowrap">
                 Atrasada ({tarea.dias_atraso}d)
@@ -21,7 +21,7 @@ const TareaCard = ({ tarea, onCompletar }) => {
           {tarea.descripcion && (
             <p className="text-sm text-gray-500 mb-2">{tarea.descripcion}</p>
           )}
-          <div className="flex items-center gap-3 text-xs text-gray-400">
+          <div className={`flex items-center gap-3 text-gray-400 ${grande ? 'text-sm mt-3' : 'text-xs'}`}>
             {tarea.repetitiva ? (
               <>
                 <span>{tarea.subtareas.length} subtarea{tarea.subtareas.length > 1 ? 's' : ''}</span>
@@ -34,15 +34,22 @@ const TareaCard = ({ tarea, onCompletar }) => {
             ) : (
               <>
                 <span>Programada: {formatFecha(tarea.fecha_programada)}</span>
-                <span>Cada {tarea.frecuencia_dias} días</span>
-                {tarea.dia_preferencia && <span>({tarea.dia_preferencia})</span>}
+                {tarea.tipo === 'dia_fijo' ? (
+                  <span>
+                    {(tarea.dias_semana || []).map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}
+                    {' · '}
+                    {tarea.frecuencia_dias === 7 ? 'Semanal' : tarea.frecuencia_dias === 14 ? 'Cada 2 sem' : tarea.frecuencia_dias === 21 ? 'Cada 3 sem' : 'Mensual'}
+                  </span>
+                ) : (
+                  <span>Cada {tarea.frecuencia_dias} días</span>
+                )}
               </>
             )}
           </div>
         </div>
         <button
           onClick={() => onCompletar(tarea)}
-          className="px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 transition-colors whitespace-nowrap"
+          className={`bg-orange-600 text-white font-medium rounded-lg hover:bg-orange-700 transition-colors whitespace-nowrap ${grande ? 'px-6 py-3 text-base' : 'px-4 py-2 text-sm'}`}
         >
           Completar
         </button>

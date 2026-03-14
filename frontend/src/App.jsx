@@ -44,6 +44,7 @@ import TareasHome from './pages/tareas/TareasHome'
 import TareasAdmin from './pages/tareas/TareasAdmin'
 import TareasAnalytics from './pages/tareas/TareasAnalytics'
 import TareasPanel from './pages/tareas/TareasPanel'
+import TareasEquipo from './pages/tareas/TareasEquipo'
 
 // Páginas de la app Auditoría
 import AuditoriaHome from './pages/auditoria/AuditoriaHome'
@@ -220,6 +221,11 @@ const App = () => {
           <Route path="/tareas" element={
             <RutaProtegida>
               <TareasHome />
+            </RutaProtegida>
+          } />
+          <Route path="/tareas/equipo" element={
+            <RutaProtegida>
+              <TareasEquipo />
             </RutaProtegida>
           } />
           <Route path="/tareas/admin" element={

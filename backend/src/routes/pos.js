@@ -713,10 +713,25 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
 router.post('/pedidos', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado } = req.body
+    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
+    }
+
+    // Validar: productos perecederos no pueden tener fecha de entrega > mañana
+    if (fecha_entrega) {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const manana = new Date()
+      manana.setDate(manana.getDate() + 1)
+      const mananaISO = manana.toISOString().split('T')[0]
+      const tienePerecedor = items.some(i => {
+        const rubro = (i.rubro || '').toLowerCase()
+        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+      })
+      if (tienePerecedor && fecha_entrega > mananaISO) {
+        return res.status(400).json({ error: 'Los pedidos con Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana' })
+      }
     }
 
     // Generar número secuencial
@@ -731,7 +746,7 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
 
     const insertData = {
       cajero_id: req.perfil.id,
-      sucursal_id: req.perfil.sucursal_id || null,
+      sucursal_id: sucursal_id || req.perfil.sucursal_id || null,
       id_cliente_centum: id_cliente_centum ?? 0,
       nombre_cliente: nombre_cliente || 'Consumidor Final',
       items: JSON.stringify(items),
@@ -744,6 +759,7 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
       ].filter(Boolean).join(' | ') || null,
       tipo: tipo || 'retiro',
       fecha_entrega: fecha_entrega || null,
+      turno_entrega: turno_entrega || null,
     }
     if (total_pagado) insertData.total_pagado = total_pagado
 
@@ -766,15 +782,31 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
 router.get('/pedidos', verificarAuth, async (req, res) => {
   try {
     const estado = req.query.estado || 'pendiente'
+    const { fecha, sucursal_id, busqueda, tipo } = req.query
 
     let query = supabase
       .from('pedidos_pos')
-      .select('*, perfiles:cajero_id(nombre)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre)')
       .order('created_at', { ascending: false })
-      // total_pagado ya viene con * — no se necesita select extra
 
     if (estado !== 'todos') {
       query = query.eq('estado', estado)
+    }
+    if (tipo && tipo !== 'todos') {
+      query = query.eq('tipo', tipo)
+    }
+
+    // Si hay búsqueda por nombre, ignorar fecha y sucursal
+    if (busqueda && busqueda.trim()) {
+      query = query.ilike('nombre_cliente', `%${busqueda.trim()}%`)
+    } else {
+      // Filtros de fecha y sucursal solo cuando no hay búsqueda
+      if (fecha) {
+        query = query.gte('created_at', `${fecha}T00:00:00`).lte('created_at', `${fecha}T23:59:59`)
+      }
+      if (sucursal_id) {
+        query = query.eq('sucursal_id', sucursal_id)
+      }
     }
 
     const { data, error } = await query
@@ -787,16 +819,121 @@ router.get('/pedidos', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/pos/pedidos/guia-delivery — pedidos delivery para guía de envíos
+router.get('/pedidos/guia-delivery', verificarAuth, async (req, res) => {
+  try {
+    const { fecha } = req.query
+    if (!fecha) return res.status(400).json({ error: 'fecha es requerido' })
+
+    let query = supabase
+      .from('pedidos_pos')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre)')
+      .eq('tipo', 'delivery')
+      .eq('estado', 'pendiente')
+      .eq('fecha_entrega', fecha)
+      .order('turno_entrega', { ascending: true })
+      .order('created_at', { ascending: true })
+
+    const { data, error } = await query
+    if (error) throw error
+
+    res.json({ pedidos: data || [] })
+  } catch (err) {
+    console.error('[POS] Error al obtener guía delivery:', err.message)
+    res.status(500).json({ error: 'Error al obtener guía delivery' })
+  }
+})
+
+// GET /api/pos/pedidos/articulos-por-dia — artículos necesarios agrupados por fecha de entrega
+router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
+  try {
+    const { sucursal_id, fecha_desde, fecha_hasta } = req.query
+
+    let query = supabase
+      .from('pedidos_pos')
+      .select('items, fecha_entrega, created_at, sucursal_id')
+      .eq('estado', 'pendiente')
+
+    if (sucursal_id) {
+      query = query.eq('sucursal_id', sucursal_id)
+    }
+
+    // Filtro de rango de fechas sobre fecha_entrega
+    if (fecha_desde) {
+      query = query.gte('fecha_entrega', fecha_desde)
+    }
+    if (fecha_hasta) {
+      query = query.lte('fecha_entrega', fecha_hasta)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    // Agrupar artículos por fecha de entrega
+    const porDia = {}
+    for (const pedido of (data || [])) {
+      // Usar fecha_entrega o la fecha de creación si no tiene
+      const fecha = pedido.fecha_entrega || (pedido.created_at ? pedido.created_at.split('T')[0] : null)
+      if (!fecha) continue
+
+      if (!porDia[fecha]) porDia[fecha] = {}
+
+      const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
+      for (const item of (items || [])) {
+        const key = item.articulo_id || item.nombre
+        if (!porDia[fecha][key]) {
+          porDia[fecha][key] = {
+            articulo_id: item.articulo_id || null,
+            codigo: item.codigo || null,
+            nombre: item.nombre,
+            cantidad: 0,
+          }
+        }
+        porDia[fecha][key].cantidad += item.cantidad || 1
+      }
+    }
+
+    // Convertir a array ordenado por fecha
+    const resultado = Object.entries(porDia)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fecha, articulosMap]) => ({
+        fecha,
+        articulos: Object.values(articulosMap).sort((a, b) => a.nombre.localeCompare(b.nombre)),
+        total_articulos: Object.values(articulosMap).reduce((s, a) => s + a.cantidad, 0),
+      }))
+
+    res.json({ dias: resultado })
+  } catch (err) {
+    console.error('[POS] Error artículos por día:', err.message)
+    res.status(500).json({ error: 'Error al obtener artículos por día' })
+  }
+})
+
 // PUT /api/pos/pedidos/:id — editar items/total/observaciones de un pedido pendiente
 router.put('/pedidos/:id', verificarAuth, async (req, res) => {
   try {
-    const { items, total, observaciones } = req.body
+    const { items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente, id_cliente_centum, turno_entrega, sucursal_id } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
     }
     if (total == null || total <= 0) {
       return res.status(400).json({ error: 'total debe ser mayor a 0' })
+    }
+
+    // Validar perecederos si cambia fecha_entrega
+    if (fecha_entrega) {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const manana = new Date()
+      manana.setDate(manana.getDate() + 1)
+      const mananaISO = manana.toISOString().split('T')[0]
+      const tienePerecedor = items.some(i => {
+        const rubro = (i.rubro || '').toLowerCase()
+        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+      })
+      if (tienePerecedor && fecha_entrega > mananaISO) {
+        return res.status(400).json({ error: 'Los pedidos con Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana' })
+      }
     }
 
     // Leer pedido actual antes de actualizar (para saldo)
@@ -816,6 +953,20 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
       items: JSON.stringify(items),
       total: nuevoTotal,
       observaciones: observaciones || null,
+    }
+    if (tipo !== undefined) updateData.tipo = tipo
+    if (fecha_entrega !== undefined) updateData.fecha_entrega = fecha_entrega || null
+    if (nombre_cliente !== undefined) updateData.nombre_cliente = nombre_cliente
+    if (id_cliente_centum !== undefined) updateData.id_cliente_centum = id_cliente_centum
+    if (turno_entrega !== undefined) updateData.turno_entrega = turno_entrega || null
+    if (sucursal_id !== undefined) updateData.sucursal_id = sucursal_id
+    if (direccion_entrega !== undefined) {
+      // Actualizar observaciones con nueva dirección
+      let obs = (updateData.observaciones || '').replace(/Dirección: [^|]+\|?\s*/g, '').trim()
+      if (direccion_entrega) {
+        obs = obs ? `${obs} | Dirección: ${direccion_entrega}` : `Dirección: ${direccion_entrega}`
+      }
+      updateData.observaciones = obs || null
     }
 
     // Si el pedido estaba pagado y el nuevo total es menor, ajustar total_pagado y generar saldo
@@ -2009,6 +2160,91 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
         .eq('id', req.params.id)
     } catch (_) { /* ignorar error al guardar */ }
 
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ===================== BLOQUEOS DE PEDIDOS =====================
+
+// GET /api/pos/bloqueos — listar bloqueos activos
+router.get('/bloqueos', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pedidos_bloqueos')
+      .select('*')
+      .eq('activo', true)
+      .order('tipo', { ascending: true })
+      .order('dia_semana', { ascending: true })
+      .order('fecha', { ascending: true })
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/pos/bloqueos — crear bloqueo
+router.post('/bloqueos', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { tipo, dia_semana, fecha, turno, aplica_a, motivo } = req.body
+    if (!tipo || !turno) return res.status(400).json({ error: 'tipo y turno son requeridos' })
+    if (tipo === 'semanal' && (dia_semana === undefined || dia_semana === null)) return res.status(400).json({ error: 'dia_semana es requerido para bloqueo semanal' })
+    if (tipo === 'fecha' && !fecha) return res.status(400).json({ error: 'fecha es requerida para bloqueo por fecha' })
+
+    const { data, error } = await supabase
+      .from('pedidos_bloqueos')
+      .insert({ tipo, dia_semana: tipo === 'semanal' ? dia_semana : null, fecha: tipo === 'fecha' ? fecha : null, turno, aplica_a: aplica_a || 'todos', motivo: motivo || null })
+      .select()
+      .single()
+    if (error) throw error
+    res.status(201).json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/pos/bloqueos/:id — eliminar bloqueo
+router.delete('/bloqueos/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('pedidos_bloqueos')
+      .delete()
+      .eq('id', req.params.id)
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/pos/bloqueos/verificar — verificar si una fecha/turno/tipo está bloqueado
+router.get('/bloqueos/verificar', verificarAuth, async (req, res) => {
+  try {
+    const { fecha, turno, tipo_pedido } = req.query
+    if (!fecha) return res.status(400).json({ error: 'fecha es requerida' })
+
+    const diaSemana = new Date(fecha + 'T12:00:00').getDay()
+
+    const { data, error } = await supabase
+      .from('pedidos_bloqueos')
+      .select('*')
+      .eq('activo', true)
+
+    if (error) throw error
+
+    const bloqueo = (data || []).find(b => {
+      // Verificar si aplica al tipo de pedido
+      if (b.aplica_a !== 'todos' && b.aplica_a !== tipo_pedido) return false
+      // Verificar turno
+      if (b.turno !== 'todo' && turno && b.turno !== turno) return false
+      // Verificar fecha
+      if (b.tipo === 'fecha' && b.fecha === fecha) return true
+      if (b.tipo === 'semanal' && b.dia_semana === diaSemana) return true
+      return false
+    })
+
+    res.json({ bloqueado: !!bloqueo, bloqueo: bloqueo || null })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })

@@ -32,8 +32,9 @@ const TareasAdmin = () => {
 
   // Form config
   const [cfgSucursalId, setCfgSucursalId] = useState('')
+  const [cfgTipo, setCfgTipo] = useState('frecuencia') // 'dia_fijo' o 'frecuencia'
   const [cfgFrecuencia, setCfgFrecuencia] = useState(7)
-  const [cfgDia, setCfgDia] = useState('')
+  const [cfgDiasSemana, setCfgDiasSemana] = useState([]) // para dia_fijo: ['martes','jueves']
   const [cfgReprogramar, setCfgReprogramar] = useState(true)
   const [cfgFechaInicio, setCfgFechaInicio] = useState(new Date().toISOString().split('T')[0])
 
@@ -161,23 +162,34 @@ const TareasAdmin = () => {
   const abrirFormConfig = (config = null) => {
     setEditandoConfig(config)
     setCfgSucursalId(config?.sucursal?.id || config?.sucursal_id || '')
+    setCfgTipo(config?.tipo || 'frecuencia')
     setCfgFrecuencia(config?.frecuencia_dias || 7)
-    setCfgDia(config?.dia_preferencia || '')
+    setCfgDiasSemana(config?.dias_semana || [])
     setCfgReprogramar(config?.reprogramar_siguiente !== false)
     setCfgFechaInicio(config?.fecha_inicio || new Date().toISOString().split('T')[0])
     setMostrarFormConfig(true)
     setError('')
   }
 
+  const toggleDiaSemana = (dia) => {
+    setCfgDiasSemana(prev =>
+      prev.includes(dia) ? prev.filter(d => d !== dia) : [...prev, dia]
+    )
+  }
+
   const guardarConfig = async () => {
     if (!cfgSucursalId) { setError('Seleccione sucursal'); return }
+    if (cfgTipo === 'dia_fijo' && cfgDiasSemana.length === 0) {
+      setError('Seleccione al menos un día de la semana'); return
+    }
     setGuardando(true)
     setError('')
     try {
       const body = {
         sucursal_id: cfgSucursalId,
+        tipo: cfgTipo,
         frecuencia_dias: cfgFrecuencia,
-        dia_preferencia: cfgDia || null,
+        dias_semana: cfgTipo === 'dia_fijo' ? cfgDiasSemana : null,
         reprogramar_siguiente: cfgReprogramar,
         fecha_inicio: cfgFechaInicio,
       }
@@ -260,8 +272,9 @@ const TareasAdmin = () => {
       for (const suc of sucursalesNoConfiguradas) {
         await api.post(`/api/tareas/${tareaActiva.id}/config`, {
           sucursal_id: suc.id,
+          tipo: cfgTipo,
           frecuencia_dias: cfgFrecuencia || 7,
-          dia_preferencia: cfgDia || null,
+          dias_semana: cfgTipo === 'dia_fijo' ? cfgDiasSemana : null,
           reprogramar_siguiente: cfgReprogramar,
           fecha_inicio: cfgFechaInicio,
         })
@@ -399,8 +412,15 @@ const TareasAdmin = () => {
                             <div>
                               <p className="font-medium text-gray-800">{cfg.sucursal?.nombre}</p>
                               <p className="text-xs text-gray-500 mt-0.5">
-                                Cada {cfg.frecuencia_dias}d
-                                {cfg.dia_preferencia && ` (${cfg.dia_preferencia})`}
+                                {cfg.tipo === 'dia_fijo' ? (
+                                  <>
+                                    {(cfg.dias_semana || []).map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}
+                                    {' · '}
+                                    {cfg.frecuencia_dias === 7 ? 'Semanal' : cfg.frecuencia_dias === 14 ? 'Cada 2 sem' : cfg.frecuencia_dias === 21 ? 'Cada 3 sem' : 'Mensual'}
+                                  </>
+                                ) : (
+                                  <>Cada {cfg.frecuencia_dias} días</>
+                                )}
                                 {cfg.reprogramar_siguiente ? ' · reprograma' : ' · no reprograma'}
                               </p>
                             </div>
@@ -555,33 +575,94 @@ const TareasAdmin = () => {
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Frecuencia (dias)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={cfgFrecuencia}
-                    onChange={e => setCfgFrecuencia(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Dia preferido</label>
-                  <select
-                    value={cfgDia}
-                    onChange={e => setCfgDia(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+
+              {/* Tipo de tarea */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de programación *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setCfgTipo('dia_fijo'); setCfgFrecuencia(7) }}
+                    className={`px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                      cfgTipo === 'dia_fijo'
+                        ? 'border-orange-400 bg-orange-50 text-orange-700 ring-2 ring-orange-100'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
                   >
-                    <option value="">Sin preferencia</option>
-                    {DIAS.map(d => (
-                      <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>
-                    ))}
-                  </select>
+                    Día fijo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCfgTipo('frecuencia'); setCfgFrecuencia(7); setCfgDiasSemana([]) }}
+                    className={`px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                      cfgTipo === 'frecuencia'
+                        ? 'border-orange-400 bg-orange-50 text-orange-700 ring-2 ring-orange-100'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    Frecuencia fija
+                  </button>
                 </div>
               </div>
+
+              {cfgTipo === 'dia_fijo' ? (
+                <>
+                  {/* Días de la semana */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Días de la semana *</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {DIAS.map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => toggleDiaSemana(d)}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                            cfgDiasSemana.includes(d)
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {d.charAt(0).toUpperCase() + d.slice(1, 3)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Período */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Frecuencia</label>
+                    <select
+                      value={cfgFrecuencia}
+                      onChange={e => setCfgFrecuencia(parseInt(e.target.value))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    >
+                      <option value={7}>Cada 1 semana</option>
+                      <option value={14}>Cada 2 semanas</option>
+                      <option value={21}>Cada 3 semanas</option>
+                      <option value={30}>1 vez al mes</option>
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Frecuencia en días */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Cada cuántos días</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={cfgFrecuencia}
+                      onChange={e => setCfgFrecuencia(parseInt(e.target.value) || 1)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Fecha de inicio (siempre visible) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de inicio</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {cfgTipo === 'frecuencia' ? 'Día de inicio (primera aparición)' : 'Fecha de inicio'}
+                </label>
                 <input
                   type="date"
                   value={cfgFechaInicio}
@@ -589,6 +670,7 @@ const TareasAdmin = () => {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                 />
               </div>
+
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -596,8 +678,14 @@ const TareasAdmin = () => {
                   onChange={e => setCfgReprogramar(e.target.checked)}
                   className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
                 />
-                <span className="text-sm text-gray-700">Reprogramar si no se completa</span>
+                <span className="text-sm text-gray-700">Reprogramar si no se confirma</span>
               </label>
+              <p className="text-xs text-gray-400 -mt-2 ml-6">
+                {cfgReprogramar
+                  ? 'Si no se completa, aparece al día siguiente hasta que se confirme'
+                  : 'Si no se completa, se marca como incumplida y no reaparece'}
+              </p>
+
               {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
             </div>
             <div className="p-5 border-t border-gray-200 flex gap-3">

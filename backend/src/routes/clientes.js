@@ -661,6 +661,37 @@ router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) =
   }
 })
 
+// GET /api/clientes/por-centum/:idCentum/direcciones
+// Listar direcciones de entrega buscando por id_centum
+router.get('/por-centum/:idCentum/direcciones', verificarAuth, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.idCentum)
+    if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
+
+    const { data: cli } = await supabase
+      .from('clientes')
+      .select('id')
+      .eq('id_centum', idCentum)
+      .limit(1)
+      .single()
+
+    if (!cli) return res.json([])
+
+    const { data, error } = await supabase
+      .from('direcciones_entrega')
+      .select('*')
+      .eq('cliente_id', cli.id)
+      .order('es_principal', { ascending: false })
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    console.error('Error al obtener direcciones por centum:', err)
+    res.status(500).json({ error: 'Error al obtener direcciones' })
+  }
+})
+
 // GET /api/clientes/:id/direcciones
 // Listar direcciones de entrega de un cliente
 router.get('/:id/direcciones', verificarAuth, async (req, res) => {

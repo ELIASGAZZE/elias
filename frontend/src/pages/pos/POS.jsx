@@ -784,10 +784,12 @@ const POS = () => {
 
   // Modal wizard pedido (paso 0: cliente, paso 1: tipo, paso 2: dirección/sucursal, paso 3: pago anticipado)
   const [mostrarBuscarClientePedido, setMostrarBuscarClientePedido] = useState(false)
-  const [pasoPedido, setPasoPedido] = useState(0) // 0=cliente, 1=tipo, 2=fecha, 3=dirección/sucursal, 4=pago
+  const [pasoPedido, setPasoPedido] = useState(0) // 0=fecha, 1=cliente, 2=tipo, 3=dirección/sucursal, 4=pago
   const [fechaEntregaPedido, setFechaEntregaPedido] = useState('')
+  const [turnoPedido, setTurnoPedido] = useState('')
   const [mostrarCobrarPedido, setMostrarCobrarPedido] = useState(false)
   const [cobrarPedidoExistente, setCobrarPedidoExistente] = useState(null) // { id, total, items, cliente_nombre, id_cliente_centum }
+  const [pedidosRefreshKey, setPedidosRefreshKey] = useState(0)
   const pedidoWizardDataRef = useRef(null)
   const [clientePedido, setClientePedido] = useState(null)
   const [busquedaClientePedido, setBusquedaClientePedido] = useState('')
@@ -932,11 +934,11 @@ const POS = () => {
 
   // Refocus al buscador tras cualquier click (excepto otros inputs)
   const handlePOSClick = useCallback((e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
     // No refocalizar si hay un modal abierto (gift card, cobro, etc.)
     if (e.target.closest('[data-modal]')) return
     setTimeout(() => {
-      if (document.activeElement?.tagName !== 'INPUT') {
+      if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT') {
         inputBusquedaRef.current?.focus()
       }
     }, 0)
@@ -1409,6 +1411,9 @@ const POS = () => {
         return
       }
 
+      // No interceptar teclas cuando el foco está en un select (para permitir navegación del dropdown)
+      if (document.activeElement?.tagName === 'SELECT') return
+
       const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
 
       // F1 = Cambiar cliente
@@ -1653,8 +1658,32 @@ const POS = () => {
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
-    setPedidoEnProceso({ id: pedido.id, numero: pedido.numero, esPagado, totalPagado, editando: true, observaciones: pedido.observaciones || '' })
+    // Extraer dirección de observaciones
+    const obsMatch = (pedido.observaciones || '').match(/Dirección: ([^|]+)/)
+    const direccionTexto = obsMatch ? obsMatch[1].trim() : ''
+    const pedidoData = {
+      id: pedido.id, numero: pedido.numero, esPagado, totalPagado, editando: true,
+      observaciones: pedido.observaciones || '',
+      tipo: pedido.tipo || 'retiro',
+      fecha_entrega: pedido.fecha_entrega || '',
+      direccion_entrega: direccionTexto,
+      direccionesCliente: [],
+      turno_entrega: pedido.turno_entrega || '',
+      sucursal_id: pedido.sucursal_id || '',
+    }
+    setPedidoEnProceso(pedidoData)
     setVistaActiva('venta')
+
+    // Cargar direcciones del cliente en background
+    if (pedido.id_cliente_centum) {
+      api.get(`/api/clientes/por-centum/${pedido.id_cliente_centum}/direcciones`)
+        .then(({ data }) => {
+          if (data?.length) {
+            setPedidoEnProceso(prev => prev ? { ...prev, direccionesCliente: data } : prev)
+          }
+        })
+        .catch(() => {})
+    }
   }
 
   // Guardar edición de pedido (PUT) desde la vista POS
@@ -1668,9 +1697,38 @@ const POS = () => {
       precio: i.precioOverride != null ? i.precioOverride : i.articulo.precio,
       cantidad: i.cantidad,
       esPesable: i.articulo.esPesable || false,
+      rubro: i.articulo.rubro?.nombre || null,
     }))
     const nuevoTotal = items.reduce((sum, i) => sum + (i.precio * i.cantidad), 0)
     const totalPagado = pedidoEnProceso.totalPagado || 0
+
+    // Validar perecederos
+    if (pedidoEnProceso.fecha_entrega) {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const manana = new Date()
+      manana.setDate(manana.getDate() + 1)
+      const mananaISO = manana.toISOString().split('T')[0]
+      const tienePerecedor = carrito.some(i => {
+        const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+      })
+      if (tienePerecedor && pedidoEnProceso.fecha_entrega > mananaISO) {
+        alert('Los pedidos con Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+        return
+      }
+    }
+
+    // Validar campos obligatorios para delivery
+    if (pedidoEnProceso.tipo === 'delivery') {
+      if (!pedidoEnProceso.turno_entrega) {
+        alert('Seleccioná un turno de entrega (AM o PM) para pedidos delivery.')
+        return
+      }
+      if (!pedidoEnProceso.direccion_entrega?.trim()) {
+        alert('Completá la dirección de entrega para pedidos delivery.')
+        return
+      }
+    }
 
     // Si el pedido estaba pagado y el nuevo total es menor, confirmar generación de saldo
     if (totalPagado > 0 && nuevoTotal < totalPagado) {
@@ -1684,6 +1742,13 @@ const POS = () => {
         items,
         total: nuevoTotal,
         observaciones: pedidoEnProceso.observaciones || null,
+        tipo: pedidoEnProceso.tipo,
+        fecha_entrega: pedidoEnProceso.fecha_entrega || null,
+        direccion_entrega: pedidoEnProceso.tipo === 'delivery' ? pedidoEnProceso.direccion_entrega : null,
+        nombre_cliente: cliente.razon_social || null,
+        id_cliente_centum: cliente.id_centum || 0,
+        turno_entrega: pedidoEnProceso.tipo === 'delivery' ? (pedidoEnProceso.turno_entrega || null) : null,
+        sucursal_id: pedidoEnProceso.tipo === 'delivery' ? 'c254cac8-4c6e-4098-9119-485d7172f281' : pedidoEnProceso.sucursal_id || null,
       })
       alert(`Pedido #${pedidoEnProceso.numero} actualizado`)
       limpiarVenta()
@@ -1802,6 +1867,7 @@ const POS = () => {
             total_pagado: pedido.total,
             observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
           })
+          setPedidosRefreshKey(k => k + 1)
         } catch (err) {
           console.error('Error actualizando pago pedido:', err)
           alert('Error al registrar pago: ' + (err.response?.data?.error || err.message))
@@ -1875,6 +1941,7 @@ const POS = () => {
     setPasoPedido(0)
     setClientePedido(null)
     setFechaEntregaPedido('')
+    setTurnoPedido('')
     setBusquedaClientePedido('')
     setClientesPedido([])
     setMostrarCrearClientePedido(false)
@@ -1890,7 +1957,7 @@ const POS = () => {
   function seleccionarClienteParaPedido(cli) {
     if (!cli.id_centum) return
     setClientePedido(cli)
-    setPasoPedido(1) // ir a elegir tipo
+    setPasoPedido(2) // ir a elegir tipo
   }
 
   function onClientePedidoCreado(clienteNuevo) {
@@ -1903,12 +1970,8 @@ const POS = () => {
   async function seleccionarTipoPedido(tipo) {
     if (!clientePedido) return
     setTipoPedidoSeleccionado(tipo)
-    // Default fecha: mañana
-    const manana = new Date()
-    manana.setDate(manana.getDate() + 1)
-    setFechaEntregaPedido(manana.toISOString().split('T')[0])
-    setPasoPedido(2) // ir a fecha
-    // Pre-cargar direcciones/sucursales para el paso 3
+    setPasoPedido(3) // ir a dirección/sucursal
+    // Pre-cargar direcciones/sucursales
     setCargandoDetallePedido(true)
     try {
       if (tipo === 'delivery') {
@@ -1947,12 +2010,28 @@ const POS = () => {
     }
   }
 
-  function confirmarPedidoWizard() {
+  async function confirmarPedidoWizard() {
+    // Verificar bloqueos antes de continuar
+    try {
+      const turnoCheck = tipoPedidoSeleccionado === 'delivery' ? turnoPedido : null
+      const { data } = await api.get('/api/pos/bloqueos/verificar', {
+        params: { fecha: fechaEntregaPedido, turno: turnoCheck || undefined, tipo_pedido: tipoPedidoSeleccionado }
+      })
+      if (data.bloqueado) {
+        const b = data.bloqueo
+        const motivo = b.motivo ? ` (${b.motivo})` : ''
+        alert(`No se pueden crear pedidos de ${tipoPedidoSeleccionado} para esa fecha/turno${motivo}`)
+        return
+      }
+    } catch (err) {
+      console.error('Error verificando bloqueos:', err)
+    }
     // Ir al paso 4: preguntar pago anticipado
     setPasoPedido(4)
   }
 
-  function finalizarPedidoWizard(conPago) {
+  function finalizarPedidoWizard(modo) {
+    // modo: 'cobrar' | 'efectivo_entrega' | 'link_pago' | false (solo guardar)
     if (!clientePedido || !tipoPedidoSeleccionado) return
     const cli = {
       id_centum: clientePedido.id_centum,
@@ -1967,39 +2046,28 @@ const POS = () => {
       : null
     setCliente(cli)
 
-    if (conPago) {
+    if (modo === 'cobrar') {
       // Abrir pantalla de cobro — el wizard queda abierto detrás
       setMostrarBuscarClientePedido(false)
       setMostrarCobrarPedido(true)
-      // Guardar datos del pedido en un ref para usar al confirmar cobro
       pedidoWizardDataRef.current = { cli, tipo: tipoPedidoSeleccionado, dirObj, sucObj, fecha: fechaEntregaPedido }
+    } else if (modo === 'efectivo_entrega') {
+      cerrarWizardPedido()
+      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido, null, 'PAGO EN ENTREGA: EFECTIVO')
+    } else if (modo === 'link_pago') {
+      cerrarWizardPedido()
+      guardarPedidoYGenerarLink(cli, tipoPedidoSeleccionado, dirObj, sucObj, fechaEntregaPedido)
     } else {
       cerrarWizardPedido()
       guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido)
     }
   }
 
-  function handleEsPedido() {
+  async function guardarPedidoYGenerarLink(cli, tipo, direccion, sucursal, fechaEntrega) {
     if (carrito.length === 0) return
-    // Si ya tiene cliente real, ir directo a tipo
-    if (cliente.id_centum && cliente.id_centum !== 0) {
-      setClientePedido(cliente)
-      setPasoPedido(1)
-      setMostrarBuscarClientePedido(true)
-      return
-    }
-    // Si no, abrir buscador de cliente (paso 0)
-    setPasoPedido(0)
-    setMostrarBuscarClientePedido(true)
-  }
-
-  // ---- Pedidos POS (página separada en /pos/pedidos) ----
-
-  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago) {
-    if (carrito.length === 0) return
-    if (!cli.id_centum || cli.id_centum === 0) return
     setGuardandoPedido(true)
     try {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
       const itemsPayload = carrito.map(i => ({
         id: i.articulo.id,
         codigo: i.articulo.codigo,
@@ -2007,7 +2075,129 @@ const POS = () => {
         precio: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
+        rubro: i.articulo.rubro?.nombre || null,
       }))
+
+      if (fechaEntrega) {
+        const manana = new Date()
+        manana.setDate(manana.getDate() + 1)
+        const mananaISO = manana.toISOString().split('T')[0]
+        const tienePerecedor = carrito.some(i => {
+          const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+          return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+        })
+        if (tienePerecedor && fechaEntrega > mananaISO) {
+          alert('Los pedidos con productos de Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+          setGuardandoPedido(false)
+          return
+        }
+      }
+
+      const payload = {
+        id_cliente_centum: cli.id_centum,
+        nombre_cliente: cli.razon_social,
+        items: itemsPayload,
+        total,
+        tipo: tipo || 'retiro',
+        observaciones: 'PAGO PENDIENTE: LINK MP',
+      }
+      if (direccion) {
+        payload.direccion_entrega = direccion.direccion + (direccion.localidad ? `, ${direccion.localidad}` : '')
+      }
+      if (sucursal) {
+        payload.sucursal_retiro = sucursal.nombre
+        payload.sucursal_id = sucursal.id
+      }
+      if (fechaEntrega) {
+        payload.fecha_entrega = fechaEntrega
+      }
+      if (tipo === 'delivery') {
+        payload.turno_entrega = turnoPedido || null
+        payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
+      }
+
+      const { data } = await api.post('/api/pos/pedidos', payload)
+      const pedidoId = data.pedido?.id
+
+      // Generar link MP
+      if (pedidoId) {
+        try {
+          const { data: linkData } = await api.post(`/api/pos/pedidos/${pedidoId}/link-pago`)
+          if (linkData.link) {
+            try {
+              await navigator.clipboard.writeText(linkData.link)
+            } catch {
+              // Fallback para cuando el documento no tiene foco
+              const ta = document.createElement('textarea')
+              ta.value = linkData.link
+              ta.style.position = 'fixed'
+              ta.style.opacity = '0'
+              document.body.appendChild(ta)
+              ta.focus()
+              ta.select()
+              document.execCommand('copy')
+              document.body.removeChild(ta)
+            }
+            alert('Link de pago copiado al portapapeles')
+          }
+        } catch (linkErr) {
+          console.error('Error generando link MP:', linkErr)
+          alert('Pedido guardado pero hubo un error al generar el link: ' + (linkErr.response?.data?.error || linkErr.message))
+        }
+      }
+
+      limpiarVenta()
+    } catch (err) {
+      console.error('Error guardando pedido:', err)
+      alert('Error al guardar pedido: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardandoPedido(false)
+    }
+  }
+
+  function handleEsPedido() {
+    if (carrito.length === 0) return
+    // Default fecha: mañana
+    const manana = new Date()
+    manana.setDate(manana.getDate() + 1)
+    setFechaEntregaPedido(manana.toISOString().split('T')[0])
+    setPasoPedido(0)
+    setMostrarBuscarClientePedido(true)
+  }
+
+  // ---- Pedidos POS (página separada en /pos/pedidos) ----
+
+  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago, observacionExtra) {
+    if (carrito.length === 0) return
+    if (!cli.id_centum || cli.id_centum === 0) return
+    setGuardandoPedido(true)
+    try {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const itemsPayload = carrito.map(i => ({
+        id: i.articulo.id,
+        codigo: i.articulo.codigo,
+        nombre: i.articulo.nombre,
+        precio: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        cantidad: i.cantidad,
+        esPesable: i.articulo.esPesable || false,
+        rubro: i.articulo.rubro?.nombre || null,
+      }))
+
+      // Validar: productos perecederos no pueden tener fecha de entrega > mañana
+      if (fechaEntrega) {
+        const manana = new Date()
+        manana.setDate(manana.getDate() + 1)
+        const mananaISO = manana.toISOString().split('T')[0]
+        const tienePerecedor = carrito.some(i => {
+          const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+          return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+        })
+        if (tienePerecedor && fechaEntrega > mananaISO) {
+          alert('Los pedidos con productos de Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+          setGuardandoPedido(false)
+          return
+        }
+      }
       const payload = {
         id_cliente_centum: cli.id_centum,
         nombre_cliente: cli.razon_social,
@@ -2022,6 +2212,7 @@ const POS = () => {
       if (sucursal) {
         payload.sucursal_retiro = sucursal.nombre
         payload.sucursal_retiro_id = sucursal.id
+        payload.sucursal_id = sucursal.id
       }
       if (pagado) {
         // Guardar info de pago en observaciones (la venta se genera al entregar)
@@ -2032,9 +2223,15 @@ const POS = () => {
           payload.observaciones = 'PAGO ANTICIPADO'
         }
         payload.total_pagado = total
+      } else if (observacionExtra) {
+        payload.observaciones = observacionExtra
       }
       if (fechaEntrega) {
         payload.fecha_entrega = fechaEntrega
+      }
+      if (tipo === 'delivery') {
+        payload.turno_entrega = turnoPedido || null
+        payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
       }
       await api.post('/api/pos/pedidos', payload)
       limpiarVenta()
@@ -2202,7 +2399,7 @@ const POS = () => {
       {/* === TAB PEDIDOS === */}
       {vistaActiva === 'pedidos' && (
         <div className="flex-1 overflow-hidden">
-          <PedidosPOS embebido onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} onCobrarEnCaja={handleCobrarPedidoEnCaja} />
+          <PedidosPOS key={pedidosRefreshKey} embebido terminalConfig={terminalConfig} onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} onCobrarEnCaja={handleCobrarPedidoEnCaja} />
         </div>
       )}
 
@@ -2224,17 +2421,124 @@ const POS = () => {
       {vistaActiva === 'venta' && <>
       {/* Banner pedido en proceso */}
       {pedidoEnProceso && (
-        <div className="flex items-center justify-between px-4 py-2 bg-violet-50 border-b border-violet-200">
-          <span className="text-sm text-violet-700 font-medium">
-            {pedidoEnProceso.editando ? 'Editando' : 'Entregando'} pedido {pedidoEnProceso.numero ? `#${pedidoEnProceso.numero}` : ''} de <strong>{cliente.razon_social}</strong>
-            {!pedidoEnProceso.editando && (pedidoEnProceso.esPagado ? ' (ya pagado)' : ' (pendiente de cobro)')}
-          </span>
-          <button
-            onClick={limpiarVenta}
-            className="text-xs text-violet-500 hover:text-violet-700 font-medium"
-          >
-            Cancelar entrega
-          </button>
+        <div className="bg-violet-50 border-b border-violet-200">
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-sm text-violet-700 font-medium">
+              {pedidoEnProceso.editando ? 'Editando' : 'Entregando'} pedido {pedidoEnProceso.numero ? `#${pedidoEnProceso.numero}` : ''} de <strong>{cliente.razon_social}</strong>
+              {!pedidoEnProceso.editando && (pedidoEnProceso.esPagado ? ' (ya pagado)' : ' (pendiente de cobro)')}
+            </span>
+            <button
+              onClick={limpiarVenta}
+              className="text-xs text-violet-500 hover:text-violet-700 font-medium"
+            >
+              Cancelar entrega
+            </button>
+          </div>
+          {/* Controles de edición: tipo, fecha, dirección */}
+          {pedidoEnProceso.editando && (
+            <div className="px-4 pb-2 flex items-center gap-3 flex-wrap">
+              {/* Tipo */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setPedidoEnProceso(prev => ({ ...prev, tipo: 'retiro', direccion_entrega: '' }))}
+                  className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${pedidoEnProceso.tipo === 'retiro' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border hover:bg-gray-50'}`}
+                >
+                  Retiro
+                </button>
+                <button
+                  onClick={() => setPedidoEnProceso(prev => ({ ...prev, tipo: 'delivery' }))}
+                  className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${pedidoEnProceso.tipo === 'delivery' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border hover:bg-gray-50'}`}
+                >
+                  Delivery
+                </button>
+              </div>
+              {/* Fecha */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-violet-600">Entrega:</span>
+                <input
+                  type="date"
+                  value={pedidoEnProceso.fecha_entrega || ''}
+                  onChange={e => setPedidoEnProceso(prev => ({ ...prev, fecha_entrega: e.target.value }))}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                />
+              </div>
+              {/* Turno (solo delivery) */}
+              {pedidoEnProceso.tipo === 'delivery' && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-violet-600">Turno:</span>
+                  <select
+                    value={pedidoEnProceso.turno_entrega || ''}
+                    onChange={e => setPedidoEnProceso(prev => ({ ...prev, turno_entrega: e.target.value }))}
+                    className="text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                  >
+                    <option value="">Sin turno</option>
+                    <option value="AM">AM (9-13hs)</option>
+                    <option value="PM">PM (17-21hs)</option>
+                  </select>
+                </div>
+              )}
+              {/* Dirección (solo delivery) */}
+              {pedidoEnProceso.tipo === 'delivery' && (
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <span className="text-xs text-violet-600 flex-shrink-0">Dir:</span>
+                  {pedidoEnProceso.direccionesCliente?.length > 0 && !pedidoEnProceso.dirManual ? (
+                    <select
+                      value={pedidoEnProceso.direccion_entrega || ''}
+                      onChange={e => {
+                        if (e.target.value === '__otra__') {
+                          setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: '', dirManual: true }))
+                        } else {
+                          setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: e.target.value }))
+                        }
+                      }}
+                      className="flex-1 text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                    >
+                      <option value="">Seleccionar dirección...</option>
+                      {(() => {
+                        const opciones = pedidoEnProceso.direccionesCliente.map(d => ({
+                          id: d.id,
+                          val: `${d.direccion}${d.localidad ? `, ${d.localidad}` : ''}`,
+                          principal: d.es_principal,
+                        }))
+                        // Si la dirección actual no coincide con ninguna opción, mostrarla también
+                        const dirActual = pedidoEnProceso.direccion_entrega || ''
+                        const coincide = !dirActual || opciones.some(o => o.val === dirActual)
+                        return (
+                          <>
+                            {!coincide && <option value={dirActual}>{dirActual} (actual)</option>}
+                            {opciones.map(o => (
+                              <option key={o.id} value={o.val}>{o.val}{o.principal ? ' (principal)' : ''}</option>
+                            ))}
+                          </>
+                        )
+                      })()}
+                      <option value="__otra__">Otra dirección...</option>
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-1 flex-1">
+                      <input
+                        type="text"
+                        value={pedidoEnProceso.direccion_entrega || ''}
+                        onChange={e => setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: e.target.value }))}
+                        placeholder="Dirección de entrega..."
+                        autoFocus={pedidoEnProceso.dirManual}
+                        className="flex-1 text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                      />
+                      {pedidoEnProceso.dirManual && pedidoEnProceso.direccionesCliente?.length > 0 && (
+                        <button
+                          onClick={() => setPedidoEnProceso(prev => ({ ...prev, dirManual: false }))}
+                          className="text-[10px] text-violet-600 hover:text-violet-800 whitespace-nowrap"
+                        >
+                          Ver guardadas
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
       {/* Indicadores offline */}
@@ -4377,7 +4681,7 @@ const POS = () => {
             <div className="p-4 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-gray-800">
-                  {pasoPedido === 0 ? 'Seleccionar cliente' : pasoPedido === 1 ? 'Tipo de pedido' : pasoPedido === 2 ? 'Fecha de entrega' : pasoPedido === 3 ? (tipoPedidoSeleccionado === 'delivery' ? 'Direccion de entrega' : 'Sucursal de retiro') : 'Pago anticipado'}
+                  {pasoPedido === 0 ? 'Fecha de entrega' : pasoPedido === 1 ? 'Seleccionar cliente' : pasoPedido === 2 ? 'Tipo de pedido' : pasoPedido === 3 ? (tipoPedidoSeleccionado === 'delivery' ? 'Direccion de entrega' : 'Sucursal de retiro') : 'Pago anticipado'}
                 </h2>
                 <button onClick={cerrarWizardPedido} className="text-gray-400 hover:text-gray-600">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -4386,18 +4690,18 @@ const POS = () => {
                 </button>
               </div>
               {pasoPedido === 1 && (
-                <button onClick={() => { setPasoPedido(0); setClientePedido(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar cliente
+                <button onClick={() => { setPasoPedido(0); setFechaEntregaPedido('') }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar fecha
                 </button>
               )}
               {pasoPedido === 2 && (
-                <button onClick={() => { setPasoPedido(1); setTipoPedidoSeleccionado(null); setFechaEntregaPedido('') }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar tipo
+                <button onClick={() => { setPasoPedido(1); setClientePedido(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar cliente
                 </button>
               )}
               {pasoPedido === 3 && (
-                <button onClick={() => setPasoPedido(2)} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar fecha
+                <button onClick={() => { setPasoPedido(2); setTipoPedidoSeleccionado(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar tipo
                 </button>
               )}
               {pasoPedido === 4 && (
@@ -4416,9 +4720,78 @@ const POS = () => {
             {/* Content */}
             <div className="p-4 overflow-y-auto flex-1 space-y-3">
 
-              {/* PASO 0: Buscar cliente */}
+              {/* PASO 0: Fecha de entrega */}
               {pasoPedido === 0 && (
                 <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Fecha de entrega / retiro
+                    </label>
+                    <input
+                      type="date"
+                      value={fechaEntregaPedido}
+                      onChange={e => setFechaEntregaPedido(e.target.value)}
+                      min={new Date().toISOString().split('T')[0]}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  {(() => {
+                    const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+                    const tienePerecedor = carrito.some(i => {
+                      const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+                      return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+                    })
+                    if (tienePerecedor) {
+                      const manana = new Date()
+                      manana.setDate(manana.getDate() + 1)
+                      const mananaISO = manana.toISOString().split('T')[0]
+                      const excede = fechaEntregaPedido && fechaEntregaPedido > mananaISO
+                      return (
+                        <div className={`text-xs px-3 py-2 rounded-lg ${excede ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                          {excede
+                            ? 'El pedido contiene Fiambres, Quesos o Frescos. La fecha no puede ser mayor a mañana.'
+                            : 'El pedido contiene productos perecederos (max. mañana).'}
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
+                  <button
+                    onClick={() => {
+                      if (!fechaEntregaPedido) return
+                      // Validar perecederos
+                      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+                      const manana = new Date()
+                      manana.setDate(manana.getDate() + 1)
+                      const mananaISO = manana.toISOString().split('T')[0]
+                      const tienePerecedor = carrito.some(i => {
+                        const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+                        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+                      })
+                      if (tienePerecedor && fechaEntregaPedido > mananaISO) return
+                      // Si ya tiene cliente real, saltar al paso 2 (tipo)
+                      if (cliente.id_centum && cliente.id_centum !== 0) {
+                        setClientePedido(cliente)
+                        setPasoPedido(2)
+                      } else {
+                        setPasoPedido(1)
+                      }
+                    }}
+                    disabled={!fechaEntregaPedido}
+                    className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors mt-2"
+                  >
+                    Continuar
+                  </button>
+                </>
+              )}
+
+              {/* PASO 1: Buscar cliente */}
+              {pasoPedido === 1 && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                    <span className="text-gray-500">Fecha:</span>{' '}
+                    <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                  </div>
                   <input
                     ref={inputClientePedidoRef}
                     type="text"
@@ -4476,12 +4849,18 @@ const POS = () => {
                 </>
               )}
 
-              {/* PASO 1: Tipo de pedido */}
-              {pasoPedido === 1 && clientePedido && (
+              {/* PASO 2: Tipo de pedido */}
+              {pasoPedido === 2 && clientePedido && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-3 text-sm">
-                    <span className="text-gray-500">Cliente:</span>{' '}
-                    <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+                    <div>
+                      <span className="text-gray-500">Fecha:</span>{' '}
+                      <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Cliente:</span>{' '}
+                      <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 mt-2">
                     <button
@@ -4506,45 +4885,14 @@ const POS = () => {
                 </>
               )}
 
-              {/* PASO 2: Fecha de entrega */}
-              {pasoPedido === 2 && clientePedido && (
-                <>
-                  <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
-                    <div>
-                      <span className="text-gray-500">Cliente:</span>{' '}
-                      <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Tipo:</span>{' '}
-                      <span className="font-medium text-gray-800">{tipoPedidoSeleccionado === 'delivery' ? 'Delivery' : 'Retiro por Sucursal'}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fecha de {tipoPedidoSeleccionado === 'delivery' ? 'entrega' : 'retiro'}
-                    </label>
-                    <input
-                      type="date"
-                      value={fechaEntregaPedido}
-                      onChange={e => setFechaEntregaPedido(e.target.value)}
-                      min={new Date().toISOString().split('T')[0]}
-                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                  <button
-                    onClick={() => { if (fechaEntregaPedido) setPasoPedido(3) }}
-                    disabled={!fechaEntregaPedido}
-                    className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors mt-2"
-                  >
-                    Continuar
-                  </button>
-                </>
-              )}
-
               {/* PASO 3: Dirección (delivery) o Sucursal (retiro) */}
               {pasoPedido === 3 && clientePedido && (
                 <>
                   <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+                    <div>
+                      <span className="text-gray-500">Fecha:</span>{' '}
+                      <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                    </div>
                     <div>
                       <span className="text-gray-500">Cliente:</span>{' '}
                       <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
@@ -4631,10 +4979,55 @@ const POS = () => {
                         </button>
                       )}
 
+                      {/* Turno de entrega */}
+                      {(() => {
+                        const esHoy = fechaEntregaPedido === new Date().toISOString().split('T')[0]
+                        const horaActual = new Date().getHours()
+                        const amDisabled = esHoy && horaActual >= 9
+                        const pmDisabled = esHoy && horaActual >= 17
+                        return (
+                          <div className="mt-3">
+                            <p className="text-xs text-gray-500 mb-1.5">Turno de entrega</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => !amDisabled && setTurnoPedido('AM')}
+                                disabled={amDisabled}
+                                className={`flex-1 p-3 rounded-lg border-2 text-center transition-colors ${
+                                  amDisabled
+                                    ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                                    : turnoPedido === 'AM'
+                                      ? 'border-amber-400 bg-amber-50'
+                                      : 'border-gray-100 hover:border-gray-300'
+                                }`}
+                              >
+                                <span className={`text-sm font-semibold ${amDisabled ? 'text-gray-400' : 'text-gray-800'}`}>AM</span>
+                                <span className="block text-[11px] text-gray-400">9 a 13hs</span>
+                                {amDisabled && <span className="block text-[10px] text-red-400 mt-0.5">Fuera de horario</span>}
+                              </button>
+                              <button
+                                onClick={() => !pmDisabled && setTurnoPedido('PM')}
+                                disabled={pmDisabled}
+                                className={`flex-1 p-3 rounded-lg border-2 text-center transition-colors ${
+                                  pmDisabled
+                                    ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                                    : turnoPedido === 'PM'
+                                      ? 'border-amber-400 bg-amber-50'
+                                      : 'border-gray-100 hover:border-gray-300'
+                                }`}
+                              >
+                                <span className={`text-sm font-semibold ${pmDisabled ? 'text-gray-400' : 'text-gray-800'}`}>PM</span>
+                                <span className="block text-[11px] text-gray-400">17 a 21hs</span>
+                                {pmDisabled && <span className="block text-[10px] text-red-400 mt-0.5">Fuera de horario</span>}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })()}
+
                       {/* Botón confirmar delivery */}
                       <button
                         onClick={confirmarPedidoWizard}
-                        disabled={!direccionSeleccionadaPedido || guardandoPedido}
+                        disabled={!direccionSeleccionadaPedido || !turnoPedido || guardandoPedido}
                         className="w-full mt-3 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
                       >
                         {guardandoPedido ? 'Guardando...' : 'Confirmar pedido'}
@@ -4710,37 +5103,85 @@ const POS = () => {
                         </span>
                       </div>
                     )}
+                    {tipoPedidoSeleccionado === 'delivery' && turnoPedido && (
+                      <div>
+                        <span className="text-gray-500">Turno:</span>{' '}
+                        <span className="font-medium text-gray-800">{turnoPedido === 'AM' ? 'AM (9-13hs)' : 'PM (17-21hs)'}</span>
+                      </div>
+                    )}
                     <div className="pt-1 border-t border-gray-200 mt-1">
                       <span className="text-gray-500">Total:</span>{' '}
                       <span className="font-bold text-gray-800">{formatPrecio(total)}</span>
                     </div>
                   </div>
 
-                  <div className="text-center py-2">
-                    <p className="text-sm font-medium text-gray-700">¿Desea abonar por anticipado?</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => finalizarPedidoWizard(false)}
-                      disabled={guardandoPedido}
-                      className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50"
-                    >
-                      <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      <span className="text-sm font-medium text-gray-700">No, solo guardar</span>
-                    </button>
-                    <button
-                      onClick={() => finalizarPedidoWizard(true)}
-                      className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all"
-                    >
-                      <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
-                      </svg>
-                      <span className="text-sm font-medium text-green-700">Si, cobrar ahora</span>
-                    </button>
-                  </div>
+                  {tipoPedidoSeleccionado === 'delivery' ? (
+                    <>
+                      <div className="text-center py-1">
+                        <p className="text-sm font-medium text-gray-700">Forma de pago</p>
+                      </div>
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => finalizarPedidoWizard('cobrar')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-green-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+                          </svg>
+                          <span className="text-sm font-medium text-green-700">Cobrar ahora</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('efectivo_entrega')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.079-.504 1.004-1.1A17.05 17.05 0 0015.064 8.39a2.25 2.25 0 00-1.89-1.014H12m-1.5 11.374h6" />
+                          </svg>
+                          <span className="text-sm font-medium text-amber-700">Paga en la entrega en efectivo</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('link_pago')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-blue-200 hover:border-blue-400 hover:bg-blue-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-blue-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.06a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364l1.757 1.757" />
+                          </svg>
+                          <span className="text-sm font-medium text-blue-700">Link de pago</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-center py-2">
+                        <p className="text-sm font-medium text-gray-700">¿Desea abonar por anticipado?</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => finalizarPedidoWizard(false)}
+                          disabled={guardandoPedido}
+                          className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          <span className="text-sm font-medium text-gray-700">No, solo guardar</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('cobrar')}
+                          disabled={guardandoPedido}
+                          className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+                          </svg>
+                          <span className="text-sm font-medium text-green-700">Si, cobrar ahora</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {guardandoPedido && (
                     <div className="flex justify-center py-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-600" />

@@ -6,43 +6,113 @@ const DIAS_SEMANA = {
   jueves: 4, viernes: 5, sabado: 6,
 }
 
+const NOMBRE_DIA = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+
 /**
- * Ajusta una fecha al próximo día de la semana indicado (o el mismo si coincide).
+ * Para tipo "dia_fijo": determina si hoy es un día programado
+ * considerando los días de la semana y el período (cada N semanas o mes).
+ * Retorna { programada: bool, fechaProgramada: Date|null }
  */
-function ajustarAlDia(fecha, diaPref) {
-  const target = DIAS_SEMANA[diaPref]
-  if (target === undefined) return fecha
-  const actual = fecha.getDay()
-  let diff = target - actual
-  if (diff < 0) diff += 7
-  if (diff === 0) return fecha
-  const ajustada = new Date(fecha)
-  ajustada.setDate(ajustada.getDate() + diff)
-  return ajustada
+function evaluarDiaFijo(config, hoy, ultimaEjecucionFecha) {
+  const diasSemana = config.dias_semana || []
+  if (diasSemana.length === 0) return { programada: false }
+
+  const hoyNombre = NOMBRE_DIA[hoy.getDay()]
+  const fechaInicio = new Date(config.fecha_inicio)
+  fechaInicio.setHours(0, 0, 0, 0)
+
+  if (hoy < fechaInicio) return { programada: false }
+
+  const periodo = config.frecuencia_dias // 7=1sem, 14=2sem, 21=3sem, 30=1mes
+
+  // Calcular si estamos en una semana/período activo
+  if (periodo <= 21) {
+    // Lógica semanal: cada N semanas
+    const semanas = periodo / 7
+    // Calcular número de semana desde fecha_inicio (ambas alineadas al lunes)
+    const inicioLunes = new Date(fechaInicio)
+    inicioLunes.setDate(inicioLunes.getDate() - ((inicioLunes.getDay() + 6) % 7)) // ir al lunes de esa semana
+    const hoyLunes = new Date(hoy)
+    hoyLunes.setDate(hoyLunes.getDate() - ((hoyLunes.getDay() + 6) % 7)) // ir al lunes de esta semana
+
+    const diffSemanas = Math.round((hoyLunes - inicioLunes) / (7 * 24 * 60 * 60 * 1000))
+    const esSemanActiva = diffSemanas >= 0 && (diffSemanas % semanas === 0)
+
+    if (!esSemanActiva) return { programada: false }
+  } else {
+    // Lógica mensual (periodo = 30): mismo día del mes que fecha_inicio, pero en los días configurados
+    // Simplificación: la tarea aparece en la semana que contiene el día del mes de inicio
+    const diaDelMes = fechaInicio.getDate()
+    const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), diaDelMes)
+    inicioMes.setHours(0, 0, 0, 0)
+    // La semana activa es la del día de referencia del mes
+    const inicioLunes = new Date(inicioMes)
+    inicioLunes.setDate(inicioLunes.getDate() - ((inicioLunes.getDay() + 6) % 7))
+    const finDomingo = new Date(inicioLunes)
+    finDomingo.setDate(finDomingo.getDate() + 6)
+
+    if (hoy < inicioLunes || hoy > finDomingo) return { programada: false }
+  }
+
+  // Estamos en período activo, verificar si hoy es uno de los días configurados
+  if (diasSemana.includes(hoyNombre)) {
+    return { programada: true, fechaProgramada: new Date(hoy) }
+  }
+
+  return { programada: false }
 }
 
 /**
- * Calcula la fecha programada de la próxima ejecución.
+ * Para tipo "dia_fijo": calcula la próxima fecha programada después de una ejecución.
+ * Busca el siguiente día de la semana configurado en el período activo.
+ */
+function proximaFechaDiaFijo(config, desdeDate) {
+  const diasSemana = config.dias_semana || []
+  if (diasSemana.length === 0) return null
+
+  const periodo = config.frecuencia_dias
+  const fechaInicio = new Date(config.fecha_inicio)
+  fechaInicio.setHours(0, 0, 0, 0)
+
+  // Buscar el próximo día configurado (máx 60 días adelante)
+  const cursor = new Date(desdeDate)
+  cursor.setDate(cursor.getDate() + 1) // empezar desde mañana
+  for (let i = 0; i < 60; i++) {
+    const resultado = evaluarDiaFijo(config, cursor, null)
+    if (resultado.programada) return new Date(cursor)
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return null
+}
+
+/**
+ * Para tipo "frecuencia": calcula la próxima fecha (cada N días desde última ejecución o fecha_inicio).
+ */
+function calcularProximaFechaFrecuencia(config, ultimaEjecucionFecha) {
+  if (ultimaEjecucionFecha) {
+    const base = new Date(ultimaEjecucionFecha)
+    base.setDate(base.getDate() + config.frecuencia_dias)
+    return base
+  }
+  return new Date(config.fecha_inicio)
+}
+
+/**
+ * Wrapper general que delega según tipo.
  */
 function calcularProximaFecha(config, ultimaEjecucionFecha) {
-  let base
-  if (ultimaEjecucionFecha) {
-    base = new Date(ultimaEjecucionFecha)
-    base.setDate(base.getDate() + config.frecuencia_dias)
-  } else {
-    base = new Date(config.fecha_inicio)
+  if (config.tipo === 'dia_fijo') {
+    if (ultimaEjecucionFecha) {
+      return proximaFechaDiaFijo(config, new Date(ultimaEjecucionFecha))
+    }
+    return new Date(config.fecha_inicio)
   }
-
-  if (config.dia_preferencia) {
-    base = ajustarAlDia(base, config.dia_preferencia)
-  }
-
-  return base
+  // tipo = 'frecuencia' (default, también para configs legacy)
+  return calcularProximaFechaFrecuencia(config, ultimaEjecucionFecha)
 }
 
 /**
  * Obtiene las tareas pendientes para una sucursal en la fecha actual.
- * Retorna array de objetos con info de la tarea, config, estado (a_tiempo/atrasada), etc.
  */
 async function obtenerTareasPendientes(sucursalId) {
   const hoy = new Date()
@@ -70,6 +140,7 @@ async function obtenerTareasPendientes(sucursalId) {
       .sort((a, b) => a.orden - b.orden)
 
     const esRepetitiva = subtareasActivas.length > 0
+    const tipo = config.tipo || 'frecuencia'
 
     // Buscar última ejecución de esta config
     const { data: ultimaEjecucion } = await supabase
@@ -81,16 +152,13 @@ async function obtenerTareasPendientes(sucursalId) {
       .single()
 
     const ultimaFecha = ultimaEjecucion?.fecha_ejecucion || null
-    const proximaFecha = calcularProximaFecha(config, ultimaFecha)
-    proximaFecha.setHours(0, 0, 0, 0)
 
-    // Tareas repetitivas: siempre aparecen si fecha_inicio <= hoy
+    // ── Tareas repetitivas (con subtareas): siempre aparecen ──
     if (esRepetitiva) {
       const fechaInicio = new Date(config.fecha_inicio)
       fechaInicio.setHours(0, 0, 0, 0)
       if (fechaInicio > hoy) continue
 
-      // Contar ejecuciones de hoy
       const { count: ejecucionesHoy } = await supabase
         .from('ejecuciones_tarea')
         .select('id', { count: 'exact', head: true })
@@ -104,8 +172,9 @@ async function obtenerTareasPendientes(sucursalId) {
         nombre: config.tarea.nombre,
         descripcion: config.tarea.descripcion,
         enlace_manual: config.tarea.enlace_manual,
+        tipo,
         frecuencia_dias: config.frecuencia_dias,
-        dia_preferencia: config.dia_preferencia,
+        dias_semana: config.dias_semana,
         fecha_programada: hoyStr,
         atrasada: false,
         dias_atraso: 0,
@@ -116,14 +185,117 @@ async function obtenerTareasPendientes(sucursalId) {
       continue
     }
 
-    // Tareas únicas: lógica original
-    // Si la proxima fecha es en el futuro, no es pendiente
+    // ── Tareas sin subtareas: lógica según tipo ──
+
+    if (tipo === 'dia_fijo') {
+      // Verificar si hoy es día programado
+      const { programada } = evaluarDiaFijo(config, hoy, ultimaFecha)
+
+      // Ya ejecutada hoy → no mostrar
+      if (ultimaFecha === hoyStr) continue
+
+      if (programada) {
+        // Hoy toca, verificar si ya se completó
+        pendientes.push({
+          tarea_config_id: config.id,
+          tarea_id: config.tarea.id,
+          sucursal_id: config.sucursal_id,
+          nombre: config.tarea.nombre,
+          descripcion: config.tarea.descripcion,
+          enlace_manual: config.tarea.enlace_manual,
+          tipo,
+          frecuencia_dias: config.frecuencia_dias,
+          dias_semana: config.dias_semana,
+          fecha_programada: hoyStr,
+          atrasada: false,
+          dias_atraso: 0,
+          subtareas: [],
+          repetitiva: false,
+          ejecuciones_hoy: 0,
+        })
+        continue
+      }
+
+      // Hoy NO toca. Verificar si hay tarea pendiente reprogramada de días anteriores.
+      if (config.reprogramar_siguiente && ultimaFecha) {
+        // Buscar la última fecha programada que no fue completada
+        const proxDespuesUltima = proximaFechaDiaFijo(config, new Date(ultimaFecha))
+        if (proxDespuesUltima) {
+          proxDespuesUltima.setHours(0, 0, 0, 0)
+          if (proxDespuesUltima <= hoy) {
+            // Hay tarea atrasada que se reprograma
+            const diasAtraso = Math.floor((hoy - proxDespuesUltima) / (1000 * 60 * 60 * 24))
+            pendientes.push({
+              tarea_config_id: config.id,
+              tarea_id: config.tarea.id,
+              sucursal_id: config.sucursal_id,
+              nombre: config.tarea.nombre,
+              descripcion: config.tarea.descripcion,
+              enlace_manual: config.tarea.enlace_manual,
+              tipo,
+              frecuencia_dias: config.frecuencia_dias,
+              dias_semana: config.dias_semana,
+              fecha_programada: proxDespuesUltima.toISOString().split('T')[0],
+              atrasada: true,
+              dias_atraso: diasAtraso,
+              subtareas: [],
+              repetitiva: false,
+              ejecuciones_hoy: 0,
+            })
+          }
+        }
+      } else if (config.reprogramar_siguiente && !ultimaFecha) {
+        // Nunca ejecutada, verificar si ya pasó algún día programado
+        const fechaInicio = new Date(config.fecha_inicio)
+        fechaInicio.setHours(0, 0, 0, 0)
+        if (fechaInicio <= hoy) {
+          // Buscar primer día programado desde fecha_inicio
+          const cursor = new Date(fechaInicio)
+          let primerDia = null
+          for (let i = 0; i < 60; i++) {
+            const res = evaluarDiaFijo(config, cursor, null)
+            if (res.programada && cursor <= hoy) {
+              primerDia = new Date(cursor)
+              break
+            }
+            cursor.setDate(cursor.getDate() + 1)
+          }
+          if (primerDia) {
+            const diasAtraso = Math.floor((hoy - primerDia) / (1000 * 60 * 60 * 24))
+            pendientes.push({
+              tarea_config_id: config.id,
+              tarea_id: config.tarea.id,
+              sucursal_id: config.sucursal_id,
+              nombre: config.tarea.nombre,
+              descripcion: config.tarea.descripcion,
+              enlace_manual: config.tarea.enlace_manual,
+              tipo,
+              frecuencia_dias: config.frecuencia_dias,
+              dias_semana: config.dias_semana,
+              fecha_programada: primerDia.toISOString().split('T')[0],
+              atrasada: diasAtraso > 0,
+              dias_atraso: diasAtraso,
+              subtareas: [],
+              repetitiva: false,
+              ejecuciones_hoy: 0,
+            })
+          }
+        }
+      }
+      // Si no reprograma y hoy no toca → no aparece (incumplida)
+      continue
+    }
+
+    // ── tipo = 'frecuencia' (o legacy sin tipo) ──
+    const proximaFecha = calcularProximaFechaFrecuencia(config, ultimaFecha)
+    proximaFecha.setHours(0, 0, 0, 0)
+
+    // Si la próxima fecha es en el futuro, no es pendiente
     if (proximaFecha > hoy) continue
 
-    // Si no reprogramar y ya pasó, skip
+    // Si no reprogramar y ya pasó, skip (incumplida)
     if (!config.reprogramar_siguiente && proximaFecha < hoy) continue
 
-    // Es pendiente
     const atrasada = proximaFecha < hoy
 
     pendientes.push({
@@ -133,8 +305,9 @@ async function obtenerTareasPendientes(sucursalId) {
       nombre: config.tarea.nombre,
       descripcion: config.tarea.descripcion,
       enlace_manual: config.tarea.enlace_manual,
+      tipo,
       frecuencia_dias: config.frecuencia_dias,
-      dia_preferencia: config.dia_preferencia,
+      dias_semana: config.dias_semana,
       fecha_programada: proximaFecha.toISOString().split('T')[0],
       atrasada,
       dias_atraso: atrasada ? Math.floor((hoy - proximaFecha) / (1000 * 60 * 60 * 24)) : 0,
@@ -150,7 +323,6 @@ async function obtenerTareasPendientes(sucursalId) {
     const allSubtareaIds = repetitivas.flatMap(p => p.subtareas.map(s => s.id))
     const repConfigIds = repetitivas.map(p => p.tarea_config_id)
 
-    // Traer ejecuciones de estas configs
     const { data: execsRep } = await supabase
       .from('ejecuciones_tarea')
       .select('id, tarea_config_id, fecha_ejecucion')
@@ -167,16 +339,14 @@ async function obtenerTareasPendientes(sucursalId) {
         execConfigMap[e.id] = e.tarea_config_id
       }
 
-      // Traer subtareas completadas de esas ejecuciones
       const { data: subExecs } = await supabase
         .from('ejecuciones_subtareas')
         .select('subtarea_id, completada, ejecucion_id')
         .in('ejecucion_id', execIds)
         .eq('completada', true)
 
-      // Mapa: configId+subtareaId → última fecha y todas las fechas completadas
       const ultimaMap = {}
-      const fechasMap = {} // key → [fechas ordenadas desc]
+      const fechasMap = {}
       for (const se of (subExecs || [])) {
         const configId = execConfigMap[se.ejecucion_id]
         const fecha = execDateMap[se.ejecucion_id]
@@ -188,7 +358,6 @@ async function obtenerTareasPendientes(sucursalId) {
         if (!fechasMap[key].includes(fecha)) fechasMap[key].push(fecha)
       }
 
-      // Calcular frecuencia promedio real por subtarea
       const promedioMap = {}
       for (const [key, fechas] of Object.entries(fechasMap)) {
         if (fechas.length < 2) continue
@@ -201,7 +370,6 @@ async function obtenerTareasPendientes(sucursalId) {
         promedioMap[key] = Math.round(totalDias / (fechas.length - 1))
       }
 
-      // Asignar a cada subtarea
       for (const p of repetitivas) {
         for (const s of p.subtareas) {
           const key = `${p.tarea_config_id}_${s.id}`

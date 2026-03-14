@@ -487,6 +487,17 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setGuardando(true)
     setError('')
 
+    // Modo soloPago: no necesita items ni venta, solo datos de pago
+    if (soloPago) {
+      const pagosPayload = [
+        ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
+        ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
+      ]
+      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado + saldoAplicado, vuelto: vuelto > 0 ? vuelto : 0 })
+      setGuardando(false)
+      return
+    }
+
     const items = carrito.map(i => ({
       id_articulo: i.articulo.id,
       codigo: i.articulo.codigo,
@@ -551,13 +562,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       total: totalEfectivo,
       totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
-    }
-
-    // Modo soloPago: no crear venta, solo devolver datos de pago (para pedidos con pago anticipado)
-    if (soloPago) {
-      onConfirmar({ pagos: payload.pagos, total: payload.total, monto_pagado: payload.monto_pagado, vuelto: payload.vuelto })
-      setGuardando(false)
-      return
     }
 
     try {
