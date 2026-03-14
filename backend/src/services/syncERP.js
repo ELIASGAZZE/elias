@@ -164,8 +164,9 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     }
   }
 
-  // 3. Upsert solo nuevos + actualizados
-  const aUpsertear = [...nuevos, ...actualizados]
+  // 3. Upsert solo nuevos + actualizados (con updated_at para tracking)
+  const ahora = new Date().toISOString()
+  const aUpsertear = [...nuevos, ...actualizados].map(art => ({ ...art, updated_at: ahora }))
   let totalInsertados = 0
 
   for (let i = 0; i < aUpsertear.length; i += BATCH_SIZE) {

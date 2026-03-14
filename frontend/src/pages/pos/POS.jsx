@@ -13,6 +13,7 @@ import useOnlineStatus from '../../hooks/useOnlineStatus'
 import { guardarArticulos, getArticulos, guardarPromociones, getPromociones, guardarClientes, getClientes } from '../../services/offlineDB'
 import { syncVentasPendientes } from '../../services/offlineSync'
 import { imprimirTicketDevolucion } from '../../utils/imprimirComprobante'
+import ActualizacionesPOS from '../../components/pos/ActualizacionesPOS'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -837,6 +838,7 @@ const POS = () => {
   const [pedidoEnProceso, setPedidoEnProceso] = useState(null) // { id, esPagado, ... }
 
   // Modal problema
+  const [mostrarActualizaciones, setMostrarActualizaciones] = useState(false)
   const [mostrarProblema, setMostrarProblema] = useState(false)
   const [problemaSeleccionado, setProblemaSeleccionado] = useState(null)
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
@@ -2204,6 +2206,13 @@ const POS = () => {
               <span>Cerrar Caja</span>
             </a>
             <button
+              onClick={() => setMostrarActualizaciones(true)}
+              className="text-violet-400 hover:text-white px-2 py-1 rounded transition-colors text-[11px] font-medium"
+              title="Ver actualizaciones de precios"
+            >
+              Actualizaciones
+            </button>
+            <button
               onClick={sincronizarPrecios}
               disabled={sincronizandoERP}
               className="text-violet-400 hover:text-white p-1 rounded transition-colors disabled:opacity-50"
@@ -2978,6 +2987,11 @@ const POS = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Actualizaciones */}
+      {mostrarActualizaciones && (
+        <ActualizacionesPOS onCerrar={() => setMostrarActualizaciones(false)} />
       )}
 
       {/* Modal Problema */}
