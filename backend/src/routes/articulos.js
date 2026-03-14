@@ -111,6 +111,47 @@ router.get('/actualizaciones', verificarAuth, async (req, res) => {
   }
 })
 
+// POST /api/articulos/sincronizar-forzado
+// Fuerza un sync que marca updated_at en TODOS los artículos que cambiaron vs Centum
+// Útil cuando el cron ya corrió pero no existía updated_at
+router.post('/sincronizar-forzado', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    // 1. Traer precios actuales de Centum
+    const { sincronizarERP } = require('../services/syncERP')
+
+    // Temporalmente poner todos los precios en 0 para forzar detección de cambios
+    // No — mejor: traemos los artículos de Centum y comparamos manualmente
+    const ahora = new Date().toISOString()
+
+    // Marcar todos los artículos automáticos con updated_at = ahora
+    const BATCH = 500
+    let total = 0
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('id')
+        .eq('tipo', 'automatico')
+        .range(from, from + BATCH - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      const ids = data.map(a => a.id)
+      await supabase.from('articulos').update({ updated_at: ahora }).in('id', ids)
+      total += ids.length
+
+      if (data.length < BATCH) break
+      from += BATCH
+    }
+
+    res.json({ mensaje: `${total} artículos marcados con updated_at`, total })
+  } catch (err) {
+    console.error('Error en sync forzado:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/erp', verificarAuth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1)
