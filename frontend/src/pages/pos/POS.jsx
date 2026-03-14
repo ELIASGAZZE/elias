@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import ModalCobrar from '../../components/pos/ModalCobrar'
+import ModalVentaEmpleado from '../../components/pos/ModalVentaEmpleado'
 import PedidosPOS from './PedidosPOS'
 import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
@@ -777,6 +778,8 @@ const POS = () => {
 
   // Modal cobrar
   const [mostrarCobrar, setMostrarCobrar] = useState(false)
+  // Modal venta empleado
+  const [mostrarVentaEmpleado, setMostrarVentaEmpleado] = useState(false)
 
   // Pedidos POS
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
@@ -2949,6 +2952,15 @@ const POS = () => {
                     >
                       {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
+                    {carrito.length > 0 && (
+                      <button
+                        onClick={() => setMostrarVentaEmpleado(true)}
+                        className="px-3 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                        title="Venta empleado"
+                      >
+                        Empleado
+                      </button>
+                    )}
                     <button
                       onClick={() => setMostrarCobrar(true)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
@@ -4644,6 +4656,23 @@ const POS = () => {
           pedidoPosId={pedidoEnProceso?.id || null}
           saldoCliente={saldoCliente}
           giftCardsEnVenta={giftCardsEnVenta}
+        />
+      )}
+
+      {/* Modal venta empleado */}
+      {mostrarVentaEmpleado && carrito.length > 0 && (
+        <ModalVentaEmpleado
+          carrito={carrito}
+          calcularPrecioConDescuentosBase={calcularPrecioConDescuentosBase}
+          terminalConfig={terminalConfig}
+          onCerrar={() => setMostrarVentaEmpleado(false)}
+          onExito={() => {
+            setMostrarVentaEmpleado(false)
+            setCarrito([])
+            setCliente({ ...CLIENTE_DEFAULT })
+            setBusquedaArt('')
+            setGiftCardsEnVenta([])
+          }}
         />
       )}
 

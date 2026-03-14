@@ -34,6 +34,7 @@ import VerificarRetiroPos from './pages/cajas-pos/VerificarRetiroPos'
 // Páginas de la app POS
 import POS from './pages/pos/POS'
 import PedidosPOS from './pages/pos/PedidosPOS'
+import SaldosEmpleados from './pages/pos/SaldosEmpleados'
 
 // Páginas de la app Ventas
 import VentasHome from './pages/ventas/VentasHome'
@@ -195,6 +196,12 @@ const App = () => {
           <Route path="/pos/pedidos" element={
             <RutaProtegida>
               <PedidosPOS />
+            </RutaProtegida>
+          } />
+
+          <Route path="/pos/saldos-empleados" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <SaldosEmpleados />
             </RutaProtegida>
           } />
 

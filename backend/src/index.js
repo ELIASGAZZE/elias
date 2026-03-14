@@ -31,6 +31,7 @@ const giftCardsRoutes = require('./routes/giftcards')
 const tareasRoutes = require('./routes/tareas')
 const auditoriaRoutes = require('./routes/auditoria')
 const mpPointRoutes = require('./routes/mpPoint')
+const cuentaEmpleadosRoutes = require('./routes/cuentaCorrienteEmpleados')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -90,6 +91,7 @@ app.use('/api/gift-cards', giftCardsRoutes)
 app.use('/api/tareas', tareasRoutes)
 app.use('/api/auditoria', auditoriaRoutes)
 app.use('/api/mp-point', mpPointRoutes)
+app.use('/api/cuenta-empleados', cuentaEmpleadosRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {
