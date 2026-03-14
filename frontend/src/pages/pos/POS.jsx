@@ -1396,40 +1396,6 @@ const POS = () => {
   // Atajos de teclado para modales y acciones rápidas
   useEffect(() => {
     const handler = (e) => {
-      // Modal cancelar venta
-      if (mostrarCancelar) {
-        if (e.key === 'Escape') { e.preventDefault(); setMostrarCancelar(false) }
-        if (e.key === 'Enter' && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) {
-          e.preventDefault()
-          const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
-          api.post('/api/auditoria/cancelacion', {
-            motivo: motivoFinal,
-            items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
-            subtotal,
-            total,
-            cliente_nombre: cliente?.nombre || null,
-            caja_id: terminalConfig?.caja_id || null,
-            sucursal_id: terminalConfig?.sucursal_id || null,
-            cierre_id: cierreActivo?.id || null,
-          }).catch(err => console.error('Error registrando cancelación:', err))
-          limpiarVenta(); setMostrarCancelar(false)
-        }
-        // Flechas arriba/abajo para seleccionar motivo
-        if (!cancelarPasoConfirm && document.activeElement?.tagName !== 'TEXTAREA') {
-          const motivos = [
-            'El cliente no tiene dinero suficiente',
-            'El cliente cambió de opinión',
-            'Error del cajero al cargar productos',
-            'Problema con el medio de pago',
-            'El cliente se retiró del local',
-            'otro',
-          ]
-          const idxActual = motivos.indexOf(cancelarMotivo)
-          if (e.key === 'ArrowDown') { e.preventDefault(); const next = Math.min(idxActual + 1, motivos.length - 1); setCancelarMotivo(motivos[next]); if (motivos[next] !== 'otro') setCancelarMotivoOtro('') }
-          if (e.key === 'ArrowUp') { e.preventDefault(); const prev = Math.max(idxActual <= 0 ? 0 : idxActual - 1, 0); setCancelarMotivo(motivos[prev]); if (motivos[prev] !== 'otro') setCancelarMotivoOtro('') }
-        }
-        return
-      }
       // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys pero bloquear defaults del browser
       if (mostrarCobrar) {
         if (e.key.startsWith('F') && e.key.length <= 3) e.preventDefault()
@@ -1484,7 +1450,17 @@ const POS = () => {
       // F9 = Cancelar venta
       if (e.key === 'F9' && tieneItems) {
         e.preventDefault()
-        setMostrarCancelar(true); setCancelarMotivo(null); setCancelarMotivoOtro(''); setCancelarPasoConfirm(false)
+        api.post('/api/auditoria/cancelacion', {
+          motivo: 'Cancelación rápida',
+          items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+          subtotal,
+          total,
+          cliente_nombre: cliente?.nombre || null,
+          caja_id: terminalConfig?.caja_id || null,
+          sucursal_id: terminalConfig?.sucursal_id || null,
+          cierre_id: cierreActivo?.id || null,
+        }).catch(err => console.error('Error registrando cancelación:', err))
+        limpiarVenta()
       }
       // F10 = Es pedido
       if (e.key === 'F10' && tieneItems && !pedidoEnProceso) {
@@ -2634,7 +2610,19 @@ const POS = () => {
             {(carrito.length > 0 || giftCardsEnVenta.length > 0) && (
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => { setMostrarCancelar(true); setCancelarMotivo(null); setCancelarMotivoOtro(''); setCancelarPasoConfirm(false) }}
+                  onClick={() => {
+                    api.post('/api/auditoria/cancelacion', {
+                      motivo: 'Cancelación rápida',
+                      items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+                      subtotal,
+                      total,
+                      cliente_nombre: cliente?.nombre || null,
+                      caja_id: terminalConfig?.caja_id || null,
+                      sucursal_id: terminalConfig?.sucursal_id || null,
+                      cierre_id: cierreActivo?.id || null,
+                    }).catch(err => console.error('Error registrando cancelación:', err))
+                    limpiarVenta()
+                  }}
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
                   title="F9"
                 >
@@ -4313,86 +4301,6 @@ const POS = () => {
         </div>
       )}
 
-      {/* Modal cancelar venta */}
-      {mostrarCancelar && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center" data-modal>
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMostrarCancelar(false)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div className="px-5 py-4 border-b bg-red-50 flex items-center justify-between">
-              <h3 className="text-base font-bold text-red-800">Motivo de cancelacion</h3>
-              <button onClick={() => setMostrarCancelar(false)} className="p-1 hover:bg-red-100 rounded-lg">
-                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="p-5">
-              <p className="text-sm text-gray-500 mb-4">Selecciona el motivo por el cual se cancela la venta:</p>
-              <div className="space-y-2">
-                {[
-                  'El cliente no tiene dinero suficiente',
-                  'El cliente cambió de opinión',
-                  'Error del cajero al cargar productos',
-                  'Problema con el medio de pago',
-                  'El cliente se retiró del local',
-                ].map(motivo => (
-                  <button
-                    key={motivo}
-                    onClick={() => { setCancelarMotivo(motivo); setCancelarMotivoOtro('') }}
-                    className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
-                      cancelarMotivo === motivo ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
-                    }`}
-                  >
-                    {motivo}
-                  </button>
-                ))}
-                <button
-                  onClick={() => setCancelarMotivo('otro')}
-                  className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
-                    cancelarMotivo === 'otro' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
-                  }`}
-                >
-                  Otro
-                </button>
-                {cancelarMotivo === 'otro' && (
-                  <textarea
-                    autoFocus
-                    value={cancelarMotivoOtro}
-                    onChange={e => setCancelarMotivoOtro(e.target.value)}
-                    placeholder="Escribi el motivo..."
-                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-500 focus:outline-none text-sm resize-none"
-                    rows={2}
-                  />
-                )}
-              </div>
-              <div className="flex gap-3 mt-5">
-                <button onClick={() => setMostrarCancelar(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                  Volver
-                </button>
-                <button disabled={!cancelarMotivo || (cancelarMotivo === 'otro' && !cancelarMotivoOtro.trim())} onClick={async () => {
-                  const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
-                  api.post('/api/auditoria/cancelacion', {
-                    motivo: motivoFinal,
-                    items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
-                    subtotal,
-                    total,
-                    cliente_nombre: cliente?.nombre || null,
-                    caja_id: terminalConfig?.caja_id || null,
-                    sucursal_id: terminalConfig?.sucursal_id || null,
-                    cierre_id: cierreActivo?.id || null,
-                  }).catch(err => console.error('Error registrando cancelación:', err))
-                  limpiarVenta(); setMostrarCancelar(false)
-                }}
-                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors">
-                  Cancelar venta
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal de cobro */}
       {mostrarCobrar && (
