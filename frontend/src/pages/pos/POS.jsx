@@ -829,6 +829,7 @@ const POS = () => {
   // Modal problema
   const [mostrarActualizaciones, setMostrarActualizaciones] = useState(false)
   const [mostrarCerrarCaja, setMostrarCerrarCaja] = useState(false)
+  const [mostrarConfirmarCancelar, setMostrarConfirmarCancelar] = useState(false)
   const [mostrarProblema, setMostrarProblema] = useState(false)
   const [problemaSeleccionado, setProblemaSeleccionado] = useState(null)
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
@@ -1396,6 +1397,12 @@ const POS = () => {
   // Atajos de teclado para modales y acciones rápidas
   useEffect(() => {
     const handler = (e) => {
+      // Confirmar cancelación
+      if (mostrarConfirmarCancelar) {
+        if (e.key === 'Enter') { e.preventDefault(); ejecutarCancelacion() }
+        if (e.key === 'Escape') { e.preventDefault(); setMostrarConfirmarCancelar(false) }
+        return
+      }
       // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys pero bloquear defaults del browser
       if (mostrarCobrar) {
         if (e.key.startsWith('F') && e.key.length <= 3) e.preventDefault()
@@ -1450,17 +1457,7 @@ const POS = () => {
       // F9 = Cancelar venta
       if (e.key === 'F9' && tieneItems) {
         e.preventDefault()
-        api.post('/api/auditoria/cancelacion', {
-          motivo: 'Cancelación rápida',
-          items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
-          subtotal,
-          total,
-          cliente_nombre: cliente?.nombre || null,
-          caja_id: terminalConfig?.caja_id || null,
-          sucursal_id: terminalConfig?.sucursal_id || null,
-          cierre_id: cierreActivo?.id || null,
-        }).catch(err => console.error('Error registrando cancelación:', err))
-        limpiarVenta()
+        setMostrarConfirmarCancelar(true)
       }
       // F10 = Es pedido
       if (e.key === 'F10' && tieneItems && !pedidoEnProceso) {
@@ -1547,6 +1544,21 @@ const POS = () => {
       promosAplicadas: aplicadas,
     }
   }, [carrito, promociones])
+
+  function ejecutarCancelacion() {
+    api.post('/api/auditoria/cancelacion', {
+      motivo: 'Cancelación rápida',
+      items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+      subtotal,
+      total,
+      cliente_nombre: cliente?.nombre || null,
+      caja_id: terminalConfig?.caja_id || null,
+      sucursal_id: terminalConfig?.sucursal_id || null,
+      cierre_id: cierreActivo?.id || null,
+    }).catch(err => console.error('Error registrando cancelación:', err))
+    limpiarVenta()
+    setMostrarConfirmarCancelar(false)
+  }
 
   function limpiarVenta() {
     setCarrito([])
@@ -2610,19 +2622,7 @@ const POS = () => {
             {(carrito.length > 0 || giftCardsEnVenta.length > 0) && (
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => {
-                    api.post('/api/auditoria/cancelacion', {
-                      motivo: 'Cancelación rápida',
-                      items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
-                      subtotal,
-                      total,
-                      cliente_nombre: cliente?.nombre || null,
-                      caja_id: terminalConfig?.caja_id || null,
-                      sucursal_id: terminalConfig?.sucursal_id || null,
-                      cierre_id: cierreActivo?.id || null,
-                    }).catch(err => console.error('Error registrando cancelación:', err))
-                    limpiarVenta()
-                  }}
+                  onClick={() => setMostrarConfirmarCancelar(true)}
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
                   title="F9"
                 >
@@ -2944,6 +2944,29 @@ const POS = () => {
                 className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:bg-gray-300 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
               >
                 Agregar al cobro
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmar cancelación */}
+      {mostrarConfirmarCancelar && (
+        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full mx-4 text-center">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Cancelar venta?</h3>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setMostrarConfirmarCancelar(false)}
+                className="flex-1 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
+              >
+                No <span className="text-[10px] opacity-60">Esc</span>
+              </button>
+              <button
+                onClick={ejecutarCancelacion}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
+              >
+                Si <span className="text-[10px] opacity-60">Enter</span>
               </button>
             </div>
           </div>
