@@ -37,7 +37,8 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
   // Cargar promo descuento efectivo
   useEffect(() => {
     api.get('/api/pos/promociones').then(({ data }) => {
-      const promo = (data || []).find(p => p.activa && p.tipo === 'forma_pago' && (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo')
+      const promos = data?.promociones || data || []
+      const promo = promos.find(p => p.activa && p.tipo === 'forma_pago' && (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo')
       if (promo) setDescEfectivoPct(parseFloat(promo.reglas?.valor) || 0)
     }).catch(() => {})
   }, [])
