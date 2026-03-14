@@ -14,6 +14,7 @@ import { guardarArticulos, getArticulos, guardarPromociones, getPromociones, gua
 import { syncVentasPendientes } from '../../services/offlineSync'
 import { imprimirTicketDevolucion } from '../../utils/imprimirComprobante'
 import ActualizacionesPOS from '../../components/pos/ActualizacionesPOS'
+import ModalCerrarCaja from '../../components/cajas-pos/ModalCerrarCaja'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -552,7 +553,6 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
                       valor={d.valor}
                       cantidad={billetesApertura[d.valor] || 0}
                       onChange={(val) => setBilletesApertura(prev => ({ ...prev, [d.valor]: val }))}
-                      alerta={tieneDiferencia(d.valor)}
                     />
                   ))}
                 </div>
@@ -561,17 +561,6 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
                   <div className="bg-violet-50 border border-violet-200 rounded-xl px-3 py-2 flex justify-between items-center mt-3">
                     <span className="text-sm font-medium text-violet-800">Total cambio inicial</span>
                     <span className="text-sm font-bold text-violet-700">{formatMonto(totalCambioInicial)}</span>
-                  </div>
-                )}
-
-                {hayUltimoCambio && calcularDiferencias() && (
-                  <div className="bg-red-50 border border-red-300 rounded-xl px-3 py-2 mt-2">
-                    <p className="text-xs font-semibold text-red-700">
-                      El cambio ingresado difiere del ultimo cierre de esta caja
-                    </p>
-                    <p className="text-xs text-red-600 mt-0.5">
-                      Las denominaciones con diferencia estan marcadas en rojo
-                    </p>
                   </div>
                 )}
               </>
@@ -839,6 +828,7 @@ const POS = () => {
 
   // Modal problema
   const [mostrarActualizaciones, setMostrarActualizaciones] = useState(false)
+  const [mostrarCerrarCaja, setMostrarCerrarCaja] = useState(false)
   const [mostrarProblema, setMostrarProblema] = useState(false)
   const [problemaSeleccionado, setProblemaSeleccionado] = useState(null)
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
@@ -1385,49 +1375,31 @@ const POS = () => {
     })
   }, [])
 
-  const [confirmEliminar, setConfirmEliminar] = useState(null) // { articuloId, nombre, cantidad }
 
   const quitarDelCarrito = useCallback((articuloId) => {
     setCarrito(prev => {
       const item = prev.find(i => i.articulo.id === articuloId)
       if (item) {
-        setConfirmEliminar({ articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad })
+        const precio = item.precioOverride ?? item.articulo.precio ?? 0
+        api.post('/api/pos/log-eliminacion', {
+          usuario_nombre: usuario?.nombre || 'Desconocido',
+          cierre_id: cierreActivo?.id || null,
+          items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
+        }).catch(err => console.error('Error registrando eliminación:', err))
       }
-      return prev
+      return prev.filter(i => i.articulo.id !== articuloId)
     })
-  }, [])
-
-  const confirmarEliminacion = useCallback(async () => {
-    if (!confirmEliminar) return
-    const { articuloId, nombre, cantidad } = confirmEliminar
-    setCarrito(prev => prev.filter(i => i.articulo.id !== articuloId))
-    setConfirmEliminar(null)
     setCarritoIdx(-1)
     setTimeout(() => inputBusquedaRef.current?.focus(), 50)
-    try {
-      await api.post('/api/pos/log-eliminacion', {
-        usuario_nombre: usuario?.nombre || 'Desconocido',
-        items: [{ articulo_id: articuloId, nombre, cantidad, hora: new Date().toISOString() }],
-      })
-    } catch (err) {
-      console.error('Error registrando eliminación:', err)
-    }
-  }, [confirmEliminar, usuario])
+  }, [usuario, cierreActivo])
 
   // Atajos de teclado para modales y acciones rápidas
   useEffect(() => {
     const handler = (e) => {
-      // Modal eliminar artículo
-      if (confirmEliminar) {
-        if (e.key === 'Enter') { e.preventDefault(); confirmarEliminacion() }
-        if (e.key === 'Escape') { e.preventDefault(); setConfirmEliminar(null) }
-        return
-      }
       // Modal cancelar venta
       if (mostrarCancelar) {
-        if (e.key === 'Escape') { e.preventDefault(); if (cancelarPasoConfirm) setCancelarPasoConfirm(false); else setMostrarCancelar(false) }
-        if (e.key === 'Enter' && !cancelarPasoConfirm && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) { e.preventDefault(); setCancelarPasoConfirm(true) }
-        if (e.key === 'Enter' && cancelarPasoConfirm) {
+        if (e.key === 'Escape') { e.preventDefault(); setMostrarCancelar(false) }
+        if (e.key === 'Enter' && cancelarMotivo && (cancelarMotivo !== 'otro' || cancelarMotivoOtro.trim())) {
           e.preventDefault()
           const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
           api.post('/api/auditoria/cancelacion', {
@@ -1438,6 +1410,7 @@ const POS = () => {
             cliente_nombre: cliente?.nombre || null,
             caja_id: terminalConfig?.caja_id || null,
             sucursal_id: terminalConfig?.sucursal_id || null,
+            cierre_id: cierreActivo?.id || null,
           }).catch(err => console.error('Error registrando cancelación:', err))
           limpiarVenta(); setMostrarCancelar(false)
         }
@@ -1568,7 +1541,7 @@ const POS = () => {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [confirmEliminar, confirmarEliminacion, mostrarCancelar, cancelarPasoConfirm, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad, carritoIdx, quitarDelCarrito])
+  }, [mostrarCancelar, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad, carritoIdx, quitarDelCarrito, cierreActivo])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -2195,8 +2168,8 @@ const POS = () => {
               </svg>
               PROBLEMA <span className="text-[9px] opacity-70">F8</span>
             </button>
-            <a
-              href={`/cajas-pos/cierre/${cierreActivo?.id}/cerrar`}
+            <button
+              onClick={() => setMostrarCerrarCaja(true)}
               className="text-violet-400 hover:text-red-300 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
               title="Cerrar caja"
             >
@@ -2204,7 +2177,7 @@ const POS = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
               </svg>
               <span>Cerrar Caja</span>
-            </a>
+            </button>
             <button
               onClick={() => setMostrarActualizaciones(true)}
               className="text-violet-400 hover:text-white px-2 py-1 rounded transition-colors text-[11px] font-medium"
@@ -2992,6 +2965,18 @@ const POS = () => {
       {/* Modal Actualizaciones */}
       {mostrarActualizaciones && (
         <ActualizacionesPOS onCerrar={() => setMostrarActualizaciones(false)} />
+      )}
+
+      {/* Modal Cerrar Caja */}
+      {mostrarCerrarCaja && cierreActivo && (
+        <ModalCerrarCaja
+          cierreId={cierreActivo.id}
+          onClose={() => setMostrarCerrarCaja(false)}
+          onCajaCerrada={() => {
+            setMostrarCerrarCaja(false)
+            setCierreActivo(null)
+          }}
+        />
       )}
 
       {/* Modal Problema */}
@@ -4334,9 +4319,7 @@ const POS = () => {
           <div className="absolute inset-0 bg-black/40" onClick={() => setMostrarCancelar(false)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="px-5 py-4 border-b bg-red-50 flex items-center justify-between">
-              <h3 className="text-base font-bold text-red-800">
-                {cancelarPasoConfirm ? 'Confirmar cancelación' : 'Motivo de cancelación'}
-              </h3>
+              <h3 className="text-base font-bold text-red-800">Motivo de cancelacion</h3>
               <button onClick={() => setMostrarCancelar(false)} className="p-1 hover:bg-red-100 rounded-lg">
                 <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -4344,95 +4327,69 @@ const POS = () => {
               </button>
             </div>
 
-            {!cancelarPasoConfirm ? (
-              <div className="p-5">
-                <p className="text-sm text-gray-500 mb-4">Selecciona el motivo por el cual se cancela la venta:</p>
-                <div className="space-y-2">
-                  {[
-                    'El cliente no tiene dinero suficiente',
-                    'El cliente cambió de opinión',
-                    'Error del cajero al cargar productos',
-                    'Problema con el medio de pago',
-                    'El cliente se retiró del local',
-                  ].map(motivo => (
-                    <button
-                      key={motivo}
-                      onClick={() => { setCancelarMotivo(motivo); setCancelarMotivoOtro('') }}
-                      className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
-                        cancelarMotivo === motivo ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
-                      }`}
-                    >
-                      {motivo}
-                    </button>
-                  ))}
+            <div className="p-5">
+              <p className="text-sm text-gray-500 mb-4">Selecciona el motivo por el cual se cancela la venta:</p>
+              <div className="space-y-2">
+                {[
+                  'El cliente no tiene dinero suficiente',
+                  'El cliente cambió de opinión',
+                  'Error del cajero al cargar productos',
+                  'Problema con el medio de pago',
+                  'El cliente se retiró del local',
+                ].map(motivo => (
                   <button
-                    onClick={() => setCancelarMotivo('otro')}
+                    key={motivo}
+                    onClick={() => { setCancelarMotivo(motivo); setCancelarMotivoOtro('') }}
                     className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
-                      cancelarMotivo === 'otro' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
+                      cancelarMotivo === motivo ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
                     }`}
                   >
-                    Otro
+                    {motivo}
                   </button>
-                  {cancelarMotivo === 'otro' && (
-                    <textarea
-                      autoFocus
-                      value={cancelarMotivoOtro}
-                      onChange={e => setCancelarMotivoOtro(e.target.value)}
-                      placeholder="Escribí el motivo..."
-                      className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-500 focus:outline-none text-sm resize-none"
-                      rows={2}
-                    />
-                  )}
-                </div>
-                <div className="flex gap-3 mt-5">
-                  <button onClick={() => setMostrarCancelar(false)}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                    Volver
-                  </button>
-                  <button disabled={!cancelarMotivo || (cancelarMotivo === 'otro' && !cancelarMotivoOtro.trim())} onClick={() => setCancelarPasoConfirm(true)}
-                    className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors">
-                    Continuar
-                  </button>
-                </div>
+                ))}
+                <button
+                  onClick={() => setCancelarMotivo('otro')}
+                  className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
+                    cancelarMotivo === 'otro' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
+                  }`}
+                >
+                  Otro
+                </button>
+                {cancelarMotivo === 'otro' && (
+                  <textarea
+                    autoFocus
+                    value={cancelarMotivoOtro}
+                    onChange={e => setCancelarMotivoOtro(e.target.value)}
+                    placeholder="Escribi el motivo..."
+                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-500 focus:outline-none text-sm resize-none"
+                    rows={2}
+                  />
+                )}
               </div>
-            ) : (
-              <div className="p-5">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
-                  <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                    </svg>
-                    <p className="text-sm text-amber-900 leading-relaxed">
-                      El usuario <strong>{usuario?.nombre || 'Sin nombre'}</strong> deja constancia de que la venta iniciada es cancelada por motivo: <strong>"{cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo}"</strong> el día <strong>{new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</strong> a las <strong>{new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</strong>.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-3">
-                  <button onClick={() => setCancelarPasoConfirm(false)}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                    Volver
-                  </button>
-                  <button onClick={async () => {
-                    const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
-                    try {
-                      await api.post('/api/auditoria/cancelacion', {
-                        motivo: motivoFinal,
-                        items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
-                        subtotal,
-                        total,
-                        cliente_nombre: cliente?.nombre || null,
-                        caja_id: terminalConfig?.caja_id || null,
-                        sucursal_id: terminalConfig?.sucursal_id || null,
-                      })
-                    } catch (err) { console.error('Error registrando cancelación:', err) }
-                    limpiarVenta(); setMostrarCancelar(false)
-                  }}
-                    className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
-                    Confirmar cancelación
-                  </button>
-                </div>
+              <div className="flex gap-3 mt-5">
+                <button onClick={() => setMostrarCancelar(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+                  Volver
+                </button>
+                <button disabled={!cancelarMotivo || (cancelarMotivo === 'otro' && !cancelarMotivoOtro.trim())} onClick={async () => {
+                  const motivoFinal = cancelarMotivo === 'otro' ? cancelarMotivoOtro.trim() : cancelarMotivo
+                  api.post('/api/auditoria/cancelacion', {
+                    motivo: motivoFinal,
+                    items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+                    subtotal,
+                    total,
+                    cliente_nombre: cliente?.nombre || null,
+                    caja_id: terminalConfig?.caja_id || null,
+                    sucursal_id: terminalConfig?.sucursal_id || null,
+                    cierre_id: cierreActivo?.id || null,
+                  }).catch(err => console.error('Error registrando cancelación:', err))
+                  limpiarVenta(); setMostrarCancelar(false)
+                }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors">
+                  Cancelar venta
+                </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -4983,40 +4940,6 @@ const POS = () => {
       )}
 
       {/* Modal confirmación eliminación de artículo */}
-      {confirmEliminar && (
-        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center">
-          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
-            <div className="text-center mb-4">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-bold text-gray-800 mb-2">Eliminar artículo</h3>
-              <p className="text-sm text-gray-600">
-                Estás por eliminar <strong>{confirmEliminar.cantidad}x {confirmEliminar.nombre}</strong> del ticket.
-              </p>
-              <p className="text-xs text-red-500 font-medium mt-2">
-                Quedará registro de esta eliminación: {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} — {usuario?.nombre || 'Usuario'}
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setConfirmEliminar(null)}
-                className="flex-1 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={confirmarEliminacion}
-                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
-              >
-                Eliminar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

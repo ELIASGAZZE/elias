@@ -1800,7 +1800,7 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
 // Registra eliminación de artículos del ticket (auditoría anti-robo)
 router.post('/log-eliminacion', verificarAuth, async (req, res) => {
   try {
-    const { items, usuario_nombre } = req.body
+    const { items, usuario_nombre, cierre_id } = req.body
     if (!items || !items.length) return res.status(400).json({ error: 'Items requeridos' })
 
     const { error } = await supabase.from('pos_eliminaciones_log').insert({
@@ -1808,6 +1808,7 @@ router.post('/log-eliminacion', verificarAuth, async (req, res) => {
       usuario_nombre: usuario_nombre || req.usuario.nombre || 'Desconocido',
       items,
       fecha: new Date().toISOString(),
+      cierre_id: cierre_id || null,
     })
 
     if (error) throw error

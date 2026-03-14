@@ -8,7 +8,7 @@ const { verificarAuth, soloAdmin } = require('../middleware/auth')
 // Registra una venta cancelada
 router.post('/cancelacion', verificarAuth, async (req, res) => {
   try {
-    const { motivo, items, subtotal, total, cliente_nombre, caja_id, sucursal_id } = req.body
+    const { motivo, items, subtotal, total, cliente_nombre, caja_id, sucursal_id, cierre_id } = req.body
     if (!motivo) return res.status(400).json({ error: 'Motivo requerido' })
 
     const { error } = await supabase.from('ventas_pos_canceladas').insert({
@@ -21,6 +21,7 @@ router.post('/cancelacion', verificarAuth, async (req, res) => {
       subtotal: subtotal || 0,
       total: total || 0,
       cliente_nombre: cliente_nombre || null,
+      cierre_id: cierre_id || null,
     })
 
     if (error) {
