@@ -2344,6 +2344,18 @@ const POS = () => {
             <span className="text-violet-300">|</span>
             <span className="text-violet-300">{usuario?.nombre}</span>
             <button
+              onClick={() => { if (carrito.length > 0) setMostrarVentaEmpleado(true) }}
+              className={`px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 ${
+                carrito.length > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-orange-900/30 text-orange-300/50 cursor-not-allowed'
+              }`}
+              title="Venta a empleado (cta cte)"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+              </svg>
+              Empleado
+            </button>
+            <button
               onClick={() => setMostrarProblema(true)}
               className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
             >
@@ -2952,15 +2964,6 @@ const POS = () => {
                     >
                       {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
-                    {carrito.length > 0 && (
-                      <button
-                        onClick={() => setMostrarVentaEmpleado(true)}
-                        className="px-3 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-colors"
-                        title="Venta empleado"
-                      >
-                        Empleado
-                      </button>
-                    )}
                     <button
                       onClick={() => setMostrarCobrar(true)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
