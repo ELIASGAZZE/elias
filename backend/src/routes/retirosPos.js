@@ -124,11 +124,12 @@ router.get('/cierres-pos/:cierreId/retiros', verificarAuth, async (req, res) => 
       }
     }
 
-    // Fetch retiros con join empleado
+    // Fetch retiros con join empleado (excluir ocultos como cambio delivery)
     const { data: retiros, error } = await supabase
       .from('retiros_pos')
       .select(SELECT_RETIRO)
       .eq('cierre_pos_id', cierre.id)
+      .neq('oculto', true)
       .order('numero', { ascending: true })
 
     if (error) throw error

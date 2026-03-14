@@ -152,28 +152,44 @@ const VerificarCierrePos = () => {
     }))
   }
 
+  // Delivery: solo un campo de monto recibido
+  const [efectivoDelivery, setEfectivoDelivery] = useState('')
+  const esDelivery = cierre?.tipo === 'delivery'
+
   const enviarVerificacion = async () => {
     setEnviando(true)
     setError('')
     try {
-      // Build medios_pago array — only entries with monto > 0
-      const mediosPagoArray = formasCobro
-        .filter(f => (mediosPago[f.id]?.monto || 0) > 0)
-        .map(f => ({
-          forma_cobro_id: f.id,
-          nombre: f.nombre,
-          monto: mediosPago[f.id].monto,
-          cantidad: mediosPago[f.id].cantidad,
-        }))
+      if (esDelivery) {
+        const montoRecibido = parseFloat(efectivoDelivery) || 0
+        await api.post(`/api/cierres-pos/${id}/verificar`, {
+          billetes: {},
+          monedas: {},
+          total_efectivo: montoRecibido,
+          medios_pago: [],
+          total_general: montoRecibido,
+          observaciones,
+        })
+      } else {
+        // Build medios_pago array — only entries with monto > 0
+        const mediosPagoArray = formasCobro
+          .filter(f => (mediosPago[f.id]?.monto || 0) > 0)
+          .map(f => ({
+            forma_cobro_id: f.id,
+            nombre: f.nombre,
+            monto: mediosPago[f.id].monto,
+            cantidad: mediosPago[f.id].cantidad,
+          }))
 
-      await api.post(`/api/cierres-pos/${id}/verificar`, {
-        billetes,
-        monedas,
-        total_efectivo: totalEfectivo,
-        medios_pago: mediosPagoArray,
-        total_general: totalGeneral,
-        observaciones,
-      })
+        await api.post(`/api/cierres-pos/${id}/verificar`, {
+          billetes,
+          monedas,
+          total_efectivo: totalEfectivo,
+          medios_pago: mediosPagoArray,
+          total_general: totalGeneral,
+          observaciones,
+        })
+      }
       navigate(`/cajas-pos/cierre/${id}`)
     } catch (err) {
       setError(err.response?.data?.error || 'Error al enviar verificacion')
@@ -204,6 +220,78 @@ const VerificarCierrePos = () => {
     )
   }
 
+  // ── Delivery: vista simplificada ──
+  if (esDelivery) {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-6">
+        <Navbar titulo="Verificar Delivery" sinTabs volverA="/cajas-pos" />
+
+        <div className="px-4 py-4 max-w-lg mx-auto space-y-4">
+
+          {/* Header delivery */}
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+              </svg>
+              <span className="font-semibold text-purple-800">{cierre.observaciones_apertura || 'Delivery'}</span>
+            </div>
+            <p className="text-sm text-purple-700">{cierre.observaciones || ''}</p>
+          </div>
+
+          {/* Total esperado */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
+            <p className="text-sm text-gray-500 mb-1">Total que el repartidor debe dejar</p>
+            <p className="text-3xl font-bold text-gray-800">{formatMonto(cierre.total_efectivo)}</p>
+            {cierre.fondo_fijo > 0 && (
+              <p className="text-xs text-gray-400 mt-1">Cambio entregado: {formatMonto(cierre.fondo_fijo)}</p>
+            )}
+          </div>
+
+          {/* Campo: cuanto recibiste */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <label className="text-sm font-medium text-gray-700 mb-2 block">Efectivo recibido del repartidor</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={efectivoDelivery}
+              onChange={(e) => setEfectivoDelivery(e.target.value)}
+              className="campo-form text-lg font-semibold text-center"
+              placeholder="$0.00"
+              autoFocus
+            />
+          </div>
+
+          {/* Observaciones */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
+            <textarea
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              className="campo-form text-sm"
+              rows={2}
+              placeholder="Observaciones opcionales..."
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 p-3 rounded-xl">{error}</p>
+          )}
+
+          <button
+            onClick={enviarVerificacion}
+            disabled={enviando || !efectivoDelivery}
+            className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
+          >
+            {enviando ? 'Enviando...' : 'Confirmar recepcion'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Regular: vista completa ──
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
       <Navbar titulo="Verificar Cierre POS" sinTabs volverA="/cajas-pos" />

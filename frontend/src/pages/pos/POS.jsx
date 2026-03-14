@@ -787,6 +787,7 @@ const POS = () => {
   const [pasoPedido, setPasoPedido] = useState(0) // 0=fecha, 1=cliente, 2=tipo, 3=dirección/sucursal, 4=pago
   const [fechaEntregaPedido, setFechaEntregaPedido] = useState('')
   const [turnoPedido, setTurnoPedido] = useState('')
+  const [bloqueosFecha, setBloqueosFecha] = useState([])
   const [mostrarCobrarPedido, setMostrarCobrarPedido] = useState(false)
   const [cobrarPedidoExistente, setCobrarPedidoExistente] = useState(null) // { id, total, items, cliente_nombre, id_cliente_centum }
   const [pedidosRefreshKey, setPedidosRefreshKey] = useState(0)
@@ -1942,6 +1943,7 @@ const POS = () => {
     setClientePedido(null)
     setFechaEntregaPedido('')
     setTurnoPedido('')
+    setBloqueosFecha([])
     setBusquedaClientePedido('')
     setClientesPedido([])
     setMostrarCrearClientePedido(false)
@@ -2010,22 +2012,7 @@ const POS = () => {
     }
   }
 
-  async function confirmarPedidoWizard() {
-    // Verificar bloqueos antes de continuar
-    try {
-      const turnoCheck = tipoPedidoSeleccionado === 'delivery' ? turnoPedido : null
-      const { data } = await api.get('/api/pos/bloqueos/verificar', {
-        params: { fecha: fechaEntregaPedido, turno: turnoCheck || undefined, tipo_pedido: tipoPedidoSeleccionado }
-      })
-      if (data.bloqueado) {
-        const b = data.bloqueo
-        const motivo = b.motivo ? ` (${b.motivo})` : ''
-        alert(`No se pueden crear pedidos de ${tipoPedidoSeleccionado} para esa fecha/turno${motivo}`)
-        return
-      }
-    } catch (err) {
-      console.error('Error verificando bloqueos:', err)
-    }
+  function confirmarPedidoWizard() {
     // Ir al paso 4: preguntar pago anticipado
     setPasoPedido(4)
   }
@@ -4769,6 +4756,19 @@ const POS = () => {
                         return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
                       })
                       if (tienePerecedor && fechaEntregaPedido > mananaISO) return
+                      // Cargar bloqueos para la fecha seleccionada
+                      api.get('/api/pos/bloqueos', { params: { fecha: fechaEntregaPedido } })
+                        .then(({ data }) => {
+                          const diaSemana = new Date(fechaEntregaPedido + 'T12:00:00').getDay()
+                          const activos = (data || []).filter(b => {
+                            if (!b.activo) return false
+                            if (b.tipo === 'fecha' && b.fecha === fechaEntregaPedido) return true
+                            if (b.tipo === 'semanal' && b.dia_semana === diaSemana) return true
+                            return false
+                          })
+                          setBloqueosFecha(activos)
+                        })
+                        .catch(() => setBloqueosFecha([]))
                       // Si ya tiene cliente real, saltar al paso 2 (tipo)
                       if (cliente.id_centum && cliente.id_centum !== 0) {
                         setClientePedido(cliente)
@@ -4862,6 +4862,24 @@ const POS = () => {
                       <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
                     </div>
                   </div>
+                  {bloqueosFecha.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 mt-2">
+                      <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                        </svg>
+                        <div className="text-sm text-amber-800">
+                          {bloqueosFecha.map((b, i) => (
+                            <div key={i} className="font-medium">
+                              {b.motivo || `Bloqueo ${b.turno === 'todo' ? 'todo el día' : b.turno.toUpperCase()}`}
+                              {b.turno !== 'todo' && <span className="font-normal text-amber-600"> — turno {b.turno.toUpperCase()}</span>}
+                              {b.aplica_a !== 'todos' && <span className="font-normal text-amber-600"> ({b.aplica_a})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3 mt-2">
                     <button
                       onClick={() => seleccionarTipoPedido('delivery')}

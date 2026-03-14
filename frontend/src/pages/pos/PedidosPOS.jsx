@@ -727,7 +727,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
 
       {/* Modal guía de delivery */}
       {mostrarGuiaDelivery && (
-        <ModalGuiaDelivery onCerrar={() => setMostrarGuiaDelivery(false)} />
+        <ModalGuiaDelivery onCerrar={() => setMostrarGuiaDelivery(false)} cajaId={terminalConfig?.caja_id} />
       )}
 
       {/* CSS para animación del drawer */}

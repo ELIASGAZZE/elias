@@ -844,6 +844,454 @@ router.get('/pedidos/guia-delivery', verificarAuth, async (req, res) => {
   }
 })
 
+// ============ GUIAS DELIVERY ============
+
+// GET /api/pos/guias-delivery — listar guías
+router.get('/guias-delivery', verificarAuth, async (req, res) => {
+  try {
+    const { fecha, estado } = req.query
+    let query = supabase
+      .from('guias_delivery')
+      .select('*, guia_delivery_pedidos(*, pedido:pedidos_pos(id, numero, nombre_cliente, total, observaciones, items))')
+      .order('fecha', { ascending: false })
+
+    if (fecha) query = query.eq('fecha', fecha)
+    if (estado) query = query.eq('estado', estado)
+
+    const { data, error } = await query
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/pos/guias-delivery/:id — detalle de una guía
+router.get('/guias-delivery/:id', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('guias_delivery')
+      .select('*, guia_delivery_pedidos(*, pedido:pedidos_pos(id, numero, nombre_cliente, total, observaciones, items, id_cliente_centum))')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(404).json({ error: 'Guía no encontrada' })
+    res.json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/pos/guias-delivery/despachar — crear guía + ventas automáticas + cambiar estado pedidos
+router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
+  try {
+    const { fecha, turno, cadete_id, cadete_nombre, cambio_entregado, caja_id } = req.body
+    if (!fecha || !turno) return res.status(400).json({ error: 'fecha y turno son requeridos' })
+    if (!caja_id) return res.status(400).json({ error: 'caja_id es requerido (caja delivery)' })
+
+    // Verificar que no exista guía para fecha+turno
+    const { data: existente } = await supabase
+      .from('guias_delivery')
+      .select('id')
+      .eq('fecha', fecha)
+      .eq('turno', turno)
+      .single()
+
+    if (existente) return res.status(400).json({ error: `Ya existe una guía despachada para ${fecha} turno ${turno}` })
+
+    // Obtener pedidos delivery pendientes para fecha+turno
+    const { data: pedidos, error: errPedidos } = await supabase
+      .from('pedidos_pos')
+      .select('*')
+      .eq('tipo', 'delivery')
+      .eq('estado', 'pendiente')
+      .eq('fecha_entrega', fecha)
+      .eq('turno_entrega', turno)
+      .order('created_at', { ascending: true })
+
+    if (errPedidos) throw errPedidos
+    if (!pedidos || pedidos.length === 0) {
+      return res.status(400).json({ error: 'No hay pedidos pendientes para despachar' })
+    }
+
+    // Verificar que no haya pedidos sin forma de pago
+    const sinPago = pedidos.filter(p => {
+      const obs = p.observaciones || ''
+      return !obs.includes('PAGO ANTICIPADO') && !obs.includes('PAGO EN ENTREGA: EFECTIVO')
+    })
+    if (sinPago.length > 0) {
+      return res.status(400).json({ error: `Hay ${sinPago.length} pedido(s) sin forma de pago definida` })
+    }
+
+    // Obtener promo de descuento por pago en efectivo
+    let descEfectivoPct = 0
+    const { data: promos } = await supabase
+      .from('promociones_pos')
+      .select('*')
+      .eq('activa', true)
+      .eq('tipo', 'forma_pago')
+    const promoEfectivo = (promos || []).find(p => (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo')
+    if (promoEfectivo) {
+      descEfectivoPct = parseFloat(promoEfectivo.reglas?.valor) || 0
+    }
+
+    // Calcular totales (efectivo con descuento aplicado)
+    let totalEfectivo = 0
+    let totalAnticipado = 0
+    let totalDescuento = 0
+    pedidos.forEach(p => {
+      const obs = p.observaciones || ''
+      const pedidoTotal = parseFloat(p.total) || 0
+      if (obs.includes('PAGO ANTICIPADO')) {
+        totalAnticipado += pedidoTotal
+      } else {
+        const desc = descEfectivoPct > 0 ? Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100 : 0
+        totalEfectivo += Math.round((pedidoTotal - desc) * 100) / 100
+        totalDescuento += desc
+      }
+    })
+
+    // Obtener config de caja para Centum
+    const { data: cajaData } = await supabase
+      .from('cajas')
+      .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+      .eq('id', caja_id)
+      .single()
+
+    // Crear la guía
+    const { data: guia, error: errGuia } = await supabase
+      .from('guias_delivery')
+      .insert({
+        fecha,
+        turno,
+        cadete_id: cadete_id || null,
+        cadete_nombre: cadete_nombre || null,
+        cambio_entregado: cambio_entregado || 0,
+        total_efectivo: totalEfectivo,
+        total_anticipado: totalAnticipado,
+        cantidad_pedidos: pedidos.length,
+        estado: 'despachada',
+        despachada_por: req.perfil.id,
+        sucursal_id: cajaData?.sucursal_id || null,
+      })
+      .select()
+      .single()
+
+    if (errGuia) throw errGuia
+
+    // Crear ventas y vincular pedidos a la guía
+    const guiaPedidos = []
+    const ventasCreadas = []
+
+    for (const pedido of pedidos) {
+      const obs = pedido.observaciones || ''
+      const esAnticipado = obs.includes('PAGO ANTICIPADO')
+      const formaPago = esAnticipado ? 'anticipado' : 'efectivo'
+
+      // Crear venta_pos para cada pedido
+      const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
+      const pedidoTotal = parseFloat(pedido.total) || 0
+
+      // Aplicar descuento efectivo si corresponde
+      let descuento = 0
+      let totalVenta = pedidoTotal
+      if (!esAnticipado && descEfectivoPct > 0) {
+        descuento = Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100
+        totalVenta = Math.round((pedidoTotal - descuento) * 100) / 100
+      }
+
+      const pagos = esAnticipado
+        ? [{ tipo: 'Pago anticipado', monto: pedidoTotal }]
+        : [{ tipo: 'efectivo', monto: totalVenta }]
+
+      const insertVenta = {
+        cajero_id: req.perfil.id,
+        sucursal_id: cajaData?.sucursal_id || null,
+        caja_id,
+        id_cliente_centum: pedido.id_cliente_centum || 0,
+        nombre_cliente: pedido.nombre_cliente || null,
+        subtotal: pedidoTotal,
+        descuento_total: descuento,
+        total: totalVenta,
+        monto_pagado: totalVenta,
+        vuelto: 0,
+        items: typeof pedido.items === 'string' ? pedido.items : JSON.stringify(pedido.items),
+        pagos,
+        descuento_forma_pago: descuento > 0 ? { total: descuento, detalle: [{ formaCobro: 'Efectivo', porcentaje: descEfectivoPct, descuento }] } : null,
+        pedido_pos_id: pedido.id,
+      }
+
+      const { data: venta, error: errVenta } = await supabase
+        .from('ventas_pos')
+        .insert(insertVenta)
+        .select()
+        .single()
+
+      if (errVenta) {
+        console.error(`[Guía Delivery] Error creando venta para pedido ${pedido.id}:`, errVenta.message)
+        continue
+      }
+
+      ventasCreadas.push(venta)
+
+      // Registrar en Centum ERP (async)
+      if (venta && cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
+        ;(async () => {
+          try {
+            const resultado = await registrarVentaPOSEnCentum(venta, {
+              sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
+              puntoVenta: cajaData.punto_venta_centum,
+              centum_operador_empresa: cajaData.sucursales.centum_operador_empresa,
+              centum_operador_prueba: cajaData.sucursales.centum_operador_prueba,
+            })
+            if (resultado) {
+              const numDoc = resultado.NumeroDocumento
+              const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
+              await supabase.from('ventas_pos').update({
+                id_venta_centum: resultado.IdVenta || null,
+                centum_comprobante: comprobante,
+                centum_sync: true,
+                centum_error: null,
+              }).eq('id', venta.id)
+              console.log(`[Guía Delivery] Venta ${venta.id} registrada en Centum: ${comprobante}`)
+            }
+          } catch (err) {
+            console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
+            await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id).catch(() => {})
+          }
+        })()
+      }
+
+      // Vincular pedido a la guía
+      guiaPedidos.push({
+        guia_id: guia.id,
+        pedido_pos_id: pedido.id,
+        venta_pos_id: venta.id,
+        forma_pago: formaPago,
+        monto: totalVenta,
+        estado_entrega: 'pendiente',
+      })
+    }
+
+    // Insertar relaciones guía-pedidos
+    if (guiaPedidos.length > 0) {
+      const { error: errGP } = await supabase.from('guia_delivery_pedidos').insert(guiaPedidos)
+      if (errGP) console.error('[Guía Delivery] Error insertando guia_delivery_pedidos:', errGP.message)
+    }
+
+    // Cambiar estado de todos los pedidos a 'entregado'
+    const pedidoIds = pedidos.map(p => p.id)
+    await supabase
+      .from('pedidos_pos')
+      .update({ estado: 'entregado' })
+      .in('id', pedidoIds)
+
+    // Crear cierre delivery en Control Caja POS (pendiente de verificación)
+    const cambioNum = parseFloat(cambio_entregado) || 0
+    const totalADevolver = totalEfectivo + cambioNum
+    const fechaFormateada = fecha.split('-').reverse().join('/')
+    const labelDelivery = `Delivery ${fechaFormateada} ${turno}`
+
+    const { data: cierreDelivery, error: errCierre } = await supabase
+      .from('cierres_pos')
+      .insert({
+        caja_id,
+        empleado_id: null,
+        cajero_id: req.perfil.id,
+        apertura_at: new Date().toISOString(),
+        cierre_at: new Date().toISOString(),
+        fecha,
+        fondo_fijo: cambioNum,
+        fondo_fijo_billetes: {},
+        fondo_fijo_monedas: {},
+        tipo: 'delivery',
+        estado: 'pendiente_gestor',
+        total_efectivo: totalADevolver,
+        total_general: totalADevolver,
+        medios_pago: totalAnticipado > 0 ? [{ nombre: 'Pago anticipado (MP)', total: totalAnticipado }] : [],
+        billetes: {},
+        monedas: {},
+        observaciones_apertura: labelDelivery,
+        observaciones: `Guía delivery ${turno} - ${pedidos.length} pedidos. Cadete: ${cadete_nombre || 'Sin asignar'}. Efectivo a cobrar: $${totalEfectivo}. Cambio entregado: $${cambioNum}. Total a devolver: $${totalADevolver}.`,
+      })
+      .select()
+      .single()
+
+    if (errCierre) {
+      console.error('[Guía Delivery] Error creando cierre delivery:', errCierre.message)
+    }
+
+    // Registrar retiro en la caja que despacha (el cambio dado al cadete)
+    if (cambioNum > 0) {
+      // Buscar cierre abierto de la caja que despacha
+      const { data: cierreAbierto } = await supabase
+        .from('cierres_pos')
+        .select('id')
+        .eq('caja_id', caja_id)
+        .eq('estado', 'abierta')
+        .limit(1)
+        .single()
+
+      if (cierreAbierto) {
+        // Calcular número secuencial del retiro
+        const { data: maxRetiro } = await supabase
+          .from('retiros_pos')
+          .select('numero')
+          .eq('cierre_pos_id', cierreAbierto.id)
+          .order('numero', { ascending: false })
+          .limit(1)
+
+        const numRetiro = (maxRetiro && maxRetiro.length > 0 ? maxRetiro[0].numero : 0) + 1
+
+        await supabase
+          .from('retiros_pos')
+          .insert({
+            cierre_pos_id: cierreAbierto.id,
+            empleado_id: null,
+            numero: numRetiro,
+            billetes: {},
+            monedas: {},
+            total: cambioNum,
+            oculto: true,
+            observaciones: `Cambio para delivery ${turno} ${fechaFormateada} - Cadete: ${cadete_nombre || 'Sin asignar'}`,
+          })
+        console.log(`[Guía Delivery] Retiro de $${cambioNum} registrado en cierre ${cierreAbierto.id}`)
+      } else {
+        console.log('[Guía Delivery] No hay caja abierta para registrar retiro del cambio')
+      }
+    }
+
+    // Vincular cierre al registro de guía
+    if (cierreDelivery) {
+      await supabase
+        .from('guias_delivery')
+        .update({ cierre_pos_id: cierreDelivery.id })
+        .eq('id', guia.id)
+    }
+
+    res.json({
+      guia,
+      ventas_creadas: ventasCreadas.length,
+      pedidos_despachados: pedidoIds.length,
+      total_efectivo: totalEfectivo,
+      total_anticipado: totalAnticipado,
+      total_descuento: totalDescuento,
+      descuento_efectivo_pct: descEfectivoPct,
+      cambio_entregado: cambioNum,
+      total_a_devolver: totalADevolver,
+      cierre_delivery_id: cierreDelivery?.id || null,
+    })
+  } catch (err) {
+    console.error('[Guía Delivery] Error al despachar:', err.message)
+    res.status(500).json({ error: 'Error al despachar guía: ' + err.message })
+  }
+})
+
+// PUT /api/pos/guias-delivery/:id/cerrar — cierre delivery (cuando vuelve el cadete)
+router.put('/guias-delivery/:id/cerrar', verificarAuth, async (req, res) => {
+  try {
+    const { efectivo_recibido, observaciones, pedidos_no_entregados } = req.body
+
+    // Obtener guía con pedidos
+    const { data: guia, error: errGuia } = await supabase
+      .from('guias_delivery')
+      .select('*, guia_delivery_pedidos(*)')
+      .eq('id', req.params.id)
+      .single()
+
+    if (errGuia || !guia) return res.status(404).json({ error: 'Guía no encontrada' })
+    if (guia.estado !== 'despachada') return res.status(400).json({ error: 'La guía ya fue cerrada' })
+
+    // Marcar pedidos no entregados
+    const noEntregadosIds = (pedidos_no_entregados || []).map(p => p.id)
+    for (const pe of (pedidos_no_entregados || [])) {
+      await supabase
+        .from('guia_delivery_pedidos')
+        .update({ estado_entrega: pe.estado || 'no_entregado', motivo_no_entrega: pe.motivo || null })
+        .eq('guia_id', guia.id)
+        .eq('pedido_pos_id', pe.id)
+
+      // Cambiar estado del pedido
+      await supabase
+        .from('pedidos_pos')
+        .update({ estado: pe.estado || 'no_entregado' })
+        .eq('id', pe.id)
+    }
+
+    // Marcar el resto como entregados
+    const entregadosGP = guia.guia_delivery_pedidos.filter(gp => !noEntregadosIds.includes(gp.pedido_pos_id))
+    for (const gp of entregadosGP) {
+      await supabase
+        .from('guia_delivery_pedidos')
+        .update({ estado_entrega: 'entregado' })
+        .eq('id', gp.id)
+
+      await supabase
+        .from('pedidos_pos')
+        .update({ estado: 'entregado' })
+        .eq('id', gp.pedido_pos_id)
+    }
+
+    // Calcular efectivo esperado (solo pedidos entregados que pagan en efectivo)
+    const efectivoEntregados = guia.guia_delivery_pedidos
+      .filter(gp => gp.forma_pago === 'efectivo' && !noEntregadosIds.includes(gp.pedido_pos_id))
+      .reduce((s, gp) => s + (parseFloat(gp.monto) || 0), 0)
+
+    const totalEsperado = efectivoEntregados + (parseFloat(guia.cambio_entregado) || 0)
+    const efectivoRec = parseFloat(efectivo_recibido) || 0
+    const diferencia = Math.round((efectivoRec - totalEsperado) * 100) / 100
+
+    // Actualizar guía
+    const nuevoEstado = Math.abs(diferencia) < 0.01 ? 'cerrada' : 'con_diferencia'
+    const { data: guiaActualizada, error: errUpdate } = await supabase
+      .from('guias_delivery')
+      .update({
+        estado: nuevoEstado,
+        efectivo_recibido: efectivoRec,
+        diferencia,
+        observaciones_cierre: observaciones || null,
+        cerrada_por: req.perfil.id,
+        cerrada_at: new Date().toISOString(),
+      })
+      .eq('id', guia.id)
+      .select()
+      .single()
+
+    if (errUpdate) throw errUpdate
+
+    // Generar saldo a favor para pedidos anticipados no entregados
+    for (const pe of (pedidos_no_entregados || [])) {
+      const gp = guia.guia_delivery_pedidos.find(g => g.pedido_pos_id === pe.id && g.forma_pago === 'anticipado')
+      if (gp) {
+        const { data: pedidoData } = await supabase.from('pedidos_pos').select('id_cliente_centum, nombre_cliente, numero').eq('id', pe.id).single()
+        if (pedidoData && pedidoData.id_cliente_centum) {
+          await supabase.from('movimientos_saldo_pos').insert({
+            id_cliente_centum: pedidoData.id_cliente_centum,
+            nombre_cliente: pedidoData.nombre_cliente || 'Cliente',
+            monto: parseFloat(gp.monto) || 0,
+            motivo: `No entregado - Pedido #${pedidoData.numero || pe.id}`,
+            pedido_pos_id: pe.id,
+            created_by: req.perfil.id,
+          })
+        }
+      }
+    }
+
+    res.json({
+      guia: guiaActualizada,
+      efectivo_esperado: totalEsperado,
+      efectivo_recibido: efectivoRec,
+      diferencia,
+      pedidos_entregados: entregadosGP.length,
+      pedidos_no_entregados: noEntregadosIds.length,
+    })
+  } catch (err) {
+    console.error('[Guía Delivery] Error al cerrar:', err.message)
+    res.status(500).json({ error: 'Error al cerrar guía: ' + err.message })
+  }
+})
+
 // GET /api/pos/pedidos/articulos-por-dia — artículos necesarios agrupados por fecha de entrega
 router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
   try {
@@ -1280,6 +1728,99 @@ router.get('/saldos', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al listar saldos:', err.message)
     res.status(500).json({ error: 'Error al listar saldos' })
+  }
+})
+
+// GET /api/pos/saldos/buscar-cuit?cuit=XXX — buscar saldo por DNI/CUIT
+router.get('/saldos/buscar-cuit', verificarAuth, async (req, res) => {
+  try {
+    const { cuit } = req.query
+    if (!cuit || cuit.trim().length < 3) return res.status(400).json({ error: 'Ingresá al menos 3 dígitos de DNI/CUIT' })
+
+    const termino = cuit.trim()
+    const soloDigitos = termino.replace(/\D/g, '')
+
+    // Buscar cliente por CUIT en tabla clientes
+    let orFilter = `cuit.ilike.%${soloDigitos}%`
+    if (soloDigitos.length === 11) {
+      const conGuiones = `${soloDigitos.slice(0,2)}-${soloDigitos.slice(2,10)}-${soloDigitos.slice(10)}`
+      orFilter += `,cuit.ilike.%${conGuiones}%`
+    }
+    if (termino !== soloDigitos) orFilter += `,cuit.ilike.%${termino}%`
+
+    const { data: clientes, error: errCli } = await supabase
+      .from('clientes')
+      .select('id, id_centum, razon_social, cuit')
+      .eq('activo', true)
+      .or(orFilter)
+      .limit(5)
+
+    if (errCli) throw errCli
+    if (!clientes || clientes.length === 0) {
+      return res.json({ clientes: [] })
+    }
+
+    // Para cada cliente, buscar su saldo
+    const resultado = []
+    for (const cli of clientes) {
+      const idCentum = cli.id_centum
+      if (!idCentum) continue
+
+      const { data: movs } = await supabase
+        .from('movimientos_saldo_pos')
+        .select('monto')
+        .eq('id_cliente_centum', idCentum)
+
+      const saldo = (movs || []).reduce((s, m) => s + parseFloat(m.monto), 0)
+      resultado.push({
+        id_cliente_centum: idCentum,
+        nombre_cliente: cli.razon_social,
+        cuit: cli.cuit,
+        saldo: Math.round(saldo * 100) / 100,
+      })
+    }
+
+    res.json({ clientes: resultado })
+  } catch (err) {
+    console.error('[POS] Error buscando saldo por CUIT:', err.message)
+    res.status(500).json({ error: 'Error al buscar saldo' })
+  }
+})
+
+// POST /api/pos/saldos/ajuste — ajuste manual de saldo (solo admin)
+router.post('/saldos/ajuste', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id_cliente_centum, nombre_cliente, monto, motivo } = req.body
+    if (!id_cliente_centum) return res.status(400).json({ error: 'id_cliente_centum requerido' })
+    if (!monto || parseFloat(monto) === 0) return res.status(400).json({ error: 'Monto requerido y distinto de 0' })
+    if (!motivo || !motivo.trim()) return res.status(400).json({ error: 'Motivo requerido' })
+
+    const { data, error } = await supabase
+      .from('movimientos_saldo_pos')
+      .insert({
+        id_cliente_centum,
+        nombre_cliente: nombre_cliente || 'Sin nombre',
+        monto: parseFloat(monto),
+        motivo: `Ajuste manual: ${motivo.trim()}`,
+        created_by: req.perfil.id,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    // Recalcular saldo total
+    const { data: movs } = await supabase
+      .from('movimientos_saldo_pos')
+      .select('monto')
+      .eq('id_cliente_centum', id_cliente_centum)
+
+    const saldoActual = (movs || []).reduce((s, m) => s + parseFloat(m.monto), 0)
+
+    res.status(201).json({ movimiento: data, saldo: Math.round(saldoActual * 100) / 100 })
+  } catch (err) {
+    console.error('[POS] Error al ajustar saldo:', err.message)
+    res.status(500).json({ error: 'Error al ajustar saldo' })
   }
 })
 
@@ -2235,8 +2776,9 @@ router.get('/bloqueos/verificar', verificarAuth, async (req, res) => {
     const bloqueo = (data || []).find(b => {
       // Verificar si aplica al tipo de pedido
       if (b.aplica_a !== 'todos' && b.aplica_a !== tipo_pedido) return false
-      // Verificar turno
-      if (b.turno !== 'todo' && turno && b.turno !== turno) return false
+      // Verificar turno: si no se envía turno (retiro), solo aplican bloqueos con turno=todo
+      if (!turno && b.turno !== 'todo') return false
+      if (turno && b.turno !== 'todo' && b.turno !== turno) return false
       // Verificar fecha
       if (b.tipo === 'fecha' && b.fecha === fecha) return true
       if (b.tipo === 'semanal' && b.dia_semana === diaSemana) return true
