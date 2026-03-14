@@ -1994,11 +1994,13 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
         let sucursalFisicaId = null
         let centumOperadorEmpresa = null
         let centumOperadorPrueba = null
-        if (venta.caja_id) {
+        // Usar la caja donde se procesa la NC (no la caja de la venta original)
+        const cajaParaCentum = caja_id || venta.caja_id
+        if (cajaParaCentum) {
           const { data: cajaData } = await supabase
             .from('cajas')
             .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-            .eq('id', venta.caja_id)
+            .eq('id', cajaParaCentum)
             .single()
           sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
           centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
@@ -2401,11 +2403,13 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
         let sucursalFisicaId = null
         let centumOperadorEmpresa = null
         let centumOperadorPrueba = null
-        if (venta.caja_id) {
+        // Usar la caja donde se procesa la NC (no la caja de la venta original)
+        const cajaParaCentum = caja_id || venta.caja_id
+        if (cajaParaCentum) {
           const { data: cajaData } = await supabase
             .from('cajas')
             .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-            .eq('id', venta.caja_id)
+            .eq('id', cajaParaCentum)
             .single()
           sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
           centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
