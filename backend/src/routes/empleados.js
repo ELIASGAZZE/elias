@@ -14,20 +14,12 @@ router.get('/', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('empleados')
-      .select('*, sucursales(id, nombre)')
+      .select('*')
       .order('nombre')
 
     // Filtro por activo: por defecto solo activos
     if (todas !== 'true') {
       query = query.eq('activo', true)
-    }
-
-    // Operario/Gestor: solo su sucursal
-    if (rol !== 'admin') {
-      query = query.eq('sucursal_id', perfilSucursalId)
-    } else if (sucursal_id) {
-      // Admin con filtro opcional
-      query = query.eq('sucursal_id', sucursal_id)
     }
 
     const { data, error } = await query

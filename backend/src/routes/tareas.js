@@ -443,7 +443,7 @@ router.get('/pendientes', verificarAuth, async (req, res) => {
 // POST /api/tareas/ejecutar — Completar tarea
 router.post('/ejecutar', verificarAuth, async (req, res) => {
   try {
-    const { tarea_config_id, empleados_ids, subtareas_completadas, observaciones } = req.body
+    const { tarea_config_id, empleados_ids, subtareas_completadas, observaciones, calificacion } = req.body
 
     if (!tarea_config_id) {
       return res.status(400).json({ error: 'tarea_config_id es requerido' })
@@ -464,10 +464,21 @@ router.post('/ejecutar', verificarAuth, async (req, res) => {
       return res.status(403).json({ error: 'No puede completar tareas de otra sucursal' })
     }
 
-    // Calcular fecha programada (usar scheduler para obtener la fecha que corresponde)
-    const pendientes = await obtenerTareasPendientes(config.sucursal_id)
-    const tareaPendiente = pendientes.find(p => p.tarea_config_id === tarea_config_id)
-    const fechaProgramada = tareaPendiente?.fecha_programada || new Date().toISOString().split('T')[0]
+    // Calcular fecha programada con query liviana (sin cargar todas las pendientes)
+    const { calcularProximaFecha } = require('../services/tareasScheduler')
+    const [{ data: configFull }, { data: ultimaEjec }] = await Promise.all([
+      supabase.from('tareas_config_sucursal').select('frecuencia_dias, dia_preferencia, fecha_inicio').eq('id', tarea_config_id).single(),
+      supabase.from('ejecuciones_tarea').select('fecha_ejecucion').eq('tarea_config_id', tarea_config_id).order('fecha_ejecucion', { ascending: false }).limit(1).maybeSingle(),
+    ])
+    const proximaFecha = calcularProximaFecha(configFull, ultimaEjec?.fecha_ejecucion || null)
+    const hoyStr = new Date().toISOString().split('T')[0]
+    const fechaProgramada = proximaFecha <= new Date() ? proximaFecha.toISOString().split('T')[0] : hoyStr
+
+    // Validar calificación si viene
+    const calif = calificacion ? parseInt(calificacion) : null
+    if (calif !== null && (calif < 1 || calif > 5)) {
+      return res.status(400).json({ error: 'La calificación debe ser entre 1 y 5' })
+    }
 
     // Crear ejecución
     const { data: ejecucion, error: errEjec } = await supabase
@@ -475,38 +486,37 @@ router.post('/ejecutar', verificarAuth, async (req, res) => {
       .insert({
         tarea_config_id,
         fecha_programada: fechaProgramada,
-        fecha_ejecucion: new Date().toISOString().split('T')[0],
+        fecha_ejecucion: hoyStr,
         completada_por_id: req.perfil.id,
         observaciones: observaciones?.trim() || null,
+        calificacion: calif,
       })
       .select()
       .single()
 
     if (errEjec) throw errEjec
 
-    // Registrar empleados
+    // Registrar empleados y subtareas en paralelo
+    const promesas = []
     if (empleados_ids && empleados_ids.length > 0) {
-      const empInsert = empleados_ids.map(eid => ({
-        ejecucion_id: ejecucion.id,
-        empleado_id: eid,
-      }))
-      const { error: errEmp } = await supabase
-        .from('ejecuciones_empleados')
-        .insert(empInsert)
-      if (errEmp) throw errEmp
+      promesas.push(
+        supabase.from('ejecuciones_empleados').insert(
+          empleados_ids.map(eid => ({ ejecucion_id: ejecucion.id, empleado_id: eid }))
+        )
+      )
     }
-
-    // Registrar subtareas completadas
     if (subtareas_completadas && subtareas_completadas.length > 0) {
-      const subInsert = subtareas_completadas.map(s => ({
-        ejecucion_id: ejecucion.id,
-        subtarea_id: s.subtarea_id,
-        completada: s.completada !== false,
-      }))
-      const { error: errSub } = await supabase
-        .from('ejecuciones_subtareas')
-        .insert(subInsert)
-      if (errSub) throw errSub
+      promesas.push(
+        supabase.from('ejecuciones_subtareas').insert(
+          subtareas_completadas.map(s => ({ ejecucion_id: ejecucion.id, subtarea_id: s.subtarea_id, completada: s.completada !== false }))
+        )
+      )
+    }
+    if (promesas.length > 0) {
+      const resultados = await Promise.all(promesas)
+      for (const r of resultados) {
+        if (r.error) throw r.error
+      }
     }
 
     res.status(201).json(ejecucion)
@@ -741,7 +751,7 @@ router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, 
     let query = supabase
       .from('ejecuciones_tarea')
       .select(`
-        id, fecha_programada, fecha_ejecucion, observaciones, created_at,
+        id, fecha_programada, fecha_ejecucion, observaciones, calificacion, created_at,
         completada_por:perfiles(nombre),
         tarea_config:tareas_config_sucursal(
           tarea:tareas(nombre),

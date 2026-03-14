@@ -2,16 +2,28 @@
 import React, { useState, useEffect } from 'react'
 import api from '../../services/api'
 
+function diasDesde(fecha) {
+  if (!fecha) return null
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  const f = new Date(fecha)
+  f.setHours(0, 0, 0, 0)
+  return Math.floor((hoy - f) / (1000 * 60 * 60 * 24))
+}
+
 const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
   const [empleados, setEmpleados] = useState([])
   const [empleadosSeleccionados, setEmpleadosSeleccionados] = useState([])
   const [subtareasState, setSubtareasState] = useState({})
   const [observaciones, setObservaciones] = useState('')
+  const [calificacion, setCalificacion] = useState(0)
+  const [hoverStar, setHoverStar] = useState(0)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    // Cargar empleados de la sucursal
+    // Cargar todos los empleados activos
     api.get('/api/empleados')
       .then(r => setEmpleados(r.data))
       .catch(() => {})
@@ -39,6 +51,10 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
       setError('Seleccione al menos un empleado')
       return
     }
+    if (calificacion === 0) {
+      setError('Seleccione un puntaje para la tarea')
+      return
+    }
 
     setEnviando(true)
     setError('')
@@ -54,6 +70,7 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
             }))
           : [],
         observaciones,
+        calificacion,
       }
 
       await api.post('/api/tareas/ejecutar', body)
@@ -86,22 +103,60 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Empleados que realizaron la tarea *
             </label>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto">
-              {empleados.map(emp => (
-                <label key={emp.id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={empleadosSeleccionados.includes(emp.id)}
-                    onChange={() => toggleEmpleado(emp.id)}
-                    className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-                  />
-                  <span className="text-sm text-gray-700">{emp.nombre}</span>
-                </label>
-              ))}
-              {empleados.length === 0 && (
-                <p className="text-sm text-gray-400">No hay empleados cargados</p>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDropdownOpen(prev => !prev)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-left flex items-center justify-between focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              >
+                <span className={empleadosSeleccionados.length > 0 ? 'text-gray-700' : 'text-gray-400'}>
+                  {empleadosSeleccionados.length > 0
+                    ? `${empleadosSeleccionados.length} empleado${empleadosSeleccionados.length > 1 ? 's' : ''} seleccionado${empleadosSeleccionados.length > 1 ? 's' : ''}`
+                    : 'Seleccionar empleados...'}
+                </span>
+                <svg className={`w-4 h-4 text-gray-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
+              {dropdownOpen && (
+                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {empleados.map(emp => (
+                    <label
+                      key={emp.id}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-orange-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={empleadosSeleccionados.includes(emp.id)}
+                        onChange={() => toggleEmpleado(emp.id)}
+                        className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                      />
+                      <span className="text-sm text-gray-700">{emp.nombre}</span>
+                    </label>
+                  ))}
+                  {empleados.length === 0 && (
+                    <p className="text-sm text-gray-400 px-3 py-2">No hay empleados cargados</p>
+                  )}
+                </div>
               )}
             </div>
+            {empleadosSeleccionados.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {empleadosSeleccionados.map(id => {
+                  const emp = empleados.find(e => e.id === id)
+                  return emp ? (
+                    <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
+                      {emp.nombre}
+                      <button type="button" onClick={() => toggleEmpleado(id)} className="hover:text-orange-900">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </span>
+                  ) : null
+                })}
+              </div>
+            )}
           </div>
 
           {/* Subtareas */}
@@ -119,14 +174,69 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
                       onChange={() => toggleSubtarea(sub.id)}
                       className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
                     />
-                    <span className={`text-sm ${subtareasState[sub.id] ? 'text-gray-700' : 'text-gray-400 line-through'}`}>
+                    <span className={`text-sm flex-1 ${subtareasState[sub.id] ? 'text-gray-700' : 'text-gray-400 line-through'}`}>
                       {sub.nombre}
                     </span>
+                    {(() => {
+                      const dias = diasDesde(sub.ultima_ejecucion)
+                      const umbral = sub.frecuencia_promedio || tarea.frecuencia_dias || 7
+                      const urgente = dias !== null && dias >= umbral
+                      if (dias === null) return (
+                        <span className="text-xs text-red-500 font-medium whitespace-nowrap">
+                          🔥 Nunca realizada
+                        </span>
+                      )
+                      if (dias === 0) return (
+                        <span className="text-xs text-green-500 whitespace-nowrap">Hoy</span>
+                      )
+                      return (
+                        <span className={`text-xs font-medium whitespace-nowrap ${urgente ? 'text-red-500' : 'text-gray-400'}`}>
+                          {urgente && '🔥 '}{dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`}
+                        </span>
+                      )
+                    })()}
                   </label>
                 ))}
               </div>
             </div>
           )}
+
+          {/* Calificación */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              ¿Qué puntaje le das al resultado de la tarea realizada? *
+            </label>
+            <div className="flex items-center gap-1">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setCalificacion(star)}
+                  onMouseEnter={() => setHoverStar(star)}
+                  onMouseLeave={() => setHoverStar(0)}
+                  className="p-0.5 transition-transform hover:scale-110"
+                >
+                  <svg
+                    className={`w-8 h-8 ${
+                      star <= (hoverStar || calificacion)
+                        ? 'text-yellow-400 fill-yellow-400'
+                        : 'text-gray-300 fill-gray-300'
+                    } transition-colors`}
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1}
+                  >
+                    <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                  </svg>
+                </button>
+              ))}
+              {calificacion > 0 && (
+                <span className="ml-2 text-sm text-gray-500">
+                  {calificacion === 1 ? 'Muy mal' : calificacion === 2 ? 'Mal' : calificacion === 3 ? 'Regular' : calificacion === 4 ? 'Bien' : 'Excelente'}
+                </span>
+              )}
+            </div>
+          </div>
 
           {/* Observaciones */}
           <div>

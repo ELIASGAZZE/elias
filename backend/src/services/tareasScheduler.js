@@ -100,6 +100,7 @@ async function obtenerTareasPendientes(sucursalId) {
       pendientes.push({
         tarea_config_id: config.id,
         tarea_id: config.tarea.id,
+        sucursal_id: config.sucursal_id,
         nombre: config.tarea.nombre,
         descripcion: config.tarea.descripcion,
         enlace_manual: config.tarea.enlace_manual,
@@ -128,6 +129,7 @@ async function obtenerTareasPendientes(sucursalId) {
     pendientes.push({
       tarea_config_id: config.id,
       tarea_id: config.tarea.id,
+      sucursal_id: config.sucursal_id,
       nombre: config.tarea.nombre,
       descripcion: config.tarea.descripcion,
       enlace_manual: config.tarea.enlace_manual,
@@ -140,6 +142,74 @@ async function obtenerTareasPendientes(sucursalId) {
       repetitiva: false,
       ejecuciones_hoy: 0,
     })
+  }
+
+  // Enriquecer subtareas de tareas repetitivas con última fecha de ejecución
+  const repetitivas = pendientes.filter(p => p.repetitiva && p.subtareas.length > 0)
+  if (repetitivas.length > 0) {
+    const allSubtareaIds = repetitivas.flatMap(p => p.subtareas.map(s => s.id))
+    const repConfigIds = repetitivas.map(p => p.tarea_config_id)
+
+    // Traer ejecuciones de estas configs
+    const { data: execsRep } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, tarea_config_id, fecha_ejecucion')
+      .in('tarea_config_id', repConfigIds)
+      .order('fecha_ejecucion', { ascending: false })
+      .limit(500)
+
+    if (execsRep && execsRep.length > 0) {
+      const execIds = execsRep.map(e => e.id)
+      const execDateMap = {}
+      const execConfigMap = {}
+      for (const e of execsRep) {
+        execDateMap[e.id] = e.fecha_ejecucion
+        execConfigMap[e.id] = e.tarea_config_id
+      }
+
+      // Traer subtareas completadas de esas ejecuciones
+      const { data: subExecs } = await supabase
+        .from('ejecuciones_subtareas')
+        .select('subtarea_id, completada, ejecucion_id')
+        .in('ejecucion_id', execIds)
+        .eq('completada', true)
+
+      // Mapa: configId+subtareaId → última fecha y todas las fechas completadas
+      const ultimaMap = {}
+      const fechasMap = {} // key → [fechas ordenadas desc]
+      for (const se of (subExecs || [])) {
+        const configId = execConfigMap[se.ejecucion_id]
+        const fecha = execDateMap[se.ejecucion_id]
+        const key = `${configId}_${se.subtarea_id}`
+        if (!ultimaMap[key] || fecha > ultimaMap[key]) {
+          ultimaMap[key] = fecha
+        }
+        if (!fechasMap[key]) fechasMap[key] = []
+        if (!fechasMap[key].includes(fecha)) fechasMap[key].push(fecha)
+      }
+
+      // Calcular frecuencia promedio real por subtarea
+      const promedioMap = {}
+      for (const [key, fechas] of Object.entries(fechasMap)) {
+        if (fechas.length < 2) continue
+        fechas.sort((a, b) => a.localeCompare(b))
+        let totalDias = 0
+        for (let i = 1; i < fechas.length; i++) {
+          const diff = (new Date(fechas[i]) - new Date(fechas[i - 1])) / (1000 * 60 * 60 * 24)
+          totalDias += diff
+        }
+        promedioMap[key] = Math.round(totalDias / (fechas.length - 1))
+      }
+
+      // Asignar a cada subtarea
+      for (const p of repetitivas) {
+        for (const s of p.subtareas) {
+          const key = `${p.tarea_config_id}_${s.id}`
+          s.ultima_ejecucion = ultimaMap[key] || null
+          s.frecuencia_promedio = promedioMap[key] || null
+        }
+      }
+    }
   }
 
   return pendientes

@@ -63,7 +63,10 @@ CREATE TABLE ejecuciones_subtareas (
   UNIQUE(ejecucion_id, subtarea_id)
 );
 
--- 7. Checklist imprimible (campo libre en tarea)
+-- 7. Calificación de ejecución (1-5 estrellas)
+-- ALTER TABLE ejecuciones_tarea ADD COLUMN calificacion SMALLINT CHECK (calificacion >= 1 AND calificacion <= 5);
+
+-- 8. Checklist imprimible (campo libre en tarea)
 -- ALTER TABLE tareas ADD COLUMN checklist_imprimible TEXT;
 
 -- RLS: habilitar Row Level Security (permitir todo via service_role key)
