@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import api from '../../services/api'
 import Navbar from '../../components/layout/Navbar'
+import { imprimirCierreCuentaEmpleado } from '../../utils/imprimirComprobante'
 
 const formatPrecio = (n) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0 }).format(n || 0)
@@ -231,6 +232,8 @@ const TabCuentaCorriente = () => {
   const [guardandoPago, setGuardandoPago] = useState(false)
   const [mensajePago, setMensajePago] = useState('')
   const [ventaExpandida, setVentaExpandida] = useState(null)
+  const [ejecutandoCierre, setEjecutandoCierre] = useState(false)
+  const [confirmandoCierre, setConfirmandoCierre] = useState(false)
 
   useEffect(() => { cargarSaldos() }, [])
 
@@ -285,6 +288,38 @@ const TabCuentaCorriente = () => {
     }
   }
 
+  const empleadosConDeuda = empleados.filter(e => e.saldo > 0)
+  const totalDeuda = empleadosConDeuda.reduce((sum, e) => sum + e.saldo, 0)
+
+  const ejecutarCierreMasivo = async () => {
+    setEjecutandoCierre(true)
+    try {
+      const { data } = await api.post('/api/cuenta-empleados/cierre-masivo')
+      const { cierres } = data
+
+      if (cierres.length === 0) {
+        alert('No hay empleados con saldo pendiente')
+        setConfirmandoCierre(false)
+        setEjecutandoCierre(false)
+        return
+      }
+
+      // Imprimir comprobante de cada empleado con delay entre cada uno
+      for (let i = 0; i < cierres.length; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 1500))
+        imprimirCierreCuentaEmpleado(cierres[i])
+      }
+
+      setConfirmandoCierre(false)
+      setSeleccionado(null)
+      cargarSaldos()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al ejecutar cierre masivo')
+    } finally {
+      setEjecutandoCierre(false)
+    }
+  }
+
   const timeline = [
     ...(movimientos.ventas || []).map(v => ({ ...v, _tipo: 'venta', _fecha: v.created_at })),
     ...(movimientos.pagos || []).map(p => ({ ...p, _tipo: 'pago', _fecha: p.created_at })),
@@ -299,7 +334,46 @@ const TabCuentaCorriente = () => {
   }
 
   return (
-    <div className="flex gap-6">
+    <div>
+      {/* Barra superior con botón cierre masivo */}
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-gray-500">
+          {empleadosConDeuda.length > 0
+            ? `${empleadosConDeuda.length} empleado${empleadosConDeuda.length !== 1 ? 's' : ''} con deuda · Total: ${formatPrecio(totalDeuda)}`
+            : 'Todos los saldos están en $0'}
+        </p>
+        {empleadosConDeuda.length > 0 && !confirmandoCierre && (
+          <button
+            onClick={() => setConfirmandoCierre(true)}
+            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            Cierre mensual (todos a $0)
+          </button>
+        )}
+        {confirmandoCierre && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+            <span className="text-sm text-red-700">
+              Se pagarán {empleadosConDeuda.length} empleados por {formatPrecio(totalDeuda)}. Se imprimirá un comprobante por cada uno.
+            </span>
+            <button
+              onClick={ejecutarCierreMasivo}
+              disabled={ejecutandoCierre}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-1.5 rounded-lg"
+            >
+              {ejecutandoCierre ? 'Procesando...' : 'Confirmar'}
+            </button>
+            <button
+              onClick={() => setConfirmandoCierre(false)}
+              disabled={ejecutandoCierre}
+              className="text-sm text-gray-500 hover:text-gray-700 px-2 py-1.5"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-6">
       {/* Lista empleados */}
       <div className={`${seleccionado ? 'w-1/3' : 'w-full'} transition-all`}>
         <p className="text-sm text-gray-500 mb-3">{empleados.length} empleado{empleados.length !== 1 ? 's' : ''} con cuenta</p>
@@ -448,6 +522,7 @@ const TabCuentaCorriente = () => {
           </div>
         </div>
       )}
+    </div>
     </div>
   )
 }

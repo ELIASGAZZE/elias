@@ -371,3 +371,53 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
     abrirVentanaImpresion(buildTicket('cajero'))
   }, 1500)
 }
+
+/**
+ * Imprime comprobante de cierre mensual de cuenta corriente de un empleado.
+ * Muestra: nombre, total consumido, listado de comprobantes (ventas) que componen la deuda.
+ */
+export function imprimirCierreCuentaEmpleado({ empleado, saldo, ventas, concepto }) {
+  let html = ''
+
+  html += '<div class="center titulo">PADANO SRL</div>'
+  html += '<div class="center bold" style="font-size:20px;margin-bottom:4px">CIERRE CUENTA CORRIENTE</div>'
+  html += '<div class="line-double"></div>'
+
+  const ahora = new Date()
+  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+  html += `<div style="font-size:22px" class="bold">${escapeHtml(empleado.nombre)}</div>`
+  if (empleado.codigo) html += `<div style="font-size:20px">Codigo: ${escapeHtml(empleado.codigo)}</div>`
+  if (empleado.sucursales?.nombre) html += `<div style="font-size:20px">Sucursal: ${escapeHtml(empleado.sucursales.nombre)}</div>`
+  html += '<div class="line-double"></div>'
+
+  // Comprobantes (ventas)
+  if (ventas && ventas.length > 0) {
+    html += '<div class="seccion">COMPROBANTES</div>'
+    html += '<div class="line"></div>'
+
+    ventas.forEach(v => {
+      const fecha = formatFechaHora(v.created_at)
+      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(fecha)}</span><span>${formatMonto(v.total)}</span></div>`
+
+      // Items de la venta
+      const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
+      items.forEach(item => {
+        html += `<div style="font-size:18px;padding-left:8px">${escapeHtml(item.nombre)} x${item.cantidad} ${formatMonto(item.subtotal || (item.precio_final || item.precio_original || 0) * item.cantidad)}</div>`
+      })
+      html += '<div style="margin-bottom:4px"></div>'
+    })
+  }
+
+  html += '<div class="line-double"></div>'
+  html += `<div class="row total"><span>TOTAL CONSUMIDO</span><span>${formatMonto(saldo)}</span></div>`
+  html += '<div class="line-double"></div>'
+
+  if (concepto) html += `<div style="font-size:20px">${escapeHtml(concepto)}</div>`
+  html += '<div style="font-size:20px;margin-top:4px">Saldo despues del cierre: $0</div>'
+  html += '<div class="line"></div>'
+
+  html += '<div class="firma">Firma empleado: _______________</div>'
+  html += '<div style="text-align:center;font-size:18px;margin-top:4px">Aclaracion: _______________</div>'
+
+  abrirVentanaImpresion(html)
+}

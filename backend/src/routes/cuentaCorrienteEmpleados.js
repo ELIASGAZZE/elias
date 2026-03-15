@@ -448,4 +448,79 @@ router.post('/:empleadoId/pagos', verificarAuth, soloGestorOAdmin, async (req, r
   }
 })
 
+// POST /api/cuenta-empleados/cierre-masivo — poner todos los saldos en $0 y devolver resumen para imprimir
+router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    // 1) Traer empleados activos
+    const { data: empleados, error: errEmp } = await supabase
+      .from('empleados')
+      .select('id, nombre, codigo, sucursal_id, sucursales(nombre)')
+      .eq('activo', true)
+      .order('nombre')
+
+    if (errEmp) throw errEmp
+
+    const empIds = empleados.map(e => e.id)
+    if (empIds.length === 0) return res.json({ cierres: [] })
+
+    // 2) Calcular saldo actual de cada uno
+    const [ventasRes, pagosRes] = await Promise.all([
+      supabase.from('ventas_empleados').select('empleado_id, total').in('empleado_id', empIds),
+      supabase.from('pagos_cuenta_empleados').select('empleado_id, monto').in('empleado_id', empIds),
+    ])
+
+    const ventasMap = {}
+    ;(ventasRes.data || []).forEach(v => {
+      ventasMap[v.empleado_id] = (ventasMap[v.empleado_id] || 0) + (v.total || 0)
+    })
+    const pagosMap = {}
+    ;(pagosRes.data || []).forEach(p => {
+      pagosMap[p.empleado_id] = (pagosMap[p.empleado_id] || 0) + (p.monto || 0)
+    })
+
+    // 3) Para cada empleado con saldo > 0, traer movimientos del período y registrar pago
+    const ahora = new Date()
+    const mesLabel = ahora.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+    const concepto = `Cierre mensual ${mesLabel}`
+
+    const cierres = []
+
+    for (const emp of empleados) {
+      const saldo = (ventasMap[emp.id] || 0) - (pagosMap[emp.id] || 0)
+      if (saldo <= 0) continue
+
+      // Traer movimientos (ventas) que componen la deuda pendiente
+      // (ventas sin pagar = todo lo que genera el saldo actual)
+      const { data: ventas } = await supabase
+        .from('ventas_empleados')
+        .select('id, items, total, created_at, cajero:perfiles!cajero_id(nombre)')
+        .eq('empleado_id', emp.id)
+        .order('created_at', { ascending: false })
+
+      // Registrar pago que deja en $0
+      const { error: errPago } = await supabase
+        .from('pagos_cuenta_empleados')
+        .insert({
+          empleado_id: emp.id,
+          monto: saldo,
+          concepto,
+          registrado_por: req.perfil.id,
+        })
+
+      if (errPago) throw errPago
+
+      cierres.push({
+        empleado: emp,
+        saldo,
+        ventas: ventas || [],
+        concepto,
+      })
+    }
+
+    res.json({ cierres, fecha: ahora.toISOString(), concepto })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
