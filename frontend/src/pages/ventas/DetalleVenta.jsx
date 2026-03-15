@@ -30,128 +30,196 @@ const escapeHtml = (s) => {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function imprimirComprobanteVenta(venta) {
+async function imprimirComprobanteVenta(venta, caeData) {
   const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
   const pagos = venta.pagos || []
-  const fecha = formatFechaHora(venta.created_at)
   const esNC = venta.tipo === 'nota_credito'
-  const tipoDoc = esNC ? 'NOTA DE CREDITO B' : 'FACTURA B'
-  const numero = venta.centum_comprobante || `#${venta.numero_venta || '—'}`
+  const tipoDoc = esNC ? 'Nota de Crédito' : 'Factura'
+  const letraDoc = 'B'
+  const codigoDoc = esNC ? '08' : '06'
 
+  // Número de comprobante
+  const numero = venta.centum_comprobante
+    ? venta.centum_comprobante.replace(/^[A-Z]\s*/, '') // "B PV19-1213" -> "PV19-1213"
+    : `INT-${String(venta.numero_venta || '0').padStart(8, '0')}`
+
+  // Fecha formateada DD/MM/YYYY
+  const fechaObj = new Date(venta.created_at)
+  const fechaStr = fechaObj.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+  // IVA contenido (21% incluido en precio para factura B)
+  const totalNum = parseFloat(venta.total) || 0
+  const ivaContenido = (totalNum / 1.21 * 0.21).toFixed(2)
+
+  // Items tabla
   let filasItems = ''
-  items.forEach((item, i) => {
+  items.forEach(item => {
     const precio = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
     const cant = parseFloat(item.cantidad || 1)
     const sub = precio * cant
     filasItems += `<tr>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${i + 1}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb">${item.codigo || ''}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(item.nombre)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${cant}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${formatPrecio(precio)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${formatPrecio(sub)}</td>
+      <td class="td">${escapeHtml(item.codigo || '')}</td>
+      <td class="td" style="text-align:center">${cant.toFixed(2)}</td>
+      <td class="td">${escapeHtml(item.nombre)}</td>
+      <td class="td" style="text-align:right">${formatPrecio(precio)}</td>
+      <td class="td" style="text-align:right">${formatPrecio(sub)}</td>
     </tr>`
   })
 
-  let mediosPago = ''
-  if (pagos.length > 0) {
-    mediosPago = pagos.map(p =>
-      `<span style="display:inline-block;background:#f3f4f6;padding:2px 10px;border-radius:4px;margin-right:6px;font-size:12px">${escapeHtml(MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo)} ${formatPrecio(p.monto)}</span>`
-    ).join('')
-  }
+  // Forma de pago
+  const formaPago = pagos.map(p => MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean).join(', ') || 'Cuenta Corriente'
+
+  // CAE info
+  const cae = caeData?.cae || null
+  const caeVto = caeData?.cae_vencimiento || null
+  const caeVtoStr = caeVto ? new Date(caeVto).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
 
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-  @page { margin: 15mm; size: A4; }
+  @page { margin: 12mm; size: A4; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #1f2937; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
-  .empresa { }
-  .empresa h1 { font-size: 20px; margin-bottom: 2px; }
-  .empresa p { font-size: 11px; color: #6b7280; }
-  .tipo-doc { text-align: right; }
-  .tipo-doc h2 { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
-  .tipo-doc .numero { font-size: 14px; color: #374151; }
-  .tipo-doc .fecha { font-size: 12px; color: #6b7280; margin-top: 2px; }
-  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  .info-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
-  .info-box .label { font-size: 10px; text-transform: uppercase; color: #9ca3af; font-weight: 600; letter-spacing: 0.5px; }
-  .info-box .value { font-size: 13px; color: #111; margin-top: 2px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-  th { background: #f3f4f6; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #6b7280; border-bottom: 2px solid #d1d5db; }
-  th:nth-child(1) { text-align: center; width: 30px; }
-  th:nth-child(4) { text-align: center; width: 50px; }
-  th:nth-child(5), th:nth-child(6) { text-align: right; width: 100px; }
-  .total-row td { padding: 10px 8px; font-size: 15px; font-weight: bold; border-top: 2px solid #111; }
-  .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
-  .footer p { font-size: 10px; color: #9ca3af; text-align: center; }
-  .medios { margin-top: 8px; }
-  .nc-badge { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 13px; display: inline-block; margin-bottom: 12px; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; }
+
+  .page { border: 1px solid #000; padding: 0; }
+
+  /* === HEADER === */
+  .hdr { display: flex; border-bottom: 2px solid #000; }
+  .hdr-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
+  .hdr-letra { width: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid #000; padding: 6px; }
+  .hdr-letra .letra { font-size: 28px; font-weight: bold; border: 2px solid #000; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
+  .hdr-letra .cod { font-size: 9px; margin-top: 2px; }
+  .hdr-right { flex: 1; padding: 10px 14px; }
+  .empresa-nombre { font-size: 18px; font-weight: bold; margin-bottom: 2px; }
+  .empresa-dir { font-size: 10px; color: #333; }
+  .empresa-contacto { font-size: 10px; color: #555; }
+  .doc-tipo { font-size: 16px; font-weight: bold; text-align: right; }
+  .doc-num { font-size: 12px; margin-top: 4px; }
+  .doc-fecha { font-size: 11px; margin-top: 2px; }
+  .fiscal-data { font-size: 10px; margin-top: 8px; color: #333; line-height: 1.5; }
+  .fiscal-data span { display: inline-block; width: 130px; }
+
+  /* === CLIENTE === */
+  .cliente { border-bottom: 1px solid #000; padding: 8px 14px; font-size: 11px; line-height: 1.6; }
+  .cliente-row { display: flex; gap: 20px; }
+  .cliente-row .lbl { color: #555; min-width: 100px; }
+
+  /* === ITEMS === */
+  .items { padding: 0; }
+  .items table { width: 100%; border-collapse: collapse; }
+  .items th { background: #eee; padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+  .td { padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 11px; }
+
+  /* === FOOTER ZONA === */
+  .footer-zone { display: flex; border-top: 2px solid #000; }
+  .footer-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
+  .footer-right { width: 240px; padding: 10px 14px; }
+  .firma-line { border-bottom: 1px solid #000; margin-bottom: 2px; padding-bottom: 14px; font-size: 10px; }
+  .totales-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+  .totales-row.total { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 4px; }
+
+  /* === CAE + TRANSPARENCIA === */
+  .cae-zone { border-top: 1px solid #000; padding: 8px 14px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .cae-left { font-size: 10px; }
+  .cae-right { text-align: right; font-size: 10px; }
+  .transparencia { font-size: 9px; color: #555; margin-top: 6px; }
 </style></head><body>
 
-<div class="header">
-  <div class="empresa">
-    <h1>PADANO SRL</h1>
-    <p>Gestiones Operativas</p>
+<div class="page">
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <div class="empresa-nombre">Comercial Padano SRL</div>
+      <div class="empresa-dir">Brasil 313 Barrio Belgrano (2000)</div>
+      <div class="empresa-contacto">+54 9 3412 28-6109 &nbsp; administracion@padano.com.ar &nbsp; www.padano.com.ar</div>
+    </div>
+    <div class="hdr-letra">
+      <div class="letra">${letraDoc}</div>
+      <div class="cod">${codigoDoc}</div>
+    </div>
+    <div class="hdr-right">
+      <div class="doc-tipo">${tipoDoc}</div>
+      <div class="doc-num">Numero: ${escapeHtml(numero)}</div>
+      <div class="doc-fecha">Fecha: ${escapeHtml(fechaStr)}</div>
+      <div class="fiscal-data">
+        <div><span>IVA:</span> Responsable Inscripto</div>
+        <div><span>CUIT:</span> 30-71885278-8</div>
+        <div><span>INGRESOS BRUTOS:</span> 0213900654</div>
+        <div><span>INICIO ACTIVIDADES:</span> 01/09/2019</div>
+      </div>
+    </div>
   </div>
-  <div class="tipo-doc">
-    <h2>${tipoDoc}</h2>
-    <div class="numero">${escapeHtml(numero)}</div>
-    <div class="fecha">${escapeHtml(fecha)}</div>
+
+  <!-- CLIENTE -->
+  <div class="cliente">
+    <div class="cliente-row">
+      <div><span class="lbl">Razon Social:</span> <strong>${escapeHtml(venta.nombre_cliente || 'CONSUMIDOR FINAL')}</strong></div>
+      <div><span class="lbl">Condicion IVA:</span> Consumidor Final</div>
+    </div>
+    <div class="cliente-row">
+      <div><span class="lbl">Condicion Venta:</span> CONTADO</div>
+      <div><span class="lbl">Moneda:</span> Peso Argentino</div>
+    </div>
   </div>
-</div>
 
-${esNC ? '<div class="nc-badge">NOTA DE CREDITO</div>' : ''}
-
-<div class="info-grid">
-  <div class="info-box">
-    <div class="label">Cliente</div>
-    <div class="value">${escapeHtml(venta.nombre_cliente || 'Consumidor Final')}</div>
+  <!-- ITEMS -->
+  <div class="items">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:70px">Codigo</th>
+          <th style="width:50px;text-align:center">Cant.</th>
+          <th>Descripcion</th>
+          <th style="width:90px;text-align:right">Unit.</th>
+          <th style="width:100px;text-align:right">Importe</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filasItems}
+      </tbody>
+    </table>
   </div>
-  <div class="info-box">
-    <div class="label">Condicion IVA</div>
-    <div class="value">Consumidor Final</div>
+
+  <!-- FOOTER: FIRMA + TOTALES -->
+  <div class="footer-zone">
+    <div class="footer-left">
+      <div style="font-size:10px;color:#555;margin-bottom:10px">RECIBI CONFORME</div>
+      <div class="firma-line">Firma:____________________</div>
+      <div class="firma-line">Aclaracion:____________________</div>
+      <div class="firma-line">DNI:____________________</div>
+      <div class="firma-line">Forma de Pago: ${escapeHtml(formaPago)}</div>
+    </div>
+    <div class="footer-right">
+      <div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(venta.subtotal || venta.total)}</span></div>
+      ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatPrecio(venta.descuento_total)}</span></div>` : ''}
+      <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
+      <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
+      <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(venta.total)}</span></div>
+    </div>
   </div>
-  ${venta.perfiles?.nombre ? `<div class="info-box">
-    <div class="label">Cajero</div>
-    <div class="value">${escapeHtml(venta.perfiles.nombre)}</div>
-  </div>` : ''}
-  ${venta.centum_comprobante ? `<div class="info-box">
-    <div class="label">Comprobante Centum</div>
-    <div class="value" style="color:#059669">${escapeHtml(venta.centum_comprobante)}</div>
-  </div>` : ''}
-</div>
 
-<table>
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Codigo</th>
-      <th>Descripcion</th>
-      <th>Cant.</th>
-      <th>P. Unit.</th>
-      <th>Subtotal</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${filasItems}
-    ${parseFloat(venta.descuento_total) > 0 ? `
-    <tr>
-      <td colspan="5" style="padding:5px 8px;text-align:right;color:#059669">Descuentos</td>
-      <td style="padding:5px 8px;text-align:right;color:#059669">-${formatPrecio(venta.descuento_total)}</td>
-    </tr>` : ''}
-    <tr class="total-row">
-      <td colspan="5" style="text-align:right">TOTAL</td>
-      <td style="text-align:right">${formatPrecio(venta.total)}</td>
-    </tr>
-  </tbody>
-</table>
-
-${mediosPago ? `<div class="medios"><strong style="font-size:11px;color:#6b7280">FORMA DE PAGO:</strong> ${mediosPago}</div>` : ''}
-
-<div class="footer">
-  <p>Comprobante interno — Padano SRL — ${escapeHtml(fecha)}</p>
-  <p>Este documento no reemplaza la factura fiscal emitida por AFIP/ARCA.</p>
+  <!-- CAE + TRANSPARENCIA FISCAL -->
+  <div class="cae-zone">
+    <div class="cae-left">
+      ${cae
+        ? `<div><strong>CAE N°:</strong> ${escapeHtml(cae)}</div>
+           <div><strong>Fecha Vto CAE:</strong> ${escapeHtml(caeVtoStr)}</div>`
+        : `<div style="margin-bottom:6px">Gracias por su compra</div>`
+      }
+      <div class="transparencia">
+        <div><strong>Regimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong></div>
+        <div>IVA Contenido: $ ${ivaContenido}</div>
+        <div>Otros Impuestos Nacionales Indirectos</div>
+      </div>
+    </div>
+    <div class="cae-right">
+      ${cae
+        ? `<div style="font-size:9px;color:#555">Comprobante fiscal autorizado por AFIP</div>`
+        : venta.centum_comprobante
+          ? `<div>Comprobante: ${escapeHtml(venta.centum_comprobante)}</div><div style="font-size:9px;color:#999;margin-top:2px">CAE no disponible</div>`
+          : `<div style="color:#999">Comprobante interno - sin CAE</div><div style="font-size:9px;color:#999;margin-top:2px">Este documento no reemplaza la factura fiscal emitida por AFIP/ARCA</div>`
+      }
+    </div>
+  </div>
 </div>
 
 </body></html>`
@@ -179,6 +247,7 @@ const DetalleVenta = () => {
   const [reenviando, setReenviando] = useState(false)
   const [reenvioMsg, setReenvioMsg] = useState('')
   const [eliminando, setEliminando] = useState(false)
+  const [imprimiendo, setImprimiendo] = useState(false)
 
   useEffect(() => {
     const cargar = async () => {
@@ -635,10 +704,26 @@ const DetalleVenta = () => {
 
         {/* Botón imprimir comprobante */}
         <button
-          onClick={() => imprimirComprobanteVenta(venta)}
-          className="w-full py-3 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium rounded-xl transition-colors"
+          onClick={async () => {
+            setImprimiendo(true)
+            try {
+              let caeData = null
+              if (venta.id_venta_centum || venta.centum_comprobante) {
+                const { data } = await api.get(`/api/pos/ventas/${id}/cae`)
+                caeData = data
+              }
+              await imprimirComprobanteVenta(venta, caeData)
+            } catch (err) {
+              console.error('Error al obtener CAE:', err)
+              await imprimirComprobanteVenta(venta, null)
+            } finally {
+              setImprimiendo(false)
+            }
+          }}
+          disabled={imprimiendo}
+          className="w-full py-3 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium rounded-xl transition-colors disabled:opacity-50"
         >
-          Imprimir comprobante A4
+          {imprimiendo ? 'Obteniendo datos fiscales...' : 'Imprimir comprobante A4'}
         </button>
       </div>
     </div>

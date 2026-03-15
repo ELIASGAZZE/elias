@@ -508,4 +508,54 @@ function extraerPuntoVentaDeComprobante(comprobante) {
   return { puntoVenta: parseInt(match[1]), numero: parseInt(match[2]) }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante }
+/**
+ * Obtiene una Venta de Centum por su IdVenta (para obtener CAE, NumeroDocumento, etc.)
+ * GET /Ventas/{idVenta}
+ * @param {number} idVenta - IdVenta en Centum
+ * @returns {Promise<Object>} Datos de la venta incluyendo CAE y FechaVencimientoCAE
+ */
+async function obtenerVentaCentum(idVenta) {
+  const url = `${BASE_URL}/Ventas/${idVenta}`
+  const inicio = Date.now()
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: getHeaders(),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_ventas_pos', endpoint: url, metodo: 'GET',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'pos',
+    })
+    throw new Error('Error al conectar con Centum ERP (GET Venta): ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_ventas_pos', endpoint: url, metodo: 'GET',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'pos',
+    })
+    if (response.status === 404) {
+      throw new Error(`Venta ${idVenta} no encontrada en Centum`)
+    }
+    throw new Error(`Error al obtener venta Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json()
+
+  registrarLlamada({
+    servicio: 'centum_ventas_pos', endpoint: url, metodo: 'GET',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'pos',
+  })
+
+  console.log(`[Centum POS] GET Venta ${idVenta}: CAE=${data.CAE || '(vacío)'}, FechaVtoCAE=${data.FechaVencimientoCAE || '(vacío)'}`)
+  return data
+}
+
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum }
