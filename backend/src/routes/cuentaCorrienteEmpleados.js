@@ -10,22 +10,31 @@ const { registrarVentaPOSEnCentum } = require('../services/centumVentasPOS')
 // GET /api/cuenta-empleados/rubros — lista rubros distintos de los artículos
 router.get('/rubros', verificarAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('articulos')
-      .select('rubro, rubro_id_centum')
-      .eq('tipo', 'automatico')
-      .gt('precio', 0)
-      .not('rubro', 'is', null)
-
-    if (error) throw error
-
-    // Deduplicar por nombre de rubro
+    const PAGE_SIZE = 1000
     const rubrosMap = {}
-    ;(data || []).forEach(a => {
-      if (a.rubro && !rubrosMap[a.rubro]) {
-        rubrosMap[a.rubro] = { nombre: a.rubro, rubro_id_centum: a.rubro_id_centum }
-      }
-    })
+    let from = 0
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('rubro, rubro_id_centum')
+        .eq('tipo', 'automatico')
+        .gt('precio', 0)
+        .not('rubro', 'is', null)
+        .range(from, from + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      data.forEach(a => {
+        if (a.rubro && !rubrosMap[a.rubro]) {
+          rubrosMap[a.rubro] = { nombre: a.rubro, rubro_id_centum: a.rubro_id_centum }
+        }
+      })
+
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
 
     const rubros = Object.values(rubrosMap).sort((a, b) => a.nombre.localeCompare(b.nombre))
     res.json(rubros)
