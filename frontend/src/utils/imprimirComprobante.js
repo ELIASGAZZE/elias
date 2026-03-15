@@ -373,51 +373,101 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
 }
 
 /**
- * Imprime comprobante de cierre mensual de cuenta corriente de un empleado.
+ * Imprime comprobante A4 de cierre mensual de cuenta corriente de un empleado.
  * Muestra: nombre, total consumido, listado de comprobantes (ventas) que componen la deuda.
  */
 export function imprimirCierreCuentaEmpleado({ empleado, saldo, ventas, concepto }) {
-  let html = ''
-
-  html += '<div class="center titulo">PADANO SRL</div>'
-  html += '<div class="center bold" style="font-size:20px;margin-bottom:4px">CIERRE CUENTA CORRIENTE</div>'
-  html += '<div class="line-double"></div>'
-
   const ahora = new Date()
-  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
-  html += `<div style="font-size:22px" class="bold">${escapeHtml(empleado.nombre)}</div>`
-  if (empleado.codigo) html += `<div style="font-size:20px">Codigo: ${escapeHtml(empleado.codigo)}</div>`
-  if (empleado.sucursales?.nombre) html += `<div style="font-size:20px">Sucursal: ${escapeHtml(empleado.sucursales.nombre)}</div>`
-  html += '<div class="line-double"></div>'
+  const fechaStr = ahora.toLocaleDateString('es-AR') + ' ' + ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 
-  // Comprobantes (ventas)
-  if (ventas && ventas.length > 0) {
-    html += '<div class="seccion">COMPROBANTES</div>'
-    html += '<div class="line"></div>'
+  // Construir filas de la tabla (solo nro, fecha y monto — sin detalle de artículos)
+  let filasHtml = ''
+  let numComprobante = 0
+  ;(ventas || []).forEach(v => {
+    numComprobante++
+    const fecha = formatFechaHora(v.created_at)
 
-    ventas.forEach(v => {
-      const fecha = formatFechaHora(v.created_at)
-      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(fecha)}</span><span>${formatMonto(v.total)}</span></div>`
+    filasHtml += `<tr>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${numComprobante}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(fecha)}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap">${formatMonto(v.total)}</td>
+    </tr>`
+  })
 
-      // Items de la venta
-      const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
-      items.forEach(item => {
-        html += `<div style="font-size:18px;padding-left:8px">${escapeHtml(item.nombre)} x${item.cantidad} ${formatMonto(item.subtotal || (item.precio_final || item.precio_original || 0) * item.cantidad)}</div>`
-      })
-      html += '<div style="margin-bottom:4px"></div>'
-    })
-  }
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  @page { margin: 20mm; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #1f2937; }
+  .header { text-align: center; margin-bottom: 20px; }
+  .header h1 { font-size: 22px; margin-bottom: 2px; }
+  .header h2 { font-size: 16px; font-weight: normal; color: #6b7280; }
+  .info { margin-bottom: 16px; }
+  .info div { margin-bottom: 3px; }
+  .info .label { color: #6b7280; display: inline-block; width: 80px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #f3f4f6; padding: 6px 8px; text-align: left; font-size: 12px; border-bottom: 2px solid #d1d5db; }
+  th:last-child, td:last-child { text-align: right; }
+  .total-row { font-size: 16px; font-weight: bold; border-top: 2px solid #111; }
+  .total-row td { padding: 10px 8px; }
+  .footer { margin-top: 40px; }
+  .firma-line { border-top: 1px solid #111; width: 250px; margin: 40px auto 4px; }
+  .firma-text { text-align: center; font-size: 12px; color: #6b7280; }
+  .nota { margin-top: 20px; font-size: 11px; color: #9ca3af; text-align: center; }
+</style></head><body>
 
-  html += '<div class="line-double"></div>'
-  html += `<div class="row total"><span>TOTAL CONSUMIDO</span><span>${formatMonto(saldo)}</span></div>`
-  html += '<div class="line-double"></div>'
+<div class="header">
+  <h1>PADANO SRL</h1>
+  <h2>Cierre de Cuenta Corriente Empleado</h2>
+</div>
 
-  if (concepto) html += `<div style="font-size:20px">${escapeHtml(concepto)}</div>`
-  html += '<div style="font-size:20px;margin-top:4px">Saldo despues del cierre: $0</div>'
-  html += '<div class="line"></div>'
+<div class="info">
+  <div><span class="label">Empleado:</span> <strong>${escapeHtml(empleado.nombre)}</strong></div>
+  ${empleado.codigo ? `<div><span class="label">Codigo:</span> ${escapeHtml(empleado.codigo)}</div>` : ''}
+  ${empleado.sucursales?.nombre ? `<div><span class="label">Sucursal:</span> ${escapeHtml(empleado.sucursales.nombre)}</div>` : ''}
+  <div><span class="label">Fecha:</span> ${escapeHtml(fechaStr)}</div>
+  ${concepto ? `<div><span class="label">Concepto:</span> ${escapeHtml(concepto)}</div>` : ''}
+</div>
 
-  html += '<div class="firma">Firma empleado: _______________</div>'
-  html += '<div style="text-align:center;font-size:18px;margin-top:4px">Aclaracion: _______________</div>'
+<table>
+  <thead>
+    <tr>
+      <th style="width:40px;text-align:center">#</th>
+      <th>Fecha</th>
+      <th style="width:110px">Importe</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${filasHtml}
+    <tr class="total-row">
+      <td colspan="2">TOTAL CONSUMIDO</td>
+      <td>${formatMonto(saldo)}</td>
+    </tr>
+  </tbody>
+</table>
 
-  abrirVentanaImpresion(html)
+<div style="font-size:13px;margin-top:8px">Saldo despues del cierre: <strong>$0</strong></div>
+
+<div class="footer">
+  <div class="firma-line"></div>
+  <div class="firma-text">Firma del empleado</div>
+  <div class="firma-line" style="margin-top:24px"></div>
+  <div class="firma-text">Aclaracion</div>
+</div>
+
+<div class="nota">Comprobante generado automaticamente — Padano SRL</div>
+
+</body></html>`
+
+  const iframe = document.createElement('iframe')
+  iframe.style.cssText = 'position:fixed;width:0;height:0;border:none;left:-9999px'
+  document.body.appendChild(iframe)
+  const doc = iframe.contentDocument || iframe.contentWindow.document
+  doc.open()
+  doc.write(fullHtml)
+  doc.close()
+  setTimeout(() => {
+    try { iframe.contentWindow.focus(); iframe.contentWindow.print() } catch (e) { console.error('Error al imprimir:', e) }
+    setTimeout(() => { try { document.body.removeChild(iframe) } catch {} }, 2000)
+  }, 100)
 }
