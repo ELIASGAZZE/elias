@@ -25,6 +25,150 @@ const MEDIOS_LABELS = {
   cuenta_corriente: 'Cta. Corriente',
 }
 
+const escapeHtml = (s) => {
+  if (s == null) return ''
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function imprimirComprobanteVenta(venta) {
+  const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
+  const pagos = venta.pagos || []
+  const fecha = formatFechaHora(venta.created_at)
+  const esNC = venta.tipo === 'nota_credito'
+  const tipoDoc = esNC ? 'NOTA DE CREDITO B' : 'FACTURA B'
+  const numero = venta.centum_comprobante || `#${venta.numero_venta || '—'}`
+
+  let filasItems = ''
+  items.forEach((item, i) => {
+    const precio = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
+    const cant = parseFloat(item.cantidad || 1)
+    const sub = precio * cant
+    filasItems += `<tr>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${i + 1}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb">${item.codigo || ''}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(item.nombre)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${cant}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${formatPrecio(precio)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${formatPrecio(sub)}</td>
+    </tr>`
+  })
+
+  let mediosPago = ''
+  if (pagos.length > 0) {
+    mediosPago = pagos.map(p =>
+      `<span style="display:inline-block;background:#f3f4f6;padding:2px 10px;border-radius:4px;margin-right:6px;font-size:12px">${escapeHtml(MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo)} ${formatPrecio(p.monto)}</span>`
+    ).join('')
+  }
+
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  @page { margin: 15mm; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #1f2937; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
+  .empresa { }
+  .empresa h1 { font-size: 20px; margin-bottom: 2px; }
+  .empresa p { font-size: 11px; color: #6b7280; }
+  .tipo-doc { text-align: right; }
+  .tipo-doc h2 { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
+  .tipo-doc .numero { font-size: 14px; color: #374151; }
+  .tipo-doc .fecha { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .info-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
+  .info-box .label { font-size: 10px; text-transform: uppercase; color: #9ca3af; font-weight: 600; letter-spacing: 0.5px; }
+  .info-box .value { font-size: 13px; color: #111; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #f3f4f6; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #6b7280; border-bottom: 2px solid #d1d5db; }
+  th:nth-child(1) { text-align: center; width: 30px; }
+  th:nth-child(4) { text-align: center; width: 50px; }
+  th:nth-child(5), th:nth-child(6) { text-align: right; width: 100px; }
+  .total-row td { padding: 10px 8px; font-size: 15px; font-weight: bold; border-top: 2px solid #111; }
+  .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+  .footer p { font-size: 10px; color: #9ca3af; text-align: center; }
+  .medios { margin-top: 8px; }
+  .nc-badge { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 13px; display: inline-block; margin-bottom: 12px; }
+</style></head><body>
+
+<div class="header">
+  <div class="empresa">
+    <h1>PADANO SRL</h1>
+    <p>Gestiones Operativas</p>
+  </div>
+  <div class="tipo-doc">
+    <h2>${tipoDoc}</h2>
+    <div class="numero">${escapeHtml(numero)}</div>
+    <div class="fecha">${escapeHtml(fecha)}</div>
+  </div>
+</div>
+
+${esNC ? '<div class="nc-badge">NOTA DE CREDITO</div>' : ''}
+
+<div class="info-grid">
+  <div class="info-box">
+    <div class="label">Cliente</div>
+    <div class="value">${escapeHtml(venta.nombre_cliente || 'Consumidor Final')}</div>
+  </div>
+  <div class="info-box">
+    <div class="label">Condicion IVA</div>
+    <div class="value">Consumidor Final</div>
+  </div>
+  ${venta.perfiles?.nombre ? `<div class="info-box">
+    <div class="label">Cajero</div>
+    <div class="value">${escapeHtml(venta.perfiles.nombre)}</div>
+  </div>` : ''}
+  ${venta.centum_comprobante ? `<div class="info-box">
+    <div class="label">Comprobante Centum</div>
+    <div class="value" style="color:#059669">${escapeHtml(venta.centum_comprobante)}</div>
+  </div>` : ''}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Codigo</th>
+      <th>Descripcion</th>
+      <th>Cant.</th>
+      <th>P. Unit.</th>
+      <th>Subtotal</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${filasItems}
+    ${parseFloat(venta.descuento_total) > 0 ? `
+    <tr>
+      <td colspan="5" style="padding:5px 8px;text-align:right;color:#059669">Descuentos</td>
+      <td style="padding:5px 8px;text-align:right;color:#059669">-${formatPrecio(venta.descuento_total)}</td>
+    </tr>` : ''}
+    <tr class="total-row">
+      <td colspan="5" style="text-align:right">TOTAL</td>
+      <td style="text-align:right">${formatPrecio(venta.total)}</td>
+    </tr>
+  </tbody>
+</table>
+
+${mediosPago ? `<div class="medios"><strong style="font-size:11px;color:#6b7280">FORMA DE PAGO:</strong> ${mediosPago}</div>` : ''}
+
+<div class="footer">
+  <p>Comprobante interno — Padano SRL — ${escapeHtml(fecha)}</p>
+  <p>Este documento no reemplaza la factura fiscal emitida por AFIP/ARCA.</p>
+</div>
+
+</body></html>`
+
+  const iframe = document.createElement('iframe')
+  iframe.style.cssText = 'position:fixed;width:0;height:0;border:none;left:-9999px'
+  document.body.appendChild(iframe)
+  const doc = iframe.contentDocument || iframe.contentWindow.document
+  doc.open()
+  doc.write(fullHtml)
+  doc.close()
+  setTimeout(() => {
+    try { iframe.contentWindow.focus(); iframe.contentWindow.print() } catch (e) { console.error('Error al imprimir:', e) }
+    setTimeout(() => { try { document.body.removeChild(iframe) } catch {} }, 2000)
+  }, 100)
+}
+
 const DetalleVenta = () => {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -488,6 +632,14 @@ const DetalleVenta = () => {
             )}
           </div>
         </div>
+
+        {/* Botón imprimir comprobante */}
+        <button
+          onClick={() => imprimirComprobanteVenta(venta)}
+          className="w-full py-3 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium rounded-xl transition-colors"
+        >
+          Imprimir comprobante A4
+        </button>
       </div>
     </div>
   )
