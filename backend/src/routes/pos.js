@@ -70,6 +70,61 @@ router.post('/sincronizar-articulos', verificarAuth, soloAdmin, async (req, res)
   }
 })
 
+// ============ RUBROS / SUBRUBROS ============
+
+// GET /api/pos/rubros — rubros distintos de artículos Centum
+router.get('/rubros', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('articulos')
+      .select('rubro, rubro_id_centum')
+      .eq('tipo', 'automatico')
+      .not('rubro', 'is', null)
+
+    if (error) throw error
+
+    // Distintos por rubro_id_centum
+    const map = {}
+    for (const row of (data || [])) {
+      if (row.rubro_id_centum && !map[row.rubro_id_centum]) {
+        map[row.rubro_id_centum] = { id: row.rubro_id_centum, nombre: row.rubro }
+      }
+    }
+    const rubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
+
+    res.json({ rubros })
+  } catch (err) {
+    console.error('[POS] Error al obtener rubros:', err.message)
+    res.status(500).json({ error: 'Error al obtener rubros' })
+  }
+})
+
+// GET /api/pos/subrubros — subrubros distintos de artículos Centum
+router.get('/subrubros', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('articulos')
+      .select('subrubro, subrubro_id_centum')
+      .eq('tipo', 'automatico')
+      .not('subrubro', 'is', null)
+
+    if (error) throw error
+
+    const map = {}
+    for (const row of (data || [])) {
+      if (row.subrubro_id_centum && !map[row.subrubro_id_centum]) {
+        map[row.subrubro_id_centum] = { id: row.subrubro_id_centum, nombre: row.subrubro }
+      }
+    }
+    const subrubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
+
+    res.json({ subrubros })
+  } catch (err) {
+    console.error('[POS] Error al obtener subrubros:', err.message)
+    res.status(500).json({ error: 'Error al obtener subrubros' })
+  }
+})
+
 // ============ PROMOCIONES LOCALES ============
 
 // GET /api/pos/promociones

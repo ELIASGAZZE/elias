@@ -66,6 +66,10 @@ const AdminPromociones = () => {
   const [buscando, setBuscando] = useState(false)
   const [tipoEntidad, setTipoEntidad] = useState('articulo')
 
+  // Rubros y subrubros de Centum
+  const [rubros, setRubros] = useState([])
+  const [subrubros, setSubrubros] = useState([])
+
   const cargar = async () => {
     try {
       const { data } = await api.get('/api/pos/promociones?todas=1')
@@ -80,7 +84,21 @@ const AdminPromociones = () => {
   useEffect(() => {
     cargar()
     cargarFormasCobro()
+    cargarRubrosSubrubros()
   }, [])
+
+  async function cargarRubrosSubrubros() {
+    try {
+      const [resR, resS] = await Promise.all([
+        api.get('/api/pos/rubros'),
+        api.get('/api/pos/subrubros'),
+      ])
+      setRubros(resR.data.rubros || [])
+      setSubrubros(resS.data.subrubros || [])
+    } catch (err) {
+      console.error('Error cargando rubros/subrubros:', err)
+    }
+  }
 
   async function cargarFormasCobro() {
     try {
@@ -574,8 +592,52 @@ const AdminPromociones = () => {
               </div>
             )}
 
-            {/* Input búsqueda */}
-            {(tipoEntidad !== 'todos' || form.tipo === 'combo') && (
+            {/* Dropdown de rubros */}
+            {tipoEntidad === 'rubro' && form.tipo !== 'combo' && (
+              <select
+                className="campo-form text-sm"
+                value=""
+                onChange={e => {
+                  const r = rubros.find(r => String(r.id) === e.target.value)
+                  if (!r) return
+                  if (form.aplicar_a.find(a => a.tipo === 'rubro' && a.id === r.id)) return
+                  setForm(prev => ({
+                    ...prev,
+                    aplicar_a: [...prev.aplicar_a.filter(a => a.tipo !== 'todos'), { tipo: 'rubro', id: r.id, nombre: r.nombre }],
+                  }))
+                }}
+              >
+                <option value="">Seleccionar rubro...</option>
+                {rubros.map(r => (
+                  <option key={r.id} value={r.id}>{r.nombre}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Dropdown de subrubros */}
+            {tipoEntidad === 'subrubro' && form.tipo !== 'combo' && (
+              <select
+                className="campo-form text-sm"
+                value=""
+                onChange={e => {
+                  const s = subrubros.find(s => String(s.id) === e.target.value)
+                  if (!s) return
+                  if (form.aplicar_a.find(a => a.tipo === 'subrubro' && a.id === s.id)) return
+                  setForm(prev => ({
+                    ...prev,
+                    aplicar_a: [...prev.aplicar_a.filter(a => a.tipo !== 'todos'), { tipo: 'subrubro', id: s.id, nombre: s.nombre }],
+                  }))
+                }}
+              >
+                <option value="">Seleccionar sub rubro...</option>
+                {subrubros.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Input búsqueda de artículos (solo para tipo articulo o combo) */}
+            {((tipoEntidad === 'articulo' && form.tipo !== 'combo') || form.tipo === 'combo') && (
               <div className="relative">
                 <input
                   type="text"
