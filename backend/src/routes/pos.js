@@ -76,23 +76,32 @@ router.post('/sincronizar-articulos', verificarAuth, soloAdmin, async (req, res)
 // GET /api/pos/rubros — rubros distintos de artículos Centum
 router.get('/rubros', verificarAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('articulos')
-      .select('rubro, rubro_id_centum')
-      .eq('tipo', 'automatico')
-      .not('rubro', 'is', null)
-
-    if (error) throw error
-
-    // Distintos por rubro_id_centum
+    const PAGE_SIZE = 1000
     const map = {}
-    for (const row of (data || [])) {
-      if (row.rubro_id_centum && !map[row.rubro_id_centum]) {
-        map[row.rubro_id_centum] = { id: row.rubro_id_centum, nombre: row.rubro }
-      }
-    }
-    const rubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
+    let from = 0
 
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('rubro, rubro_id_centum')
+        .eq('tipo', 'automatico')
+        .not('rubro', 'is', null)
+        .range(from, from + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      for (const row of data) {
+        if (row.rubro_id_centum && !map[row.rubro_id_centum]) {
+          map[row.rubro_id_centum] = { id: row.rubro_id_centum, nombre: row.rubro }
+        }
+      }
+
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+
+    const rubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
     res.json({ rubros })
   } catch (err) {
     console.error('[POS] Error al obtener rubros:', err.message)
@@ -103,22 +112,32 @@ router.get('/rubros', verificarAuth, async (req, res) => {
 // GET /api/pos/subrubros — subrubros distintos de artículos Centum
 router.get('/subrubros', verificarAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('articulos')
-      .select('subrubro, subrubro_id_centum')
-      .eq('tipo', 'automatico')
-      .not('subrubro', 'is', null)
-
-    if (error) throw error
-
+    const PAGE_SIZE = 1000
     const map = {}
-    for (const row of (data || [])) {
-      if (row.subrubro_id_centum && !map[row.subrubro_id_centum]) {
-        map[row.subrubro_id_centum] = { id: row.subrubro_id_centum, nombre: row.subrubro }
-      }
-    }
-    const subrubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
+    let from = 0
 
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('subrubro, subrubro_id_centum')
+        .eq('tipo', 'automatico')
+        .not('subrubro', 'is', null)
+        .range(from, from + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      for (const row of data) {
+        if (row.subrubro_id_centum && !map[row.subrubro_id_centum]) {
+          map[row.subrubro_id_centum] = { id: row.subrubro_id_centum, nombre: row.subrubro }
+        }
+      }
+
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+
+    const subrubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
     res.json({ subrubros })
   } catch (err) {
     console.error('[POS] Error al obtener subrubros:', err.message)
