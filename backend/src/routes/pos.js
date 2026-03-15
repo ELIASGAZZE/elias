@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante } = require('../services/centumVentasPOS')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum } = require('../services/centumVentasPOS')
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
@@ -698,6 +698,52 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al obtener detalle de venta:', err.message)
     res.status(500).json({ error: 'Error al obtener detalle de venta' })
+  }
+})
+
+// GET /api/pos/ventas/:id/cae — obtener CAE de AFIP desde Centum
+router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
+  try {
+    const { data: venta, error } = await supabase
+      .from('ventas_pos')
+      .select('id, id_venta_centum, centum_comprobante, id_cliente_centum, pagos')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
+
+    // Si no hay id_venta_centum, no podemos consultar Centum
+    if (!venta.id_venta_centum) {
+      return res.json({ cae: null, cae_vencimiento: null, comprobante: venta.centum_comprobante, mensaje: 'Venta no registrada en Centum' })
+    }
+
+    // Determinar clasificación: PRUEBA (division 2) no tiene CAE (factura manual)
+    // Solo EMPRESA (division 3) tiene factura electrónica con CAE de AFIP
+    let condIva = 'CF'
+    if (venta.id_cliente_centum) {
+      const { data: cli } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', venta.id_cliente_centum).single()
+      condIva = cli?.condicion_iva || 'CF'
+    }
+    const esFacturaA = condIva === 'RI' || condIva === 'MT'
+    const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
+    const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+    const esPrueba = !esFacturaA && soloEfectivo
+
+    if (esPrueba) {
+      return res.json({ cae: null, cae_vencimiento: null, comprobante: venta.centum_comprobante, mensaje: 'Factura manual (División Prueba) - sin CAE' })
+    }
+
+    // Consultar Centum REST API para obtener CAE (solo funciona para factura electrónica / div 3)
+    const centumData = await obtenerVentaCentum(venta.id_venta_centum)
+
+    const cae = centumData.CAE || null
+    const caeVto = centumData.FechaVencimientoCAE || null
+
+    res.json({ cae, cae_vencimiento: caeVto, comprobante: venta.centum_comprobante })
+  } catch (err) {
+    console.error('[POS] Error al obtener CAE:', err.message)
+    res.status(500).json({ error: 'Error al obtener CAE: ' + err.message })
   }
 })
 
