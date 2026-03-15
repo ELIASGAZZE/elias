@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
-const { fetchClientesCentum, crearClienteEnCentum, agregarContactoEnvioCentum } = require('../services/centumClientes')
+const { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum } = require('../services/centumClientes')
 const { registrarLlamada } = require('../services/apiLogger')
 const { getPool } = require('../config/centum')
 const sql = require('mssql')
@@ -30,6 +30,33 @@ router.get('/', verificarAuth, async (req, res) => {
       const termino = buscar.trim()
       const soloDigitos = termino.replace(/\D/g, '')
       const esNumerico = /^\d[\d\-\s]*$/.test(termino) && soloDigitos.length >= 3
+      const soloDni = req.query.solo_dni === 'true'
+
+      if (soloDni) {
+        // Solo buscar por CUIT/DNI (usado en búsqueda de pedidos)
+        if (soloDigitos.length < 3) {
+          return res.json({ clientes: [], total: 0 })
+        }
+        const conGuiones = soloDigitos.length === 11
+          ? `${soloDigitos.slice(0,2)}-${soloDigitos.slice(2,10)}-${soloDigitos.slice(10)}`
+          : null
+
+        let orFilter = `cuit.ilike.%${soloDigitos}%`
+        if (conGuiones) orFilter += `,cuit.ilike.%${conGuiones}%`
+        if (termino !== soloDigitos) orFilter += `,cuit.ilike.%${termino}%`
+
+        const dniQuery = supabase
+          .from('clientes')
+          .select('*', { count: 'exact' })
+          .eq('activo', true)
+          .or(orFilter)
+          .order('razon_social', { ascending: true })
+          .range(from, to)
+
+        const { data: dniData, error: dniError, count: dniCount } = await dniQuery
+        if (dniError) throw dniError
+        return res.json({ clientes: dniData, total: dniCount })
+      }
 
       if (esNumerico) {
         // Búsqueda por CUIT/DNI: usar ilike con el patrón numérico
@@ -347,6 +374,155 @@ router.post('/', verificarAuth, async (req, res) => {
   }
 })
 
+// PUT /api/clientes/contacto/:idCentum
+// Actualizar email/celular del cliente (local + Centum contacto envío comprobantes)
+router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
+  const idCentum = parseInt(req.params.idCentum)
+  const { email, celular } = req.body
+
+  if (!idCentum) {
+    return res.status(400).json({ error: 'ID Centum requerido' })
+  }
+
+  try {
+    // Actualizar localmente
+    const updates = {}
+    if (email !== undefined) updates.email = email?.trim() || null
+    if (celular !== undefined) updates.celular = celular?.trim() || null
+
+    if (Object.keys(updates).length > 0) {
+      await supabase
+        .from('clientes')
+        .update(updates)
+        .eq('id_centum', idCentum)
+    }
+
+    // Actualizar en Centum (contacto envío comprobantes)
+    let warningCentum = null
+    try {
+      await agregarContactoEnvioCentum(idCentum, { email: email?.trim(), celular: celular?.trim() })
+    } catch (err) {
+      console.error('Error actualizando contacto en Centum:', err.message)
+      warningCentum = err.message
+    }
+
+    const respuesta = { ok: true, email: email?.trim() || null, celular: celular?.trim() || null }
+    if (warningCentum) respuesta.warning_centum = warningCentum
+    res.json(respuesta)
+  } catch (err) {
+    console.error('Error al actualizar contacto:', err)
+    res.status(500).json({ error: 'Error al actualizar contacto' })
+  }
+})
+
+// GET /api/clientes/refresh/:idCentum
+// Refresca un cliente individual desde Centum BI
+router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
+  const idCentum = parseInt(req.params.idCentum)
+  if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
+
+  try {
+    const db = await getPool()
+    const result = await db.request()
+      .input('id', sql.Int, idCentum)
+      .query(`
+        SELECT ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente,
+               LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, ActivoCliente
+        FROM Clientes_VIEW
+        WHERE ClienteID = @id
+      `)
+
+    if (!result.recordset || result.recordset.length === 0) {
+      return res.status(404).json({ error: 'Cliente no encontrado en Centum' })
+    }
+
+    // Si el cliente está inactivo en Centum, desactivarlo localmente y avisar
+    if (result.recordset[0].ActivoCliente === 0 || result.recordset[0].ActivoCliente === false) {
+      await supabase.from('clientes').update({ activo: false }).eq('id_centum', idCentum)
+      return res.status(410).json({ error: 'Cliente desactivado en Centum', desactivado: true })
+    }
+
+    const r = result.recordset[0]
+    const mapCondicionIVA = (id) => {
+      if (id === 1895) return 'RI'
+      if (id === 1894) return 'MT'
+      if (id === 1893) return 'EX' // Exento
+      return 'CF'
+    }
+
+    const updates = {
+      razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
+      cuit: r.CUITCliente?.trim() || null,
+      direccion: r.DireccionCliente?.trim() || null,
+      localidad: r.LocalidadCliente?.trim() || null,
+      codigo_postal: r.CodigoPostalCliente?.trim() || null,
+      telefono: r.Telefono1Cliente?.trim() || null,
+      condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID),
+    }
+
+    const { data, error } = await supabase
+      .from('clientes')
+      .update(updates)
+      .eq('id_centum', idCentum)
+      .select('id, id_centum, codigo, razon_social, cuit, condicion_iva, email, celular, telefono')
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error refrescando cliente:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/clientes/editar-centum/:idCentum
+// Editar cliente local + sync a Centum
+router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
+  const idCentum = parseInt(req.params.idCentum)
+  const { razon_social, cuit, condicion_iva, telefono, email, celular } = req.body
+
+  if (!idCentum) {
+    return res.status(400).json({ error: 'ID Centum requerido' })
+  }
+
+  try {
+    // Actualizar localmente
+    const updates = {}
+    if (razon_social !== undefined) updates.razon_social = razon_social?.trim() || null
+    if (cuit !== undefined) updates.cuit = cuit?.trim() || null
+    if (condicion_iva !== undefined) updates.condicion_iva = condicion_iva
+    if (telefono !== undefined) updates.telefono = telefono?.trim() || null
+    if (email !== undefined) updates.email = email?.trim() || null
+    if (celular !== undefined) updates.celular = celular?.trim() || null
+
+    if (Object.keys(updates).length > 0) {
+      await supabase
+        .from('clientes')
+        .update(updates)
+        .eq('id_centum', idCentum)
+    }
+
+    // Actualizar contacto envío comprobantes en Centum (email/celular)
+    // Nota: Centum no soporta PUT/PATCH en /Clientes, solo se puede actualizar el contacto de envío
+    let warningCentum = null
+    if (email || celular) {
+      try {
+        await agregarContactoEnvioCentum(idCentum, { email: email?.trim(), celular: celular?.trim() })
+      } catch (err) {
+        console.error('Error actualizando contacto envío en Centum:', err.message)
+        warningCentum = err.message
+      }
+    }
+
+    const respuesta = { ok: true, ...updates }
+    if (warningCentum) respuesta.warning_centum = warningCentum
+    res.json(respuesta)
+  } catch (err) {
+    console.error('Error al editar cliente con sync:', err)
+    res.status(500).json({ error: 'Error al editar cliente' })
+  }
+})
+
 // PUT /api/clientes/:id
 // Editar cliente
 router.put('/:id', verificarAuth, async (req, res) => {
@@ -482,6 +658,37 @@ router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) =
   } catch (err) {
     console.error('Error al exportar cliente a Centum:', err)
     res.status(500).json({ error: 'Error al exportar cliente a Centum' })
+  }
+})
+
+// GET /api/clientes/por-centum/:idCentum/direcciones
+// Listar direcciones de entrega buscando por id_centum
+router.get('/por-centum/:idCentum/direcciones', verificarAuth, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.idCentum)
+    if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
+
+    const { data: cli } = await supabase
+      .from('clientes')
+      .select('id')
+      .eq('id_centum', idCentum)
+      .limit(1)
+      .single()
+
+    if (!cli) return res.json([])
+
+    const { data, error } = await supabase
+      .from('direcciones_entrega')
+      .select('*')
+      .eq('cliente_id', cli.id)
+      .order('es_principal', { ascending: false })
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    console.error('Error al obtener direcciones por centum:', err)
+    res.status(500).json({ error: 'Error al obtener direcciones' })
   }
 })
 

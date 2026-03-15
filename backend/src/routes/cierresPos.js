@@ -778,6 +778,40 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/cierres-pos/:id/eliminaciones — artículos eliminados del ticket durante el turno
+router.get('/:id/eliminaciones', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pos_eliminaciones_log')
+      .select('*')
+      .eq('cierre_id', req.params.id)
+      .order('fecha', { ascending: true })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    console.error('Error al obtener eliminaciones:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/cierres-pos/:id/cancelaciones — tickets cancelados durante el turno
+router.get('/:id/cancelaciones', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('ventas_pos_canceladas')
+      .select('*')
+      .eq('cierre_id', req.params.id)
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    console.error('Error al obtener cancelaciones:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // DELETE /api/cierres-pos/:id — admin elimina un cierre POS y sus datos relacionados
 router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {

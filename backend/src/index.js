@@ -19,7 +19,6 @@ const empleadosRoutes = require('./routes/empleados')
 const retirosRoutes = require('./routes/retiros')
 const gastosRoutes = require('./routes/gastos')
 const clientesRoutes = require('./routes/clientes')
-const deliveryRoutes = require('./routes/delivery')
 const cajerosRoutes = require('./routes/cajeros')
 const reglasIARoutes = require('./routes/reglasIA')
 const resolucionesRoutes = require('./routes/resoluciones')
@@ -30,6 +29,9 @@ const retirosPosRoutes = require('./routes/retirosPos')
 const gastosPosRoutes = require('./routes/gastosPos')
 const giftCardsRoutes = require('./routes/giftcards')
 const tareasRoutes = require('./routes/tareas')
+const auditoriaRoutes = require('./routes/auditoria')
+const mpPointRoutes = require('./routes/mpPoint')
+const cuentaEmpleadosRoutes = require('./routes/cuentaCorrienteEmpleados')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -44,8 +46,17 @@ app.set('trust proxy', 1)
 app.use(helmet())
 
 // Permitimos requests desde el frontend
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL_2,
+  'http://localhost:5173',
+].filter(Boolean)
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
+    cb(null, false)
+  },
   credentials: true,
 }))
 
@@ -68,7 +79,6 @@ app.use('/api/empleados', empleadosRoutes)
 app.use('/api', retirosRoutes)
 app.use('/api', gastosRoutes)
 app.use('/api/clientes', clientesRoutes)
-app.use('/api/delivery', deliveryRoutes)
 app.use('/api/cajeros', cajerosRoutes)
 app.use('/api/reglas-ia', reglasIARoutes)
 app.use('/api/resoluciones', resolucionesRoutes)
@@ -79,6 +89,9 @@ app.use('/api', retirosPosRoutes)
 app.use('/api', gastosPosRoutes)
 app.use('/api/gift-cards', giftCardsRoutes)
 app.use('/api/tareas', tareasRoutes)
+app.use('/api/auditoria', auditoriaRoutes)
+app.use('/api/mp-point', mpPointRoutes)
+app.use('/api/cuenta-empleados', cuentaEmpleadosRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

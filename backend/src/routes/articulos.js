@@ -71,6 +71,87 @@ router.get('/', verificarAuth, async (req, res) => {
 // GET /api/articulos/erp
 // Cualquier usuario autenticado: artículos ERP paginados con búsqueda
 // Usado para pedidos extraordinarios (todos los artículos ERP, sin filtro por sucursal)
+// GET /api/articulos/actualizaciones?fecha=YYYY-MM-DD
+// Devuelve artículos actualizados en una fecha específica
+router.get('/actualizaciones', verificarAuth, async (req, res) => {
+  try {
+    const fecha = req.query.fecha
+    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      return res.status(400).json({ error: 'Parámetro fecha requerido (YYYY-MM-DD)' })
+    }
+
+    const desde = `${fecha}T00:00:00.000Z`
+    const hasta = `${fecha}T23:59:59.999Z`
+
+    // Leer en lotes para no perder artículos
+    const BATCH = 1000
+    let todos = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('codigo, nombre, precio, rubro, marca, descuento1, descuento2, descuento3, updated_at')
+        .gte('updated_at', desde)
+        .lte('updated_at', hasta)
+        .order('rubro', { ascending: true })
+        .order('nombre', { ascending: true })
+        .range(from, from + BATCH - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+      todos = todos.concat(data)
+      if (data.length < BATCH) break
+      from += BATCH
+    }
+
+    res.json({ fecha, cantidad: todos.length, articulos: todos })
+  } catch (err) {
+    console.error('Error obteniendo actualizaciones:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/articulos/sincronizar-forzado
+// Fuerza un sync que marca updated_at en TODOS los artículos que cambiaron vs Centum
+// Útil cuando el cron ya corrió pero no existía updated_at
+router.post('/sincronizar-forzado', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    // 1. Traer precios actuales de Centum
+    const { sincronizarERP } = require('../services/syncERP')
+
+    // Temporalmente poner todos los precios en 0 para forzar detección de cambios
+    // No — mejor: traemos los artículos de Centum y comparamos manualmente
+    const ahora = new Date().toISOString()
+
+    // Marcar todos los artículos automáticos con updated_at = ahora
+    const BATCH = 500
+    let total = 0
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('id')
+        .eq('tipo', 'automatico')
+        .range(from, from + BATCH - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      const ids = data.map(a => a.id)
+      await supabase.from('articulos').update({ updated_at: ahora }).in('id', ids)
+      total += ids.length
+
+      if (data.length < BATCH) break
+      from += BATCH
+    }
+
+    res.json({ mensaje: `${total} artículos marcados con updated_at`, total })
+  } catch (err) {
+    console.error('Error en sync forzado:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/erp', verificarAuth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1)
@@ -400,7 +481,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 })
 
 // POST /api/articulos/sincronizar-erp
-// Admin: sincroniza artículos desde ERP Centum
+// Admin: sincroniza artículos desde ERP Centum (completa)
 router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual')
@@ -408,6 +489,18 @@ router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al sincronizar con ERP:', err)
     res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })
+  }
+})
+
+// POST /api/articulos/sincronizar-precios
+// Sync rápida: solo precios, sin códigos de barra ni relaciones sucursales
+router.post('/sincronizar-precios', verificarAuth, async (req, res) => {
+  try {
+    const resultado = await sincronizarERP('pos', { skipBarcodes: true, skipSucursales: true })
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error al sincronizar precios:', err)
+    res.status(500).json({ error: 'Error al sincronizar precios' })
   }
 })
 

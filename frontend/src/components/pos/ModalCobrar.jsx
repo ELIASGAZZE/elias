@@ -1,5 +1,5 @@
 // Modal de cobro — POS (pantalla completa, denominaciones desde config, pagos parciales, offline support)
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import api, { isNetworkError } from '../../services/api'
 import { guardarDenominaciones, getDenominaciones, guardarFormasCobro, getFormasCobro as getFormasCobroDB, encolarVenta } from '../../services/offlineDB'
 import { syncVentasPendientes } from '../../services/offlineSync'
@@ -23,6 +23,10 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
+// Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
+const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100 }
+const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
+
 const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta }) => {
   const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
@@ -43,11 +47,46 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   // Saldo a favor del cliente
   const saldoDisponible = parseFloat(saldoProp) || 0
 
+  // Mercado Pago Point
+  const [mpEstado, setMpEstado] = useState(null) // null | 'creando' | 'esperando' | 'procesando' | 'aprobado' | 'error' | 'cancelado'
+  const [mpShowProblema, setMpShowProblema] = useState(false)
+  const [mpIntentId, setMpIntentId] = useState(null)
+  const [mpDeviceId, setMpDeviceId] = useState(null)
+  const [mpError, setMpError] = useState('')
+  const [mpPaymentId, setMpPaymentId] = useState(null)
+  const [mpMontoIntent, setMpMontoIntent] = useState(0)
+  const [mpUltimoPaymentType, setMpUltimoPaymentType] = useState(null)
+  const [mpRefundingIdx, setMpRefundingIdx] = useState(null) // índice del pago que se está anulando
+  const mpPollingRef = useRef(null)
+  const mpTimeoutRef = useRef(null)
+  const cobrarRootRef = useRef(null)
+
+  // Cleanup polling + timeout on unmount, y cancelar orden si hay una pendiente
   useEffect(() => {
-    cargarConfig()
+    return () => {
+      if (mpPollingRef.current) clearInterval(mpPollingRef.current)
+      if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current)
+    }
   }, [])
 
-  async function cargarConfig() {
+  useEffect(() => {
+    // Cargar cache primero (instantáneo), luego refrescar desde API en background
+    async function cargarDesdeCache() {
+      try {
+        const [cachedDens, cachedFcs] = await Promise.all([getDenominaciones(), getFormasCobroDB()])
+        if (cachedDens.length > 0) {
+          setDenominaciones(cachedDens.filter(d => d.activo !== false).sort((a, b) => Number(a.valor) - Number(b.valor)))
+        }
+        if (cachedFcs.length > 0) {
+          setFormasCobro(cachedFcs.filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo'))
+        }
+      } catch {}
+    }
+    cargarDesdeCache()
+    cargarConfigDesdeAPI()
+  }, [])
+
+  async function cargarConfigDesdeAPI() {
     try {
       const [denRes, fcRes, promosRes] = await Promise.all([
         api.get('/api/denominaciones'),
@@ -63,7 +102,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       const fcs = (fcRes.data.formas_cobro || fcRes.data || [])
         .filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo')
       setFormasCobro(fcs)
-      // Guardar todas las formas de cobro (sin filtrar efectivo) para offline
       const fcsAll = (fcRes.data.formas_cobro || fcRes.data || []).filter(f => f.activo !== false)
       guardarFormasCobro(fcsAll).catch(() => {})
 
@@ -72,19 +110,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setPromosPago(promos)
     } catch (err) {
       console.error('Error cargando config cobro:', err)
-      // Fallback a IndexedDB si es error de red
-      if (isNetworkError(err)) {
-        try {
-          const cachedDens = await getDenominaciones()
-          if (cachedDens.length > 0) {
-            setDenominaciones(cachedDens.filter(d => d.activo !== false).sort((a, b) => Number(a.valor) - Number(b.valor)))
-          }
-          const cachedFcs = await getFormasCobroDB()
-          if (cachedFcs.length > 0) {
-            setFormasCobro(cachedFcs.filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo'))
-          }
-        } catch {}
-      }
     }
   }
 
@@ -94,20 +119,24 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     return acc
   }, {})
 
-  // Calcular descuentos por forma de pago
+  // Calcular descuentos por forma de pago (sobre el monto pagado en esa forma, sin exceder el total)
   const descuentosPorForma = promosPago.map(promo => {
     const reglas = promo.reglas || {}
     const nombreForma = reglas.forma_cobro_nombre
     const porcentaje = reglas.valor || 0
     const montoPagado = resumenPagos[nombreForma] || 0
     if (montoPagado <= 0 || porcentaje <= 0) return null
+    // Si el efectivo cubre el total descontado → descuento completo sobre el total
+    // Si no alcanza (pago mixto) → descuento solo sobre lo pagado en esta forma
+    const totalDescontado = total * (1 - porcentaje / 100)
+    const baseDescuento = montoPagado >= totalDescontado ? total : montoPagado
     return {
       promoId: promo.id,
       promoNombre: promo.nombre,
       formaCobro: nombreForma,
       porcentaje,
       montoPagado,
-      descuento: Math.round(montoPagado * porcentaje / 100 * 100) / 100,
+      descuento: Math.round(baseDescuento * porcentaje / 100 * 100) / 100,
     }
   }).filter(Boolean)
 
@@ -129,6 +158,230 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const montoSuficiente = totalEfectivoConGC <= 0 || totalPagado >= totalEfectivoConGC
   const vuelto = Math.max(0, totalPagado - totalEfectivoConGC)
 
+  // Mercado Pago Point — funciones (Orders API: tarjeta + QR)
+  async function iniciarPagoMP(paymentType) {
+    // No iniciar si ya hay un pago MP en curso
+    if (mpEstado && mpEstado !== 'error' && mpEstado !== 'cancelado' && mpEstado !== 'aprobado') return
+    const montoACobrar = restante > 0 ? restante : totalEfectivoConGC
+    if (montoACobrar <= 0) return
+
+    setMpEstado('creando')
+    setMpError('')
+    setMpPaymentId(null)
+    setMpUltimoPaymentType(paymentType)
+
+    try {
+      const terminalConfig = (() => { try { return JSON.parse(localStorage.getItem('pos_terminal_config') || '{}') } catch { return {} } })()
+      const deviceId = terminalConfig.mp_device_id
+      if (!deviceId) {
+        setMpError('No hay posnet configurado. Configuralo en ajustes del terminal.')
+        setMpEstado('error')
+        return
+      }
+      setMpDeviceId(deviceId)
+
+      const orderBody = {
+        device_id: deviceId,
+        amount: montoACobrar,
+        external_reference: `pos-${Date.now()}`,
+        description: 'Venta POS',
+      }
+      if (paymentType) orderBody.payment_type = paymentType
+
+      const { data } = await api.post('/api/mp-point/order', orderBody)
+
+      setMpIntentId(data.id) // order ID
+      setMpMontoIntent(montoACobrar)
+      setMpEstado('esperando')
+
+      // Polling estado de la orden cada 3 segundos
+      mpPollingRef.current = setInterval(async () => {
+        try {
+          const { data: order } = await api.get(`/api/mp-point/order/${data.id}`)
+          const state = order.status
+          console.log('[MP Point] Polling:', state, JSON.stringify(order.transactions?.payments?.map(p => ({ status: p.status, detail: p.status_detail }))))
+
+          if (state === 'processing') {
+            setMpEstado('procesando')
+          } else if (state === 'processed' || state === 'finished') {
+            clearInterval(mpPollingRef.current)
+            mpPollingRef.current = null
+            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+            // Buscar el pago aprobado en la orden
+            const payment = order.transactions?.payments?.find(p => p.status === 'approved' || p.status === 'processed')
+            const payId = payment?.payment_id || payment?.id
+            if (payId) {
+              setMpPaymentId(payId)
+              try {
+                const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
+                const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
+                  : pd.payment_type_id === 'debit_card' ? 'Débito'
+                  : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
+                setPagos(prev => [...prev, {
+                  tipo: tipoPago,
+                  monto: montoACobrar,
+                  detalle: {
+                    mp_payment_id: payId,
+                    mp_order_id: data.id,
+                    payment_type: pd.payment_type_id,
+                    card_last_four: pd.card?.last_four_digits || null,
+                    card_brand: pd.payment_method_id || null,
+                  }
+                }])
+              } catch {
+                setPagos(prev => [...prev, {
+                  tipo: 'Posnet MP',
+                  monto: montoACobrar,
+                  detalle: { mp_payment_id: payId, mp_order_id: data.id }
+                }])
+              }
+              setMpEstado('aprobado')
+            } else {
+              // Orden procesada pero sin pago aprobado → rechazado
+              const detail = order.transactions?.payments?.[0]?.status_detail || ''
+              const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+                : detail.includes('expired') ? 'Tarjeta vencida'
+                : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+                : detail.includes('blocked') ? 'Tarjeta bloqueada'
+                : detail ? `Rechazado: ${detail}`
+                : 'Pago rechazado'
+              setMpEstado('cancelado')
+              setMpError(motivo)
+            }
+          } else if (state === 'canceled' || state === 'expired' || state === 'reverted') {
+            clearInterval(mpPollingRef.current)
+            mpPollingRef.current = null
+            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+            setMpEstado('cancelado')
+            setMpError('Pago cancelado en el posnet')
+            setMpShowProblema(false)
+          } else if (state === 'rejected' || state === 'failed' || state === 'refunded') {
+            clearInterval(mpPollingRef.current)
+            mpPollingRef.current = null
+            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+            const detail = order.transactions?.payments?.[0]?.status_detail || ''
+            const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+              : detail.includes('expired') ? 'Tarjeta vencida'
+              : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+              : detail.includes('blocked') ? 'Tarjeta bloqueada'
+              : 'Pago rechazado'
+            setMpEstado('cancelado')
+            setMpError(motivo)
+            setMpShowProblema(false)
+          }
+        } catch (err) {
+          console.error('[MP Point] Error polling:', err.message)
+        }
+      }, 3000)
+    } catch (err) {
+      console.error('[MP Point] Error creando orden:', err)
+      setMpError(err.response?.data?.error || err.response?.data?.errors?.[0]?.message || 'Error al enviar al posnet')
+      setMpEstado('error')
+    }
+  }
+
+  // Helper: dado un orderId y monto, intenta obtener el pago y agregarlo a pagos
+  async function detectarPagoCompletado(orderId, monto) {
+    try {
+      const { data: order } = await api.get(`/api/mp-point/order/${orderId}`)
+      if (order.status === 'processed' || order.status === 'finished') {
+        const payment = order.transactions?.payments?.find(p => p.status === 'approved' || p.status === 'processed')
+        const payId = payment?.payment_id || payment?.id
+        if (payId) {
+          setMpPaymentId(payId)
+          try {
+            const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
+            const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
+              : pd.payment_type_id === 'debit_card' ? 'Débito'
+              : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
+            setPagos(prev => [...prev, {
+              tipo: tipoPago,
+              monto: monto,
+              detalle: {
+                mp_payment_id: payId,
+                mp_order_id: orderId,
+                payment_type: pd.payment_type_id,
+                card_last_four: pd.card?.last_four_digits || null,
+                card_brand: pd.payment_method_id || null,
+              }
+            }])
+          } catch {
+            setPagos(prev => [...prev, {
+              tipo: 'Posnet MP',
+              monto: monto,
+              detalle: { mp_payment_id: payId, mp_order_id: orderId }
+            }])
+          }
+          setMpEstado('aprobado')
+          setMpIntentId(null)
+          setMpError('')
+          return true // pago detectado
+        }
+      }
+    } catch {}
+    return false
+  }
+
+  // "Tengo problema" — resolver cobro MP con problema
+  function resolverProblemaMP(tipoProblema) {
+    // Limpiar polling
+    if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+    if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+    const monto = mpMontoIntent
+
+    if (tipoProblema === 'cobro_sin_confirmar') {
+      // Opción 1: El cobro se realizó en el posnet pero el sistema no lo detectó
+      setPagos(prev => [...prev, {
+        tipo: 'Posnet MP',
+        monto,
+        detalle: {
+          mp_order_id: mpIntentId,
+          mp_problema: 'cobro_sin_confirmar',
+          mp_problema_desc: 'Cobro realizado en posnet pero no confirmado por el sistema',
+        }
+      }])
+    } else if (tipoProblema === 'posnet_manual') {
+      // Opción 2: No llegó al posnet, se cobra en posnet manual (fuera del sistema)
+      setPagos(prev => [...prev, {
+        tipo: 'Posnet MP',
+        monto,
+        detalle: {
+          mp_order_id: mpIntentId,
+          mp_problema: 'posnet_manual',
+          mp_problema_desc: 'Cobrado en posnet manual (fuera del sistema)',
+        }
+      }])
+    }
+
+    setMpEstado('aprobado')
+    setMpIntentId(null)
+    setMpError('')
+  }
+
+  // Anular cobro MP (refund)
+  async function anularPagoMP(pagoIdx) {
+    const pago = pagos[pagoIdx]
+    if (!pago?.detalle?.mp_order_id) return
+    setMpRefundingIdx(pagoIdx)
+    try {
+      const { data } = await api.post(`/api/mp-point/order/${pago.detalle.mp_order_id}/refund`)
+      if (data.ok || data.id) {
+        // Quitar el pago de la lista
+        setPagos(prev => prev.filter((_, i) => i !== pagoIdx))
+        // Reset estado MP para permitir nuevo cobro
+        setMpEstado(null)
+        setMpIntentId(null)
+        setMpError('')
+        setMpPaymentId(null)
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al anular el cobro'
+      setMpError(msg)
+    } finally {
+      setMpRefundingIdx(null)
+    }
+  }
+
   // Conteo de billetes por denominación para efectivo
   const conteoBilletes = pagos
     .filter(p => p.tipo === 'Efectivo' && p.detalle?.denominacion)
@@ -140,11 +393,35 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       return acc
     }, {})
 
-  function agregarBillete(valor) {
-    setPagos(prev => [...prev, { tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }])
+  function agregarBillete(valor, cantidad = 1) {
+    const nuevos = Array.from({ length: cantidad }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
+    setPagos(prev => [...prev, ...nuevos])
     // Flash feedback
     setUltimoPago(valor)
     setTimeout(() => setUltimoPago(null), 300)
+  }
+
+  const [cantidadModal, setCantidadModal] = React.useState(null) // { valor, cantidad }
+
+  // Auto-focus el div root para que capture teclas (también al cerrar modal cantidad)
+  useEffect(() => {
+    if (!cantidadModal) {
+      setTimeout(() => cobrarRootRef.current?.focus(), 50)
+    }
+  }, [cantidadModal])
+
+  function confirmarCantidadBilletes() {
+    const cant = parseInt(cantidadModal.cantidad)
+    if (cant > 0) {
+      // Reemplazar: quitar todos los billetes de esta denominación y poner la cantidad indicada
+      const valor = cantidadModal.valor
+      setPagos(prev => {
+        const sinEstaDenom = prev.filter(p => !(p.tipo === 'Efectivo' && p.detalle?.denominacion === valor))
+        const nuevos = Array.from({ length: cant }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
+        return [...sinEstaDenom, ...nuevos]
+      })
+    }
+    setCantidadModal(null)
   }
 
   function borrarPagos() {
@@ -210,6 +487,17 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setGuardando(true)
     setError('')
 
+    // Modo soloPago: no necesita items ni venta, solo datos de pago
+    if (soloPago) {
+      const pagosPayload = [
+        ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
+        ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
+      ]
+      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado + saldoAplicado, vuelto: vuelto > 0 ? vuelto : 0 })
+      setGuardando(false)
+      return
+    }
+
     const items = carrito.map(i => ({
       id_articulo: i.articulo.id,
       codigo: i.articulo.codigo,
@@ -230,9 +518,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }))
 
     const totalOriginalSinSaldo = totalConDescFormaPago
+    // Obtener caja_id de la config del terminal (localStorage)
+    const terminalConfig = (() => { try { return JSON.parse(localStorage.getItem('pos_terminal_config') || '{}') } catch { return {} } })()
     const payload = {
       id_cliente_centum: cliente.id_centum,
       nombre_cliente: cliente.razon_social,
+      condicion_iva: cliente.condicion_iva || 'CF',
+      caja_id: terminalConfig.caja_id || null,
       items,
       promociones_aplicadas: promosParaGuardar.length > 0 ? promosParaGuardar : null,
       subtotal,
@@ -244,7 +536,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       total: totalOriginalSinSaldo,
       monto_pagado: totalPagado + saldoAplicado,
       vuelto: vuelto > 0 ? vuelto : 0,
-      pagos: pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
+      pagos: [
+        ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
+        ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
+      ],
     }
     if (saldoAplicado > 0) payload.saldo_aplicado = saldoAplicado
     if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
@@ -269,17 +564,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       vuelto: vuelto > 0 ? vuelto : 0,
     }
 
-    // Modo soloPago: no crear venta, solo devolver datos de pago (para pedidos con pago anticipado)
-    if (soloPago) {
-      onConfirmar({ pagos: payload.pagos, total: payload.total, monto_pagado: payload.monto_pagado, vuelto: payload.vuelto })
-      setGuardando(false)
-      return
-    }
-
     try {
-      await api.post('/api/pos/ventas', payload)
+      const { data: ventaResp } = await api.post('/api/pos/ventas', payload)
+      const numeroVenta = ventaResp?.venta?.numero_venta
       syncVentasPendientes().catch(() => {})
-      imprimirTicketPOS({ ...ticketData, esOffline: false })
+      imprimirTicketPOS({ ...ticketData, esOffline: false, numeroVenta })
       onConfirmar()
     } catch (err) {
       console.error('Error al guardar venta:', err)
@@ -300,39 +589,134 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }
 
+  // Track último billete seleccionado con F-key para Enter = abrir modal cantidad
+  const [ultimoFKeyBillete, setUltimoFKeyBillete] = useState(null)
+
+  // Atajos de teclado globales del modal de cobro
+  // Se usa onKeyDown en el div root para capturar antes que el browser
+  function handleCobrarKeyDown(e) {
+    // No interceptar si hay modal de cantidad abierto
+    if (cantidadModal) return
+    const enInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
+
+    // Escape = Cerrar modal (bloqueado si hay cobro MP en curso)
+    if (e.key === 'Escape' && !guardando) {
+      e.preventDefault()
+      if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) return
+      onCerrar()
+      return
+    }
+    // Enter: si hay billete pendiente → abrir modal cantidad, sino confirmar venta
+    if (e.key === 'Enter' && !enInput) {
+      e.preventDefault()
+      if (ultimoFKeyBillete) {
+        setCantidadModal({ valor: ultimoFKeyBillete, cantidad: '' })
+        setUltimoFKeyBillete(null)
+      } else if (montoSuficiente && !guardando) {
+        confirmarVenta()
+      }
+      return
+    }
+    if (enInput) return
+
+    // Backspace = Borrar todo
+    if (e.key === 'Backspace') {
+      e.preventDefault()
+      borrarPagos()
+    }
+
+    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo
+    if (e.key === 'F1' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
+      iniciarPagoMP('credit_card')
+    }
+    // F2 = QR (posnet MP) — solo si no hay pago MP activo
+    if (e.key === 'F2' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
+      iniciarPagoMP('qr')
+    }
+
+    // F3-F9 = Billetes
+    const valorBillete = FKEY_BILLETES[e.key]
+    if (valorBillete) {
+      e.preventDefault()
+      agregarBillete(valorBillete)
+      setUltimoFKeyBillete(valorBillete)
+      setTimeout(() => setUltimoFKeyBillete(prev => prev === valorBillete ? null : prev), 2000)
+    }
+
+    // F10-F12 = Formas de cobro (Transferencia, Payway, Rappi)
+    const nombreForma = FKEY_FORMAS[e.key]
+    if (nombreForma) {
+      e.preventDefault()
+      setUltimoFKeyBillete(null)
+      const found = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
+      if (found) {
+        setFormaSeleccionada(found)
+        setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+      }
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row">
+    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row outline-none" onKeyDown={handleCobrarKeyDown} tabIndex={-1} ref={cobrarRootRef}>
 
       {/* ====== IZQUIERDA: Denominaciones ====== */}
-      <div className="flex-1 p-5 flex flex-col min-w-0">
+      <div className="flex-1 p-5 flex flex-col min-w-0 relative">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest">Efectivo</h3>
           <button
-            onClick={onCerrar}
-            className="text-white/40 hover:text-white/80 transition-colors"
+            onClick={() => {
+              if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) {
+                // No cerrar mientras hay un cobro MP en curso
+                return
+              }
+              onCerrar()
+            }}
+            className={`transition-colors flex items-center gap-1.5 ${
+              mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')
+                ? 'text-white/10 cursor-not-allowed'
+                : 'text-white/40 hover:text-white/80'
+            }`}
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
+            <span className="text-[9px] opacity-50">Esc</span>
           </button>
         </div>
 
         <div className="grid grid-cols-2 gap-2.5 flex-1 content-start">
           {denominaciones.map(den => (
-            <button
-              key={den.id}
-              onClick={() => agregarBillete(den.valor)}
-              className={`relative bg-slate-700 hover:bg-slate-600 active:bg-violet-600 text-white font-bold text-lg py-4 rounded-xl transition-all duration-150 active:scale-95 select-none ${
-                ultimoPago === den.valor ? 'bg-violet-600 scale-95' : ''
-              }`}
-            >
-              {formatDenominacion(den.valor)}
-              {conteoBilletes[den.valor]?.cantidad > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-white text-slate-800 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md">
-                  {conteoBilletes[den.valor].cantidad}
-                </span>
-              )}
-            </button>
+            <div key={den.id} className="flex rounded-xl overflow-hidden">
+              <button
+                onClick={() => agregarBillete(den.valor)}
+                className={`flex-1 relative bg-slate-700 hover:bg-slate-600 active:bg-violet-600 text-white font-bold text-lg py-4 transition-all duration-150 active:scale-95 select-none ${
+                  ultimoPago === den.valor ? 'bg-violet-600 scale-95' : ''
+                }`}
+              >
+                {formatDenominacion(den.valor)}
+                {Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor) && (
+                  <span className="absolute top-1 left-1.5 text-[9px] text-white/40">{Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor)[0]}</span>
+                )}
+                {conteoBilletes[den.valor]?.cantidad > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-white text-slate-800 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md">
+                    {conteoBilletes[den.valor].cantidad}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setCantidadModal({ valor: den.valor, cantidad: '' })}
+                className="w-10 bg-violet-500 hover:bg-violet-400 text-white text-xs font-bold flex items-center justify-center"
+                title="Ingresar cantidad"
+              >
+                #
+              </button>
+            </div>
           ))}
         </div>
 
@@ -350,9 +734,43 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
             onClick={borrarPagos}
             className={`${pagos.length > 0 ? 'flex-1' : 'w-full'} bg-red-500/80 hover:bg-red-500 text-white font-medium text-sm py-3 rounded-xl transition-colors`}
           >
-            Borrar todo
+            Borrar todo <span className="text-[9px] opacity-50">Backspace</span>
           </button>
         </div>
+
+        {/* Mini-modal cantidad de billetes (long press) */}
+        {cantidadModal && (
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-30 rounded-2xl">
+            <div className="bg-slate-700 rounded-xl p-5 w-64 shadow-2xl">
+              <p className="text-white text-sm font-medium mb-1 text-center">Cantidad de billetes</p>
+              <p className="text-violet-400 text-2xl font-bold text-center mb-4">{formatDenominacion(cantidadModal.valor)}</p>
+              <input
+                type="number"
+                min="1"
+                autoFocus
+                value={cantidadModal.cantidad}
+                onChange={e => setCantidadModal(prev => ({ ...prev, cantidad: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); confirmarCantidadBilletes() } if (e.key === 'Escape') { e.stopPropagation(); setCantidadModal(null) } }}
+                className="w-full text-center text-2xl font-bold border-2 border-violet-500 rounded-lg py-2 bg-slate-800 text-white focus:outline-none focus:border-violet-400"
+                placeholder="Ej: 50"
+              />
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => setCantidadModal(null)}
+                  className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-2.5 rounded-lg"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmarCantidadBilletes}
+                  className="flex-1 bg-violet-600 hover:bg-violet-500 text-white font-medium text-sm py-2.5 rounded-lg"
+                >
+                  Agregar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ====== CENTRO: Otros medios + detalle ====== */}
@@ -362,19 +780,30 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div>
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Otros medios</h3>
             <div className="space-y-2">
-              {formasCobro.map(fc => (
+              {formasCobro.map((fc) => {
+                const fkeyMatch = Object.entries(FKEY_FORMAS).find(([,name]) => fc.nombre.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fc.nombre.toLowerCase()))
+                return (
                 <button
                   key={fc.id}
-                  onClick={() => setFormaSeleccionada(formaSeleccionada?.id === fc.id ? null : fc)}
+                  onClick={() => {
+                    if (formaSeleccionada?.id === fc.id) {
+                      setFormaSeleccionada(null)
+                      setMontoFormaPago('')
+                    } else {
+                      setFormaSeleccionada(fc)
+                      setMontoFormaPago(restante > 0 ? restante.toFixed(2) : '')
+                    }
+                  }}
                   className={`w-full py-3 rounded-xl font-semibold text-sm transition-all ${
                     formaSeleccionada?.id === fc.id
                       ? 'bg-violet-600 text-white shadow-lg shadow-violet-500/30'
                       : 'bg-slate-700 hover:bg-slate-600 text-white'
                   }`}
                 >
-                  {fc.nombre}
+                  {fc.nombre} {fkeyMatch && <span className="text-[9px] opacity-50 ml-1">{fkeyMatch[0]}</span>}
                 </button>
-              ))}
+                )
+              })}
             </div>
 
             {formaSeleccionada && (
@@ -385,6 +814,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                   value={montoFormaPago}
                   onChange={e => setMontoFormaPago(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && agregarFormaPago()}
+                  onFocus={e => e.target.select()}
                   placeholder="0"
                   className="w-full bg-slate-600 border-0 rounded-lg px-3 py-2.5 text-xl font-bold text-white text-center focus:ring-2 focus:ring-violet-500 placeholder-white/30"
                   autoFocus
@@ -457,6 +887,117 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           )}
         </div>
 
+        {/* Mercado Pago Posnet */}
+        <div>
+          <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Posnet MP</h3>
+          {!mpEstado && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => iniciarPagoMP('credit_card')}
+                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+              >
+                <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
+                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+              </button>
+              <button
+                onClick={() => iniciarPagoMP('qr')}
+                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+              >
+                <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
+                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+              </button>
+            </div>
+          )}
+          {mpEstado === 'creando' && (
+            <div className="bg-sky-900/40 rounded-xl p-4 text-center">
+              <div className="animate-spin w-6 h-6 border-2 border-sky-400 border-t-transparent rounded-full mx-auto mb-2" />
+              <p className="text-sky-300 text-sm font-medium">Enviando al posnet...</p>
+            </div>
+          )}
+          {(mpEstado === 'esperando' || mpEstado === 'procesando') && !mpShowProblema && (
+            <div className="bg-sky-900/40 rounded-xl p-4 text-center">
+              <div className="animate-pulse">
+                <svg className="w-10 h-10 text-sky-400 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+                </svg>
+                <p className="text-sky-300 text-sm font-bold">{formatPrecio(mpMontoIntent)}</p>
+                <p className="text-sky-300/70 text-xs mt-1">
+                  {mpEstado === 'esperando' ? 'Esperando pago en el posnet...' : 'Procesando pago...'}
+                </p>
+                <p className="text-sky-300/40 text-[10px] mt-1">Para cancelar, hacelo desde el posnet</p>
+              </div>
+              <button
+                onClick={() => setMpShowProblema(true)}
+                className="mt-3 text-amber-400 hover:text-amber-300 text-xs font-medium underline"
+              >
+                Tengo problema
+              </button>
+            </div>
+          )}
+          {(mpEstado === 'esperando' || mpEstado === 'procesando') && mpShowProblema && (
+            <div className="bg-amber-900/30 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-amber-300 text-sm font-bold">Seleccioná el problema:</p>
+                <button
+                  onClick={() => setMpShowProblema(false)}
+                  className="text-white/40 hover:text-white/70 text-xs"
+                >
+                  Volver
+                </button>
+              </div>
+              <button
+                onClick={() => { setMpShowProblema(false); resolverProblemaMP('cobro_sin_confirmar') }}
+                className="w-full text-left bg-amber-800/40 hover:bg-amber-800/60 rounded-lg p-3 transition-colors"
+              >
+                <p className="text-amber-200 text-sm font-semibold">El cobro se realizó en el posnet</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">Pero el sistema no lo detectó. Guardar la venta igual.</p>
+              </button>
+              <button
+                onClick={() => { setMpShowProblema(false); resolverProblemaMP('posnet_manual') }}
+                className="w-full text-left bg-amber-800/40 hover:bg-amber-800/60 rounded-lg p-3 transition-colors"
+              >
+                <p className="text-amber-200 text-sm font-semibold">No aparece en el posnet</p>
+                <p className="text-amber-300/60 text-xs mt-0.5">Lo cobro en posnet manual (fuera del sistema).</p>
+              </button>
+            </div>
+          )}
+          {mpEstado === 'aprobado' && (
+            <div className="bg-emerald-900/40 rounded-xl p-4 text-center">
+              <svg className="w-8 h-8 text-emerald-400 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              <p className="text-emerald-300 text-sm font-bold">Pago aprobado - {formatPrecio(mpMontoIntent)}</p>
+            </div>
+          )}
+          {(mpEstado === 'error' || mpEstado === 'cancelado') && (
+            <div className="space-y-2">
+              <div className="bg-red-900/30 rounded-xl p-2 text-center">
+                <p className="text-red-400 text-xs">{mpError || 'Error en el pago'}</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('credit_card') }}
+                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+                >
+                  <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
+                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                </button>
+                <button
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('qr') }}
+                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
+                >
+                  <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
+                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Detalle de pagos cargados */}
         {pagos.length > 0 && (
           <div className="flex-1">
@@ -483,15 +1024,37 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                   )}
                 </div>
               )}
-              {/* Otros medios de pago */}
+              {/* Otros medios de pago — pagos MP se muestran individual con botón anular */}
               {Object.entries(resumenPagos)
-                .filter(([tipo]) => tipo !== 'Efectivo')
+                .filter(([tipo]) => tipo !== 'Efectivo' && !pagos.some(p => p.tipo === tipo && p.detalle?.mp_order_id))
                 .map(([tipo, monto]) => (
                   <div key={tipo} className="flex justify-between items-center">
                     <span className="text-white/60 text-sm">{tipo}</span>
                     <span className="text-white font-semibold text-sm">{formatPrecio(monto)}</span>
                   </div>
                 ))}
+              {/* Pagos MP individuales con opción de anular */}
+              {pagos.map((p, idx) => p.detalle?.mp_order_id ? (
+                <div key={`mp-${idx}`} className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white/60 text-sm">{p.tipo}</span>
+                    {p.detalle?.card_last_four && <span className="text-white/30 text-xs">****{p.detalle.card_last_four}</span>}
+                    {p.detalle?.mp_problema && <span className="text-amber-400 text-[9px]">(problema)</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-semibold text-sm">{formatPrecio(p.monto)}</span>
+                    {!p.detalle?.mp_problema && (
+                      <button
+                        onClick={() => anularPagoMP(idx)}
+                        disabled={mpRefundingIdx === idx}
+                        className="text-red-400 hover:text-red-300 text-[10px] font-medium underline disabled:opacity-50 disabled:no-underline"
+                      >
+                        {mpRefundingIdx === idx ? 'Anulando...' : 'Anular'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : null)}
               {/* Descuentos por forma de pago */}
               {descuentosPorForma.length > 0 && (
                 <div className="border-t border-white/10 pt-1.5 mt-1.5 space-y-1">
@@ -603,7 +1166,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               : 'bg-slate-700 text-slate-500 cursor-not-allowed'
           }`}
         >
-          {guardando ? 'Guardando...' : montoSuficiente ? (totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta') : 'Ingresá el pago'}
+          {guardando ? 'Guardando...' : montoSuficiente ? (<>{totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta'} <span className="text-[9px] opacity-50">Enter</span></>) : 'Ingresá el pago'}
         </button>
       </div>
     </div>

@@ -31,13 +31,10 @@ import VerificarCierrePos from './pages/cajas-pos/VerificarCierrePos'
 import NuevoRetiroPos from './pages/cajas-pos/NuevoRetiroPos'
 import VerificarRetiroPos from './pages/cajas-pos/VerificarRetiroPos'
 
-// Páginas de la app Delivery
-import DeliveryHome from './pages/delivery/DeliveryHome'
-import DetalleDelivery from './pages/delivery/DetalleDelivery'
-
 // Páginas de la app POS
 import POS from './pages/pos/POS'
 import PedidosPOS from './pages/pos/PedidosPOS'
+import SaldosEmpleados from './pages/pos/SaldosEmpleados'
 
 // Páginas de la app Ventas
 import VentasHome from './pages/ventas/VentasHome'
@@ -47,10 +44,16 @@ import DetalleVenta from './pages/ventas/DetalleVenta'
 import TareasHome from './pages/tareas/TareasHome'
 import TareasAdmin from './pages/tareas/TareasAdmin'
 import TareasAnalytics from './pages/tareas/TareasAnalytics'
+import TareasPanel from './pages/tareas/TareasPanel'
+import TareasEquipo from './pages/tareas/TareasEquipo'
+
+// Páginas de la app Auditoría
+import AuditoriaHome from './pages/auditoria/AuditoriaHome'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
+import ConfiguracionHub from './pages/admin/ConfiguracionHub'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
 import AdminApiLogs from './pages/admin/AdminApiLogs'
 
@@ -196,6 +199,12 @@ const App = () => {
             </RutaProtegida>
           } />
 
+          <Route path="/pos/saldos-empleados" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <SaldosEmpleados />
+            </RutaProtegida>
+          } />
+
           {/* App: Ventas */}
           <Route path="/ventas" element={
             <RutaProtegida>
@@ -208,15 +217,10 @@ const App = () => {
             </RutaProtegida>
           } />
 
-          {/* App: Delivery */}
-          <Route path="/delivery" element={
-            <RutaProtegida>
-              <DeliveryHome />
-            </RutaProtegida>
-          } />
-          <Route path="/delivery/:id" element={
-            <RutaProtegida>
-              <DetalleDelivery />
+          {/* App: Auditoría */}
+          <Route path="/auditoria" element={
+            <RutaProtegida soloAdmin>
+              <AuditoriaHome />
             </RutaProtegida>
           } />
 
@@ -226,9 +230,19 @@ const App = () => {
               <TareasHome />
             </RutaProtegida>
           } />
+          <Route path="/tareas/equipo" element={
+            <RutaProtegida>
+              <TareasEquipo />
+            </RutaProtegida>
+          } />
           <Route path="/tareas/admin" element={
             <RutaProtegida soloAdmin>
               <TareasAdmin />
+            </RutaProtegida>
+          } />
+          <Route path="/tareas/panel" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <TareasPanel />
             </RutaProtegida>
           } />
           <Route path="/tareas/analytics" element={
@@ -239,16 +253,21 @@ const App = () => {
 
           {/* Rutas admin */}
           <Route path="/admin/articulos" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminArticulos />
             </RutaProtegida>
           } />
           <Route path="/admin/articulos-manuales" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminArticulosManuales />
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion" element={
+            <RutaProtegida soloAdmin>
+              <ConfiguracionHub />
+            </RutaProtegida>
+          } />
+          <Route path="/admin/configuracion/:seccion" element={
             <RutaProtegida soloAdmin>
               <AdminConfiguracion />
             </RutaProtegida>

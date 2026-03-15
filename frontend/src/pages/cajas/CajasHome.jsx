@@ -628,7 +628,7 @@ const CajasHome = () => {
                               <span> · {cierre.empleado.nombre}</span>
                             )}
                           </div>
-                          {cierre.total_general !== undefined && !esGestor && (
+                          {cierre.total_general !== undefined && esAdmin && (
                             <span className="text-sm font-medium text-gray-700">
                               {formatMonto(cierre.total_general)}
                             </span>

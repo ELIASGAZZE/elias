@@ -1,5 +1,8 @@
 // Pantalla de Saldos a Favor — POS
+// Admin: lista completa + editar saldos
+// Gestor/Operario: buscador por DNI/CUIT → muestra saldo
 import React, { useState, useEffect, useCallback } from 'react'
+import { useAuth } from '../../context/AuthContext'
 import api from '../../services/api'
 
 const formatPrecio = (n) => {
@@ -8,12 +11,27 @@ const formatPrecio = (n) => {
 }
 
 const SaldosPOS = ({ embebido }) => {
+  const { esAdmin } = useAuth()
+
+  return esAdmin
+    ? <VistaAdmin embebido={embebido} />
+    : <VistaConsulta embebido={embebido} />
+}
+
+// ── Vista Admin: lista completa + editar ──
+function VistaAdmin({ embebido }) {
   const [clientes, setClientes] = useState([])
   const [cargando, setCargando] = useState(true)
   const [busqueda, setBusqueda] = useState('')
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
   const [movimientos, setMovimientos] = useState([])
   const [cargandoMovimientos, setCargandoMovimientos] = useState(false)
+
+  // Ajuste manual
+  const [mostrarAjuste, setMostrarAjuste] = useState(false)
+  const [ajusteMonto, setAjusteMonto] = useState('')
+  const [ajusteMotivo, setAjusteMotivo] = useState('')
+  const [ajustando, setAjustando] = useState(false)
 
   const cargarSaldos = useCallback(async () => {
     setCargando(true)
@@ -34,18 +52,17 @@ const SaldosPOS = ({ embebido }) => {
 
   async function verDetalle(cliente) {
     setClienteSeleccionado(cliente)
+    setMostrarAjuste(false)
+    setAjusteMonto('')
+    setAjusteMotivo('')
     setCargandoMovimientos(true)
     try {
       const { data } = await api.get(`/api/pos/saldo/${cliente.id_cliente_centum}`)
       setMovimientos(data.movimientos || [])
-      // Actualizar saldo con el valor fresco del backend
       if (data.saldo != null) {
         setClienteSeleccionado(prev => ({ ...prev, saldo: data.saldo }))
-        // Actualizar también en la lista para que no quede desactualizado
         setClientes(prev => prev.map(c =>
-          c.id_cliente_centum === cliente.id_cliente_centum
-            ? { ...c, saldo: data.saldo }
-            : c
+          c.id_cliente_centum === cliente.id_cliente_centum ? { ...c, saldo: data.saldo } : c
         ))
       }
     } catch (err) {
@@ -55,9 +72,36 @@ const SaldosPOS = ({ embebido }) => {
     }
   }
 
+  async function handleAjuste() {
+    if (!clienteSeleccionado || !ajusteMonto || !ajusteMotivo.trim()) return
+    setAjustando(true)
+    try {
+      const { data } = await api.post('/api/pos/saldos/ajuste', {
+        id_cliente_centum: clienteSeleccionado.id_cliente_centum,
+        nombre_cliente: clienteSeleccionado.nombre_cliente,
+        monto: parseFloat(ajusteMonto),
+        motivo: ajusteMotivo.trim(),
+      })
+      // Actualizar saldo y recargar movimientos
+      setClienteSeleccionado(prev => ({ ...prev, saldo: data.saldo }))
+      setClientes(prev => prev.map(c =>
+        c.id_cliente_centum === clienteSeleccionado.id_cliente_centum ? { ...c, saldo: data.saldo } : c
+      ))
+      setAjusteMonto('')
+      setAjusteMotivo('')
+      setMostrarAjuste(false)
+      // Recargar movimientos
+      const { data: detalle } = await api.get(`/api/pos/saldo/${clienteSeleccionado.id_cliente_centum}`)
+      setMovimientos(detalle.movimientos || [])
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al ajustar saldo')
+    } finally {
+      setAjustando(false)
+    }
+  }
+
   return (
     <div className={embebido ? 'h-full bg-gray-50 flex flex-col overflow-hidden' : 'min-h-screen bg-gray-50'}>
-      {/* Header solo en standalone */}
       {!embebido && (
         <div className="bg-white border-b sticky top-0 z-10">
           <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -76,7 +120,6 @@ const SaldosPOS = ({ embebido }) => {
         </div>
       )}
 
-      {/* Buscador */}
       <div className={embebido ? 'px-4 pt-3' : 'max-w-4xl mx-auto px-4 pt-4'}>
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm text-gray-500 font-medium">{clientes.length} cliente{clientes.length !== 1 ? 's' : ''} con saldo</span>
@@ -107,7 +150,6 @@ const SaldosPOS = ({ embebido }) => {
         </div>
       </div>
 
-      {/* Lista */}
       <div className={embebido ? 'flex-1 overflow-y-auto px-4 py-3' : 'max-w-4xl mx-auto px-4 py-4'}>
         {cargando ? (
           <div className="flex items-center justify-center py-16 text-gray-400">
@@ -147,12 +189,11 @@ const SaldosPOS = ({ embebido }) => {
         )}
       </div>
 
-      {/* Drawer detalle movimientos */}
+      {/* Drawer detalle movimientos + ajuste */}
       {clienteSeleccionado && (
         <>
           <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setClienteSeleccionado(null)} />
           <div className="fixed inset-y-0 right-0 w-full max-w-md bg-white shadow-2xl z-50 flex flex-col animate-slide-in-right">
-            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b bg-gray-50">
               <div>
                 <h2 className="text-lg font-bold text-gray-800">{clienteSeleccionado.nombre_cliente}</h2>
@@ -161,14 +202,61 @@ const SaldosPOS = ({ embebido }) => {
                   <span className="text-lg font-bold text-emerald-600">{formatPrecio(clienteSeleccionado.saldo)}</span>
                 </div>
               </div>
-              <button onClick={() => setClienteSeleccionado(null)} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
-                <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMostrarAjuste(!mostrarAjuste)}
+                  className={`p-2 rounded-lg transition-colors ${mostrarAjuste ? 'bg-violet-100 text-violet-700' : 'hover:bg-gray-200 text-gray-500'}`}
+                  title="Ajustar saldo"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                </button>
+                <button onClick={() => setClienteSeleccionado(null)} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
+                  <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
-            {/* Movimientos */}
+            {/* Formulario de ajuste */}
+            {mostrarAjuste && (
+              <div className="px-5 py-4 border-b bg-violet-50 space-y-3">
+                <h3 className="text-sm font-semibold text-violet-800">Ajuste manual de saldo</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Monto (+ agrega, - quita)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={ajusteMonto}
+                      onChange={e => setAjusteMonto(e.target.value)}
+                      className="w-full text-sm border rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                      placeholder="Ej: 500 o -200"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Motivo</label>
+                    <input
+                      type="text"
+                      value={ajusteMotivo}
+                      onChange={e => setAjusteMotivo(e.target.value)}
+                      className="w-full text-sm border rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                      placeholder="Motivo del ajuste..."
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={handleAjuste}
+                  disabled={ajustando || !ajusteMonto || !ajusteMotivo.trim()}
+                  className="w-full text-sm font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white py-2 rounded-lg transition-colors"
+                >
+                  {ajustando ? 'Aplicando...' : 'Aplicar ajuste'}
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">Historial de movimientos</div>
               {cargandoMovimientos ? (
@@ -216,6 +304,110 @@ const SaldosPOS = ({ embebido }) => {
           animation: slideInRight 0.2s ease-out;
         }
       `}</style>
+    </div>
+  )
+}
+
+// ── Vista Consulta (Gestor/Operario): solo buscar por DNI/CUIT ──
+function VistaConsulta({ embebido }) {
+  const [busqueda, setBusqueda] = useState('')
+  const [resultados, setResultados] = useState([])
+  const [buscando, setBuscando] = useState(false)
+  const [buscado, setBuscado] = useState(false)
+
+  async function handleBuscar(e) {
+    e?.preventDefault()
+    const termino = busqueda.trim()
+    if (termino.length < 3) return
+    setBuscando(true)
+    setBuscado(false)
+    try {
+      const { data } = await api.get('/api/pos/saldos/buscar-cuit', { params: { cuit: termino } })
+      setResultados(data.clientes || [])
+      setBuscado(true)
+    } catch (err) {
+      console.error('Error buscando saldo:', err)
+    } finally {
+      setBuscando(false)
+    }
+  }
+
+  return (
+    <div className={embebido ? 'h-full bg-gray-50 flex flex-col overflow-hidden' : 'min-h-screen bg-gray-50'}>
+      {!embebido && (
+        <div className="bg-white border-b sticky top-0 z-10">
+          <div className="max-w-4xl mx-auto px-4 py-3">
+            <h1 className="text-lg font-bold text-gray-800">Consultar Saldo</h1>
+          </div>
+        </div>
+      )}
+
+      <div className={embebido ? 'px-4 pt-4' : 'max-w-md mx-auto px-4 pt-8'}>
+        <div className="text-center mb-6">
+          <svg className="w-12 h-12 mx-auto mb-3 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          <p className="text-sm text-gray-500">Ingresá el DNI o CUIT del cliente para consultar su saldo</p>
+        </div>
+
+        <form onSubmit={handleBuscar} className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="DNI o CUIT..."
+              className="w-full text-sm border rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={buscando || busqueda.trim().length < 3}
+            className="px-4 py-2.5 text-sm font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white rounded-lg transition-colors"
+          >
+            {buscando ? 'Buscando...' : 'Buscar'}
+          </button>
+        </form>
+
+        {/* Resultados */}
+        <div className="mt-6">
+          {buscando && (
+            <div className="flex items-center justify-center py-8 text-gray-400">
+              <svg className="animate-spin w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Buscando...
+            </div>
+          )}
+
+          {!buscando && buscado && resultados.length === 0 && (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              No se encontraron clientes con ese DNI/CUIT
+            </div>
+          )}
+
+          {!buscando && resultados.length > 0 && (
+            <div className="space-y-3">
+              {resultados.map(cli => (
+                <div key={cli.id_cliente_centum} className="bg-white rounded-xl border shadow-sm p-5">
+                  <div className="text-sm font-semibold text-gray-800">{cli.nombre_cliente}</div>
+                  {cli.cuit && (
+                    <div className="text-xs text-gray-400 mt-0.5">CUIT: {cli.cuit}</div>
+                  )}
+                  <div className="mt-3 flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                    <span className="text-sm text-gray-600">Saldo a favor:</span>
+                    <span className={`text-xl font-bold ${cli.saldo > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      {formatPrecio(cli.saldo)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

@@ -2,15 +2,20 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import ModalCobrar from '../../components/pos/ModalCobrar'
+import ModalVentaEmpleado from '../../components/pos/ModalVentaEmpleado'
 import PedidosPOS from './PedidosPOS'
 import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
 import NuevoClienteModal from '../../components/NuevoClienteModal'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
+import TecladoVirtual from '../../components/pos/TecladoVirtual'
 import api, { isNetworkError } from '../../services/api'
 import useOnlineStatus from '../../hooks/useOnlineStatus'
 import { guardarArticulos, getArticulos, guardarPromociones, getPromociones, guardarClientes, getClientes } from '../../services/offlineDB'
 import { syncVentasPendientes } from '../../services/offlineSync'
+import { imprimirTicketDevolucion } from '../../utils/imprimirComprobante'
+import ActualizacionesPOS from '../../components/pos/ActualizacionesPOS'
+import ModalCerrarCaja from '../../components/cajas-pos/ModalCerrarCaja'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -141,6 +146,37 @@ function calcularPromocionesLocales(carrito, promociones) {
         })
         break
       }
+
+      case 'condicional': {
+        const artCond = reglas.articulo_condicion
+        const artBenef = reglas.articulo_beneficio
+        if (!artCond || !artBenef) break
+        const itemCondicion = carrito.find(i => i.articulo.id === artCond.id)
+        if (!itemCondicion) break
+        const cantMin = reglas.cantidad_minima || 1
+        if (itemCondicion.cantidad < cantMin) break
+        const itemBeneficio = carrito.find(i => i.articulo.id === artBenef.id)
+        if (!itemBeneficio) break
+        const vecesCondicion = Math.floor(itemCondicion.cantidad / cantMin)
+        const cantBeneficiada = Math.min(vecesCondicion, itemBeneficio.cantidad)
+        const precioBenef = calcularPrecioConDescuentosBase(itemBeneficio.articulo)
+        let descuento = 0
+        if (reglas.tipo_descuento === 'porcentaje') {
+          descuento = precioBenef * cantBeneficiada * ((reglas.valor || 0) / 100)
+        } else {
+          descuento = Math.min(reglas.valor || 0, precioBenef) * cantBeneficiada
+        }
+        if (descuento <= 0) break
+        aplicadas.push({
+          promoId: promo.id,
+          promoNombre: promo.nombre,
+          tipoPromo: 'condicional',
+          detalle: `${cantMin}x ${artCond.nombre} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off en ${artBenef.nombre}`,
+          descuento,
+          itemsAfectados: [artCond.id, artBenef.id],
+        })
+        break
+      }
     }
   }
 
@@ -180,6 +216,8 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [cajas, setCajas] = useState([])
   const [sucursalId, setSucursalId] = useState(configActual?.sucursal_id || '')
   const [cajaId, setCajaId] = useState(configActual?.caja_id || '')
+  const [mpDevices, setMpDevices] = useState([])
+  const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -187,6 +225,13 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       .then(({ data }) => setSucursales(data || []))
       .catch((err) => console.error('Error cargando sucursales:', err.message))
       .finally(() => setCargando(false))
+    // Cargar dispositivos MP Point
+    api.get('/api/mp-point/devices')
+      .then(({ data }) => {
+        const devs = data.devices || data || []
+        setMpDevices(Array.isArray(devs) ? devs : [])
+      })
+      .catch((err) => console.warn('MP Point devices no disponible:', err.message))
   }, [])
 
   useEffect(() => {
@@ -199,13 +244,38 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const sucursalSeleccionada = sucursales.find(s => s.id === sucursalId)
   const cajaSeleccionada = cajas.find(c => c.id === cajaId)
 
-  const confirmar = () => {
+  const [cambiandoModo, setCambiandoModo] = useState(false)
+  const [errorModo, setErrorModo] = useState('')
+
+  const confirmar = async () => {
     if (!sucursalId || !cajaId) return
+    setErrorModo('')
+
+    // Si seleccionó un posnet, cambiar a modo PDV automáticamente
+    if (mpDeviceId) {
+      const device = mpDevices.find(d => d.id === mpDeviceId)
+      if (device && device.operating_mode !== 'PDV') {
+        setCambiandoModo(true)
+        try {
+          const resp = await api.patch(`/api/mp-point/devices/${mpDeviceId}`, { operating_mode: 'PDV' })
+          console.log('[MP Point] Modo cambiado a PDV:', resp.data)
+        } catch (err) {
+          const msg = err.response?.data?.message || err.response?.data?.error || err.message
+          console.error('Error cambiando posnet a modo PDV:', msg, err.response?.data)
+          setErrorModo(msg.includes('one pos-store') ? 'Solo 1 posnet en modo PDV por cada caja. Revisar en MP.' : `No se pudo cambiar a modo PDV: ${msg}`)
+          setCambiandoModo(false)
+          return // No continuar si falla el cambio de modo
+        }
+        setCambiandoModo(false)
+      }
+    }
+
     onConfigurar({
       sucursal_id: sucursalId,
       sucursal_nombre: sucursalSeleccionada?.nombre || '',
       caja_id: cajaId,
       caja_nombre: cajaSeleccionada?.nombre || '',
+      mp_device_id: mpDeviceId || null,
     })
   }
 
@@ -259,14 +329,42 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
               ))}
             </select>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Posnet Mercado Pago (opcional)</label>
+            {mpDevices.length > 0 ? (
+              <select
+                value={mpDeviceId}
+                onChange={e => setMpDeviceId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              >
+                <option value="">Sin posnet</option>
+                {mpDevices.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.id}{d.operating_mode === 'PDV' ? ' (PDV)' : ' (Standalone)'}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={mpDeviceId}
+                onChange={e => setMpDeviceId(e.target.value)}
+                placeholder="ID del dispositivo (ej: PAX_A910__SMARTPOS...)"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              />
+            )}
+            <p className="text-xs text-gray-400 mt-1">Al guardar, el posnet se configurará automáticamente en modo PDV</p>
+            {errorModo && <p className="text-xs text-red-500 mt-1 font-medium">{errorModo}</p>}
+          </div>
         </div>
 
         <button
           onClick={confirmar}
-          disabled={!sucursalId || !cajaId}
+          disabled={!sucursalId || !cajaId || cambiandoModo}
           className="w-full mt-6 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors"
         >
-          Guardar configuracion
+          {cambiandoModo ? 'Configurando posnet...' : 'Guardar configuracion'}
         </button>
 
         {configActual && (
@@ -456,7 +554,6 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
                       valor={d.valor}
                       cantidad={billetesApertura[d.valor] || 0}
                       onChange={(val) => setBilletesApertura(prev => ({ ...prev, [d.valor]: val }))}
-                      alerta={tieneDiferencia(d.valor)}
                     />
                   ))}
                 </div>
@@ -465,17 +562,6 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
                   <div className="bg-violet-50 border border-violet-200 rounded-xl px-3 py-2 flex justify-between items-center mt-3">
                     <span className="text-sm font-medium text-violet-800">Total cambio inicial</span>
                     <span className="text-sm font-bold text-violet-700">{formatMonto(totalCambioInicial)}</span>
-                  </div>
-                )}
-
-                {hayUltimoCambio && calcularDiferencias() && (
-                  <div className="bg-red-50 border border-red-300 rounded-xl px-3 py-2 mt-2">
-                    <p className="text-xs font-semibold text-red-700">
-                      El cambio ingresado difiere del ultimo cierre de esta caja
-                    </p>
-                    <p className="text-xs text-red-600 mt-0.5">
-                      Las denominaciones con diferencia estan marcadas en rojo
-                    </p>
                   </div>
                 )}
               </>
@@ -565,7 +651,9 @@ const POS = () => {
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
-  const CLIENTE_DEFAULT = { id_centum: 0, razon_social: 'Consumidor Final', lista_precio_id: 1 }
+  const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
+  const [guardandoContacto, setGuardandoContacto] = useState(false)
+  const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF' }
 
   // Multi-ticket: 2 tickets en paralelo
   const [tickets, setTickets] = useState([
@@ -625,12 +713,14 @@ const POS = () => {
     })
   }, [])
 
-  const setCliente = useCallback((cli) => {
+  const setCliente = useCallback((cliOrUpdater) => {
     setTickets(prev => {
       const idx = ticketActivoRef.current
       ticketTimestamps.current[idx] = Date.now()
       const nuevo = [...prev]
-      nuevo[idx] = { ...nuevo[idx], cliente: cli }
+      const clienteActual = nuevo[idx].cliente
+      const nuevoCliente = typeof cliOrUpdater === 'function' ? cliOrUpdater(clienteActual) : cliOrUpdater
+      nuevo[idx] = { ...nuevo[idx], cliente: nuevoCliente }
       return nuevo
     })
   }, [])
@@ -638,8 +728,17 @@ const POS = () => {
   // Estado artículos
   const [articulos, setArticulos] = useState([])
   const [cargandoArticulos, setCargandoArticulos] = useState(false)
+  const [sincronizandoERP, setSincronizandoERP] = useState(false)
   const [busquedaArt, setBusquedaArt] = useState('')
+  const [busquedaIdx, setBusquedaIdx] = useState(-1) // índice seleccionado en dropdown
+  const [mostrarTeclado, setMostrarTeclado] = useState(false)
+  const [carritoIdx, setCarritoIdx] = useState(-1) // índice seleccionado en carrito (-1 = no seleccionado, foco en buscador)
   const [alertaBarcode, setAlertaBarcode] = useState(null) // código no encontrado
+  const [alertaDuplicado, setAlertaDuplicado] = useState(null) // duplicado (balanza o barcode)
+  const ultimoBarcodaBalanzaRef = useRef(null) // último código de balanza escaneado
+  const ultimoBarcodeRef = useRef({ codigo: null, time: 0 }) // último barcode normal escaneado
+  const [popupPesable, setPopupPesable] = useState(null) // { articulo } — pedir peso manual
+  const [popupPesableKg, setPopupPesableKg] = useState('')
 
   // Alarma continua con Web Audio API — suena hasta que se cierra la alerta
   const alertCtxRef = useRef(null)
@@ -679,6 +778,8 @@ const POS = () => {
 
   // Modal cobrar
   const [mostrarCobrar, setMostrarCobrar] = useState(false)
+  // Modal venta empleado
+  const [mostrarVentaEmpleado, setMostrarVentaEmpleado] = useState(false)
 
   // Pedidos POS
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
@@ -686,9 +787,13 @@ const POS = () => {
 
   // Modal wizard pedido (paso 0: cliente, paso 1: tipo, paso 2: dirección/sucursal, paso 3: pago anticipado)
   const [mostrarBuscarClientePedido, setMostrarBuscarClientePedido] = useState(false)
-  const [pasoPedido, setPasoPedido] = useState(0) // 0=cliente, 1=tipo, 2=fecha, 3=dirección/sucursal, 4=pago
+  const [pasoPedido, setPasoPedido] = useState(0) // 0=fecha, 1=cliente, 2=tipo, 3=dirección/sucursal, 4=pago
   const [fechaEntregaPedido, setFechaEntregaPedido] = useState('')
+  const [turnoPedido, setTurnoPedido] = useState('')
+  const [bloqueosFecha, setBloqueosFecha] = useState([])
   const [mostrarCobrarPedido, setMostrarCobrarPedido] = useState(false)
+  const [cobrarPedidoExistente, setCobrarPedidoExistente] = useState(null) // { id, total, items, cliente_nombre, id_cliente_centum }
+  const [pedidosRefreshKey, setPedidosRefreshKey] = useState(0)
   const pedidoWizardDataRef = useRef(null)
   const [clientePedido, setClientePedido] = useState(null)
   const [busquedaClientePedido, setBusquedaClientePedido] = useState('')
@@ -728,11 +833,15 @@ const POS = () => {
   const [pedidoEnProceso, setPedidoEnProceso] = useState(null) // { id, esPagado, ... }
 
   // Modal problema
+  const [mostrarActualizaciones, setMostrarActualizaciones] = useState(false)
+  const [mostrarCerrarCaja, setMostrarCerrarCaja] = useState(false)
+  const [mostrarConfirmarCancelar, setMostrarConfirmarCancelar] = useState(false)
   const [mostrarProblema, setMostrarProblema] = useState(false)
   const [problemaSeleccionado, setProblemaSeleccionado] = useState(null)
   const [problemaPaso, setProblemaPaso] = useState(0) // 0=tipo, 1=buscar factura, 2=seleccionar productos
   const [problemaBusqueda, setProblemaBusqueda] = useState('')
-  const [problemaFecha, setProblemaFecha] = useState(new Date().toISOString().split('T')[0])
+  const [problemaBusFactura, setProblemaBusFactura] = useState('')
+  const [problemaFecha, setProblemaFecha] = useState('')
   const [problemaBusArticulo, setProblemaBusArticulo] = useState('')
   const [problemaSucursal, setProblemaSucursal] = useState('')
   const [problemaSucursales, setProblemaSucursales] = useState([])
@@ -741,6 +850,7 @@ const POS = () => {
   const [problemaVentaSel, setProblemaVentaSel] = useState(null)
   const [problemaItemsSel, setProblemaItemsSel] = useState({}) // { idx: cantDevolver }
   const [problemaDescripciones, setProblemaDescripciones] = useState({}) // { idx: 'texto' }
+  const [problemaYaDevuelto, setProblemaYaDevuelto] = useState({}) // { idx: cantDevueltaPrevia }
   const [problemaCliente, setProblemaCliente] = useState(null) // cliente identificado
   const [problemaBusCliente, setProblemaBusCliente] = useState('')
   const [problemaClientesRes, setProblemaClientesRes] = useState([])
@@ -753,6 +863,7 @@ const POS = () => {
   // Modal cancelar venta
   const [mostrarCancelar, setMostrarCancelar] = useState(false)
   const [cancelarMotivo, setCancelarMotivo] = useState(null)
+  const [cancelarMotivoOtro, setCancelarMotivoOtro] = useState('')
   const [cancelarPasoConfirm, setCancelarPasoConfirm] = useState(false)
   const problemaTimerRef = useRef(null)
   const problemaCliTimerRef = useRef(null)
@@ -762,9 +873,10 @@ const POS = () => {
     setProblemaSeleccionado(null)
     setProblemaPaso(0)
     setProblemaBusqueda('')
+    setProblemaBusFactura('')
     setProblemaBusArticulo('')
     setProblemaSucursal('')
-    setProblemaFecha(new Date().toISOString().split('T')[0])
+    setProblemaFecha('')
     setProblemaVentas([])
     setProblemaVentaSel(null)
     setProblemaItemsSel({})
@@ -775,6 +887,7 @@ const POS = () => {
     setProblemaCrearCliente(false)
     setProblemaObservacion('')
     setProblemaPreciosCorregidos({})
+    setProblemaYaDevuelto({})
   }
 
   function buscarVentasProblemaDebounced(overrides = {}) {
@@ -789,12 +902,18 @@ const POS = () => {
     const fecha = overrides.fecha ?? problemaFecha
     const articulo = overrides.articulo ?? problemaBusArticulo
     const sucId = overrides.sucursal_id ?? problemaSucursal
+    const numFactura = overrides.numero_factura ?? problemaBusFactura
     setProblemaBuscando(true)
     try {
-      const params = { fecha }
-      if (cliente && cliente.trim().length >= 2) params.buscar = cliente.trim()
-      if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
-      if (sucId) params.sucursal_id = sucId
+      const params = {}
+      if (numFactura && numFactura.trim().length >= 1) {
+        params.numero_factura = numFactura.trim()
+      } else {
+        if (fecha) params.fecha = fecha
+        if (cliente && cliente.trim().length >= 2) params.buscar = cliente.trim()
+        if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
+        if (sucId) params.sucursal_id = sucId
+      }
       const { data } = await api.get('/api/pos/ventas', { params })
       setProblemaVentas(data.ventas || [])
     } catch {
@@ -807,33 +926,44 @@ const POS = () => {
   // Carrito mobile toggle
   const [carritoVisible, setCarritoVisible] = useState(false)
 
-  // Favoritos (persistidos en localStorage)
-  const [favoritos, setFavoritos] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('pos_favoritos') || '[]')
-    } catch { return [] }
-  })
+  // Modo empleado (cuenta corriente)
+  const [empleadoActivo, setEmpleadoActivo] = useState(null) // { id, nombre, codigo }
+  const [descuentosEmpleado, setDescuentosEmpleado] = useState({}) // { rubroNombre: porcentaje }
+
+  // Favoritos (globales desde DB)
+  const [favoritos, setFavoritos] = useState([])
 
   const inputBusquedaRef = useRef(null)
+  const inputClienteRef = useRef(null)
 
   // Refocus al buscador tras cualquier click (excepto otros inputs)
   const handlePOSClick = useCallback((e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
     // No refocalizar si hay un modal abierto (gift card, cobro, etc.)
     if (e.target.closest('[data-modal]')) return
     setTimeout(() => {
-      if (document.activeElement?.tagName !== 'INPUT') {
+      if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT') {
         inputBusquedaRef.current?.focus()
       }
     }, 0)
   }, [])
 
-  // Cargar promos, artículos y clientes al montar (1 sola vez)
+  // Cargar promos, artículos, clientes y favoritos al montar (1 sola vez)
   useEffect(() => {
     cargarPromociones()
     cargarArticulos()
     cargarClientesCache()
+    cargarFavoritos()
   }, [])
+
+  async function cargarFavoritos() {
+    try {
+      const { data } = await api.get('/api/pos/favoritos')
+      setFavoritos(data.articulo_ids || [])
+    } catch (err) {
+      console.error('Error cargando favoritos:', err)
+    }
+  }
 
   async function cargarPromociones() {
     setCargandoPromos(true)
@@ -926,6 +1056,20 @@ const POS = () => {
     }
   }
 
+  // Sincronizar precios desde Centum ERP
+  async function sincronizarPrecios() {
+    if (sincronizandoERP) return
+    setSincronizandoERP(true)
+    try {
+      await api.post('/api/articulos/sincronizar-precios')
+      await cargarArticulos()
+    } catch (err) {
+      alert('Error al sincronizar: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setSincronizandoERP(false)
+    }
+  }
+
   // Consultar saldo a favor del cliente seleccionado
   useEffect(() => {
     if (!cliente.id_centum || cliente.id_centum === 0) {
@@ -939,14 +1083,61 @@ const POS = () => {
     return () => { cancelled = true }
   }, [cliente.id_centum])
 
-  function seleccionarCliente(cli) {
-    setCliente({
-      id_centum: cli.id_centum,
-      razon_social: cli.razon_social,
-      lista_precio_id: cli.lista_precio_id || 1,
-    })
-    setBusquedaCliente('')
+  async function seleccionarCliente(cli) {
+    if (seleccionandoCliente) return // evitar doble click
+    setSeleccionandoCliente(true)
+    // Cerrar lista y limpiar búsqueda inmediatamente para dar feedback visual
     setClientesCentum([])
+    setBusquedaCliente('')
+    // Setear cliente con datos locales al instante (se actualiza luego con refresh)
+    const clienteLocal = {
+      id_centum: cli.id_centum || 0,
+      codigo: cli.codigo || '',
+      razon_social: cli.razon_social || 'Consumidor Final',
+      lista_precio_id: cli.lista_precio_id || 1,
+      email: cli.email || '',
+      celular: cli.celular || '',
+      condicion_iva: cli.condicion_iva || 'CF',
+    }
+    setCliente(clienteLocal)
+
+    // Verificar en Centum que el cliente esté activo (en background)
+    if (cli.id_centum) {
+      try {
+        const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`)
+        // Actualizar con datos frescos de Centum
+        setCliente(prev => ({
+          ...prev,
+          codigo: data.codigo || prev.codigo,
+          razon_social: data.razon_social || prev.razon_social,
+          email: data.email || prev.email,
+          celular: data.celular || prev.celular,
+          condicion_iva: data.condicion_iva || prev.condicion_iva,
+        }))
+      } catch (err) {
+        if (err.response?.status === 410) {
+          alert('Este cliente está desactivado en Centum y no se puede usar.')
+          setCliente({ ...CLIENTE_DEFAULT })
+        }
+        // Si falla la verificación, ya tiene los datos locales cargados
+      }
+    }
+    setSeleccionandoCliente(false)
+  }
+
+  async function guardarContactoCliente() {
+    if (!cliente.id_centum || cliente.id_centum === 0) return
+    setGuardandoContacto(true)
+    try {
+      await api.put(`/api/clientes/contacto/${cliente.id_centum}`, {
+        email: cliente.email,
+        celular: cliente.celular,
+      })
+    } catch (err) {
+      console.error('Error guardando contacto:', err)
+    } finally {
+      setGuardandoContacto(false)
+    }
   }
 
   // Extraer rubros únicos de los artículos cargados
@@ -969,22 +1160,39 @@ const POS = () => {
     return map
   }, [rubros])
 
-  // Toggle favorito
+  // Toggle favorito (solo admin, guarda en DB global)
   const toggleFavorito = useCallback((articuloId, e) => {
     e.stopPropagation()
+    if (!esAdmin) return
     setFavoritos(prev => {
       const next = prev.includes(articuloId)
         ? prev.filter(id => id !== articuloId)
         : [...prev, articuloId]
-      localStorage.setItem('pos_favoritos', JSON.stringify(next))
+      api.post('/api/pos/favoritos', { articulo_ids: next }).catch(err => {
+        console.error('Error guardando favoritos:', err)
+      })
       return next
     })
-  }, [])
+  }, [esAdmin])
 
-  // Favoritos: siempre visibles como tiles
+  // Precio con descuento empleado (si modo empleado activo)
+  const precioConDescEmpleado = useCallback((articulo) => {
+    const precioBase = calcularPrecioConDescuentosBase(articulo)
+    if (!empleadoActivo) return precioBase
+    const rubroNombre = articulo.rubro?.nombre || ''
+    const descPct = descuentosEmpleado[rubroNombre] || 0
+    if (descPct <= 0) return precioBase
+    return Math.round(precioBase * (1 - descPct / 100) * 100) / 100
+  }, [empleadoActivo, descuentosEmpleado])
+
+  // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
-    return articulos.filter(a => favoritos.includes(a.id))
-  }, [articulos, favoritos])
+    const favs = articulos.filter(a => favoritos.includes(a.id))
+    const rubroOrden = {}
+    rubros.forEach((r, i) => { rubroOrden[r.nombre] = i })
+    favs.sort((a, b) => (rubroOrden[a.rubro?.nombre] ?? 999) - (rubroOrden[b.rubro?.nombre] ?? 999))
+    return favs
+  }, [articulos, favoritos, rubros])
 
   // Resultados de búsqueda: dropdown autocompletado
   const resultadosBusqueda = useMemo(() => {
@@ -996,87 +1204,176 @@ const POS = () => {
     }).slice(0, 30)
   }, [articulos, busquedaArt])
 
-  // Agregar al carrito (pesables suman 0.1, no pesables suman 1)
+  // Agregar al carrito — pesables abren popup para ingresar peso, no pesables suman 1
   const agregarAlCarrito = useCallback((articulo) => {
-    const incremento = articulo.esPesable ? 0.1 : 1
+    if (articulo.esPesable) {
+      setPopupPesable({ articulo })
+      setPopupPesableKg('')
+      return
+    }
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articulo.id)
       if (idx >= 0) {
         const nuevo = [...prev]
-        nuevo[idx] = { ...nuevo[idx], cantidad: Math.round((nuevo[idx].cantidad + incremento) * 1000) / 1000 }
+        nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + 1 }
         return nuevo
       }
-      return [...prev, { articulo, cantidad: incremento }]
+      return [...prev, { articulo, cantidad: 1 }]
     })
   }, [])
 
-  // Buscar artículo por código de barras (también busca por código interno)
+  const confirmarPesable = useCallback(() => {
+    if (!popupPesable) return
+    const kg = parseFloat(popupPesableKg)
+    if (!kg || kg <= 0) return
+    setCarrito(prev => [...prev, { articulo: popupPesable.articulo, cantidad: Math.round(kg * 1000) / 1000 }])
+    setPopupPesable(null)
+    setPopupPesableKg('')
+    setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+  }, [popupPesable, popupPesableKg])
+
+  // Parsear código de barras de balanza Kretz (EAN-13, prefijo 20)
+  // Formato: 20 PPPPP WWWWW C → PLU (5 dígitos) + Peso en gramos (5 dígitos) + check
+  const parsearBarcodeBalanza = useCallback((barcode) => {
+    const code = barcode.replace(/\s/g, '')
+    if (code.length === 13 && code.startsWith('20')) {
+      const plu = code.substring(2, 7)        // 5 dígitos PLU
+      const pesoGramos = parseInt(code.substring(7, 12), 10) // 5 dígitos peso
+      const pesoKg = pesoGramos / 1000
+      if (pesoKg > 0) {
+        return { plu, pesoKg }
+      }
+    }
+    return null
+  }, [])
+
+  // Buscar artículo por código de barras (también busca por código interno y balanza)
   const buscarPorBarcode = useCallback((barcode) => {
     const codigo = barcode.trim()
-    // Buscar en codigos_barras
+
+    // 1. Verificar si es código de balanza Kretz (prefijo 20, 13 dígitos)
+    const balanza = parsearBarcodeBalanza(codigo)
+    if (balanza) {
+      const articuloPlu = articulos.find(a => a.codigo === balanza.plu)
+      if (articuloPlu) {
+        // Detectar duplicado: mismo código de barras escaneado dos veces seguidas
+        const ultimo = ultimoBarcodaBalanzaRef.current
+        if (ultimo && ultimo === codigo) {
+          // Mostrar alerta de duplicado y guardar datos para agregar si confirma
+          setAlertaDuplicado({ articulo: articuloPlu, pesoKg: balanza.pesoKg, barcode: codigo })
+          setBusquedaArt('')
+          return true
+        }
+        // Guardar como último escaneado
+        ultimoBarcodaBalanzaRef.current = codigo
+        // Agregar como línea separada (no sumar al existente)
+        setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: balanza.pesoKg }])
+        setBusquedaArt('')
+        return true
+      }
+    }
+
+    // 2. Buscar en codigos_barras
     let encontrado = articulos.find(a =>
       a.codigosBarras && a.codigosBarras.length > 0 && a.codigosBarras.includes(codigo)
     )
-    // Si no se encuentra, buscar por código interno exacto
+    // 3. Si no se encuentra, buscar por código interno exacto
     if (!encontrado) {
       encontrado = articulos.find(a => a.codigo === codigo)
     }
     if (encontrado) {
+      // Detectar duplicado: mismo barcode escaneado rápido (< 3 seg)
+      const ahora = Date.now()
+      const ultimo = ultimoBarcodeRef.current
+      if (ultimo.codigo === codigo && (ahora - ultimo.time) < 1500) {
+        setAlertaDuplicado({ articulo: encontrado, cantidad: 1 })
+        setBusquedaArt('')
+        return true
+      }
+      ultimoBarcodeRef.current = { codigo, time: ahora }
       agregarAlCarrito(encontrado)
       setBusquedaArt('')
       return true
     }
     return false
-  }, [articulos, agregarAlCarrito])
+  }, [articulos, agregarAlCarrito, parsearBarcodeBalanza])
 
   // Detectar entrada rápida tipo escáner de barras
-  const ultimoInputRef = useRef({ time: 0, buffer: '' })
+  const ultimoInputRef = useRef({ time: 0 })
 
   const handleBusquedaChange = useCallback((e) => {
     const valor = e.target.value
     setBusquedaArt(valor)
-
-    // Detectar si es entrada rápida (escáner): varios caracteres pegados de golpe
-    const ahora = Date.now()
-    const dt = ahora - ultimoInputRef.current.time
-    ultimoInputRef.current.time = ahora
-
-    // Si el valor tiene 8+ dígitos y llegó rápido (< 50ms entre chars) o fue pegado
-    if (/^\d{8,}$/.test(valor.trim()) && (dt < 50 || valor.length > 8)) {
-      // Dar un pequeño delay para que el scanner termine de escribir
-      setTimeout(() => {
-        if (!buscarPorBarcode(valor.trim())) {
-          setAlertaBarcode(valor.trim())
-          playAlertSound()
-          setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
-          setBusquedaArt('')
-        }
-      }, 100)
-    }
-  }, [buscarPorBarcode])
+    setBusquedaIdx(-1)
+    ultimoInputRef.current.time = Date.now()
+  }, [])
 
   const handleBusquedaKeyDown = useCallback((e) => {
+    // Navegación con flechas en dropdown de resultados
+    if (e.key === 'ArrowDown' && resultadosBusqueda.length > 0) {
+      e.preventDefault()
+      setBusquedaIdx(prev => prev < resultadosBusqueda.length - 1 ? prev + 1 : 0)
+      return
+    }
+    if (e.key === 'ArrowUp' && resultadosBusqueda.length > 0) {
+      e.preventDefault()
+      setBusquedaIdx(prev => prev > 0 ? prev - 1 : resultadosBusqueda.length - 1)
+      return
+    }
+    if (e.key === 'Escape' && busquedaArt.trim()) {
+      e.preventDefault()
+      setBusquedaArt('')
+      setBusquedaIdx(-1)
+      return
+    }
+
     if (e.key === 'Enter') {
-      const valor = busquedaArt.trim()
+      e.preventDefault()
+      // Leer valor directo del input (no del state que puede estar desactualizado)
+      const valor = e.target.value.trim()
+      if (!valor) return
+
       // Si es un código numérico largo, buscar como barcode
       if (/^\d{4,}$/.test(valor)) {
-        e.preventDefault()
         if (!buscarPorBarcode(valor)) {
           setAlertaBarcode(valor)
           playAlertSound()
           setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
-          setBusquedaArt('')
         }
+        setBusquedaArt('')
+        setBusquedaIdx(-1)
         return
       }
+
+      // Detectar entrada rápida de scanner (no numérica, ej: QR con URL)
+      const dt = Date.now() - ultimoInputRef.current.time
+      const esScanner = dt < 80 && valor.length > 6
+
+      if (esScanner) {
+        setAlertaBarcode(valor)
+        playAlertSound()
+        setTimeout(() => { setAlertaBarcode(null); stopAlertSound() }, 3000)
+        setBusquedaArt('')
+        setBusquedaIdx(-1)
+        return
+      }
+
+      // Si hay un item seleccionado con flechas, agregarlo
+      if (busquedaIdx >= 0 && busquedaIdx < resultadosBusqueda.length) {
+        agregarAlCarrito(resultadosBusqueda[busquedaIdx])
+        setBusquedaArt('')
+        setBusquedaIdx(-1)
+        return
+      }
+
       // Si hay exactamente un resultado de búsqueda por texto, agregarlo
       if (resultadosBusqueda.length === 1) {
-        e.preventDefault()
         agregarAlCarrito(resultadosBusqueda[0])
         setBusquedaArt('')
+        setBusquedaIdx(-1)
       }
     }
-  }, [busquedaArt, buscarPorBarcode, resultadosBusqueda, agregarAlCarrito])
+  }, [buscarPorBarcode, resultadosBusqueda, agregarAlCarrito, busquedaIdx, busquedaArt])
 
   const cambiarCantidad = useCallback((articuloId, delta, esPesable) => {
     const paso = esPesable ? 0.1 : 1
@@ -1084,7 +1381,10 @@ const POS = () => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
       const nuevaCantidad = Math.round((prev[idx].cantidad + paso * delta) * 1000) / 1000
-      if (nuevaCantidad <= 0) return prev.filter((_, i) => i !== idx)
+      if (nuevaCantidad <= 0) {
+        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
+        return prev
+      }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: nuevaCantidad }
       return nuevo
@@ -1095,16 +1395,158 @@ const POS = () => {
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
-      if (cantidad <= 0) return prev.filter((_, i) => i !== idx)
+      if (cantidad <= 0) {
+        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
+        return prev
+      }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: Math.round(cantidad * 1000) / 1000 }
       return nuevo
     })
   }, [])
 
+
   const quitarDelCarrito = useCallback((articuloId) => {
-    setCarrito(prev => prev.filter(i => i.articulo.id !== articuloId))
-  }, [])
+    setCarrito(prev => {
+      const item = prev.find(i => i.articulo.id === articuloId)
+      if (item) {
+        const precio = item.precioOverride ?? item.articulo.precio ?? 0
+        api.post('/api/pos/log-eliminacion', {
+          usuario_nombre: usuario?.nombre || 'Desconocido',
+          cierre_id: cierreActivo?.id || null,
+          items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
+        }).catch(err => console.error('Error registrando eliminación:', err))
+      }
+      return prev.filter(i => i.articulo.id !== articuloId)
+    })
+    setCarritoIdx(-1)
+    setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+  }, [usuario, cierreActivo])
+
+  // Atajos de teclado para modales y acciones rápidas
+  useEffect(() => {
+    const handler = (e) => {
+      // Confirmar cancelación
+      if (mostrarConfirmarCancelar) {
+        if (e.key === 'Enter') { e.preventDefault(); ejecutarCancelacion() }
+        if (e.key === 'Escape') { e.preventDefault(); setMostrarConfirmarCancelar(false) }
+        return
+      }
+      // Si hay un modal abierto (cobrar, etc.) no interceptar F-keys pero bloquear defaults del browser
+      if (mostrarCobrar) {
+        if (e.key.startsWith('F') && e.key.length <= 3) e.preventDefault()
+        return
+      }
+
+      // No interceptar teclas cuando el foco está en un select (para permitir navegación del dropdown)
+      if (document.activeElement?.tagName === 'SELECT') return
+
+      const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
+
+      // F1 = Cambiar cliente
+      if (e.key === 'F1') {
+        e.preventDefault()
+        setVistaActiva('venta')
+        setTimeout(() => inputClienteRef.current?.focus(), 50)
+      }
+      // F2 = Foco buscador artículos
+      if (e.key === 'F2') {
+        e.preventDefault()
+        setVistaActiva('venta')
+        setTimeout(() => { inputBusquedaRef.current?.focus(); inputBusquedaRef.current?.select() }, 50)
+      }
+      // F3 = Tab Pedidos
+      if (e.key === 'F3') {
+        e.preventDefault()
+        setVistaActiva('pedidos')
+      }
+      // F4 = Tab Saldos
+      if (e.key === 'F4') {
+        e.preventDefault()
+        setVistaActiva('saldos')
+      }
+      // F5 = Sincronizar precios
+      if (e.key === 'F5') {
+        e.preventDefault()
+        sincronizarPrecios()
+      }
+      // F6 = Tab Gift Cards
+      if (e.key === 'F6') {
+        e.preventDefault()
+        setVistaActiva('giftcards')
+      }
+      // F7 = Alternar ticket 1/2
+      if (e.key === 'F7') {
+        e.preventDefault()
+        setTicketActivo(prev => prev === 0 ? 1 : 0)
+        setBusquedaArt(''); setBusquedaCliente('')
+      }
+      // F8 = Problema
+      if (e.key === 'F8') {
+        e.preventDefault()
+        setMostrarProblema(true)
+      }
+      // F9 = Cancelar venta
+      if (e.key === 'F9' && tieneItems) {
+        e.preventDefault()
+        setMostrarConfirmarCancelar(true)
+      }
+      // F10 = Es pedido
+      if (e.key === 'F10' && tieneItems && !pedidoEnProceso) {
+        e.preventDefault()
+        handleEsPedido()
+      }
+      // F11 = Cobrar
+      if (e.key === 'F11' && tieneItems) {
+        e.preventDefault()
+        setMostrarCobrar(true)
+      }
+      // + / - = Cantidad del item seleccionado (o último) (solo si no hay foco en input)
+      if ((e.key === '+' || e.key === '-') && carrito.length > 0 && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault()
+        const idx = carritoIdx >= 0 && carritoIdx < carrito.length ? carritoIdx : carrito.length - 1
+        const item = carrito[idx]
+        cambiarCantidad(item.articulo.id, e.key === '+' ? 1 : -1, item.articulo.esPesable)
+      }
+
+      // Flecha izquierda = entrar al carrito (seleccionar último item)
+      if (e.key === 'ArrowLeft' && carrito.length > 0 && document.activeElement?.tagName !== 'TEXTAREA') {
+        // Solo si el cursor está al inicio del input de búsqueda o no hay texto
+        const input = inputBusquedaRef.current
+        if (input && document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === 0) {
+          e.preventDefault()
+          input.blur()
+          setCarritoIdx(carrito.length - 1)
+        } else if (document.activeElement?.tagName !== 'INPUT') {
+          e.preventDefault()
+          setCarritoIdx(carrito.length - 1)
+        }
+      }
+      // Flecha derecha = volver al buscador
+      if (e.key === 'ArrowRight' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(-1)
+        setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+      }
+      // Flechas arriba/abajo = navegar carrito (solo si estamos en modo carrito)
+      if (e.key === 'ArrowUp' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(prev => Math.max(0, prev - 1))
+      }
+      if (e.key === 'ArrowDown' && carritoIdx >= 0) {
+        e.preventDefault()
+        setCarritoIdx(prev => Math.min(carrito.length - 1, prev + 1))
+      }
+      // Backspace = eliminar item seleccionado del carrito
+      if (e.key === 'Backspace' && carritoIdx >= 0 && carritoIdx < carrito.length && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault()
+        const item = carrito[carritoIdx]
+        quitarDelCarrito(item.articulo.id)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [mostrarCancelar, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad, carritoIdx, quitarDelCarrito, cierreActivo])
 
   const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
     setCarrito(prev => {
@@ -1120,7 +1562,7 @@ const POS = () => {
   const { subtotal, descuentoTotal, total, promosAplicadas } = useMemo(() => {
     let sub = 0
     for (const item of carrito) {
-      const precioBase = item.precioOverride != null ? item.precioOverride : calcularPrecioConDescuentosBase(item.articulo)
+      const precioBase = item.precioOverride != null ? item.precioOverride : precioConDescEmpleado(item.articulo)
       sub += precioBase * item.cantidad
     }
 
@@ -1134,6 +1576,21 @@ const POS = () => {
       promosAplicadas: aplicadas,
     }
   }, [carrito, promociones])
+
+  function ejecutarCancelacion() {
+    api.post('/api/auditoria/cancelacion', {
+      motivo: 'Cancelación rápida',
+      items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+      subtotal,
+      total,
+      cliente_nombre: cliente?.nombre || null,
+      caja_id: terminalConfig?.caja_id || null,
+      sucursal_id: terminalConfig?.sucursal_id || null,
+      cierre_id: cierreActivo?.id || null,
+    }).catch(err => console.error('Error registrando cancelación:', err))
+    limpiarVenta()
+    setMostrarConfirmarCancelar(false)
+  }
 
   function limpiarVenta() {
     setCarrito([])
@@ -1191,6 +1648,8 @@ const POS = () => {
         id_centum: pedido.id_cliente_centum || 0,
         razon_social: pedido.nombre_cliente,
         lista_precio_id: 1,
+        email: pedido.email_cliente || '',
+        celular: pedido.celular_cliente || '',
       })
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
@@ -1220,12 +1679,38 @@ const POS = () => {
         id_centum: pedido.id_cliente_centum || 0,
         razon_social: pedido.nombre_cliente,
         lista_precio_id: 1,
+        email: pedido.email_cliente || '',
+        celular: pedido.celular_cliente || '',
       })
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
-    setPedidoEnProceso({ id: pedido.id, numero: pedido.numero, esPagado, totalPagado, editando: true, observaciones: pedido.observaciones || '' })
+    // Extraer dirección de observaciones
+    const obsMatch = (pedido.observaciones || '').match(/Dirección: ([^|]+)/)
+    const direccionTexto = obsMatch ? obsMatch[1].trim() : ''
+    const pedidoData = {
+      id: pedido.id, numero: pedido.numero, esPagado, totalPagado, editando: true,
+      observaciones: pedido.observaciones || '',
+      tipo: pedido.tipo || 'retiro',
+      fecha_entrega: pedido.fecha_entrega || '',
+      direccion_entrega: direccionTexto,
+      direccionesCliente: [],
+      turno_entrega: pedido.turno_entrega || '',
+      sucursal_id: pedido.sucursal_id || '',
+    }
+    setPedidoEnProceso(pedidoData)
     setVistaActiva('venta')
+
+    // Cargar direcciones del cliente en background
+    if (pedido.id_cliente_centum) {
+      api.get(`/api/clientes/por-centum/${pedido.id_cliente_centum}/direcciones`)
+        .then(({ data }) => {
+          if (data?.length) {
+            setPedidoEnProceso(prev => prev ? { ...prev, direccionesCliente: data } : prev)
+          }
+        })
+        .catch(() => {})
+    }
   }
 
   // Guardar edición de pedido (PUT) desde la vista POS
@@ -1239,9 +1724,38 @@ const POS = () => {
       precio: i.precioOverride != null ? i.precioOverride : i.articulo.precio,
       cantidad: i.cantidad,
       esPesable: i.articulo.esPesable || false,
+      rubro: i.articulo.rubro?.nombre || null,
     }))
     const nuevoTotal = items.reduce((sum, i) => sum + (i.precio * i.cantidad), 0)
     const totalPagado = pedidoEnProceso.totalPagado || 0
+
+    // Validar perecederos
+    if (pedidoEnProceso.fecha_entrega) {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const manana = new Date()
+      manana.setDate(manana.getDate() + 1)
+      const mananaISO = manana.toISOString().split('T')[0]
+      const tienePerecedor = carrito.some(i => {
+        const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+      })
+      if (tienePerecedor && pedidoEnProceso.fecha_entrega > mananaISO) {
+        alert('Los pedidos con Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+        return
+      }
+    }
+
+    // Validar campos obligatorios para delivery
+    if (pedidoEnProceso.tipo === 'delivery') {
+      if (!pedidoEnProceso.turno_entrega) {
+        alert('Seleccioná un turno de entrega (AM o PM) para pedidos delivery.')
+        return
+      }
+      if (!pedidoEnProceso.direccion_entrega?.trim()) {
+        alert('Completá la dirección de entrega para pedidos delivery.')
+        return
+      }
+    }
 
     // Si el pedido estaba pagado y el nuevo total es menor, confirmar generación de saldo
     if (totalPagado > 0 && nuevoTotal < totalPagado) {
@@ -1255,6 +1769,13 @@ const POS = () => {
         items,
         total: nuevoTotal,
         observaciones: pedidoEnProceso.observaciones || null,
+        tipo: pedidoEnProceso.tipo,
+        fecha_entrega: pedidoEnProceso.fecha_entrega || null,
+        direccion_entrega: pedidoEnProceso.tipo === 'delivery' ? pedidoEnProceso.direccion_entrega : null,
+        nombre_cliente: cliente.razon_social || null,
+        id_cliente_centum: cliente.id_centum || 0,
+        turno_entrega: pedidoEnProceso.tipo === 'delivery' ? (pedidoEnProceso.turno_entrega || null) : null,
+        sucursal_id: pedidoEnProceso.tipo === 'delivery' ? 'c254cac8-4c6e-4098-9119-485d7172f281' : pedidoEnProceso.sucursal_id || null,
       })
       alert(`Pedido #${pedidoEnProceso.numero} actualizado`)
       limpiarVenta()
@@ -1306,7 +1827,7 @@ const POS = () => {
         id_articulo: i.articulo.id,
         codigo: i.articulo.codigo,
         nombre: i.articulo.nombre,
-        precio_unitario: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        precio_unitario: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
         cantidad: i.cantidad,
         iva_tasa: i.articulo.iva?.tasa || 21,
         rubro: i.articulo.rubro?.nombre || null,
@@ -1315,6 +1836,7 @@ const POS = () => {
       const payload = {
         id_cliente_centum: cliente.id_centum,
         nombre_cliente: cliente.razon_social,
+        caja_id: terminalConfig?.caja_id || null,
         items,
         promociones_aplicadas: null,
         subtotal: total,
@@ -1322,7 +1844,10 @@ const POS = () => {
         total,
         monto_pagado: totalPagado + saldoAplicadoEntrega,
         vuelto: 0,
-        pagos: [{ tipo: 'Pago anticipado', monto: totalPagado, detalle: null }],
+        pagos: [
+          { tipo: 'Pago anticipado', monto: totalPagado, detalle: null },
+          ...(saldoAplicadoEntrega > 0 ? [{ tipo: 'Saldo', monto: saldoAplicadoEntrega, detalle: null }] : []),
+        ],
         pedido_pos_id: pedidoEnProceso.id,
       }
       if (saldoAplicadoEntrega > 0) {
@@ -1357,6 +1882,27 @@ const POS = () => {
     // Solo se registró el pago (sin crear venta). Guardar el pedido con marca de pagado.
     const wd = pedidoWizardDataRef.current
     setMostrarCobrarPedido(false)
+
+    // Cobro de pedido existente (desde tab Pedidos)
+    if (cobrarPedidoExistente) {
+      const pedido = cobrarPedidoExistente
+      setCobrarPedidoExistente(null);
+      (async () => {
+        try {
+          const resumenPago = datosPago?.pagos ? datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ') : ''
+          await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
+            total_pagado: pedido.total,
+            observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
+          })
+          setPedidosRefreshKey(k => k + 1)
+        } catch (err) {
+          console.error('Error actualizando pago pedido:', err)
+          alert('Error al registrar pago: ' + (err.response?.data?.error || err.message))
+        }
+      })()
+      return
+    }
+
     if (wd) {
       guardarComoPedidoConCliente(wd.cli, wd.tipo, wd.dirObj, wd.sucObj, true, wd.fecha, datosPago)
       pedidoWizardDataRef.current = null
@@ -1371,6 +1917,12 @@ const POS = () => {
     setSucursalSeleccionadaPedido(null)
   }
 
+  // Cobrar pedido existente desde tab Pedidos
+  function handleCobrarPedidoEnCaja(pedido) {
+    setCobrarPedidoExistente(pedido)
+    setMostrarCobrarPedido(true)
+  }
+
   // ---- Buscar cliente para pedido (debounced) ----
   useEffect(() => {
     if (!mostrarBuscarClientePedido) return
@@ -1381,7 +1933,7 @@ const POS = () => {
       setBuscandoClientePedido(true)
       try {
         if (isOnline) {
-          const { data } = await api.get('/api/clientes', { params: { buscar: termino, limit: 15 } })
+          const { data } = await api.get('/api/clientes', { params: { buscar: termino, limit: 15, solo_dni: true } })
           setClientesPedido(data.clientes || data.data || [])
         } else {
           const cached = await getClientes(termino)
@@ -1416,6 +1968,8 @@ const POS = () => {
     setPasoPedido(0)
     setClientePedido(null)
     setFechaEntregaPedido('')
+    setTurnoPedido('')
+    setBloqueosFecha([])
     setBusquedaClientePedido('')
     setClientesPedido([])
     setMostrarCrearClientePedido(false)
@@ -1431,7 +1985,7 @@ const POS = () => {
   function seleccionarClienteParaPedido(cli) {
     if (!cli.id_centum) return
     setClientePedido(cli)
-    setPasoPedido(1) // ir a elegir tipo
+    setPasoPedido(2) // ir a elegir tipo
   }
 
   function onClientePedidoCreado(clienteNuevo) {
@@ -1444,12 +1998,8 @@ const POS = () => {
   async function seleccionarTipoPedido(tipo) {
     if (!clientePedido) return
     setTipoPedidoSeleccionado(tipo)
-    // Default fecha: mañana
-    const manana = new Date()
-    manana.setDate(manana.getDate() + 1)
-    setFechaEntregaPedido(manana.toISOString().split('T')[0])
-    setPasoPedido(2) // ir a fecha
-    // Pre-cargar direcciones/sucursales para el paso 3
+    setPasoPedido(3) // ir a dirección/sucursal
+    // Pre-cargar direcciones/sucursales
     setCargandoDetallePedido(true)
     try {
       if (tipo === 'delivery') {
@@ -1493,7 +2043,8 @@ const POS = () => {
     setPasoPedido(4)
   }
 
-  function finalizarPedidoWizard(conPago) {
+  function finalizarPedidoWizard(modo) {
+    // modo: 'cobrar' | 'efectivo_entrega' | 'link_pago' | false (solo guardar)
     if (!clientePedido || !tipoPedidoSeleccionado) return
     const cli = {
       id_centum: clientePedido.id_centum,
@@ -1508,47 +2059,158 @@ const POS = () => {
       : null
     setCliente(cli)
 
-    if (conPago) {
+    if (modo === 'cobrar') {
       // Abrir pantalla de cobro — el wizard queda abierto detrás
       setMostrarBuscarClientePedido(false)
       setMostrarCobrarPedido(true)
-      // Guardar datos del pedido en un ref para usar al confirmar cobro
       pedidoWizardDataRef.current = { cli, tipo: tipoPedidoSeleccionado, dirObj, sucObj, fecha: fechaEntregaPedido }
+    } else if (modo === 'efectivo_entrega') {
+      cerrarWizardPedido()
+      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido, null, 'PAGO EN ENTREGA: EFECTIVO')
+    } else if (modo === 'link_pago') {
+      cerrarWizardPedido()
+      guardarPedidoYGenerarLink(cli, tipoPedidoSeleccionado, dirObj, sucObj, fechaEntregaPedido)
     } else {
       cerrarWizardPedido()
       guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido)
     }
   }
 
+  async function guardarPedidoYGenerarLink(cli, tipo, direccion, sucursal, fechaEntrega) {
+    if (carrito.length === 0) return
+    setGuardandoPedido(true)
+    try {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+      const itemsPayload = carrito.map(i => ({
+        id: i.articulo.id,
+        codigo: i.articulo.codigo,
+        nombre: i.articulo.nombre,
+        precio: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
+        cantidad: i.cantidad,
+        esPesable: i.articulo.esPesable || false,
+        rubro: i.articulo.rubro?.nombre || null,
+      }))
+
+      if (fechaEntrega) {
+        const manana = new Date()
+        manana.setDate(manana.getDate() + 1)
+        const mananaISO = manana.toISOString().split('T')[0]
+        const tienePerecedor = carrito.some(i => {
+          const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+          return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+        })
+        if (tienePerecedor && fechaEntrega > mananaISO) {
+          alert('Los pedidos con productos de Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+          setGuardandoPedido(false)
+          return
+        }
+      }
+
+      const payload = {
+        id_cliente_centum: cli.id_centum,
+        nombre_cliente: cli.razon_social,
+        items: itemsPayload,
+        total,
+        tipo: tipo || 'retiro',
+        observaciones: 'PAGO PENDIENTE: LINK MP',
+      }
+      if (direccion) {
+        payload.direccion_entrega = direccion.direccion + (direccion.localidad ? `, ${direccion.localidad}` : '')
+      }
+      if (sucursal) {
+        payload.sucursal_retiro = sucursal.nombre
+        payload.sucursal_id = sucursal.id
+      }
+      if (fechaEntrega) {
+        payload.fecha_entrega = fechaEntrega
+      }
+      if (tipo === 'delivery') {
+        payload.turno_entrega = turnoPedido || null
+        payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
+      }
+
+      const { data } = await api.post('/api/pos/pedidos', payload)
+      const pedidoId = data.pedido?.id
+
+      // Generar link MP
+      if (pedidoId) {
+        try {
+          const { data: linkData } = await api.post(`/api/pos/pedidos/${pedidoId}/link-pago`)
+          if (linkData.link) {
+            try {
+              await navigator.clipboard.writeText(linkData.link)
+            } catch {
+              // Fallback para cuando el documento no tiene foco
+              const ta = document.createElement('textarea')
+              ta.value = linkData.link
+              ta.style.position = 'fixed'
+              ta.style.opacity = '0'
+              document.body.appendChild(ta)
+              ta.focus()
+              ta.select()
+              document.execCommand('copy')
+              document.body.removeChild(ta)
+            }
+            alert('Link de pago copiado al portapapeles')
+          }
+        } catch (linkErr) {
+          console.error('Error generando link MP:', linkErr)
+          alert('Pedido guardado pero hubo un error al generar el link: ' + (linkErr.response?.data?.error || linkErr.message))
+        }
+      }
+
+      limpiarVenta()
+    } catch (err) {
+      console.error('Error guardando pedido:', err)
+      alert('Error al guardar pedido: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardandoPedido(false)
+    }
+  }
+
   function handleEsPedido() {
     if (carrito.length === 0) return
-    // Si ya tiene cliente real, ir directo a tipo
-    if (cliente.id_centum && cliente.id_centum !== 0) {
-      setClientePedido(cliente)
-      setPasoPedido(1)
-      setMostrarBuscarClientePedido(true)
-      return
-    }
-    // Si no, abrir buscador de cliente (paso 0)
+    // Default fecha: mañana
+    const manana = new Date()
+    manana.setDate(manana.getDate() + 1)
+    setFechaEntregaPedido(manana.toISOString().split('T')[0])
     setPasoPedido(0)
     setMostrarBuscarClientePedido(true)
   }
 
   // ---- Pedidos POS (página separada en /pos/pedidos) ----
 
-  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago) {
+  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago, observacionExtra) {
     if (carrito.length === 0) return
     if (!cli.id_centum || cli.id_centum === 0) return
     setGuardandoPedido(true)
     try {
+      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
       const itemsPayload = carrito.map(i => ({
         id: i.articulo.id,
         codigo: i.articulo.codigo,
         nombre: i.articulo.nombre,
-        precio: i.precioOverride != null ? i.precioOverride : calcularPrecioConDescuentosBase(i.articulo),
+        precio: i.precioOverride != null ? i.precioOverride : precioConDescEmpleado(i.articulo),
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
+        rubro: i.articulo.rubro?.nombre || null,
       }))
+
+      // Validar: productos perecederos no pueden tener fecha de entrega > mañana
+      if (fechaEntrega) {
+        const manana = new Date()
+        manana.setDate(manana.getDate() + 1)
+        const mananaISO = manana.toISOString().split('T')[0]
+        const tienePerecedor = carrito.some(i => {
+          const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+          return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+        })
+        if (tienePerecedor && fechaEntrega > mananaISO) {
+          alert('Los pedidos con productos de Fiambres, Quesos o Frescos no pueden tener fecha de entrega mayor a mañana.')
+          setGuardandoPedido(false)
+          return
+        }
+      }
       const payload = {
         id_cliente_centum: cli.id_centum,
         nombre_cliente: cli.razon_social,
@@ -1563,6 +2225,7 @@ const POS = () => {
       if (sucursal) {
         payload.sucursal_retiro = sucursal.nombre
         payload.sucursal_retiro_id = sucursal.id
+        payload.sucursal_id = sucursal.id
       }
       if (pagado) {
         // Guardar info de pago en observaciones (la venta se genera al entregar)
@@ -1573,9 +2236,15 @@ const POS = () => {
           payload.observaciones = 'PAGO ANTICIPADO'
         }
         payload.total_pagado = total
+      } else if (observacionExtra) {
+        payload.observaciones = observacionExtra
       }
       if (fechaEntrega) {
         payload.fecha_entrega = fechaEntrega
+      }
+      if (tipo === 'delivery') {
+        payload.turno_entrega = turnoPedido || null
+        payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
       }
       await api.post('/api/pos/pedidos', payload)
       limpiarVenta()
@@ -1592,22 +2261,6 @@ const POS = () => {
 
   // Pantallas de configuración de terminal (antes del POS principal)
   if (necesitaConfig) {
-    if (!esAdmin) {
-      return (
-        <div className="h-screen bg-gray-100 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 text-center">
-            <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-gray-800">Terminal no configurado</h2>
-            <p className="text-sm text-gray-400 mt-2">Un administrador debe configurar la sucursal y caja de esta PC antes de usar el POS.</p>
-            <a href="/apps" className="inline-block mt-6 text-violet-600 hover:text-violet-700 text-sm font-medium">Volver al menu</a>
-          </div>
-        </div>
-      )
-    }
     return <ConfigurarTerminal onConfigurar={handleConfigurarTerminal} configActual={null} />
   }
 
@@ -1670,7 +2323,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Pedidos
+              Pedidos <span className="text-[9px] opacity-60 ml-1">F3</span>
             </button>
 
             {/* Tab Saldos */}
@@ -1682,7 +2335,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Saldos
+              Saldos <span className="text-[9px] opacity-60 ml-1">F4</span>
             </button>
 
             {/* Tab Gift Cards */}
@@ -1694,7 +2347,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Gift Cards
+              Gift Cards <span className="text-[9px] opacity-60 ml-1">F6</span>
             </button>
           </div>
 
@@ -1704,6 +2357,29 @@ const POS = () => {
             <span className="bg-violet-700 text-violet-100 px-1.5 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
             <span className="text-violet-300">|</span>
             <span className="text-violet-300">{usuario?.nombre}</span>
+            {empleadoActivo ? (
+              <button
+                onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]); }}
+                className="bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 animate-pulse"
+                title="Desactivar modo empleado"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                </svg>
+                {empleadoActivo.nombre} ✕
+              </button>
+            ) : (
+              <button
+                onClick={() => setMostrarVentaEmpleado(true)}
+                className="bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
+                title="Venta a empleado (cta cte)"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                </svg>
+                Empleado
+              </button>
+            )}
             <button
               onClick={() => setMostrarProblema(true)}
               className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
@@ -1711,10 +2387,10 @@ const POS = () => {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
               </svg>
-              PROBLEMA
+              PROBLEMA <span className="text-[9px] opacity-70">F8</span>
             </button>
-            <a
-              href={`/cajas-pos/cierre/${cierreActivo?.id}/cerrar`}
+            <button
+              onClick={() => setMostrarCerrarCaja(true)}
               className="text-violet-400 hover:text-red-300 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
               title="Cerrar caja"
             >
@@ -1722,7 +2398,24 @@ const POS = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
               </svg>
               <span>Cerrar Caja</span>
-            </a>
+            </button>
+            <button
+              onClick={() => setMostrarActualizaciones(true)}
+              className="text-violet-400 hover:text-white px-2 py-1 rounded transition-colors text-[11px] font-medium"
+              title="Ver actualizaciones de precios"
+            >
+              Actualizaciones
+            </button>
+            <button
+              onClick={sincronizarPrecios}
+              disabled={sincronizandoERP}
+              className="text-violet-400 hover:text-white p-1 rounded transition-colors disabled:opacity-50"
+              title="Sincronizar precios desde Centum (F5)"
+            >
+              <svg className={`w-3.5 h-3.5 ${sincronizandoERP ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.016 4.66v4.993" />
+              </svg>
+            </button>
             {esAdmin && (
               <button
                 onClick={() => setMostrarConfigTerminal(true)}
@@ -1742,7 +2435,7 @@ const POS = () => {
       {/* === TAB PEDIDOS === */}
       {vistaActiva === 'pedidos' && (
         <div className="flex-1 overflow-hidden">
-          <PedidosPOS embebido onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} />
+          <PedidosPOS key={pedidosRefreshKey} embebido terminalConfig={terminalConfig} onEntregarPedido={handleEntregarPedido} onEditarPedido={handleEditarPedido} onCobrarEnCaja={handleCobrarPedidoEnCaja} />
         </div>
       )}
 
@@ -1764,17 +2457,124 @@ const POS = () => {
       {vistaActiva === 'venta' && <>
       {/* Banner pedido en proceso */}
       {pedidoEnProceso && (
-        <div className="flex items-center justify-between px-4 py-2 bg-violet-50 border-b border-violet-200">
-          <span className="text-sm text-violet-700 font-medium">
-            {pedidoEnProceso.editando ? 'Editando' : 'Entregando'} pedido {pedidoEnProceso.numero ? `#${pedidoEnProceso.numero}` : ''} de <strong>{cliente.razon_social}</strong>
-            {!pedidoEnProceso.editando && (pedidoEnProceso.esPagado ? ' (ya pagado)' : ' (pendiente de cobro)')}
-          </span>
-          <button
-            onClick={limpiarVenta}
-            className="text-xs text-violet-500 hover:text-violet-700 font-medium"
-          >
-            Cancelar entrega
-          </button>
+        <div className="bg-violet-50 border-b border-violet-200">
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-sm text-violet-700 font-medium">
+              {pedidoEnProceso.editando ? 'Editando' : 'Entregando'} pedido {pedidoEnProceso.numero ? `#${pedidoEnProceso.numero}` : ''} de <strong>{cliente.razon_social}</strong>
+              {!pedidoEnProceso.editando && (pedidoEnProceso.esPagado ? ' (ya pagado)' : ' (pendiente de cobro)')}
+            </span>
+            <button
+              onClick={limpiarVenta}
+              className="text-xs text-violet-500 hover:text-violet-700 font-medium"
+            >
+              Cancelar entrega
+            </button>
+          </div>
+          {/* Controles de edición: tipo, fecha, dirección */}
+          {pedidoEnProceso.editando && (
+            <div className="px-4 pb-2 flex items-center gap-3 flex-wrap">
+              {/* Tipo */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setPedidoEnProceso(prev => ({ ...prev, tipo: 'retiro', direccion_entrega: '' }))}
+                  className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${pedidoEnProceso.tipo === 'retiro' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border hover:bg-gray-50'}`}
+                >
+                  Retiro
+                </button>
+                <button
+                  onClick={() => setPedidoEnProceso(prev => ({ ...prev, tipo: 'delivery' }))}
+                  className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${pedidoEnProceso.tipo === 'delivery' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border hover:bg-gray-50'}`}
+                >
+                  Delivery
+                </button>
+              </div>
+              {/* Fecha */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-violet-600">Entrega:</span>
+                <input
+                  type="date"
+                  value={pedidoEnProceso.fecha_entrega || ''}
+                  onChange={e => setPedidoEnProceso(prev => ({ ...prev, fecha_entrega: e.target.value }))}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                />
+              </div>
+              {/* Turno (solo delivery) */}
+              {pedidoEnProceso.tipo === 'delivery' && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-violet-600">Turno:</span>
+                  <select
+                    value={pedidoEnProceso.turno_entrega || ''}
+                    onChange={e => setPedidoEnProceso(prev => ({ ...prev, turno_entrega: e.target.value }))}
+                    className="text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                  >
+                    <option value="">Sin turno</option>
+                    <option value="AM">AM (9-13hs)</option>
+                    <option value="PM">PM (17-21hs)</option>
+                  </select>
+                </div>
+              )}
+              {/* Dirección (solo delivery) */}
+              {pedidoEnProceso.tipo === 'delivery' && (
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <span className="text-xs text-violet-600 flex-shrink-0">Dir:</span>
+                  {pedidoEnProceso.direccionesCliente?.length > 0 && !pedidoEnProceso.dirManual ? (
+                    <select
+                      value={pedidoEnProceso.direccion_entrega || ''}
+                      onChange={e => {
+                        if (e.target.value === '__otra__') {
+                          setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: '', dirManual: true }))
+                        } else {
+                          setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: e.target.value }))
+                        }
+                      }}
+                      className="flex-1 text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                    >
+                      <option value="">Seleccionar dirección...</option>
+                      {(() => {
+                        const opciones = pedidoEnProceso.direccionesCliente.map(d => ({
+                          id: d.id,
+                          val: `${d.direccion}${d.localidad ? `, ${d.localidad}` : ''}`,
+                          principal: d.es_principal,
+                        }))
+                        // Si la dirección actual no coincide con ninguna opción, mostrarla también
+                        const dirActual = pedidoEnProceso.direccion_entrega || ''
+                        const coincide = !dirActual || opciones.some(o => o.val === dirActual)
+                        return (
+                          <>
+                            {!coincide && <option value={dirActual}>{dirActual} (actual)</option>}
+                            {opciones.map(o => (
+                              <option key={o.id} value={o.val}>{o.val}{o.principal ? ' (principal)' : ''}</option>
+                            ))}
+                          </>
+                        )
+                      })()}
+                      <option value="__otra__">Otra dirección...</option>
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-1 flex-1">
+                      <input
+                        type="text"
+                        value={pedidoEnProceso.direccion_entrega || ''}
+                        onChange={e => setPedidoEnProceso(prev => ({ ...prev, direccion_entrega: e.target.value }))}
+                        placeholder="Dirección de entrega..."
+                        autoFocus={pedidoEnProceso.dirManual}
+                        className="flex-1 text-xs border rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-violet-400"
+                      />
+                      {pedidoEnProceso.dirManual && pedidoEnProceso.direccionesCliente?.length > 0 && (
+                        <button
+                          onClick={() => setPedidoEnProceso(prev => ({ ...prev, dirManual: false }))}
+                          className="text-[10px] text-violet-600 hover:text-violet-800 whitespace-nowrap"
+                        >
+                          Ver guardadas
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
       {/* Indicadores offline */}
@@ -1821,10 +2621,10 @@ const POS = () => {
                       ? 'bg-white text-violet-700 border-b-2 border-violet-600'
                       : items > 0
                         ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
-                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                   }`}
                 >
-                  Ticket {idx + 1}
+                  Ticket {idx + 1} <span className="text-[9px] opacity-50">F7</span>
                   {items > 0 && (
                     <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       activo ? 'bg-violet-100 text-violet-700' : 'bg-amber-200 text-amber-800'
@@ -1848,7 +2648,59 @@ const POS = () => {
                   <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-1 rounded truncate">
                     {cliente.razon_social}
                   </span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">Lista {cliente.lista_precio_id}</span>
+                  {cliente.id_centum > 0 && cliente.codigo && (
+                    <span className="text-gray-600 text-xs font-mono">{cliente.codigo}</span>
+                  )}
+                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
+                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
+                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {cliente.condicion_iva === 'RI' ? 'Resp. Inscripto' : cliente.condicion_iva === 'MT' ? 'Monotributo' : 'Cons. Final'}
+                  </span>
+                  {cliente.id_centum > 0 && (<>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { data } = await api.get(`/api/clientes/refresh/${cliente.id_centum}`)
+                          setCliente(prev => ({
+                            ...prev,
+                            razon_social: data.razon_social,
+                            codigo: data.codigo || prev.codigo || '',
+                            cuit: data.cuit,
+                            condicion_iva: data.condicion_iva || 'CF',
+                            email: data.email || '',
+                            celular: data.celular || '',
+                            lista_precio_id: data.lista_precio_id || 1,
+                          }))
+                        } catch (err) {
+                          console.error('Error refrescando cliente:', err)
+                        }
+                      }}
+                      className="text-gray-500 hover:text-violet-600 flex-shrink-0"
+                      title="Actualizar datos del cliente"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setCliente({ ...CLIENTE_DEFAULT })}
+                      className="text-gray-500 hover:text-red-500 flex-shrink-0"
+                      title="Volver a Consumidor Final"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </>)}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
+                  </span>
                   {saldoCliente > 0 && (
                     <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
                       Saldo: {formatPrecio(saldoCliente)}
@@ -1857,14 +2709,21 @@ const POS = () => {
                 </div>
                 <div className="relative mt-2">
                   <input
+                    ref={inputClienteRef}
                     type="text"
-                    placeholder="Cambiar cliente..."
+                    placeholder="Cambiar cliente… (F1)"
                     value={busquedaCliente}
                     onChange={e => setBusquedaCliente(e.target.value)}
                     className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
                   />
                   {buscandoClientes && (
-                    <div className="absolute right-2 top-1 text-gray-400 text-[10px]">Buscando...</div>
+                    <div className="absolute right-2 top-1 text-gray-500 text-[10px]">Buscando...</div>
+                  )}
+                  {seleccionandoCliente && (
+                    <div className="absolute right-2 top-1 text-violet-600 text-[10px] flex items-center gap-1">
+                      <div className="animate-spin h-3 w-3 border-2 border-violet-400 border-t-transparent rounded-full" />
+                      Verificando...
+                    </div>
                   )}
                   {clientesCentum.length > 0 && (
                     <div className="absolute z-20 w-full bg-white border rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
@@ -1875,7 +2734,7 @@ const POS = () => {
                           className="w-full text-left px-2 py-1.5 hover:bg-violet-50 text-xs border-b last:border-b-0"
                         >
                           <span className="font-medium">{cli.razon_social}</span>
-                          {cli.cuit && <span className="text-gray-400 ml-1">CUIT: {cli.cuit}</span>}
+                          {cli.cuit && <span className="text-gray-500 ml-1">CUIT: {cli.cuit}</span>}
                         </button>
                       ))}
                     </div>
@@ -1892,24 +2751,60 @@ const POS = () => {
                 </svg>
               </button>
             </div>
+            {cliente.id_centum > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={cliente.email || ''}
+                  onChange={e => setCliente({ ...cliente, email: e.target.value })}
+                  className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
+                />
+                <input
+                  type="tel"
+                  placeholder="Tel / Cel"
+                  value={cliente.celular || ''}
+                  onChange={e => setCliente({ ...cliente, celular: e.target.value })}
+                  className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
+                />
+                <button
+                  onClick={guardarContactoCliente}
+                  disabled={guardandoContacto}
+                  className="bg-violet-600 text-white text-[10px] px-2 py-0.5 rounded hover:bg-violet-700 disabled:opacity-50 flex-shrink-0"
+                >
+                  {guardandoContacto ? '...' : 'Guardar'}
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Banner modo empleado */}
+          {empleadoActivo && (
+            <div className="bg-orange-500 text-white px-3 py-1.5 flex items-center justify-between text-sm font-medium">
+              <span>Retiro empleado: {empleadoActivo.nombre}</span>
+              <button onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]) }} className="text-orange-200 hover:text-white text-xs underline">
+                Cancelar
+              </button>
+            </div>
+          )}
 
           {/* Items del carrito */}
           <div className="flex-1 overflow-y-auto">
             {carrito.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-gray-300 text-sm">
-                Carrito vacío
+              <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                {empleadoActivo ? 'Agregá artículos para el retiro' : 'Carrito vacío'}
               </div>
             ) : (
               <div className="divide-y">
-                {carrito.map(item => {
-                  const precioOriginal = calcularPrecioConDescuentosBase(item.articulo)
+                {carrito.map((item, itemIdx) => {
+                  const precioOriginal = precioConDescEmpleado(item.articulo)
                   const precioUnit = item.precioOverride != null ? item.precioOverride : precioOriginal
                   const lineTotal = precioUnit * item.cantidad
                   const tieneOverride = item.precioOverride != null
                   const estaEditando = editandoPrecio === item.articulo.id
+                  const seleccionadoEnCarrito = carritoIdx === itemIdx
                   return (
-                    <div key={item.articulo.id} className="px-3 py-2 hover:bg-gray-50/80">
+                    <div key={item.articulo.id} className={`px-3 py-2 ${seleccionadoEnCarrito ? 'bg-violet-100 border-l-4 border-l-violet-600' : 'hover:bg-gray-50/80'}`} ref={seleccionadoEnCarrito ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium text-gray-800 truncate flex-1">{item.articulo.nombre}</span>
                         <span className="text-sm font-bold text-gray-800 flex-shrink-0">{formatPrecio(lineTotal)}</span>
@@ -1918,7 +2813,7 @@ const POS = () => {
                         <div className="flex items-center gap-0.5">
                           <button
                             onClick={() => cambiarCantidad(item.articulo.id, -1, item.articulo.esPesable)}
-                            className="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-600 text-sm font-bold"
+                            className="w-6 h-6 rounded bg-gray-300 hover:bg-gray-400 flex items-center justify-center text-gray-700 text-sm font-bold"
                           >−</button>
                           {item.articulo.esPesable ? (
                             <input
@@ -1973,7 +2868,7 @@ const POS = () => {
                         ) : (
                           <span
                             onClick={() => setEditandoPrecio(item.articulo.id)}
-                            className={`text-xs cursor-pointer hover:underline ${tieneOverride ? 'text-violet-600 font-semibold' : 'text-gray-400'}`}
+                            className={`text-xs cursor-pointer hover:underline ${tieneOverride ? 'text-violet-600 font-semibold' : 'text-gray-500'}`}
                             title="Click para editar precio"
                           >
                             {formatPrecio(precioUnit)} {item.articulo.esPesable ? '/kg' : 'c/u'}
@@ -2052,7 +2947,7 @@ const POS = () => {
           {/* Totales + botones */}
           <div className="border-t bg-gray-50 px-4 py-3">
             <div className="space-y-0.5 text-sm">
-              <div className="flex justify-between text-gray-500">
+              <div className="flex justify-between text-gray-600">
                 <span>Subtotal</span>
                 <span>{formatPrecio(subtotal)}</span>
               </div>
@@ -2077,10 +2972,11 @@ const POS = () => {
             {(carrito.length > 0 || giftCardsEnVenta.length > 0) && (
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => { setMostrarCancelar(true); setCancelarMotivo(null); setCancelarPasoConfirm(false) }}
+                  onClick={() => setMostrarConfirmarCancelar(true)}
                   className="px-3 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                  title="F9"
                 >
-                  Cancelar
+                  Cancelar <span className="text-[9px] opacity-70">F9</span>
                 </button>
                 {/* Si está editando un pedido: botón guardar cambios */}
                 {pedidoEnProceso && pedidoEnProceso.editando && (
@@ -2093,28 +2989,40 @@ const POS = () => {
                   </button>
                 )}
                 {/* Si NO hay pedido en proceso: botones normales */}
-                {!pedidoEnProceso && (
+                {!pedidoEnProceso && !empleadoActivo && (
                   <>
                     <button
                       onClick={handleEsPedido}
                       disabled={guardandoPedido}
                       className="px-3 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold rounded-lg transition-colors"
+                      title="F10"
                     >
-                      {guardandoPedido ? 'Guardando...' : 'Es pedido'}
+                      {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
                     <button
                       onClick={() => setMostrarCobrar(true)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                      title="F11"
                     >
-                      Cobrar {formatPrecio(totalConGiftCards)}
+                      Cobrar {formatPrecio(totalConGiftCards)} <span className="text-[9px] opacity-70">F11</span>
                     </button>
                   </>
+                )}
+                {/* Modo empleado activo: botón registrar retiro */}
+                {!pedidoEnProceso && empleadoActivo && (
+                  <button
+                    onClick={() => setMostrarVentaEmpleado(true)}
+                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                  >
+                    Registrar retiro {formatPrecio(totalConGiftCards)}
+                  </button>
                 )}
                 {/* Si hay pedido en proceso NO pagado y NO editando: cobrar primero */}
                 {pedidoEnProceso && !pedidoEnProceso.editando && !pedidoEnProceso.esPagado && (
                   <button
                     onClick={() => setMostrarCobrar(true)}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
+                    title="F11"
                   >
                     Cobrar {formatPrecio(totalConGiftCards)}
                   </button>
@@ -2148,56 +3056,71 @@ const POS = () => {
         <div className="flex-1 flex flex-col min-w-0 p-4">
           {/* Buscador con dropdown autocompletado */}
           <div className="relative mb-4">
-            <svg className="absolute left-3 top-2.5 w-5 h-5 text-gray-400 z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="absolute left-3 top-2.5 w-5 h-5 text-gray-500 z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
             </svg>
             <input
               ref={inputBusquedaRef}
               type="text"
-              placeholder="Buscar por nombre, código o escanear..."
+              placeholder="Buscar por nombre, código o escanear... (F2)"
               value={busquedaArt}
               onChange={handleBusquedaChange}
               onKeyDown={handleBusquedaKeyDown}
-              className="w-full bg-white border rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm"
+              className="w-full bg-white border rounded-xl pl-10 pr-12 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm"
               autoFocus
             />
+            {/* Botón teclado virtual */}
+            <button
+              type="button"
+              onClick={() => setMostrarTeclado(v => !v)}
+              className={`absolute right-2 top-1.5 p-1.5 rounded-lg transition-colors z-10 ${mostrarTeclado ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+              title="Teclado virtual"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V6.75zM6 8.25h.01M6 12h.01M6 15.75h12M9.75 8.25h.01M13.5 8.25h.01M17.25 8.25h.01M9.75 12h.01M13.5 12h.01M17.25 12h.01" />
+              </svg>
+            </button>
             {cargandoArticulos && (
-              <div className="absolute right-3 top-3 text-gray-400 text-xs z-10">Cargando...</div>
+              <div className="absolute right-10 top-3 text-gray-500 text-xs z-10">Cargando...</div>
             )}
 
             {/* Dropdown de resultados de búsqueda */}
             {busquedaArt.trim() && !cargandoArticulos && (
-              <div className="absolute z-30 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 max-h-80 overflow-y-auto">
+              <div className={`${mostrarTeclado ? 'relative max-h-48' : 'absolute z-30 max-h-80'} w-full bg-white border border-gray-300 rounded-xl shadow-xl mt-1 overflow-y-auto`}>
                 {resultadosBusqueda.length === 0 ? (
-                  <div className="px-4 py-3 text-sm text-gray-400 text-center">
+                  <div className="px-4 py-3 text-sm text-gray-500 text-center">
                     Sin resultados para "{busquedaArt}"
                   </div>
                 ) : (
-                  resultadosBusqueda.map(art => {
-                    const precioFinal = calcularPrecioConDescuentosBase(art)
+                  resultadosBusqueda.map((art, idx) => {
+                    const precioFinal = precioConDescEmpleado(art)
                     const enCarrito = carrito.find(i => i.articulo.id === art.id)
                     const esFav = favoritos.includes(art.id)
+                    const seleccionado = idx === busquedaIdx
                     return (
                       <div
                         key={art.id}
-                        onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); inputBusquedaRef.current?.focus() }}
+                        ref={seleccionado ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                        onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); setBusquedaIdx(-1); inputBusquedaRef.current?.focus() }}
                         className={`flex items-center justify-between px-4 py-2.5 cursor-pointer border-b last:border-b-0 transition-colors ${
-                          enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
+                          seleccionado ? 'bg-violet-200 border-l-4 border-l-violet-600' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
                         }`}
                       >
+                        {esAdmin && (
                         <button
                           onClick={(e) => toggleFavorito(art.id, e)}
                           className={`mr-3 flex-shrink-0 transition-colors ${
-                            esFav ? 'text-amber-400 hover:text-amber-500' : 'text-gray-300 hover:text-amber-400'
+                            esFav ? 'text-amber-400 hover:text-amber-500' : 'text-gray-400 hover:text-amber-400'
                           }`}
                         >
                           <svg className="w-5 h-5" fill={esFav ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                           </svg>
                         </button>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-800 truncate">{art.nombre}</div>
-                          <div className="text-xs text-gray-400 truncate">
+                          <div className="text-xs text-gray-500 truncate">
                             {art.codigo && <span className="mr-2">{art.codigo}</span>}
                             {art.rubro?.nombre && <span>{art.rubro.nombre}</span>}
                             {art.subRubro?.nombre && <span> / {art.subRubro.nombre}</span>}
@@ -2217,12 +3140,13 @@ const POS = () => {
                 )}
               </div>
             )}
+
           </div>
 
-          {/* Grilla de favoritos (siempre visible) */}
-          <div className="flex-1 overflow-y-auto">
+          {/* Grilla de favoritos (oculta si teclado virtual abierto) */}
+          <div className={`flex-1 overflow-y-auto ${mostrarTeclado ? 'hidden' : ''}`}>
             {cargandoArticulos ? (
-              <div className="flex items-center justify-center py-20 text-gray-400">
+              <div className="flex items-center justify-center py-20 text-gray-500">
                 <svg className="animate-spin w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -2253,7 +3177,7 @@ const POS = () => {
                 </div>
 
                 {articulosFavoritos.map(art => {
-                  const precioFinal = calcularPrecioConDescuentosBase(art)
+                  const precioFinal = precioConDescEmpleado(art)
                   const enCarrito = carrito.find(i => i.articulo.id === art.id)
                   const color = rubroColorMap[art.rubro?.nombre] || TILE_COLORS[0]
 
@@ -2264,7 +3188,7 @@ const POS = () => {
                       className={`relative rounded-xl cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-95 select-none ${
                         enCarrito ? 'ring-2 ring-violet-500 shadow-md' : 'shadow-sm'
                       }`}
-                      style={{ borderTop: `4px solid ${color.border}`, backgroundColor: enCarrito ? color.bg : '#fff' }}
+                      style={{ borderTop: `4px solid ${color.border}`, backgroundColor: color.bg }}
                     >
                       {enCarrito && (
                         <span className="absolute -top-2 -right-2 bg-violet-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow z-10">
@@ -2274,6 +3198,7 @@ const POS = () => {
                       <div className="p-3 flex flex-col items-center text-center min-h-[100px] justify-center">
                         <span className="text-base font-bold text-gray-800">{formatPrecio(precioFinal)}</span>
                         <span className="text-xs text-gray-600 mt-1.5 line-clamp-2 leading-tight">{art.nombre}</span>
+                        {art.codigo && <span className="text-[10px] text-gray-500 mt-1 font-mono">{art.codigo}</span>}
                       </div>
                     </div>
                   )
@@ -2281,6 +3206,16 @@ const POS = () => {
               </div>
             )}
           </div>
+
+          {/* Teclado virtual — fijo abajo del panel */}
+          {mostrarTeclado && (
+            <div className="flex-shrink-0 pt-2">
+              <TecladoVirtual
+                valor={busquedaArt}
+                onChange={(v) => { setBusquedaArt(v); setBusquedaIdx(-1) }}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -2376,6 +3311,46 @@ const POS = () => {
         </div>
       )}
 
+      {/* Confirmar cancelación */}
+      {mostrarConfirmarCancelar && (
+        <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full mx-4 text-center">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Cancelar venta?</h3>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setMostrarConfirmarCancelar(false)}
+                className="flex-1 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
+              >
+                No <span className="text-[10px] opacity-60">Esc</span>
+              </button>
+              <button
+                onClick={ejecutarCancelacion}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
+              >
+                Si <span className="text-[10px] opacity-60">Enter</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Actualizaciones */}
+      {mostrarActualizaciones && (
+        <ActualizacionesPOS onCerrar={() => setMostrarActualizaciones(false)} />
+      )}
+
+      {/* Modal Cerrar Caja */}
+      {mostrarCerrarCaja && cierreActivo && (
+        <ModalCerrarCaja
+          cierreId={cierreActivo.id}
+          onClose={() => setMostrarCerrarCaja(false)}
+          onCajaCerrada={() => {
+            setMostrarCerrarCaja(false)
+            setCierreActivo(null)
+          }}
+        />
+      )}
+
       {/* Modal Problema */}
       {mostrarProblema && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" data-modal>
@@ -2459,6 +3434,27 @@ const POS = () => {
               <div className="p-5 flex flex-col min-h-0 flex-1">
                 {/* Filtros */}
                 <div className="space-y-2 mb-3 flex-shrink-0">
+                  {/* Fila 0: Buscar por N° Factura */}
+                  <div>
+                    <label className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">N° Factura (POS o Centum)</label>
+                    <input
+                      type="text"
+                      value={problemaBusFactura}
+                      onChange={e => {
+                        setProblemaBusFactura(e.target.value)
+                        if (e.target.value.trim()) {
+                          setProblemaBusqueda('')
+                          setProblemaBusArticulo('')
+                          setProblemaSucursal('')
+                        }
+                        buscarVentasProblemaDebounced({ numero_factura: e.target.value })
+                      }}
+                      placeholder="Ej: 1234 o B PV2-7740"
+                      autoFocus
+                      className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                  </div>
+                  {!problemaBusFactura.trim() && <>
                   {/* Fila 1: Fecha + Cliente */}
                   <div className="flex gap-2">
                     <div className="flex-shrink-0">
@@ -2469,7 +3465,7 @@ const POS = () => {
                         onChange={e => {
                           const f = e.target.value
                           setProblemaFecha(f)
-                          buscarVentasProblemaDebounced({ fecha: f })
+                          buscarVentasProblemaDebounced({ fecha: f || '' })
                         }}
                         className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       />
@@ -2484,7 +3480,6 @@ const POS = () => {
                           buscarVentasProblemaDebounced({ buscar: e.target.value })
                         }}
                         placeholder="Nombre del cliente..."
-                        autoFocus
                         className="block w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       />
                     </div>
@@ -2521,6 +3516,7 @@ const POS = () => {
                       </select>
                     </div>
                   </div>
+                  </>}
                 </div>
 
                 {/* Contador resultados */}
@@ -2548,13 +3544,20 @@ const POS = () => {
                       return (
                         <button
                           key={v.id}
-                          onClick={() => setProblemaVentaSel(v)}
+                          onClick={() => {
+                            setProblemaVentaSel(v)
+                            // Consultar items ya devueltos de esta venta
+                            api.get(`/api/pos/ventas/${v.id}/devoluciones`).then(r => {
+                              setProblemaYaDevuelto(r.data?.ya_devuelto || {})
+                            }).catch(() => setProblemaYaDevuelto({}))
+                          }}
                           className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${
                             sel ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'
                           }`}
                         >
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-sm font-semibold text-gray-800">
+                              {v.numero_venta ? <span className="text-blue-600 mr-1">#{v.numero_venta}</span> : null}
                               {v.nombre_cliente || 'Consumidor Final'}
                             </span>
                             <span className="text-sm font-bold text-gray-700">{formatPrecio(v.total)}</span>
@@ -2562,6 +3565,7 @@ const POS = () => {
                           <div className="text-xs text-gray-400">
                             {fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })}{' '}
                             {fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                            {v.centum_comprobante && <span className="text-violet-500 font-medium"> · {v.centum_comprobante}</span>}
                             {v.sucursales?.nombre && <span> · {v.sucursales.nombre}</span>}
                             {v.perfiles?.nombre && <span> · {v.perfiles.nombre}</span>}
                           </div>
@@ -2591,7 +3595,7 @@ const POS = () => {
                 {/* Botones */}
                 <div className="flex gap-3 mt-4 flex-shrink-0">
                   <button
-                    onClick={() => { setProblemaPaso(0); setProblemaBusqueda(''); setProblemaBusArticulo(''); setProblemaSucursal(''); setProblemaVentas([]); setProblemaVentaSel(null) }}
+                    onClick={() => { setProblemaPaso(0); setProblemaBusqueda(''); setProblemaBusFactura(''); setProblemaBusArticulo(''); setProblemaSucursal(''); setProblemaVentas([]); setProblemaVentaSel(null) }}
                     className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                   >
                     Volver
@@ -2626,7 +3630,10 @@ const POS = () => {
                   {/* Info venta */}
                   <div className="bg-gray-50 rounded-lg px-3 py-2 mb-3 flex-shrink-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-gray-700">{problemaVentaSel.nombre_cliente || 'Consumidor Final'}</span>
+                      <span className="text-sm font-semibold text-gray-700">
+                        {problemaVentaSel.numero_venta ? <span className="text-blue-600 mr-1">#{problemaVentaSel.numero_venta}</span> : null}
+                        {problemaVentaSel.nombre_cliente || 'Consumidor Final'}
+                      </span>
                       <span className="text-sm font-bold text-gray-600">{formatPrecio(problemaVentaSel.total)}</span>
                     </div>
                     <div className="text-xs text-gray-400 mt-0.5">
@@ -2644,17 +3651,22 @@ const POS = () => {
                     {items.map((item, idx) => {
                       const cantSel = problemaItemsSel[idx] || 0
                       const selected = cantSel > 0
-                      const cantMax = item.cantidad || 1
+                      const cantYaDevuelta = problemaYaDevuelto[idx] || 0
+                      const cantDisponible = (item.cantidad || 1) - cantYaDevuelta
+                      const cantMax = cantDisponible
+                      const totalmenteDevuelto = cantDisponible <= 0
                       return (
                         <div
                           key={idx}
                           className={`px-4 py-3 rounded-xl border-2 transition-all ${
-                            selected ? 'border-red-500 bg-red-50' : 'border-gray-200'
+                            totalmenteDevuelto ? 'border-gray-200 bg-gray-100 opacity-50' : selected ? 'border-red-500 bg-red-50' : 'border-gray-200'
                           }`}
                         >
                           <div className="flex items-center gap-3">
                             <button
+                              disabled={totalmenteDevuelto}
                               onClick={() => {
+                                if (totalmenteDevuelto) return
                                 setProblemaItemsSel(prev => {
                                   const copy = { ...prev }
                                   if (selected) { delete copy[idx] } else { copy[idx] = 1 }
@@ -2662,20 +3674,26 @@ const POS = () => {
                                 })
                               }}
                               className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                                selected ? 'bg-red-500 border-red-500' : 'border-gray-300'
+                                totalmenteDevuelto ? 'border-gray-300 bg-gray-200' : selected ? 'bg-red-500 border-red-500' : 'border-gray-300'
                               }`}
                             >
-                              {selected && (
+                              {selected && !totalmenteDevuelto && (
                                 <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
                               )}
                             </button>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-gray-800 truncate">{item.nombre}</div>
+                              <div className={`text-sm font-medium truncate ${totalmenteDevuelto ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{item.nombre}</div>
                               <div className="text-xs text-gray-400">
-                                {item.cantidad}x {formatPrecio(item.precioUnitario || item.precio)} = {formatPrecio((item.precioUnitario || item.precio) * item.cantidad)}
+                                {item.cantidad}x {formatPrecio(item.precio_unitario || item.precioUnitario || item.precio)} = {formatPrecio((item.precio_unitario || item.precioUnitario || item.precio) * item.cantidad)}
                               </div>
+                              {totalmenteDevuelto && (
+                                <div className="text-xs text-red-500 font-medium mt-0.5">Ya devuelto</div>
+                              )}
+                              {cantYaDevuelta > 0 && !totalmenteDevuelto && (
+                                <div className="text-xs text-amber-600 font-medium mt-0.5">Ya devuelto: {cantYaDevuelta} — disponible: {cantDisponible}</div>
+                              )}
                             </div>
                           </div>
                           {selected && cantMax > 1 && (
@@ -2953,7 +3971,7 @@ const POS = () => {
               const detalleItems = indices.map(idx => {
                 const item = items[idx]
                 const cant = problemaItemsSel[idx]
-                const precioUnit = item.precioUnitario || item.precio || 0
+                const precioUnit = item.precio_unitario || item.precioUnitario || item.precio || 0
                 const sub = precioUnit * cant
                 subtotalDevuelto += sub
                 return { ...item, cantDevolver: cant, subtotal: sub, descripcion: problemaDescripciones[idx] }
@@ -3064,18 +4082,41 @@ const POS = () => {
                       onClick={async () => {
                         setProblemaConfirmando(true)
                         try {
+                          const tipoProblemaLabel = problemaSeleccionado === 'cantidad_mal' ? 'Cantidad mal facturada' : problemaSeleccionado === 'cambio' ? 'Cambio de producto' : 'Producto en mal estado'
+                          const itemsDevueltos = indices.map(idx => ({
+                            indice: idx,
+                            nombre: items[idx].nombre,
+                            cantidad: problemaItemsSel[idx],
+                            descripcion: problemaDescripciones[idx]?.trim() || undefined,
+                          }))
                           const { data } = await api.post('/api/pos/devolucion', {
                             venta_id: problemaVentaSel.id,
                             id_cliente_centum: problemaCliente.id_centum,
                             nombre_cliente: problemaCliente.razon_social,
-                            tipo_problema: problemaSeleccionado === 'cantidad_mal' ? 'Cantidad mal facturada' : problemaSeleccionado === 'cambio' ? 'Cambio de producto' : 'Producto en mal estado',
+                            tipo_problema: tipoProblemaLabel,
                             observacion: problemaObservacion.trim() || undefined,
-                            items_devueltos: indices.map(idx => ({
-                              indice: idx,
-                              nombre: items[idx].nombre,
-                              cantidad: problemaItemsSel[idx],
-                              descripcion: problemaDescripciones[idx]?.trim() || undefined,
-                            })),
+                            items_devueltos: itemsDevueltos,
+                            caja_id: terminalConfig?.caja_id || null,
+                          })
+                          // Imprimir 2 tickets: cliente + cajero
+                          // Usar items_nc del backend (tienen precio con descuento aplicado)
+                          const itemsTicket = (data.items_nc || []).map(it => ({
+                            nombre: it.nombre,
+                            cantidad: it.cantidad,
+                            precioOriginal: it.precio_unitario || it.precioUnitario || it.precio || 0,
+                            precioPagado: it.precioUnitario || it.precio || 0,
+                            descripcion: it.descripcionProblema,
+                          }))
+                          imprimirTicketDevolucion({
+                            items: itemsTicket,
+                            cliente: problemaCliente.razon_social,
+                            saldoAFavor: data.saldo_generado,
+                            tipoProblema: tipoProblemaLabel,
+                            observacion: problemaObservacion.trim() || undefined,
+                            ventaOriginal: { numero: problemaVentaSel.numero_venta, comprobante: problemaVentaSel.centum_comprobante },
+                            numeroNC: data.numero_nc,
+                            huboDescuento: data.factor_descuento < 0.999,
+                            subtotalDevuelto: data.subtotal_devuelto,
                           })
                           alert(`Devolución registrada. Se generó un saldo a favor de ${formatPrecio(data.saldo_generado)} para ${problemaCliente.razon_social}`)
                           cerrarModalProblema()
@@ -3104,7 +4145,10 @@ const POS = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-xs text-gray-400">Facturado a:</div>
-                        <span className="text-sm font-semibold text-gray-700">{problemaVentaSel.nombre_cliente || 'Consumidor Final'}</span>
+                        <span className="text-sm font-semibold text-gray-700">
+                          {problemaVentaSel.numero_venta ? <span className="text-blue-600 mr-1">#{problemaVentaSel.numero_venta}</span> : null}
+                          {problemaVentaSel.nombre_cliente || 'Consumidor Final'}
+                        </span>
                       </div>
                       <span className="text-sm font-bold text-gray-600">{formatPrecio(problemaVentaSel.total)}</span>
                     </div>
@@ -3390,9 +4434,10 @@ const POS = () => {
                   <div className="flex-1 overflow-y-auto min-h-0 max-h-80 space-y-3">
                     {indices.map(idx => {
                       const item = items[idx]
-                      const precioOriginal = item.precioUnitario || item.precio || 0
+                      const precioOriginal = item.precio_unitario || item.precioUnitario || item.precio || 0
                       const precioCorr = problemaPreciosCorregidos[idx]
-                      const diferencia = precioCorr !== undefined && precioCorr !== '' ? (precioOriginal - parseFloat(precioCorr)) * (problemaItemsSel[idx] || 1) : null
+                      const cantItem = item.cantidad || 1
+                      const diferencia = precioCorr !== undefined && precioCorr !== '' ? (precioOriginal - parseFloat(precioCorr)) * cantItem : null
                       return (
                         <div key={idx} className="bg-white rounded-xl border border-gray-200 p-4">
                           <div className="text-sm font-semibold text-gray-800 mb-2">{item.nombre}</div>
@@ -3470,8 +4515,8 @@ const POS = () => {
               let totalDiferencia = 0
               const detalleItems = indices.map(idx => {
                 const item = items[idx]
-                const cant = problemaItemsSel[idx] || 1
-                const precioCobrado = item.precioUnitario || item.precio || 0
+                const cant = item.cantidad || 1
+                const precioCobrado = item.precio_unitario || item.precioUnitario || item.precio || 0
                 const precioGondola = parseFloat(problemaPreciosCorregidos[idx]) || 0
                 const dif = (precioCobrado - precioGondola) * cant
                 totalDiferencia += dif
@@ -3558,7 +4603,7 @@ const POS = () => {
                           <div className="space-y-2">
                             {detalleItems.map((d, i) => (
                               <div key={i} className="bg-gray-50 rounded-lg px-3 py-2">
-                                <div className="text-sm font-medium text-gray-800">{d.cantidad > 1 ? `${d.cantidad}x ` : ''}{d.nombre}</div>
+                                <div className="text-sm font-medium text-gray-800">{d.cantidad !== 1 ? `${d.cantidad}x ` : ''}{d.nombre}</div>
                                 <div className="flex items-center gap-2 mt-1 text-xs">
                                   <span className="text-red-600">Cobrado: {formatPrecio(d.precioCobrado)}</span>
                                   <span className="text-gray-400">→</span>
@@ -3620,6 +4665,7 @@ const POS = () => {
                               precio_cobrado: d.precioCobrado,
                               precio_correcto: d.precioGondola,
                             })),
+                            caja_id: terminalConfig?.caja_id || null,
                           })
                           alert(`Corrección registrada. Se generó un saldo a favor de ${formatPrecio(data.saldo_generado)} para ${problemaCliente.razon_social}`)
                           cerrarModalProblema()
@@ -3639,82 +4685,6 @@ const POS = () => {
         </div>
       )}
 
-      {/* Modal cancelar venta */}
-      {mostrarCancelar && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center" data-modal>
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMostrarCancelar(false)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div className="px-5 py-4 border-b bg-red-50 flex items-center justify-between">
-              <h3 className="text-base font-bold text-red-800">
-                {cancelarPasoConfirm ? 'Confirmar cancelación' : 'Motivo de cancelación'}
-              </h3>
-              <button onClick={() => setMostrarCancelar(false)} className="p-1 hover:bg-red-100 rounded-lg">
-                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {!cancelarPasoConfirm ? (
-              <div className="p-5">
-                <p className="text-sm text-gray-500 mb-4">Selecciona el motivo por el cual se cancela la venta:</p>
-                <div className="space-y-2">
-                  {[
-                    'El cliente no tiene dinero suficiente',
-                    'El cliente cambió de opinión',
-                    'Error del cajero al cargar productos',
-                    'Problema con el medio de pago',
-                    'El cliente se retiró del local',
-                  ].map(motivo => (
-                    <button
-                      key={motivo}
-                      onClick={() => setCancelarMotivo(motivo)}
-                      className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium ${
-                        cancelarMotivo === motivo ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 hover:border-red-300 text-gray-700'
-                      }`}
-                    >
-                      {motivo}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-3 mt-5">
-                  <button onClick={() => setMostrarCancelar(false)}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                    Volver
-                  </button>
-                  <button disabled={!cancelarMotivo} onClick={() => setCancelarPasoConfirm(true)}
-                    className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors">
-                    Continuar
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="p-5">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
-                  <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                    </svg>
-                    <p className="text-sm text-amber-900 leading-relaxed">
-                      El usuario <strong>{usuario?.nombre || 'Sin nombre'}</strong> deja constancia de que la venta iniciada es cancelada por motivo: <strong>"{cancelarMotivo}"</strong> el día <strong>{new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</strong> a las <strong>{new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</strong>.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-3">
-                  <button onClick={() => setCancelarPasoConfirm(false)}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                    Volver
-                  </button>
-                  <button onClick={() => { limpiarVenta(); setMostrarCancelar(false) }}
-                    className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
-                    Confirmar cancelación
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Modal de cobro */}
       {mostrarCobrar && (
@@ -3736,18 +4706,45 @@ const POS = () => {
         />
       )}
 
-      {/* Modal de cobro para pedido (pago anticipado) */}
+      {/* Modal venta empleado — seleccionar o confirmar */}
+      {mostrarVentaEmpleado && (
+        <ModalVentaEmpleado
+          mode={empleadoActivo ? 'confirmar' : 'seleccionar'}
+          carrito={carrito}
+          empleadoActivo={empleadoActivo}
+          descuentosEmpleado={descuentosEmpleado}
+          precioConDescEmpleado={precioConDescEmpleado}
+          terminalConfig={terminalConfig}
+          onCerrar={() => setMostrarVentaEmpleado(false)}
+          onEmpleadoSeleccionado={(emp, descs) => {
+            setEmpleadoActivo(emp)
+            setDescuentosEmpleado(descs)
+            setMostrarVentaEmpleado(false)
+          }}
+          onExito={() => {
+            setMostrarVentaEmpleado(false)
+            setCarrito([])
+            setCliente({ ...CLIENTE_DEFAULT })
+            setBusquedaArt('')
+            setGiftCardsEnVenta([])
+            setEmpleadoActivo(null)
+            setDescuentosEmpleado({})
+          }}
+        />
+      )}
+
+      {/* Modal de cobro para pedido (pago anticipado o cobro en caja) */}
       {mostrarCobrarPedido && (
         <ModalCobrar
-          total={total}
-          subtotal={subtotal}
-          descuentoTotal={descuentoTotal}
+          total={cobrarPedidoExistente ? cobrarPedidoExistente.total : total}
+          subtotal={cobrarPedidoExistente ? cobrarPedidoExistente.total : subtotal}
+          descuentoTotal={cobrarPedidoExistente ? 0 : descuentoTotal}
           ivaTotal={0}
-          carrito={carrito}
-          cliente={cliente}
-          promosAplicadas={promosAplicadas}
+          carrito={cobrarPedidoExistente ? (typeof cobrarPedidoExistente.items === 'string' ? JSON.parse(cobrarPedidoExistente.items) : cobrarPedidoExistente.items || []) : carrito}
+          cliente={cobrarPedidoExistente ? { id_centum: cobrarPedidoExistente.id_cliente_centum || 0, razon_social: cobrarPedidoExistente.nombre_cliente || 'Consumidor Final', condicion_iva: 'CF' } : cliente}
+          promosAplicadas={cobrarPedidoExistente ? [] : promosAplicadas}
           onConfirmar={handleCobroPedidoExitoso}
-          onCerrar={() => { setMostrarCobrarPedido(false); pedidoWizardDataRef.current = null }}
+          onCerrar={() => { setMostrarCobrarPedido(false); setCobrarPedidoExistente(null); pedidoWizardDataRef.current = null }}
           isOnline={isOnline}
           onVentaOffline={actualizarPendientes}
           soloPago
@@ -3768,7 +4765,7 @@ const POS = () => {
             <div className="p-4 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-gray-800">
-                  {pasoPedido === 0 ? 'Seleccionar cliente' : pasoPedido === 1 ? 'Tipo de pedido' : pasoPedido === 2 ? 'Fecha de entrega' : pasoPedido === 3 ? (tipoPedidoSeleccionado === 'delivery' ? 'Direccion de entrega' : 'Sucursal de retiro') : 'Pago anticipado'}
+                  {pasoPedido === 0 ? 'Fecha de entrega' : pasoPedido === 1 ? 'Seleccionar cliente' : pasoPedido === 2 ? 'Tipo de pedido' : pasoPedido === 3 ? (tipoPedidoSeleccionado === 'delivery' ? 'Direccion de entrega' : 'Sucursal de retiro') : 'Pago anticipado'}
                 </h2>
                 <button onClick={cerrarWizardPedido} className="text-gray-400 hover:text-gray-600">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -3777,18 +4774,18 @@ const POS = () => {
                 </button>
               </div>
               {pasoPedido === 1 && (
-                <button onClick={() => { setPasoPedido(0); setClientePedido(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar cliente
+                <button onClick={() => { setPasoPedido(0); setFechaEntregaPedido('') }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar fecha
                 </button>
               )}
               {pasoPedido === 2 && (
-                <button onClick={() => { setPasoPedido(1); setTipoPedidoSeleccionado(null); setFechaEntregaPedido('') }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar tipo
+                <button onClick={() => { setPasoPedido(1); setClientePedido(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar cliente
                 </button>
               )}
               {pasoPedido === 3 && (
-                <button onClick={() => setPasoPedido(2)} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
-                  ← Cambiar fecha
+                <button onClick={() => { setPasoPedido(2); setTipoPedidoSeleccionado(null) }} className="text-xs text-amber-600 hover:text-amber-700 mt-1">
+                  ← Cambiar tipo
                 </button>
               )}
               {pasoPedido === 4 && (
@@ -3807,15 +4804,97 @@ const POS = () => {
             {/* Content */}
             <div className="p-4 overflow-y-auto flex-1 space-y-3">
 
-              {/* PASO 0: Buscar cliente */}
+              {/* PASO 0: Fecha de entrega */}
               {pasoPedido === 0 && (
                 <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Fecha de entrega / retiro
+                    </label>
+                    <input
+                      type="date"
+                      value={fechaEntregaPedido}
+                      onChange={e => setFechaEntregaPedido(e.target.value)}
+                      min={new Date().toISOString().split('T')[0]}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  {(() => {
+                    const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+                    const tienePerecedor = carrito.some(i => {
+                      const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+                      return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+                    })
+                    if (tienePerecedor) {
+                      const manana = new Date()
+                      manana.setDate(manana.getDate() + 1)
+                      const mananaISO = manana.toISOString().split('T')[0]
+                      const excede = fechaEntregaPedido && fechaEntregaPedido > mananaISO
+                      return (
+                        <div className={`text-xs px-3 py-2 rounded-lg ${excede ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                          {excede
+                            ? 'El pedido contiene Fiambres, Quesos o Frescos. La fecha no puede ser mayor a mañana.'
+                            : 'El pedido contiene productos perecederos (max. mañana).'}
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
+                  <button
+                    onClick={() => {
+                      if (!fechaEntregaPedido) return
+                      // Validar perecederos
+                      const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
+                      const manana = new Date()
+                      manana.setDate(manana.getDate() + 1)
+                      const mananaISO = manana.toISOString().split('T')[0]
+                      const tienePerecedor = carrito.some(i => {
+                        const rubro = (i.articulo.rubro?.nombre || '').toLowerCase()
+                        return RUBROS_PERECEDEROS.some(r => rubro.includes(r))
+                      })
+                      if (tienePerecedor && fechaEntregaPedido > mananaISO) return
+                      // Cargar bloqueos para la fecha seleccionada
+                      api.get('/api/pos/bloqueos', { params: { fecha: fechaEntregaPedido } })
+                        .then(({ data }) => {
+                          const diaSemana = new Date(fechaEntregaPedido + 'T12:00:00').getDay()
+                          const activos = (data || []).filter(b => {
+                            if (!b.activo) return false
+                            if (b.tipo === 'fecha' && b.fecha === fechaEntregaPedido) return true
+                            if (b.tipo === 'semanal' && b.dia_semana === diaSemana) return true
+                            return false
+                          })
+                          setBloqueosFecha(activos)
+                        })
+                        .catch(() => setBloqueosFecha([]))
+                      // Si ya tiene cliente real, saltar al paso 2 (tipo)
+                      if (cliente.id_centum && cliente.id_centum !== 0) {
+                        setClientePedido(cliente)
+                        setPasoPedido(2)
+                      } else {
+                        setPasoPedido(1)
+                      }
+                    }}
+                    disabled={!fechaEntregaPedido}
+                    className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors mt-2"
+                  >
+                    Continuar
+                  </button>
+                </>
+              )}
+
+              {/* PASO 1: Buscar cliente */}
+              {pasoPedido === 1 && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                    <span className="text-gray-500">Fecha:</span>{' '}
+                    <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                  </div>
                   <input
                     ref={inputClientePedidoRef}
                     type="text"
                     value={busquedaClientePedido}
                     onChange={e => setBusquedaClientePedido(e.target.value)}
-                    placeholder="Buscar por nombre, CUIT o codigo..."
+                    placeholder="Buscar por DNI o CUIT..."
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
                   />
                   {buscandoClientePedido && (
@@ -3867,13 +4946,37 @@ const POS = () => {
                 </>
               )}
 
-              {/* PASO 1: Tipo de pedido */}
-              {pasoPedido === 1 && clientePedido && (
+              {/* PASO 2: Tipo de pedido */}
+              {pasoPedido === 2 && clientePedido && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-3 text-sm">
-                    <span className="text-gray-500">Cliente:</span>{' '}
-                    <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+                    <div>
+                      <span className="text-gray-500">Fecha:</span>{' '}
+                      <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Cliente:</span>{' '}
+                      <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                    </div>
                   </div>
+                  {bloqueosFecha.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 mt-2">
+                      <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                        </svg>
+                        <div className="text-sm text-amber-800">
+                          {bloqueosFecha.map((b, i) => (
+                            <div key={i} className="font-medium">
+                              {b.motivo || `Bloqueo ${b.turno === 'todo' ? 'todo el día' : b.turno.toUpperCase()}`}
+                              {b.turno !== 'todo' && <span className="font-normal text-amber-600"> — turno {b.turno.toUpperCase()}</span>}
+                              {b.aplica_a !== 'todos' && <span className="font-normal text-amber-600"> ({b.aplica_a})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3 mt-2">
                     <button
                       onClick={() => seleccionarTipoPedido('delivery')}
@@ -3897,45 +5000,14 @@ const POS = () => {
                 </>
               )}
 
-              {/* PASO 2: Fecha de entrega */}
-              {pasoPedido === 2 && clientePedido && (
-                <>
-                  <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
-                    <div>
-                      <span className="text-gray-500">Cliente:</span>{' '}
-                      <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Tipo:</span>{' '}
-                      <span className="font-medium text-gray-800">{tipoPedidoSeleccionado === 'delivery' ? 'Delivery' : 'Retiro por Sucursal'}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fecha de {tipoPedidoSeleccionado === 'delivery' ? 'entrega' : 'retiro'}
-                    </label>
-                    <input
-                      type="date"
-                      value={fechaEntregaPedido}
-                      onChange={e => setFechaEntregaPedido(e.target.value)}
-                      min={new Date().toISOString().split('T')[0]}
-                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                  <button
-                    onClick={() => { if (fechaEntregaPedido) setPasoPedido(3) }}
-                    disabled={!fechaEntregaPedido}
-                    className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors mt-2"
-                  >
-                    Continuar
-                  </button>
-                </>
-              )}
-
               {/* PASO 3: Dirección (delivery) o Sucursal (retiro) */}
               {pasoPedido === 3 && clientePedido && (
                 <>
                   <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+                    <div>
+                      <span className="text-gray-500">Fecha:</span>{' '}
+                      <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                    </div>
                     <div>
                       <span className="text-gray-500">Cliente:</span>{' '}
                       <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
@@ -4022,10 +5094,55 @@ const POS = () => {
                         </button>
                       )}
 
+                      {/* Turno de entrega */}
+                      {(() => {
+                        const esHoy = fechaEntregaPedido === new Date().toISOString().split('T')[0]
+                        const horaActual = new Date().getHours()
+                        const amDisabled = esHoy && horaActual >= 9
+                        const pmDisabled = esHoy && horaActual >= 17
+                        return (
+                          <div className="mt-3">
+                            <p className="text-xs text-gray-500 mb-1.5">Turno de entrega</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => !amDisabled && setTurnoPedido('AM')}
+                                disabled={amDisabled}
+                                className={`flex-1 p-3 rounded-lg border-2 text-center transition-colors ${
+                                  amDisabled
+                                    ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                                    : turnoPedido === 'AM'
+                                      ? 'border-amber-400 bg-amber-50'
+                                      : 'border-gray-100 hover:border-gray-300'
+                                }`}
+                              >
+                                <span className={`text-sm font-semibold ${amDisabled ? 'text-gray-400' : 'text-gray-800'}`}>AM</span>
+                                <span className="block text-[11px] text-gray-400">9 a 13hs</span>
+                                {amDisabled && <span className="block text-[10px] text-red-400 mt-0.5">Fuera de horario</span>}
+                              </button>
+                              <button
+                                onClick={() => !pmDisabled && setTurnoPedido('PM')}
+                                disabled={pmDisabled}
+                                className={`flex-1 p-3 rounded-lg border-2 text-center transition-colors ${
+                                  pmDisabled
+                                    ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                                    : turnoPedido === 'PM'
+                                      ? 'border-amber-400 bg-amber-50'
+                                      : 'border-gray-100 hover:border-gray-300'
+                                }`}
+                              >
+                                <span className={`text-sm font-semibold ${pmDisabled ? 'text-gray-400' : 'text-gray-800'}`}>PM</span>
+                                <span className="block text-[11px] text-gray-400">17 a 21hs</span>
+                                {pmDisabled && <span className="block text-[10px] text-red-400 mt-0.5">Fuera de horario</span>}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })()}
+
                       {/* Botón confirmar delivery */}
                       <button
                         onClick={confirmarPedidoWizard}
-                        disabled={!direccionSeleccionadaPedido || guardandoPedido}
+                        disabled={!direccionSeleccionadaPedido || !turnoPedido || guardandoPedido}
                         className="w-full mt-3 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:text-gray-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
                       >
                         {guardandoPedido ? 'Guardando...' : 'Confirmar pedido'}
@@ -4101,37 +5218,85 @@ const POS = () => {
                         </span>
                       </div>
                     )}
+                    {tipoPedidoSeleccionado === 'delivery' && turnoPedido && (
+                      <div>
+                        <span className="text-gray-500">Turno:</span>{' '}
+                        <span className="font-medium text-gray-800">{turnoPedido === 'AM' ? 'AM (9-13hs)' : 'PM (17-21hs)'}</span>
+                      </div>
+                    )}
                     <div className="pt-1 border-t border-gray-200 mt-1">
                       <span className="text-gray-500">Total:</span>{' '}
                       <span className="font-bold text-gray-800">{formatPrecio(total)}</span>
                     </div>
                   </div>
 
-                  <div className="text-center py-2">
-                    <p className="text-sm font-medium text-gray-700">¿Desea abonar por anticipado?</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => finalizarPedidoWizard(false)}
-                      disabled={guardandoPedido}
-                      className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50"
-                    >
-                      <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      <span className="text-sm font-medium text-gray-700">No, solo guardar</span>
-                    </button>
-                    <button
-                      onClick={() => finalizarPedidoWizard(true)}
-                      className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all"
-                    >
-                      <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
-                      </svg>
-                      <span className="text-sm font-medium text-green-700">Si, cobrar ahora</span>
-                    </button>
-                  </div>
+                  {tipoPedidoSeleccionado === 'delivery' ? (
+                    <>
+                      <div className="text-center py-1">
+                        <p className="text-sm font-medium text-gray-700">Forma de pago</p>
+                      </div>
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => finalizarPedidoWizard('cobrar')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-green-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+                          </svg>
+                          <span className="text-sm font-medium text-green-700">Cobrar ahora</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('efectivo_entrega')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.079-.504 1.004-1.1A17.05 17.05 0 0015.064 8.39a2.25 2.25 0 00-1.89-1.014H12m-1.5 11.374h6" />
+                          </svg>
+                          <span className="text-sm font-medium text-amber-700">Paga en la entrega en efectivo</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('link_pago')}
+                          disabled={guardandoPedido}
+                          className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-blue-200 hover:border-blue-400 hover:bg-blue-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-7 h-7 text-blue-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.06a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364l1.757 1.757" />
+                          </svg>
+                          <span className="text-sm font-medium text-blue-700">Link de pago</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-center py-2">
+                        <p className="text-sm font-medium text-gray-700">¿Desea abonar por anticipado?</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => finalizarPedidoWizard(false)}
+                          disabled={guardandoPedido}
+                          className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          <span className="text-sm font-medium text-gray-700">No, solo guardar</span>
+                        </button>
+                        <button
+                          onClick={() => finalizarPedidoWizard('cobrar')}
+                          disabled={guardandoPedido}
+                          className="flex flex-col items-center gap-2 p-5 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition-all disabled:opacity-50"
+                        >
+                          <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+                          </svg>
+                          <span className="text-sm font-medium text-green-700">Si, cobrar ahora</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {guardandoPedido && (
                     <div className="flex justify-center py-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-600" />
@@ -4152,6 +5317,48 @@ const POS = () => {
           )}
         </div>
       )}
+      {/* Popup peso manual para pesables */}
+      {popupPesable && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Ingresar peso</h3>
+            <p className="text-sm text-gray-500 mb-4 truncate">{popupPesable.articulo.nombre}</p>
+            <div className="flex items-center gap-2 mb-5">
+              <input
+                autoFocus
+                type="number"
+                step="0.001"
+                min="0.001"
+                value={popupPesableKg}
+                onChange={e => setPopupPesableKg(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') confirmarPesable()
+                  if (e.key === 'Escape') { setPopupPesable(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }
+                }}
+                placeholder="0.000"
+                className="flex-1 border-2 border-gray-300 focus:border-violet-500 rounded-xl px-4 py-3 text-2xl font-mono text-center outline-none"
+              />
+              <span className="text-lg font-semibold text-gray-500">kg</span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setPopupPesable(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={!popupPesableKg || parseFloat(popupPesableKg) <= 0}
+                onClick={confirmarPesable}
+                className="flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors"
+              >
+                Agregar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pantalla roja fullscreen — artículo no encontrado */}
       {alertaBarcode && (
         <div className="fixed inset-0 z-[100] bg-red-600 flex flex-col items-center justify-center text-white" onClick={() => { setAlertaBarcode(null); stopAlertSound() }}>
@@ -4162,6 +5369,64 @@ const POS = () => {
           <span className="text-2xl font-mono opacity-80">{alertaBarcode}</span>
         </div>
       )}
+
+      {/* Pantalla amarilla fullscreen — artículo duplicado (balanza o barcode) */}
+      {alertaDuplicado && (
+        <div className="fixed inset-0 z-[100] bg-amber-500 flex flex-col items-center justify-center text-white"
+          tabIndex={0}
+          ref={el => el?.focus()}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              if (alertaDuplicado.pesoKg) {
+                setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+              } else {
+                agregarAlCarrito(alertaDuplicado.articulo)
+              }
+              setAlertaDuplicado(null)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+            } else if (e.key === 'Escape') {
+              setAlertaDuplicado(null)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+            }
+          }}>
+          <svg className="w-24 h-24 mb-6 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <span className="text-4xl font-black mb-3">ARTÍCULO DUPLICADO</span>
+          <span className="text-xl opacity-90 mb-2">{alertaDuplicado.articulo.nombre}</span>
+          {alertaDuplicado.pesoKg && (
+            <span className="text-2xl font-mono opacity-80 mb-8">{alertaDuplicado.pesoKg} kg</span>
+          )}
+          {alertaDuplicado.cantidad && !alertaDuplicado.pesoKg && (
+            <span className="text-2xl font-mono opacity-80 mb-8">x{alertaDuplicado.cantidad}</span>
+          )}
+          <span className="text-xl mb-8">¿Deseas agregar igual?</span>
+          <div className="flex gap-6">
+            <button
+              onClick={() => { setAlertaDuplicado(null); setTimeout(() => inputBusquedaRef.current?.focus(), 50) }}
+              className="px-10 py-4 bg-white/20 hover:bg-white/30 rounded-2xl text-2xl font-bold transition-colors"
+            >
+              No
+            </button>
+            <button
+              onClick={() => {
+                if (alertaDuplicado.pesoKg) {
+                  setCarrito(prev => [...prev, { articulo: alertaDuplicado.articulo, cantidad: alertaDuplicado.pesoKg }])
+                } else {
+                  agregarAlCarrito(alertaDuplicado.articulo)
+                }
+                setAlertaDuplicado(null)
+                setTimeout(() => inputBusquedaRef.current?.focus(), 50)
+              }}
+              className="px-10 py-4 bg-white text-amber-600 hover:bg-amber-50 rounded-2xl text-2xl font-bold transition-colors"
+            >
+              Sí, agregar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmación eliminación de artículo */}
     </div>
   )
 }

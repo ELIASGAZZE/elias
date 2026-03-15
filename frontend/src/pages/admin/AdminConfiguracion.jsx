@@ -1,7 +1,9 @@
 // Panel de administrador: configuración general (usuarios, empleados, cajas, denominaciones, formas de cobro, rubros y sucursales)
 import React, { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import AdminPromociones from '../../components/pos/AdminPromociones'
+import AdminDescuentosEmpleados from '../../components/pos/AdminDescuentosEmpleados'
 import api from '../../services/api'
 
 const ChevronIcon = ({ abierta }) => (
@@ -61,9 +63,24 @@ const BotonActivo = ({ activo, onClick }) => (
   </button>
 )
 
+const TITULOS_SECCION = {
+  usuarios: 'Usuarios',
+  empleados: 'Empleados',
+  cajas: 'Cajas',
+  denominaciones: 'Denominaciones',
+  'formas-cobro': 'Formas de Cobro',
+  rubros: 'Rubros',
+  sucursales: 'Sucursales',
+  promociones: 'Promociones POS',
+  'bloqueos-pedidos': 'Bloqueos de Pedidos',
+}
+
 const AdminConfiguracion = () => {
-  // Acordeón
-  const [seccionAbierta, setSeccionAbierta] = useState(null)
+  const { seccion } = useParams()
+  const navigate = useNavigate()
+
+  // Acordeón (legacy, ahora siempre abierta la sección de la URL)
+  const seccionAbierta = seccion || null
 
   // Sync POS
   const [sincronizandoPOS, setSincronizandoPOS] = useState(false)
@@ -77,6 +94,9 @@ const AdminConfiguracion = () => {
   const [mensajeSucursal, setMensajeSucursal] = useState('')
   const [editandoSucursalId, setEditandoSucursalId] = useState(null)
   const [editandoSucursalNombre, setEditandoSucursalNombre] = useState('')
+  const [editandoSucursalCentumId, setEditandoSucursalCentumId] = useState('')
+  const [editandoOperadorEmpresa, setEditandoOperadorEmpresa] = useState('')
+  const [editandoOperadorPrueba, setEditandoOperadorPrueba] = useState('')
 
   // Rubros
   const [rubros, setRubros] = useState([])
@@ -114,7 +134,7 @@ const AdminConfiguracion = () => {
   const [creandoCaja, setCreandoCaja] = useState(false)
   const [mensajeCaja, setMensajeCaja] = useState('')
   const [editandoCajaId, setEditandoCajaId] = useState(null)
-  const [editandoCajaData, setEditandoCajaData] = useState({ nombre: '' })
+  const [editandoCajaData, setEditandoCajaData] = useState({ nombre: '', punto_venta_centum: '' })
 
   // Denominaciones
   const [denominaciones, setDenominaciones] = useState([])
@@ -212,18 +232,18 @@ const AdminConfiguracion = () => {
   }
 
   useEffect(() => {
-    cargarSucursales()
-    cargarRubros()
-    cargarUsuarios()
-    cargarEmpleados()
-    cargarCajas()
-    cargarDenominaciones()
-    cargarFormasCobro()
-  }, [])
-
-  const toggleSeccion = (id) => {
-    setSeccionAbierta(prev => prev === id ? null : id)
-  }
+    // Sucursales se necesita para usuarios, empleados y cajas
+    if (['usuarios', 'empleados', 'cajas'].includes(seccion)) {
+      cargarSucursales()
+    }
+    if (seccion === 'usuarios') cargarUsuarios()
+    if (seccion === 'empleados') cargarEmpleados()
+    if (seccion === 'cajas') cargarCajas()
+    if (seccion === 'denominaciones') cargarDenominaciones()
+    if (seccion === 'formas-cobro') cargarFormasCobro()
+    if (seccion === 'rubros') cargarRubros()
+    if (seccion === 'sucursales') cargarSucursales()
+  }, [seccion])
 
   // --- Sucursales ---
   const crearSucursal = async (e) => {
@@ -252,19 +272,33 @@ const AdminConfiguracion = () => {
   const iniciarEdicionSucursal = (sucursal) => {
     setEditandoSucursalId(sucursal.id)
     setEditandoSucursalNombre(sucursal.nombre)
+    setEditandoSucursalCentumId(sucursal.centum_sucursal_id || '')
+    setEditandoOperadorEmpresa(sucursal.centum_operador_empresa || '')
+    setEditandoOperadorPrueba(sucursal.centum_operador_prueba || '')
   }
 
   const cancelarEdicionSucursal = () => {
     setEditandoSucursalId(null)
     setEditandoSucursalNombre('')
+    setEditandoSucursalCentumId('')
+    setEditandoOperadorEmpresa('')
+    setEditandoOperadorPrueba('')
   }
 
   const guardarEdicionSucursal = async (id) => {
     if (!editandoSucursalNombre.trim()) return
     try {
-      await api.put(`/api/sucursales/${id}`, { nombre: editandoSucursalNombre.trim() })
+      await api.put(`/api/sucursales/${id}`, {
+        nombre: editandoSucursalNombre.trim(),
+        centum_sucursal_id: editandoSucursalCentumId || null,
+        centum_operador_empresa: editandoOperadorEmpresa || null,
+        centum_operador_prueba: editandoOperadorPrueba || null,
+      })
       setEditandoSucursalId(null)
       setEditandoSucursalNombre('')
+      setEditandoSucursalCentumId('')
+      setEditandoOperadorEmpresa('')
+      setEditandoOperadorPrueba('')
       await cargarSucursales()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar sucursal')
@@ -336,11 +370,6 @@ const AdminConfiguracion = () => {
       return
     }
 
-    if ((nuevoUsuario.rol === 'operario' || nuevoUsuario.rol === 'gestor') && !nuevoUsuario.sucursal_id) {
-      setMensajeUsuario('Seleccioná una sucursal')
-      return
-    }
-
     setCreandoUsuario(true)
     setMensajeUsuario('')
 
@@ -395,10 +424,6 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('El usuario es requerido')
       return
     }
-    if ((editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && !editUsuarioData.sucursal_id) {
-      setMensajeEditUsuario('Seleccioná una sucursal')
-      return
-    }
     if (editUsuarioData.password && editUsuarioData.password.length < 6) {
       setMensajeEditUsuario('La contraseña debe tener al menos 6 caracteres')
       return
@@ -432,16 +457,11 @@ const AdminConfiguracion = () => {
       setMensajeEmpleado('Ingresá el código del empleado')
       return
     }
-    if (!nuevoEmpleado.sucursal_id) {
-      setMensajeEmpleado('Seleccioná una sucursal')
-      return
-    }
-
     setCreandoEmpleado(true)
     setMensajeEmpleado('')
 
     try {
-      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), sucursal_id: nuevoEmpleado.sucursal_id, codigo: nuevoEmpleado.codigo.trim() })
+      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim() })
       setMensajeEmpleado('ok:Empleado creado correctamente')
       setNuevoEmpleado({ nombre: '', sucursal_id: '', codigo: '' })
       await cargarEmpleados()
@@ -468,7 +488,6 @@ const AdminConfiguracion = () => {
     try {
       await api.put(`/api/empleados/${id}`, {
         nombre: editandoEmpleadoData.nombre.trim(),
-        sucursal_id: editandoEmpleadoData.sucursal_id,
         codigo: editandoEmpleadoData.codigo.trim(),
       })
       setEditandoEmpleadoId(null)
@@ -528,20 +547,23 @@ const AdminConfiguracion = () => {
 
   const iniciarEdicionCaja = (caja) => {
     setEditandoCajaId(caja.id)
-    setEditandoCajaData({ nombre: caja.nombre })
+    setEditandoCajaData({ nombre: caja.nombre, punto_venta_centum: caja.punto_venta_centum || '' })
   }
 
   const cancelarEdicionCaja = () => {
     setEditandoCajaId(null)
-    setEditandoCajaData({ nombre: '' })
+    setEditandoCajaData({ nombre: '', punto_venta_centum: '' })
   }
 
   const guardarEdicionCaja = async (id) => {
     if (!editandoCajaData.nombre.trim()) return
     try {
-      await api.put(`/api/cajas/${id}`, { nombre: editandoCajaData.nombre.trim() })
+      await api.put(`/api/cajas/${id}`, {
+        nombre: editandoCajaData.nombre.trim(),
+        punto_venta_centum: editandoCajaData.punto_venta_centum || null,
+      })
       setEditandoCajaId(null)
-      setEditandoCajaData({ nombre: '' })
+      setEditandoCajaData({ nombre: '', punto_venta_centum: '' })
       await cargarCajas()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar caja')
@@ -713,19 +735,25 @@ const AdminConfiguracion = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-4">
-      <Navbar titulo="Configuración" sinTabs />
+      <Navbar titulo={TITULOS_SECCION[seccion] || 'Configuración'} sinTabs />
+
+      {/* Botón volver */}
+      <div className="px-4 pt-3">
+        <button
+          onClick={() => navigate('/admin/configuracion')}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+          Volver a configuración
+        </button>
+      </div>
 
       <div className="px-4 py-4 space-y-3">
 
         {/* ===== USUARIOS ===== */}
-        <SeccionAcordeon
-          id="usuarios"
-          titulo="Usuarios"
-          count={usuarios.length}
-          abierta={seccionAbierta === 'usuarios'}
-          onToggle={toggleSeccion}
-          cargando={cargandoUsuarios}
-        >
+        {seccion === 'usuarios' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearUsuario} className="space-y-3 pt-4">
             <input
               type="text"
@@ -811,17 +839,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== EMPLEADOS ===== */}
-        <SeccionAcordeon
-          id="empleados"
-          titulo="Empleados"
-          count={empleados.length}
-          abierta={seccionAbierta === 'empleados'}
-          onToggle={toggleSeccion}
-          cargando={cargandoEmpleados}
-        >
+        {seccion === 'empleados' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearEmpleado} className="space-y-3 pt-4">
             <input
               type="text"
@@ -837,16 +858,6 @@ const AdminConfiguracion = () => {
               placeholder="Código único del empleado"
               className="campo-form text-sm"
             />
-            <select
-              value={nuevoEmpleado.sucursal_id}
-              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, sucursal_id: e.target.value }))}
-              className="campo-form text-sm"
-            >
-              <option value="">Seleccioná una sucursal</option>
-              {sucursales.map(s => (
-                <option key={s.id} value={s.id}>{s.nombre}</option>
-              ))}
-            </select>
             <button type="submit" disabled={creandoEmpleado} className="btn-primario">
               {creandoEmpleado ? 'Creando...' : 'Crear empleado'}
             </button>
@@ -890,15 +901,6 @@ const AdminConfiguracion = () => {
                             placeholder="Código"
                             className="campo-form text-sm w-28"
                           />
-                          <select
-                            value={editandoEmpleadoData.sucursal_id}
-                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, sucursal_id: e.target.value }))}
-                            className="campo-form text-sm"
-                          >
-                            {sucursales.map(s => (
-                              <option key={s.id} value={s.id}>{s.nombre}</option>
-                            ))}
-                          </select>
                           <button
                             onClick={() => guardarEdicionEmpleado(empleado.id)}
                             className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
@@ -922,7 +924,6 @@ const AdminConfiguracion = () => {
                               {empleado.nombre}
                               {empleado.codigo && <span className="text-xs text-gray-400 ml-2">[{empleado.codigo}]</span>}
                             </p>
-                            <p className="text-xs text-gray-400 truncate">{empleado.sucursales?.nombre || 'Sin sucursal'}</p>
                           </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             <BotonActivo activo={empleado.activo} onClick={() => toggleActivoEmpleado(empleado)} />
@@ -947,17 +948,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== CAJAS ===== */}
-        <SeccionAcordeon
-          id="cajas"
-          titulo="Cajas"
-          count={cajas.length}
-          abierta={seccionAbierta === 'cajas'}
-          onToggle={toggleSeccion}
-          cargando={cargandoCajas}
-        >
+        {seccion === 'cajas' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearCaja} className="space-y-3 pt-4">
             <input
               type="text"
@@ -1005,7 +999,19 @@ const AdminConfiguracion = () => {
                               if (e.key === 'Escape') cancelarEdicionCaja()
                             }}
                             autoFocus
+                            placeholder="Nombre"
                             className="campo-form text-sm flex-1"
+                          />
+                          <input
+                            type="number"
+                            value={editandoCajaData.punto_venta_centum}
+                            onChange={(e) => setEditandoCajaData(prev => ({ ...prev, punto_venta_centum: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') guardarEdicionCaja(caja.id)
+                              if (e.key === 'Escape') cancelarEdicionCaja()
+                            }}
+                            placeholder="PV Centum"
+                            className="campo-form text-sm w-24"
                           />
                           <button
                             onClick={() => guardarEdicionCaja(caja.id)}
@@ -1027,7 +1033,10 @@ const AdminConfiguracion = () => {
                             onClick={() => iniciarEdicionCaja(caja)}
                           >
                             <p className="text-sm font-medium text-gray-800 truncate">{caja.nombre}</p>
-                            <p className="text-xs text-gray-400 truncate">{caja.sucursales?.nombre || 'Sin sucursal'}</p>
+                            <p className="text-xs text-gray-400 truncate">
+                              {caja.sucursales?.nombre || 'Sin sucursal'}
+                              {caja.punto_venta_centum ? ` · PV Centum: ${caja.punto_venta_centum}` : ''}
+                            </p>
                           </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             <BotonActivo activo={caja.activo} onClick={() => toggleActivoCaja(caja)} />
@@ -1052,17 +1061,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== DENOMINACIONES ===== */}
-        <SeccionAcordeon
-          id="denominaciones"
-          titulo="Denominaciones"
-          count={denominaciones.length}
-          abierta={seccionAbierta === 'denominaciones'}
-          onToggle={toggleSeccion}
-          cargando={cargandoDenominaciones}
-        >
+        {seccion === 'denominaciones' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearDenominacion} className="space-y-3 pt-4">
             <input
               type="number"
@@ -1187,17 +1189,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== FORMAS DE COBRO ===== */}
-        <SeccionAcordeon
-          id="formas-cobro"
-          titulo="Formas de Cobro"
-          count={formasCobro.length}
-          abierta={seccionAbierta === 'formas-cobro'}
-          onToggle={toggleSeccion}
-          cargando={cargandoFormasCobro}
-        >
+        {seccion === 'formas-cobro' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearFormaCobro} className="space-y-3 pt-4">
             <input
               type="text"
@@ -1300,17 +1295,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== RUBROS ===== */}
-        <SeccionAcordeon
-          id="rubros"
-          titulo="Rubros"
-          count={rubros.length}
-          abierta={seccionAbierta === 'rubros'}
-          onToggle={toggleSeccion}
-          cargando={cargandoRubros}
-        >
+        {seccion === 'rubros' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearRubro} className="flex items-center gap-2 pt-4">
             <input
               type="text"
@@ -1397,17 +1385,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== SUCURSALES ===== */}
-        <SeccionAcordeon
-          id="sucursales"
-          titulo="Sucursales"
-          count={sucursales.length}
-          abierta={seccionAbierta === 'sucursales'}
-          onToggle={toggleSeccion}
-          cargando={cargandoSucursales}
-        >
+        {seccion === 'sucursales' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <form onSubmit={crearSucursal} className="flex items-center gap-2 pt-4">
             <input
               type="text"
@@ -1439,39 +1420,76 @@ const AdminConfiguracion = () => {
                   {sucursales.map(sucursal => (
                     <div key={sucursal.id} className="flex items-center justify-between gap-2 py-2.5">
                       {editandoSucursalId === sucursal.id ? (
-                        <div className="flex items-center gap-2 flex-1">
-                          <input
-                            type="text"
-                            value={editandoSucursalNombre}
-                            onChange={(e) => setEditandoSucursalNombre(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
-                              if (e.key === 'Escape') cancelarEdicionSucursal()
-                            }}
-                            autoFocus
-                            className="campo-form text-sm flex-1"
-                          />
-                          <button
-                            onClick={() => guardarEdicionSucursal(sucursal.id)}
-                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            OK
-                          </button>
-                          <button
-                            onClick={cancelarEdicionSucursal}
-                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            X
-                          </button>
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editandoSucursalNombre}
+                              onChange={(e) => setEditandoSucursalNombre(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') guardarEdicionSucursal(sucursal.id)
+                                if (e.key === 'Escape') cancelarEdicionSucursal()
+                              }}
+                              autoFocus
+                              placeholder="Nombre"
+                              className="campo-form text-sm flex-1"
+                            />
+                            <input
+                              type="number"
+                              value={editandoSucursalCentumId}
+                              onChange={(e) => setEditandoSucursalCentumId(e.target.value)}
+                              placeholder="ID Sucursal Centum"
+                              className="campo-form text-sm w-40"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editandoOperadorEmpresa}
+                              onChange={(e) => setEditandoOperadorEmpresa(e.target.value)}
+                              placeholder="Operador Empresa"
+                              className="campo-form text-sm flex-1"
+                            />
+                            <input
+                              type="text"
+                              value={editandoOperadorPrueba}
+                              onChange={(e) => setEditandoOperadorPrueba(e.target.value)}
+                              placeholder="Operador Prueba"
+                              className="campo-form text-sm flex-1"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => guardarEdicionSucursal(sucursal.id)}
+                              className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              onClick={cancelarEdicionSucursal}
+                              className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <>
-                          <p
-                            className="text-sm font-medium text-gray-800 cursor-pointer hover:text-blue-600 transition-colors"
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
                             onClick={() => iniciarEdicionSucursal(sucursal)}
                           >
-                            {sucursal.nombre}
-                          </p>
+                            <p className="text-sm font-medium text-gray-800 hover:text-blue-600 transition-colors">
+                              {sucursal.nombre}
+                            </p>
+                            {sucursal.centum_sucursal_id && (
+                              <p className="text-xs text-gray-400">
+                                Centum ID: {sucursal.centum_sucursal_id}
+                                {sucursal.centum_operador_empresa && <span className="ml-2">| Emp: {sucursal.centum_operador_empresa}</span>}
+                                {sucursal.centum_operador_prueba && <span className="ml-2">| Prueba: {sucursal.centum_operador_prueba}</span>}
+                              </p>
+                            )}
+                          </div>
                           <button
                             onClick={() => iniciarEdicionSucursal(sucursal)}
                             className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
@@ -1486,17 +1504,10 @@ const AdminConfiguracion = () => {
               )}
             </div>
           )}
-        </SeccionAcordeon>
+        </div>}
 
         {/* ===== PROMOCIONES POS ===== */}
-        <SeccionAcordeon
-          id="promociones"
-          titulo="Promociones POS"
-          count=""
-          abierta={seccionAbierta === 'promociones'}
-          onToggle={toggleSeccion}
-          cargando={false}
-        >
+        {seccion === 'promociones' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <div className="mb-4 flex items-center gap-3">
             <button
               onClick={async () => {
@@ -1523,7 +1534,17 @@ const AdminConfiguracion = () => {
             )}
           </div>
           <AdminPromociones />
-        </SeccionAcordeon>
+
+          {/* Descuentos empleados */}
+          <div className="mt-6 border-t border-gray-200 pt-4">
+            <h3 className="text-base font-semibold text-gray-700 mb-1">Descuentos Empleados</h3>
+            <p className="text-xs text-gray-400 mb-2">Descuentos por rubro y topes mensuales para retiros de mercadería</p>
+            <AdminDescuentosEmpleados />
+          </div>
+        </div>}
+
+        {/* ===== BLOQUEOS DE PEDIDOS ===== */}
+        {seccion === 'bloqueos-pedidos' && <SeccionBloqueosPedidos />}
 
       </div>
 
@@ -1616,6 +1637,188 @@ const AdminConfiguracion = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+const TURNOS_OPT = [
+  { value: 'todo', label: 'Todo el día' },
+  { value: 'AM', label: 'AM (9-13hs)' },
+  { value: 'PM', label: 'PM (17-21hs)' },
+]
+const APLICA_OPT = [
+  { value: 'todos', label: 'Delivery y Retiro' },
+  { value: 'delivery', label: 'Solo Delivery' },
+  { value: 'retiro', label: 'Solo Retiro' },
+]
+
+function SeccionBloqueosPedidos() {
+  const [bloqueos, setBloqueos] = useState([])
+  const [cargando, setCargando] = useState(true)
+  const [tipo, setTipo] = useState('semanal')
+  const [diaSemana, setDiaSemana] = useState(1)
+  const [fecha, setFecha] = useState('')
+  const [turno, setTurno] = useState('todo')
+  const [aplicaA, setAplicaA] = useState('todos')
+  const [motivo, setMotivo] = useState('')
+  const [guardando, setGuardando] = useState(false)
+
+  useEffect(() => {
+    cargar()
+  }, [])
+
+  async function cargar() {
+    setCargando(true)
+    try {
+      const { data } = await api.get('/api/pos/bloqueos')
+      setBloqueos(data || [])
+    } catch (err) {
+      console.error('Error cargando bloqueos:', err)
+    } finally {
+      setCargando(false)
+    }
+  }
+
+  async function crear(e) {
+    e.preventDefault()
+    setGuardando(true)
+    try {
+      const body = { tipo, turno, aplica_a: aplicaA, motivo: motivo.trim() || null }
+      if (tipo === 'semanal') body.dia_semana = parseInt(diaSemana)
+      if (tipo === 'fecha') {
+        if (!fecha) { alert('Seleccioná una fecha'); setGuardando(false); return }
+        body.fecha = fecha
+      }
+      await api.post('/api/pos/bloqueos', body)
+      setMotivo('')
+      setFecha('')
+      cargar()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function eliminar(id) {
+    if (!confirm('¿Eliminar este bloqueo?')) return
+    try {
+      await api.delete(`/api/pos/bloqueos/${id}`)
+      cargar()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
+  const semanales = bloqueos.filter(b => b.tipo === 'semanal')
+  const porFecha = bloqueos.filter(b => b.tipo === 'fecha')
+
+  return (
+    <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+      {/* Formulario */}
+      <form onSubmit={crear} className="space-y-3">
+        <div className="flex items-center gap-2">
+          <select value={tipo} onChange={e => setTipo(e.target.value)} className="campo-form text-sm flex-1">
+            <option value="semanal">Día de la semana (recurrente)</option>
+            <option value="fecha">Fecha específica</option>
+          </select>
+          {tipo === 'semanal' ? (
+            <select value={diaSemana} onChange={e => setDiaSemana(e.target.value)} className="campo-form text-sm flex-1">
+              {DIAS_SEMANA.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+          ) : (
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} className="campo-form text-sm flex-1" />
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={turno} onChange={e => setTurno(e.target.value)} className="campo-form text-sm flex-1">
+            {TURNOS_OPT.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <select value={aplicaA} onChange={e => setAplicaA(e.target.value)} className="campo-form text-sm flex-1">
+            {APLICA_OPT.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>
+        </div>
+        <input
+          type="text"
+          value={motivo}
+          onChange={e => setMotivo(e.target.value)}
+          placeholder="Motivo (opcional, ej: Feriado, Sucursal cerrada)"
+          className="campo-form text-sm w-full"
+        />
+        <button type="submit" disabled={guardando} className="btn-primario">
+          {guardando ? 'Guardando...' : 'Agregar bloqueo'}
+        </button>
+      </form>
+
+      {/* Lista */}
+      {cargando ? (
+        <div className="flex justify-center py-6">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600" />
+        </div>
+      ) : bloqueos.length === 0 ? (
+        <p className="text-gray-400 text-sm text-center py-6">No hay bloqueos configurados</p>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {/* Semanales */}
+          {semanales.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Recurrentes (semanal)</h4>
+              <div className="space-y-1">
+                {semanales.map(b => (
+                  <div key={b.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-gray-700">{DIAS_SEMANA[b.dia_semana]}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.turno === 'todo' ? 'bg-red-100 text-red-700' : b.turno === 'AM' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
+                      }`}>
+                        {b.turno === 'todo' ? 'Todo el día' : b.turno}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.aplica_a === 'todos' ? 'bg-gray-100 text-gray-600' : b.aplica_a === 'delivery' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {b.aplica_a === 'todos' ? 'Delivery + Retiro' : b.aplica_a === 'delivery' ? 'Delivery' : 'Retiro'}
+                      </span>
+                      {b.motivo && <span className="text-gray-400 text-xs">— {b.motivo}</span>}
+                    </div>
+                    <button onClick={() => eliminar(b.id)} className="text-red-400 hover:text-red-600 text-xs font-medium">Eliminar</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Por fecha */}
+          {porFecha.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Fechas específicas</h4>
+              <div className="space-y-1">
+                {porFecha.map(b => (
+                  <div key={b.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-gray-700">
+                        {new Date(b.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.turno === 'todo' ? 'bg-red-100 text-red-700' : b.turno === 'AM' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
+                      }`}>
+                        {b.turno === 'todo' ? 'Todo el día' : b.turno}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        b.aplica_a === 'todos' ? 'bg-gray-100 text-gray-600' : b.aplica_a === 'delivery' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {b.aplica_a === 'todos' ? 'Delivery + Retiro' : b.aplica_a === 'delivery' ? 'Delivery' : 'Retiro'}
+                      </span>
+                      {b.motivo && <span className="text-gray-400 text-xs">— {b.motivo}</span>}
+                    </div>
+                    <button onClick={() => eliminar(b.id)} className="text-red-400 hover:text-red-600 text-xs font-medium">Eliminar</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

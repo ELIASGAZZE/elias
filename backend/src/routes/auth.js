@@ -46,6 +46,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
       usuario: {
         id: data.user.id,
         username: perfil.username,
@@ -56,6 +57,32 @@ router.post('/login', async (req, res) => {
     })
   } catch (err) {
     console.error('Error en login:', err)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+})
+
+// POST /api/auth/refresh
+// Renueva el access token usando el refresh token
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refresh_token } = req.body
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'refresh_token requerido' })
+    }
+
+    const clienteAuth = crearClienteAuth()
+    const { data, error } = await clienteAuth.auth.refreshSession({ refresh_token })
+
+    if (error || !data.session) {
+      return res.status(401).json({ error: 'No se pudo renovar la sesión' })
+    }
+
+    res.json({
+      token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    })
+  } catch (err) {
+    console.error('Error en refresh:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 })
@@ -114,10 +141,6 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
   }
 
-  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
-  }
-
   if (password.length < 8) {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
   }
@@ -151,8 +174,11 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     })
 
     if (authError) {
-      console.error('Error creando usuario en Auth:', authError.message)
-      return res.status(500).json({ error: 'Error al crear usuario' })
+      console.error('Error creando usuario en Auth:', authError.message, authError.status)
+      const msg = authError.message?.includes('already been registered')
+        ? `El email ya existe en el sistema. Puede que "${usernameLimpio}" haya sido creado antes.`
+        : authError.message || 'Error al crear usuario'
+      return res.status(500).json({ error: msg })
     }
 
     // Crear perfil
@@ -198,10 +224,6 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
 
   if (!['admin', 'operario', 'gestor'].includes(rol)) {
     return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
-  }
-
-  if ((rol === 'operario' || rol === 'gestor') && !sucursal_id) {
-    return res.status(400).json({ error: 'Los operarios y gestores deben tener una sucursal asignada' })
   }
 
   if (password && password.length < 8) {
@@ -402,6 +424,35 @@ router.post('/setup-admin', async (req, res) => {
     console.error('Error en setup-admin:', err)
     res.status(500).json({ error: 'Error interno', detalle: err.message })
   }
+})
+
+// POST /api/auth/emergency-login
+// Login de emergencia sin Supabase (solo cuando no hay internet)
+// Usa un PIN configurado en variable de entorno
+router.post('/emergency-login', async (req, res) => {
+  const { pin } = req.body
+  const emergencyPin = process.env.EMERGENCY_PIN
+
+  if (!emergencyPin) {
+    return res.status(503).json({ error: 'Modo emergencia no configurado' })
+  }
+
+  if (!pin || pin !== emergencyPin) {
+    return res.status(401).json({ error: 'PIN incorrecto' })
+  }
+
+  // Devolver un token ficticio y datos mínimos para operar offline
+  res.json({
+    token: 'emergency-offline-' + Date.now(),
+    usuario: {
+      id: 'emergency',
+      username: 'emergencia',
+      rol: 'operario',
+      nombre: 'Modo Emergencia',
+      sucursal_id: null,
+    },
+    emergency: true,
+  })
 })
 
 module.exports = router

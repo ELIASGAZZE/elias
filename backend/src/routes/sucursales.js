@@ -50,15 +50,32 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre } = req.body
+    const { nombre, centum_sucursal_id, centum_operador_empresa, centum_operador_prueba } = req.body
 
-    if (!nombre || !nombre.trim()) {
-      return res.status(400).json({ error: 'El nombre de la sucursal es requerido' })
+    const updateData = {}
+    if (nombre !== undefined) {
+      if (!nombre || !nombre.trim()) {
+        return res.status(400).json({ error: 'El nombre de la sucursal es requerido' })
+      }
+      updateData.nombre = nombre.trim()
+    }
+    if (centum_sucursal_id !== undefined) {
+      updateData.centum_sucursal_id = centum_sucursal_id ? Number(centum_sucursal_id) : null
+    }
+    if (centum_operador_empresa !== undefined) {
+      updateData.centum_operador_empresa = centum_operador_empresa?.trim() || null
+    }
+    if (centum_operador_prueba !== undefined) {
+      updateData.centum_operador_prueba = centum_operador_prueba?.trim() || null
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'Nada que actualizar' })
     }
 
     const { data, error } = await supabase
       .from('sucursales')
-      .update({ nombre: nombre.trim() })
+      .update(updateData)
       .eq('id', id)
       .select()
       .single()

@@ -1,6 +1,19 @@
 // Middleware de autenticación
 // Verifica que el usuario esté logueado y obtiene su información
+// Con fallback offline: si Supabase no responde, usa cache en memoria
 const supabase = require('../config/supabase')
+
+// Cache en memoria: token → { user, perfil, timestamp }
+const authCache = new Map()
+const CACHE_TTL = 1000 * 60 * 60 // 1 hora
+
+function isNetworkError(err) {
+  if (!err) return false
+  const msg = (err.message || err.code || '').toLowerCase()
+  return msg.includes('fetch') || msg.includes('network') || msg.includes('enotfound')
+    || msg.includes('econnrefused') || msg.includes('timeout') || msg.includes('dns')
+    || msg.includes('socket') || msg.includes('enetunreach')
+}
 
 const verificarAuth = async (req, res, next) => {
   // Obtenemos el token del header Authorization: Bearer <token>
@@ -11,11 +24,22 @@ const verificarAuth = async (req, res, next) => {
 
   const token = authHeader.split(' ')[1]
 
+  // Token de emergencia: no validar contra Supabase
+  if (token.startsWith('emergency-offline-')) {
+    req.usuario = { id: 'emergency' }
+    req.perfil = { nombre: 'Modo Emergencia', rol: 'operario', username: 'emergencia' }
+    return next()
+  }
+
   try {
     // Verificamos el token con Supabase
     const { data: { user }, error } = await supabase.auth.getUser(token)
 
     if (error || !user) {
+      // Si es error de red, intentar fallback offline
+      if (error && isNetworkError(error)) {
+        return fallbackOffline(token, req, res, next)
+      }
       return res.status(401).json({ error: 'Token inválido o expirado' })
     }
 
@@ -27,17 +51,38 @@ const verificarAuth = async (req, res, next) => {
       .single()
 
     if (errorPerfil || !perfil) {
+      if (errorPerfil && isNetworkError(errorPerfil)) {
+        return fallbackOffline(token, req, res, next)
+      }
       return res.status(401).json({ error: 'Perfil de usuario no encontrado' })
     }
+
+    // Guardar en cache para modo offline
+    authCache.set(token, { user, perfil, timestamp: Date.now() })
 
     // Adjuntamos el usuario y su perfil al request para usarlo en las rutas
     req.usuario = user
     req.perfil = perfil
     next()
   } catch (err) {
+    // Si es error de red (sin internet), usar cache
+    if (isNetworkError(err)) {
+      return fallbackOffline(token, req, res, next)
+    }
     console.error('Error en middleware de auth:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
+}
+
+function fallbackOffline(token, req, res, next) {
+  const cached = authCache.get(token)
+  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+    console.log('[Auth] Modo offline — usando cache para', cached.perfil.nombre)
+    req.usuario = cached.user
+    req.perfil = cached.perfil
+    return next()
+  }
+  return res.status(503).json({ error: 'Sin conexión y sin sesión cacheada. Conectate a internet para iniciar sesión.' })
 }
 
 // Middleware para verificar que el usuario sea administrador

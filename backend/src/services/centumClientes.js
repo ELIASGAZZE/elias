@@ -73,17 +73,22 @@ async function syncClientesRecientes(horasAtras = 2) {
   const db = await getPool()
   const desde = new Date(Date.now() - horasAtras * 60 * 60 * 1000)
 
-  const result = await db.request()
+  // Traer clientes nuevos (creados recientemente)
+  const resultNuevos = await db.request()
     .input('desde', sql.DateTime, desde)
     .query(`
       SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
-             DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente
+             DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
+             CondicionIVAClienteID
       FROM Clientes_VIEW
       WHERE ActivoCliente = 1 AND FechaAltaCliente >= @desde
     `)
 
-  if (result.recordset.length === 0) {
-    return { nuevos: 0, actualizados: 0 }
+  const mapCondicionIVA = (id) => {
+    if (id === 1895) return 'RI'
+    if (id === 1894) return 'MT'
+    if (id === 1893) return 'EX' // Exento
+    return 'CF'
   }
 
   const mapearCliente = (r) => ({
@@ -93,20 +98,50 @@ async function syncClientesRecientes(horasAtras = 2) {
     localidad: r.LocalidadCliente?.trim() || null,
     codigo_postal: r.CodigoPostalCliente?.trim() || null,
     telefono: r.Telefono1Cliente?.trim() || null,
+    ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
   })
 
-  // Obtener clientes locales con estos id_centum
-  const idsCentum = result.recordset.map(r => r.ClienteID)
-  const { data: existentes } = await supabase
+  // Obtener todos los clientes locales con id_centum
+  const { data: todosLocales } = await supabase
+    .from('clientes')
+    .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva')
+    .not('id_centum', 'is', null)
+
+  const existentesMap = new Map((todosLocales || []).map(e => [e.id_centum, e]))
+
+  // Separar nuevos de los recién creados en Centum
+  const nuevosBI = resultNuevos.recordset.filter(r => !existentesMap.has(r.ClienteID))
+  const existentesBI = resultNuevos.recordset.filter(r => existentesMap.has(r.ClienteID))
+
+  // También actualizar todos los clientes locales activos con datos de Centum BI
+  const { data: localesActivos } = await supabase
     .from('clientes')
     .select('id, id_centum')
-    .in('id_centum', idsCentum)
+    .eq('activo', true)
+    .not('id_centum', 'is', null)
 
-  const existentesMap = new Map((existentes || []).map(e => [e.id_centum, e.id]))
-
-  // Separar nuevos y existentes
-  const nuevosBI = result.recordset.filter(r => !existentesMap.has(r.ClienteID))
-  const existentesBI = result.recordset.filter(r => existentesMap.has(r.ClienteID))
+  if (localesActivos && localesActivos.length > 0) {
+    const idsActivos = localesActivos.map(c => c.id_centum)
+    // Traer datos actuales de Centum en lotes
+    for (let i = 0; i < idsActivos.length; i += 500) {
+      const lote = idsActivos.slice(i, i + 500)
+      const resCentum = await db.request().query(
+        `SELECT ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID
+         FROM Clientes_VIEW
+         WHERE ActivoCliente = 1 AND ClienteID IN (${lote.join(',')})`
+      )
+      for (const r of resCentum.recordset) {
+        const local = existentesMap.get(r.ClienteID)
+        if (!local) continue
+        const centumData = mapearCliente(r)
+        // Solo actualizar si hay diferencias
+        const cambio = Object.keys(centumData).some(k => (centumData[k] || null) !== (local[k] || null))
+        if (cambio) {
+          await supabase.from('clientes').update(centumData).eq('id', local.id)
+        }
+      }
+    }
+  }
 
   let nuevosCount = 0
   let actualizadosCount = 0
@@ -140,16 +175,88 @@ async function syncClientesRecientes(horasAtras = 2) {
 
   // Actualizar existentes
   for (const r of existentesBI) {
-    const localId = existentesMap.get(r.ClienteID)
+    const local = existentesMap.get(r.ClienteID)
+    if (!local) continue
     const { error } = await supabase
       .from('clientes')
       .update(mapearCliente(r))
-      .eq('id', localId)
-    if (error) console.warn(`[SyncClientes] Error actualizando ${localId}:`, error.message)
+      .eq('id', local.id)
+    if (error) console.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
     else actualizadosCount++
   }
 
-  return { nuevos: nuevosCount, actualizados: actualizadosCount }
+  // Desactivar clientes locales activos que ya no son clientes en Centum
+  let desactivadosCount = 0
+  try {
+    const { data: localesActivos } = await supabase
+      .from('clientes')
+      .select('id, id_centum')
+      .eq('activo', true)
+      .not('id_centum', 'is', null)
+
+    if (localesActivos && localesActivos.length > 0) {
+      const idsLocales = localesActivos.map(c => c.id_centum)
+      // Consultar cuáles están inactivos en Centum (en lotes de 500)
+      for (let i = 0; i < idsLocales.length; i += 500) {
+        const lote = idsLocales.slice(i, i + 500)
+        const resInactivos = await db.request().query(
+          `SELECT ClienteID FROM Clientes_VIEW WHERE ActivoCliente = 0 AND ClienteID IN (${lote.join(',')})`
+        )
+        for (const r of resInactivos.recordset) {
+          const cli = localesActivos.find(c => c.id_centum === r.ClienteID)
+          if (cli) {
+            const { error: errDesact } = await supabase
+              .from('clientes')
+              .update({ activo: false })
+              .eq('id', cli.id)
+            if (!errDesact) desactivadosCount++
+          }
+        }
+      }
+      if (desactivadosCount > 0) {
+        console.log(`[SyncClientes] ${desactivadosCount} clientes desactivados (inactivos en Centum)`)
+      }
+    }
+  } catch (err) {
+    console.warn('[SyncClientes] Error al verificar clientes inactivos:', err.message)
+  }
+
+  // Reactivar clientes locales inactivos que fueron reactivados en Centum
+  let reactivadosCount = 0
+  try {
+    const { data: localesInactivos } = await supabase
+      .from('clientes')
+      .select('id, id_centum')
+      .eq('activo', false)
+      .not('id_centum', 'is', null)
+
+    if (localesInactivos && localesInactivos.length > 0) {
+      const idsInactivos = localesInactivos.map(c => c.id_centum)
+      for (let i = 0; i < idsInactivos.length; i += 500) {
+        const lote = idsInactivos.slice(i, i + 500)
+        const resActivos = await db.request().query(
+          `SELECT ClienteID FROM Clientes_VIEW WHERE ActivoCliente = 1 AND ClienteID IN (${lote.join(',')})`
+        )
+        for (const r of resActivos.recordset) {
+          const cli = localesInactivos.find(c => c.id_centum === r.ClienteID)
+          if (cli) {
+            const { error: errReact } = await supabase
+              .from('clientes')
+              .update({ activo: true })
+              .eq('id', cli.id)
+            if (!errReact) reactivadosCount++
+          }
+        }
+      }
+      if (reactivadosCount > 0) {
+        console.log(`[SyncClientes] ${reactivadosCount} clientes reactivados (activos en Centum)`)
+      }
+    }
+  } catch (err) {
+    console.warn('[SyncClientes] Error al verificar clientes reactivados:', err.message)
+  }
+
+  return { nuevos: nuevosCount, actualizados: actualizadosCount, desactivados: desactivadosCount, reactivados: reactivadosCount }
 }
 
 /**
@@ -315,6 +422,69 @@ async function crearClienteEnCentum(cliente, condicion_iva = 'CF', direccionEntr
   return data
 }
 
+/**
+ * Actualiza un cliente existente en Centum ERP (PUT).
+ * @param {number} idCliente - ID del cliente en Centum
+ * @param {Object} datos - Campos a actualizar
+ * @returns {Promise<Object>} - Respuesta del ERP
+ */
+async function actualizarClienteEnCentum(idCliente, datos) {
+  const accessToken = generateAccessToken(API_KEY)
+  const url = `${BASE_URL}/Clientes/${idCliente}`
+  const inicio = Date.now()
+
+  const body = {}
+  if (datos.razon_social) body.RazonSocial = datos.razon_social
+  if (datos.cuit !== undefined) body.CUIT = datos.cuit || ''
+  if (datos.direccion !== undefined) body.Direccion = datos.direccion || ''
+  if (datos.localidad !== undefined) body.Localidad = datos.localidad || ''
+  if (datos.codigo_postal !== undefined) body.CodigoPostal = datos.codigo_postal || ''
+  if (datos.telefono !== undefined) body.Telefono = datos.telefono || ''
+  if (datos.condicion_iva) {
+    const condicion = CONDICION_IVA_MAP[datos.condicion_iva] || CONDICION_IVA_MAP.CF
+    body.CondicionIVA = condicion.CondicionIVA
+    body.CondicionVenta = condicion.CondicionVenta
+  }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'manual',
+    })
+    throw err
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'manual',
+    })
+    throw new Error(`Error al actualizar cliente en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json().catch(() => ({}))
+  registrarLlamada({
+    servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+    estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'manual',
+  })
+  return data
+}
+
 // Cache de actividades de envío de comprobante (no cambian)
 let actividadesCache = null
 
@@ -394,8 +564,22 @@ async function agregarContactoEnvioCentum(idCliente, { email, celular }) {
     throw err
   }
 
+  const texto = await response.text()
+  let data = {}
+  try { data = JSON.parse(texto) } catch { /* may not be JSON */ }
+
   if (!response.ok) {
-    const texto = await response.text()
+    // Si el email/celular ya existe como contacto, no es un error real
+    const code = data?.Code || ''
+    if (code.includes('YaExiste')) {
+      console.log(`[Centum] Contacto envío ya existe para cliente ${idCliente}, ignorando.`)
+      registrarLlamada({
+        servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
+        estado: 'ok_existente', status_code: response.status, duracion_ms: Date.now() - inicio,
+        items_procesados: 1, origen: 'manual',
+      })
+      return data
+    }
     registrarLlamada({
       servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
       estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
@@ -403,8 +587,6 @@ async function agregarContactoEnvioCentum(idCliente, { email, celular }) {
     })
     throw new Error(`Error al agregar contacto envío en Centum (${response.status}): ${texto.slice(0, 500)}`)
   }
-
-  const data = await response.json().catch(() => ({}))
 
   registrarLlamada({
     servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
@@ -501,4 +683,4 @@ async function crearPedidoVentaCentum({ idCliente, fechaEntrega, tipo, observaci
   return data
 }
 
-module.exports = { fetchClientesCentum, crearClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, crearPedidoVentaCentum }
+module.exports = { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, crearPedidoVentaCentum }

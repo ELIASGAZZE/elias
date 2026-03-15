@@ -579,11 +579,24 @@ const CajasPosHome = () => {
                     <div key={cierre.id} className="flex items-center gap-2">
                       <Link
                         to={getLinkCierre(cierre)}
-                        className="flex-1 bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all"
+                        className={`flex-1 rounded-xl p-4 hover:shadow-sm transition-all ${
+                          cierre.tipo === 'delivery'
+                            ? 'bg-purple-50 border border-purple-200 hover:border-purple-300'
+                            : 'bg-white border border-gray-200 hover:border-gray-300'
+                        }`}
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-semibold text-gray-800">
-                            Sesion POS · {formatHora(cierre.apertura_at)}
+                            {cierre.tipo === 'delivery' ? (
+                              <span className="flex items-center gap-1.5">
+                                <svg className="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                                </svg>
+                                {cierre.observaciones_apertura || 'Delivery'}
+                              </span>
+                            ) : (
+                              <>Sesion POS · {formatHora(cierre.apertura_at)}</>
+                            )}
                           </span>
                           <BadgeEstado estado={cierre.estado} />
                         </div>

@@ -238,7 +238,7 @@ const DetalleCierrePos = () => {
           {/* Metadata */}
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-800">Sesion POS</h2>
+              <h2 className="text-lg font-semibold text-gray-800">{cierre.tipo === 'delivery' ? (cierre.observaciones_apertura || 'Delivery') : 'Sesion POS'}</h2>
               <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${estadoCfg.color}`}>
                 {estadoCfg.label}
               </span>
@@ -263,7 +263,7 @@ const DetalleCierrePos = () => {
               {cierre.cierre_at && (
                 <p>Cierre: {formatHora(cierre.cierre_at)}</p>
               )}
-              {cierre.fondo_fijo > 0 && (
+              {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && (
                 <p>Cambio inicial: {formatMonto(cierre.fondo_fijo)}</p>
               )}
               {posVentas && (
@@ -274,7 +274,7 @@ const DetalleCierrePos = () => {
 
           {/* Diferencias de apertura + Retiro y cambio */}
           <div className="space-y-4">
-            {cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
+            {cierre.tipo !== 'delivery' && cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
               <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
                 <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
                 <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
@@ -344,8 +344,8 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Seccion 2: Comparativos de cambio — dos tablas lado a lado */}
-        {!esBlind && cierre.estado !== 'abierta' && (
+        {/* Seccion 2: Comparativos de cambio — dos tablas lado a lado (no aplica a delivery) */}
+        {!esBlind && cierre.estado !== 'abierta' && cierre.tipo !== 'delivery' && (
           cierre.cierre_anterior || cierre.apertura_siguiente ||
           (cierre.fondo_fijo_billetes && Object.keys(cierre.fondo_fijo_billetes).length > 0) ||
           (cierre.cambio_billetes && Object.keys(cierre.cambio_billetes).length > 0)
@@ -619,6 +619,54 @@ const DetalleCierrePos = () => {
             )}
           </div>
         )}
+
+        {/* Alertas de pagos posnet con problema */}
+        {posVentas && (() => {
+          const pagosConProblema = []
+          ;(posVentas.detalle_ventas || []).forEach(v => {
+            ;(v.pagos || []).forEach(p => {
+              if (p.detalle?.mp_problema) {
+                pagosConProblema.push({
+                  venta_id: v.id,
+                  fecha: v.created_at,
+                  monto: p.monto,
+                  tipo_problema: p.detalle.mp_problema,
+                  descripcion: p.detalle.mp_problema_desc,
+                })
+              }
+            })
+          })
+          if (pagosConProblema.length === 0) return null
+
+          return (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                Pagos posnet con problema ({pagosConProblema.length})
+              </h3>
+              <div className="space-y-2">
+                {pagosConProblema.map((pp, idx) => (
+                  <div key={idx} className="border border-amber-200 rounded-lg p-3 bg-white/60">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-amber-900">
+                        {pp.tipo_problema === 'cobro_sin_confirmar'
+                          ? 'Cobro realizado sin confirmacion del sistema'
+                          : 'Cobrado en posnet manual'}
+                      </span>
+                      <span className="text-sm font-bold text-amber-800">{formatMonto(pp.monto)}</span>
+                    </div>
+                    <div className="text-xs text-amber-700/70 mt-1">
+                      {pp.fecha && new Date(pp.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                      {pp.descripcion && <span className="ml-2">— {pp.descripcion}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Aviso POS ventas no encontrado */}
         {!esBlind && posNoEncontrado && cierre.estado !== 'abierta' && !posVentas && (

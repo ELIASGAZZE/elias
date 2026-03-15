@@ -12,7 +12,6 @@ import { useAuth } from '../../context/AuthContext'
 const RutaProtegida = ({ children, soloAdmin = false, rolesPermitidos }) => {
   const { estaLogueado, esAdmin, cargando, usuario } = useAuth()
 
-  // Mientras verificamos la sesión, mostramos un spinner
   if (cargando) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -21,17 +20,14 @@ const RutaProtegida = ({ children, soloAdmin = false, rolesPermitidos }) => {
     )
   }
 
-  // Si no está logueado, redirigimos al login
   if (!estaLogueado) {
     return <Navigate to="/login" replace />
   }
 
-  // Si la ruta es solo para admins y no lo es, redirigimos
   if (soloAdmin && !esAdmin) {
     return <Navigate to="/apps" replace />
   }
 
-  // Si hay roles permitidos y el rol del usuario no está en la lista
   if (rolesPermitidos && !rolesPermitidos.includes(usuario?.rol)) {
     return <Navigate to="/apps" replace />
   }
