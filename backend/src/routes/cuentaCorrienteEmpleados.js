@@ -176,18 +176,82 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       }
     }
 
-    // Registrar en Centum (división Prueba = 2, CF + cuenta_corriente → siempre Prueba)
-    let comprobanteCentum = null
-    try {
-      if (caja_id) {
-        const { data: caja } = await supabase
-          .from('cajas')
-          .select('id, nombre, sucursal_id, punto_venta, sucursales(id, nombre, centum_sucursal_id, operador_empresa, operador_prueba)')
-          .eq('id', caja_id)
-          .single()
+    // Determinar sucursal desde la caja
+    let sucursalDeCaja = sucursal_id || null
+    if (caja_id && !sucursalDeCaja) {
+      const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalDeCaja = cajaInfo?.sucursal_id || null
+    }
 
-        if (caja && caja.sucursales) {
-          // Armar ventaLocal compatible con registrarVentaPOSEnCentum
+    // Guardar en ventas_empleados
+    const { data: venta, error: ventaError } = await supabase
+      .from('ventas_empleados')
+      .insert({
+        empleado_id: empleado.id,
+        sucursal_id: sucursalDeCaja,
+        cajero_id: req.perfil.id,
+        items,
+        total,
+      })
+      .select('*')
+      .single()
+
+    if (ventaError) throw ventaError
+
+    // También guardar en ventas_pos para que aparezca en módulo Ventas
+    const itemsPos = items.map(item => ({
+      id_articulo: item.articulo_id,
+      codigo: item.codigo,
+      nombre: item.nombre,
+      precio_unitario: item.precio_final,
+      cantidad: item.cantidad,
+      iva_tasa: item.iva_tasa || 21,
+      rubro: item.rubro || null,
+    }))
+
+    const { data: ventaPos, error: ventaPosError } = await supabase
+      .from('ventas_pos')
+      .insert({
+        cajero_id: req.perfil.id,
+        sucursal_id: sucursalDeCaja,
+        caja_id: caja_id || null,
+        id_cliente_centum: null,
+        nombre_cliente: `Empleado: ${empleado.nombre}`,
+        subtotal: total,
+        descuento_total: 0,
+        total,
+        monto_pagado: total,
+        vuelto: 0,
+        items: JSON.stringify(itemsPos),
+        pagos: [{ tipo: 'cuenta_corriente', monto: total }],
+      })
+      .select()
+      .single()
+
+    if (ventaPosError) {
+      console.error('Error guardando venta empleado en ventas_pos:', ventaPosError.message)
+    }
+
+    // Registrar en Centum async (no bloquea la respuesta)
+    const ventaPosId = ventaPos?.id || null
+    if (caja_id) {
+      (async () => {
+        try {
+          const { data: caja } = await supabase
+            .from('cajas')
+            .select('id, punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+            .eq('id', caja_id)
+            .single()
+
+          const puntoVenta = caja?.punto_venta_centum
+          const sucursalFisicaId = caja?.sucursales?.centum_sucursal_id
+
+          if (!puntoVenta || !sucursalFisicaId) {
+            const errorMsg = 'Sin config Centum para venta empleado'
+            if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: errorMsg }).eq('id', ventaPosId)
+            return
+          }
+
           const ventaLocal = {
             items: items.map(item => ({
               id_centum: item.id_centum,
@@ -204,38 +268,43 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             id_cliente_centum: null,
           }
 
-          const config = {
-            sucursalFisicaId: caja.sucursales.centum_sucursal_id,
-            puntoVenta: caja.punto_venta || 1,
-            centum_operador_prueba: caja.sucursales.operador_prueba,
-            centum_operador_empresa: caja.sucursales.operador_empresa,
-          }
+          const resultado = await registrarVentaPOSEnCentum(ventaLocal, {
+            sucursalFisicaId,
+            puntoVenta,
+            centum_operador_empresa: caja.sucursales.centum_operador_empresa,
+            centum_operador_prueba: caja.sucursales.centum_operador_prueba,
+          })
 
-          const resultado = await registrarVentaPOSEnCentum(ventaLocal, config)
           if (resultado) {
-            comprobanteCentum = resultado.NumeroComprobante || resultado.IdVenta || JSON.stringify(resultado).slice(0, 200)
+            const numDoc = resultado.NumeroDocumento
+            const comprobante = numDoc
+              ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+              : null
+
+            // Actualizar ventas_pos con datos de Centum
+            if (ventaPosId) {
+              await supabase.from('ventas_pos').update({
+                id_venta_centum: resultado.IdVenta || null,
+                centum_comprobante: comprobante,
+                centum_sync: true,
+                centum_error: null,
+              }).eq('id', ventaPosId)
+            }
+            // Actualizar ventas_empleados con comprobante
+            await supabase.from('ventas_empleados').update({
+              comprobante_centum: comprobante || resultado.IdVenta || null,
+            }).eq('id', venta.id)
+
+            console.log(`[Centum] Venta empleado ${venta.id} registrada: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+          } else {
+            if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: 'Sin resultado de Centum' }).eq('id', ventaPosId)
           }
+        } catch (centumErr) {
+          console.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
+          if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: centumErr.message }).eq('id', ventaPosId).catch(() => {})
         }
-      }
-    } catch (centumErr) {
-      console.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
+      })()
     }
-
-    // Guardar en DB
-    const { data: venta, error: ventaError } = await supabase
-      .from('ventas_empleados')
-      .insert({
-        empleado_id: empleado.id,
-        sucursal_id: sucursal_id || null,
-        cajero_id: req.perfil.id,
-        items,
-        total,
-        comprobante_centum: comprobanteCentum,
-      })
-      .select('*')
-      .single()
-
-    if (ventaError) throw ventaError
 
     res.status(201).json({ ...venta, empleado })
   } catch (err) {
