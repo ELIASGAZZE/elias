@@ -224,7 +224,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         cajero_id: req.perfil.id,
         sucursal_id: sucursalDeCaja,
         caja_id: caja_id || null,
-        id_cliente_centum: null,
+        id_cliente_centum: 0,
         nombre_cliente: `Empleado: ${empleado.nombre}`,
         subtotal: total,
         descuento_total: 0,
