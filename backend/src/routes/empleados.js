@@ -33,13 +33,13 @@ router.get('/', verificarAuth, async (req, res) => {
 })
 
 // GET /api/empleados/por-codigo/:codigo
-// Busca empleado activo por código. Devuelve id + nombre + sucursal_id. 404 si no existe o inactivo.
+// Busca empleado activo por código. Devuelve id + nombre + sucursal_id + tope/consumido mes.
 router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
   try {
     const { codigo } = req.params
     const { data, error } = await supabase
       .from('empleados')
-      .select('id, nombre, sucursal_id')
+      .select('id, nombre, sucursal_id, tope_mensual')
       .eq('codigo', codigo)
       .eq('activo', true)
       .single()
@@ -48,7 +48,22 @@ router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Empleado no encontrado o inactivo' })
     }
 
-    res.json(data)
+    // Calcular consumido del mes actual
+    const ahora = new Date()
+    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString()
+    const finMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 23, 59, 59).toISOString()
+
+    const { data: ventasMes } = await supabase
+      .from('ventas_empleados')
+      .select('total')
+      .eq('empleado_id', data.id)
+      .gte('created_at', inicioMes)
+      .lte('created_at', finMes)
+
+    const consumido_mes = (ventasMes || []).reduce((s, v) => s + (v.total || 0), 0)
+    const disponible = data.tope_mensual != null ? Math.max(0, data.tope_mensual - consumido_mes) : null
+
+    res.json({ ...data, consumido_mes, disponible })
   } catch (err) {
     console.error('Error al buscar empleado por código:', err)
     res.status(500).json({ error: 'Error al buscar empleado' })

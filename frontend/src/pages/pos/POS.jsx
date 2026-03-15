@@ -1412,7 +1412,7 @@ const POS = () => {
       if (item) {
         const precio = item.precioOverride ?? item.articulo.precio ?? 0
         api.post('/api/pos/log-eliminacion', {
-          usuario_nombre: usuario?.nombre || 'Desconocido',
+          usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
           cierre_id: cierreActivo?.id || null,
           items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
         }).catch(err => console.error('Error registrando eliminación:', err))
@@ -1559,23 +1559,44 @@ const POS = () => {
   }, [])
 
   // Calcular totales — precio de Centum ya incluye IVA
-  const { subtotal, descuentoTotal, total, promosAplicadas } = useMemo(() => {
+  const { subtotal, subtotalSinDescEmpleado, descuentoTotal, descEmpleadoDetalle, descEmpleadoTotal, total, promosAplicadas } = useMemo(() => {
     let sub = 0
+    let subSinDesc = 0
+    const rubroMap = {}
+
     for (const item of carrito) {
-      const precioBase = item.precioOverride != null ? item.precioOverride : precioConDescEmpleado(item.articulo)
-      sub += precioBase * item.cantidad
+      const precioOriginal = item.precioOverride != null ? item.precioOverride : calcularPrecioConDescuentosBase(item.articulo)
+      const precioFinal = item.precioOverride != null ? item.precioOverride : precioConDescEmpleado(item.articulo)
+      sub += precioFinal * item.cantidad
+      subSinDesc += precioOriginal * item.cantidad
+
+      // Acumular descuento empleado por rubro
+      if (empleadoActivo && precioOriginal !== precioFinal) {
+        const rubroNombre = item.articulo.rubro?.nombre || 'Sin rubro'
+        const descItem = (precioOriginal - precioFinal) * item.cantidad
+        if (!rubroMap[rubroNombre]) {
+          rubroMap[rubroNombre] = { rubro: rubroNombre, porcentaje: descuentosEmpleado[rubroNombre] || 0, descuento: 0 }
+        }
+        rubroMap[rubroNombre].descuento += descItem
+      }
     }
+
+    const descEmpleado = Object.values(rubroMap)
+    const totalDescEmpleado = descEmpleado.reduce((s, d) => s + d.descuento, 0)
 
     const aplicadas = calcularPromocionesLocales(carrito, promociones)
     const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
     return {
       subtotal: sub,
+      subtotalSinDescEmpleado: subSinDesc,
       descuentoTotal: descTotal,
+      descEmpleadoDetalle: descEmpleado,
+      descEmpleadoTotal: totalDescEmpleado,
       total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
-  }, [carrito, promociones])
+  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado])
 
   function ejecutarCancelacion() {
     api.post('/api/auditoria/cancelacion', {
@@ -2356,7 +2377,7 @@ const POS = () => {
             <span className="text-violet-300">{terminalConfig?.sucursal_nombre}</span>
             <span className="bg-violet-700 text-violet-100 px-1.5 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
             <span className="text-violet-300">|</span>
-            <span className="text-violet-300">{usuario?.nombre}</span>
+            <span className="text-violet-200 font-medium">Cajero: {cierreActivo?.empleado?.nombre || usuario?.nombre}</span>
             {empleadoActivo ? (
               <button
                 onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]); }}
@@ -2366,7 +2387,13 @@ const POS = () => {
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
                 </svg>
-                {empleadoActivo.nombre} ✕
+                {empleadoActivo.nombre}
+                {empleadoActivo.disponible != null && (
+                  <span className="bg-orange-700 text-orange-100 text-[10px] px-1.5 py-0.5 rounded ml-1">
+                    Disp: {formatPrecio(empleadoActivo.disponible - total)}
+                  </span>
+                )}
+                ✕
               </button>
             ) : (
               <button
@@ -2781,7 +2808,14 @@ const POS = () => {
           {/* Banner modo empleado */}
           {empleadoActivo && (
             <div className="bg-orange-500 text-white px-3 py-1.5 flex items-center justify-between text-sm font-medium">
-              <span>Retiro empleado: {empleadoActivo.nombre}</span>
+              <div className="flex items-center gap-3">
+                <span>Retiro empleado: {empleadoActivo.nombre}</span>
+                {empleadoActivo.disponible != null && (
+                  <span className="bg-orange-700/60 text-orange-100 text-xs px-2 py-0.5 rounded">
+                    Disponible: {formatPrecio(Math.max(0, empleadoActivo.disponible - total))}
+                  </span>
+                )}
+              </div>
               <button onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]) }} className="text-orange-200 hover:text-white text-xs underline">
                 Cancelar
               </button>
@@ -2917,6 +2951,21 @@ const POS = () => {
               </div>
             )}
 
+            {/* Descuentos empleado por rubro */}
+            {descEmpleadoDetalle.length > 0 && (
+              <div className="px-3 py-2 space-y-1 border-t">
+                {descEmpleadoDetalle.map((d, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded px-2 py-1 text-xs text-orange-700">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                    </svg>
+                    <span className="flex-1 truncate">Desc. empleado {d.porcentaje}% — {d.rubro}</span>
+                    <span className="font-semibold">-{formatPrecio(d.descuento)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Gift cards en venta */}
             {giftCardsEnVenta.length > 0 && (
               <div className="px-3 py-2 space-y-1.5 border-t border-amber-200 bg-amber-50/50">
@@ -2949,11 +2998,17 @@ const POS = () => {
             <div className="space-y-0.5 text-sm">
               <div className="flex justify-between text-gray-600">
                 <span>Subtotal</span>
-                <span>{formatPrecio(subtotal)}</span>
+                <span>{formatPrecio(descEmpleadoTotal > 0 ? subtotalSinDescEmpleado : subtotal)}</span>
               </div>
+              {descEmpleadoTotal > 0 && (
+                <div className="flex justify-between text-orange-600">
+                  <span>Desc. empleado</span>
+                  <span>-{formatPrecio(descEmpleadoTotal)}</span>
+                </div>
+              )}
               {descuentoTotal > 0 && (
                 <div className="flex justify-between text-green-600">
-                  <span>Descuentos</span>
+                  <span>Promos</span>
                   <span>-{formatPrecio(descuentoTotal)}</span>
                 </div>
               )}
@@ -4715,6 +4770,7 @@ const POS = () => {
           descuentosEmpleado={descuentosEmpleado}
           precioConDescEmpleado={precioConDescEmpleado}
           terminalConfig={terminalConfig}
+          cajero={cierreActivo?.empleado ? { nombre: cierreActivo.empleado.nombre, id: cierreActivo.empleado.id } : usuario}
           onCerrar={() => setMostrarVentaEmpleado(false)}
           onEmpleadoSeleccionado={(emp, descs) => {
             setEmpleadoActivo(emp)

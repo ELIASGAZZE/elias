@@ -36,7 +36,7 @@ function imprimirHTML(html) {
   }, 100)
 }
 
-export function imprimirComprobantesEmpleado(empleado, items, total) {
+export function imprimirComprobantesEmpleado(empleado, items, total, cajeroNombre) {
   const ahora = new Date()
   const fecha = `${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`
 
@@ -47,6 +47,7 @@ export function imprimirComprobantesEmpleado(empleado, items, total) {
     html += '<div class="line-double"></div>'
     html += `<div style="font-size:20px">${escapeHtml(fecha)}</div>`
     html += `<div style="font-size:20px">Empleado: ${escapeHtml(empleado.nombre)} (${escapeHtml(empleado.codigo)})</div>`
+    if (cajeroNombre) html += `<div style="font-size:20px">Cajero: ${escapeHtml(cajeroNombre)}</div>`
     html += '<div class="line"></div>'
 
     items.forEach(item => {
@@ -65,6 +66,7 @@ export function imprimirComprobantesEmpleado(empleado, items, total) {
 
     if (tipo === 'firma') {
       html += '<div class="center" style="font-size:18px;margin-top:8px">Declaro haber retirado la mercaderia detallada en este comprobante.</div>'
+      if (cajeroNombre) html += `<div class="center" style="font-size:18px;margin-top:6px">Articulos registrados por cajero: <span class="bold">${escapeHtml(cajeroNombre)}</span></div>`
       html += '<div class="firma">Firma empleado: _______________</div>'
       html += '<div style="text-align:center;font-size:18px;margin-top:4px">Aclaracion: _______________</div>'
       html += '<div style="text-align:center;font-size:18px;margin-top:4px">DNI: _______________</div>'
@@ -85,7 +87,7 @@ export function imprimirComprobantesEmpleado(empleado, items, total) {
  * - mode='seleccionar': pide código de empleado para activar modo empleado (antes de agregar artículos)
  * - mode='confirmar': muestra resumen y pide confirmación (cuando el carrito tiene items)
  */
-const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, onCerrar, onEmpleadoSeleccionado, onExito, terminalConfig }) => {
+const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, onCerrar, onEmpleadoSeleccionado, onExito, terminalConfig, cajero }) => {
   const [codigoEmpleado, setCodigoEmpleado] = useState('')
   const [error, setError] = useState('')
   const [codigoConfirm, setCodigoConfirm] = useState('')
@@ -138,6 +140,11 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     }
     try {
       const { data } = await api.get(`/api/empleados/por-codigo/${codigoEmpleado.trim()}`)
+      // No permitir que el cajero se pase artículos a sí mismo
+      if (cajero && data.nombre && cajero.nombre && data.nombre.toLowerCase() === cajero.nombre.toLowerCase()) {
+        setError('No podés registrar un retiro para vos mismo')
+        return
+      }
       // Cargar descuentos
       const { data: descs } = await api.get('/api/cuenta-empleados/descuentos')
       const map = {}
@@ -150,8 +157,19 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
 
   const confirmarVenta = async () => {
     setError('')
-    if (codigoConfirm.trim() !== empleadoActivo?.codigo) {
-      setError('El código no coincide')
+    if (!codigoConfirm.trim()) {
+      setError('Ingresá tu código de empleado')
+      return
+    }
+    // Validar que el código ingresado corresponda al cajero actual
+    try {
+      const { data: empCajero } = await api.get(`/api/empleados/por-codigo/${encodeURIComponent(codigoConfirm.trim())}`)
+      if (empCajero.nombre?.toLowerCase() !== cajero?.nombre?.toLowerCase()) {
+        setError('El código no corresponde al cajero actual')
+        return
+      }
+    } catch {
+      setError('Código inválido')
       return
     }
 
@@ -165,7 +183,7 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
         caja_id: terminalConfig?.caja_id || null,
       })
 
-      imprimirComprobantesEmpleado(data.empleado || empleadoActivo, itemsResumen, totalFinal)
+      imprimirComprobantesEmpleado(data.empleado || empleadoActivo, itemsResumen, totalFinal, cajero?.nombre)
       onExito(data)
     } catch (err) {
       setError(err.response?.data?.error || 'Error al guardar la venta')
@@ -275,13 +293,13 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
         {paso === 'confirmar' && (
           <div className="p-4 space-y-4">
             <p className="text-sm text-gray-600">
-              Para confirmar el retiro de <strong>{formatPrecio(totalFinal)}</strong>, el empleado <strong>{empleadoActivo?.nombre}</strong> debe ingresar su código nuevamente.
+              Para confirmar el retiro de <strong>{formatPrecio(totalFinal)}</strong> para <strong>{empleadoActivo?.nombre}</strong>, ingresá tu código de empleado.
             </p>
             <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Código empleado (confirmación)</label>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Código del cajero</label>
               <input
                 ref={inputConfirmRef}
-                type="password"
+                type="text"
                 value={codigoConfirm}
                 onChange={e => setCodigoConfirm(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && confirmarVenta()}
