@@ -375,7 +375,7 @@ router.post('/', verificarAuth, async (req, res) => {
 })
 
 // PUT /api/clientes/contacto/:idCentum
-// Actualizar email/celular del cliente (local + Centum contacto envío comprobantes)
+// Actualizar email/celular del cliente (solo local)
 router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
   const idCentum = parseInt(req.params.idCentum)
   const { email, celular } = req.body
@@ -385,7 +385,6 @@ router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
   }
 
   try {
-    // Actualizar localmente
     const updates = {}
     if (email !== undefined) updates.email = email?.trim() || null
     if (celular !== undefined) updates.celular = celular?.trim() || null
@@ -397,18 +396,7 @@ router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
         .eq('id_centum', idCentum)
     }
 
-    // Actualizar en Centum (contacto envío comprobantes)
-    let warningCentum = null
-    try {
-      await agregarContactoEnvioCentum(idCentum, { email: email?.trim(), celular: celular?.trim() })
-    } catch (err) {
-      console.error('Error actualizando contacto en Centum:', err.message)
-      warningCentum = err.message
-    }
-
-    const respuesta = { ok: true, email: email?.trim() || null, celular: celular?.trim() || null }
-    if (warningCentum) respuesta.warning_centum = warningCentum
-    res.json(respuesta)
+    res.json({ ok: true, email: email?.trim() || null, celular: celular?.trim() || null })
   } catch (err) {
     console.error('Error al actualizar contacto:', err)
     res.status(500).json({ error: 'Error al actualizar contacto' })

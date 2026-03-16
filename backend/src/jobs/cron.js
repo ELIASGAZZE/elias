@@ -4,6 +4,7 @@ const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum } = require('../services/centumClientes')
 const { analizarBatch } = require('../services/patronesIA')
+const { registrarLlamada } = require('../services/apiLogger')
 
 function iniciarCronJobs() {
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
@@ -74,11 +75,22 @@ function iniciarCronJobs() {
     const fechaAyer = ayer.toISOString().split('T')[0]
     console.log(`[CRON ${new Date().toISOString()}] Iniciando análisis batch para ${fechaAyer}...`)
 
+    const inicioBatch = Date.now()
     try {
       const resultado = await analizarBatch(fechaAyer)
       console.log(`[CRON] Batch completado: ${resultado.total} cierres, ${resultado.con_diferencia} con diferencia, puntaje promedio: ${resultado.puntaje_promedio || 'N/A'}`)
+      registrarLlamada({
+        servicio: 'batch_ia', endpoint: `analizarBatch(${fechaAyer})`, metodo: 'BATCH',
+        estado: 'ok', duracion_ms: Date.now() - inicioBatch,
+        items_procesados: resultado.total, origen: 'cron',
+      })
     } catch (err) {
       console.error('[CRON] Error en análisis batch:', err.message)
+      registrarLlamada({
+        servicio: 'batch_ia', endpoint: `analizarBatch(${fechaAyer})`, metodo: 'BATCH',
+        estado: 'error', duracion_ms: Date.now() - inicioBatch,
+        error_mensaje: err.message, origen: 'cron',
+      })
     }
   })
 
