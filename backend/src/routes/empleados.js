@@ -9,7 +9,7 @@ const { verificarAuth, soloAdmin } = require('../middleware/auth')
 // Por defecto solo activo=true, salvo que se envíe ?todas=true
 router.get('/', verificarAuth, async (req, res) => {
   try {
-    const { sucursal_id, todas } = req.query
+    const { sucursal_id, todas, empresa } = req.query
     const { rol, sucursal_id: perfilSucursalId } = req.perfil
 
     let query = supabase
@@ -20,6 +20,11 @@ router.get('/', verificarAuth, async (req, res) => {
     // Filtro por activo: por defecto solo activos
     if (todas !== 'true') {
       query = query.eq('activo', true)
+    }
+
+    // Filtro por empresa
+    if (empresa) {
+      query = query.eq('empresa', empresa)
     }
 
     const { data, error } = await query
@@ -74,7 +79,7 @@ router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
 // Admin: crea un nuevo empleado
 router.post('/', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { nombre, sucursal_id, codigo, fecha_cumpleanos } = req.body
+    const { nombre, sucursal_id, codigo, fecha_cumpleanos, empresa } = req.body
 
     if (!nombre || !nombre.trim()) {
       return res.status(400).json({ error: 'El nombre del empleado es requerido' })
@@ -86,6 +91,7 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 
     const insert = { nombre: nombre.trim(), codigo: codigo.trim() }
     if (sucursal_id) insert.sucursal_id = sucursal_id
+    if (empresa) insert.empresa = empresa
     if (fecha_cumpleanos !== undefined) insert.fecha_cumpleanos = fecha_cumpleanos || null
 
     const { data, error } = await supabase
@@ -112,13 +118,14 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, sucursal_id, activo, codigo, fecha_cumpleanos } = req.body
+    const { nombre, sucursal_id, activo, codigo, fecha_cumpleanos, empresa } = req.body
 
     const updates = {}
     if (nombre !== undefined) updates.nombre = nombre.trim()
     if (sucursal_id !== undefined) updates.sucursal_id = sucursal_id
     if (activo !== undefined) updates.activo = activo
     if (codigo !== undefined) updates.codigo = codigo.trim()
+    if (empresa !== undefined) updates.empresa = empresa
     if (fecha_cumpleanos !== undefined) updates.fecha_cumpleanos = fecha_cumpleanos || null
 
     if (Object.keys(updates).length === 0) {

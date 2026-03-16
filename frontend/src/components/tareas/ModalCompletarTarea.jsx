@@ -23,8 +23,8 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    // Cargar todos los empleados activos
-    api.get('/api/empleados')
+    // Cargar empleados activos de empresa zaatar (módulo tareas)
+    api.get('/api/empleados?empresa=zaatar')
       .then(r => setEmpleados(r.data))
       .catch(() => {})
 
