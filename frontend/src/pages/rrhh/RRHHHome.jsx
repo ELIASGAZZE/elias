@@ -23,11 +23,11 @@ const TABS = [
 const TabEmpleados = () => {
   const [empleados, setEmpleados] = useState([])
   const [cargando, setCargando] = useState(true)
-  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', codigo: '' })
+  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', codigo: '', empresa: 'zaatar' })
   const [creando, setCreando] = useState(false)
   const [mensaje, setMensaje] = useState('')
   const [editandoId, setEditandoId] = useState(null)
-  const [editandoData, setEditandoData] = useState({ nombre: '', codigo: '' })
+  const [editandoData, setEditandoData] = useState({ nombre: '', codigo: '', empresa: '' })
   const [mostrarForm, setMostrarForm] = useState(false)
 
   useEffect(() => { cargarEmpleados() }, [])
@@ -50,9 +50,9 @@ const TabEmpleados = () => {
     setCreando(true)
     setMensaje('')
     try {
-      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim() })
+      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim(), empresa: nuevoEmpleado.empresa })
       setMensaje('ok:Empleado creado')
-      setNuevoEmpleado({ nombre: '', codigo: '' })
+      setNuevoEmpleado({ nombre: '', codigo: '', empresa: 'zaatar' })
       setMostrarForm(false)
       await cargarEmpleados()
       setTimeout(() => setMensaje(''), 3000)
@@ -65,13 +65,13 @@ const TabEmpleados = () => {
 
   const iniciarEdicion = (emp) => {
     setEditandoId(emp.id)
-    setEditandoData({ nombre: emp.nombre, codigo: emp.codigo || '' })
+    setEditandoData({ nombre: emp.nombre, codigo: emp.codigo || '', empresa: emp.empresa || 'zaatar' })
   }
 
   const guardarEdicion = async (id) => {
     if (!editandoData.nombre.trim()) return
     try {
-      await api.put(`/api/empleados/${id}`, { nombre: editandoData.nombre.trim(), codigo: editandoData.codigo.trim() })
+      await api.put(`/api/empleados/${id}`, { nombre: editandoData.nombre.trim(), codigo: editandoData.codigo.trim(), empresa: editandoData.empresa })
       setEditandoId(null)
       await cargarEmpleados()
     } catch (err) {
@@ -137,6 +137,15 @@ const TabEmpleados = () => {
             placeholder="Código único"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-cyan-400 outline-none"
           />
+          <select
+            value={nuevoEmpleado.empresa}
+            onChange={e => setNuevoEmpleado(prev => ({ ...prev, empresa: e.target.value }))}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-cyan-400 outline-none"
+          >
+            <option value="zaatar">Zaatar</option>
+            <option value="padano">Padano</option>
+            <option value="produccion">Producción</option>
+          </select>
           <div className="flex items-center gap-2">
             <button type="submit" disabled={creando} className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg">
               {creando ? 'Creando...' : 'Crear'}
@@ -189,6 +198,15 @@ const TabEmpleados = () => {
                     placeholder="Código"
                     className="w-28 border border-gray-200 rounded-lg px-2 py-1 text-sm focus:border-cyan-400 outline-none"
                   />
+                  <select
+                    value={editandoData.empresa}
+                    onChange={e => setEditandoData(prev => ({ ...prev, empresa: e.target.value }))}
+                    className="w-28 border border-gray-200 rounded-lg px-2 py-1 text-sm focus:border-cyan-400 outline-none"
+                  >
+                    <option value="zaatar">Zaatar</option>
+                    <option value="padano">Padano</option>
+                    <option value="produccion">Producción</option>
+                  </select>
                   <button onClick={() => guardarEdicion(emp.id)} className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg">OK</button>
                   <button onClick={() => setEditandoId(null)} className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg">X</button>
                 </div>
@@ -198,6 +216,15 @@ const TabEmpleados = () => {
                     <p className="text-sm font-medium text-gray-800 truncate">
                       {emp.nombre}
                       {emp.codigo && <span className="text-xs text-gray-400 ml-2">[{emp.codigo}]</span>}
+                      {emp.empresa && (
+                        <span className={`text-xs ml-2 px-1.5 py-0.5 rounded-full ${
+                          emp.empresa === 'zaatar' ? 'bg-orange-100 text-orange-700' :
+                          emp.empresa === 'padano' ? 'bg-blue-100 text-blue-700' :
+                          'bg-purple-100 text-purple-700'
+                        }`}>
+                          {emp.empresa === 'produccion' ? 'Producción' : emp.empresa.charAt(0).toUpperCase() + emp.empresa.slice(1)}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">

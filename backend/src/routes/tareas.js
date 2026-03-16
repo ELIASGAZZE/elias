@@ -963,11 +963,12 @@ router.get('/ranking', verificarAuth, async (req, res) => {
 
     if (errEj) throw errEj
 
-    // Traer empleados activos con fecha de cumpleaños
+    // Traer empleados activos de empresa zaatar con fecha de cumpleaños
     const { data: empleados, error: errEmp } = await supabase
       .from('empleados')
       .select('id, nombre, fecha_cumpleanos')
       .eq('activo', true)
+      .eq('empresa', 'zaatar')
       .order('nombre')
 
     if (errEmp) throw errEmp
