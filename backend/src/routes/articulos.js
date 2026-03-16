@@ -2,7 +2,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
-const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP, sincronizarStock, generateAccessToken } = require('../services/syncERP')
 
 // GET /api/articulos
@@ -31,8 +31,8 @@ router.get('/', verificarAuth, async (req, res) => {
       return res.json(articulosHabilitados)
     }
 
-    // Path admin: todos los artículos con estado por sucursal
-    if (req.perfil.rol !== 'admin') {
+    // Path admin/gestor: todos los artículos con estado por sucursal
+    if (!['admin', 'gestor'].includes(req.perfil.rol)) {
       return res.status(400).json({ error: 'Se requiere sucursal_id' })
     }
 
@@ -211,7 +211,7 @@ router.get('/erp', verificarAuth, async (req, res) => {
 
 // GET /api/articulos/sucursal/:sucursalId
 // Admin: ver artículos con su estado para una sucursal específica
-router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { sucursalId } = req.params
 
@@ -238,7 +238,7 @@ router.get('/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) =
 
 // PUT /api/articulos/:articuloId/sucursal/:sucursalId
 // Admin: habilitar/deshabilitar un artículo y/o actualizar stock_ideal
-router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { articuloId, sucursalId } = req.params
     const { habilitado, stock_ideal } = req.body
@@ -298,7 +298,7 @@ router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, async
 
 // PUT /api/articulos/:id
 // Admin: edita nombre y/o rubro de un artículo manual
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, rubro } = req.body
@@ -343,7 +343,7 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
 // POST /api/articulos
 // Admin: crea un artículo individual (manual) con código autogenerado
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { nombre, rubro } = req.body
 
