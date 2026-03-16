@@ -23,10 +23,15 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    // Cargar empleados activos de empresa zaatar (módulo tareas)
-    api.get('/api/empleados?empresa=zaatar')
+    // Cargar empleados con recomendación (días desde última ejecución de esta tarea)
+    api.get(`/api/tareas/recomendacion/${tarea.tarea_config_id}`)
       .then(r => setEmpleados(r.data))
-      .catch(() => {})
+      .catch(() => {
+        // Fallback: cargar empleados sin recomendación
+        api.get('/api/empleados?empresa=zaatar')
+          .then(r => setEmpleados(r.data))
+          .catch(() => {})
+      })
 
     // Inicializar subtareas todas desmarcadas
     if (tarea.subtareas) {
@@ -119,21 +124,52 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
                 </svg>
               </button>
               {dropdownOpen && (
-                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                  {empleados.map(emp => (
-                    <label
-                      key={emp.id}
-                      className="flex items-center gap-2 px-3 py-2 hover:bg-orange-50 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={empleadosSeleccionados.includes(emp.id)}
-                        onChange={() => toggleEmpleado(emp.id)}
-                        className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-                      />
-                      <span className="text-sm text-gray-700">{emp.nombre}</span>
-                    </label>
-                  ))}
+                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {empleados.length > 0 && empleados[0].dias_desde !== undefined && (
+                    <div className="px-3 py-1.5 bg-orange-50 border-b border-orange-100">
+                      <p className="text-xs text-orange-600 font-medium flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                        </svg>
+                        Recomendado: quien hace más tiempo no la realiza
+                      </p>
+                    </div>
+                  )}
+                  {empleados.map((emp, idx) => {
+                    const esRecomendado = idx === 0 && emp.dias_desde !== undefined
+                    return (
+                      <label
+                        key={emp.id}
+                        className={`flex items-center gap-2 px-3 py-2 cursor-pointer ${
+                          esRecomendado ? 'bg-orange-50 hover:bg-orange-100' : 'hover:bg-orange-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={empleadosSeleccionados.includes(emp.id)}
+                          onChange={() => toggleEmpleado(emp.id)}
+                          className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                        />
+                        <span className={`text-sm flex-1 ${esRecomendado ? 'text-orange-700 font-medium' : 'text-gray-700'}`}>
+                          {emp.nombre}
+                          {esRecomendado && ' ★'}
+                        </span>
+                        {emp.dias_desde !== undefined && (
+                          <span className={`text-xs whitespace-nowrap ${
+                            emp.dias_desde === null ? 'text-red-500 font-medium' :
+                            emp.dias_desde === 0 ? 'text-green-500' :
+                            emp.dias_desde >= 7 ? 'text-red-500 font-medium' :
+                            'text-gray-400'
+                          }`}>
+                            {emp.dias_desde === null ? 'Nunca' :
+                             emp.dias_desde === 0 ? 'Hoy' :
+                             emp.dias_desde === 1 ? 'Hace 1 día' :
+                             `Hace ${emp.dias_desde} días`}
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
                   {empleados.length === 0 && (
                     <p className="text-sm text-gray-400 px-3 py-2">No hay empleados cargados</p>
                   )}

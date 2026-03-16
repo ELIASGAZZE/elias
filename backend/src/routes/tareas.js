@@ -453,6 +453,95 @@ router.get('/pendientes', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/tareas/recomendacion/:tarea_config_id — Días desde última ejecución por empleado
+router.get('/recomendacion/:tarea_config_id', verificarAuth, async (req, res) => {
+  try {
+    const { tarea_config_id } = req.params
+
+    // Traer empleados activos de empresa zaatar
+    const { data: empleados, error: errEmp } = await supabase
+      .from('empleados')
+      .select('id, nombre')
+      .eq('activo', true)
+      .eq('empresa', 'zaatar')
+      .order('nombre')
+
+    if (errEmp) throw errEmp
+
+    // Traer todas las ejecuciones de esta tarea con sus empleados
+    const { data: ejecuciones, error: errExec } = await supabase
+      .from('ejecuciones_tarea')
+      .select('id, fecha_ejecucion')
+      .eq('tarea_config_id', tarea_config_id)
+      .order('fecha_ejecucion', { ascending: false })
+
+    if (errExec) throw errExec
+
+    const hoy = new Date()
+    hoy.setHours(0, 0, 0, 0)
+
+    if (!ejecuciones || ejecuciones.length === 0) {
+      // Nunca ejecutada: todos los empleados con dias_desde = null
+      return res.json(empleados.map(e => ({
+        ...e,
+        dias_desde: null,
+        ultima_fecha: null,
+      })))
+    }
+
+    // Traer relación ejecución-empleado
+    const execIds = ejecuciones.map(e => e.id)
+    const { data: relaciones, error: errRel } = await supabase
+      .from('ejecuciones_empleados')
+      .select('ejecucion_id, empleado_id')
+      .in('ejecucion_id', execIds)
+
+    if (errRel) throw errRel
+
+    // Mapear última fecha de ejecución por empleado
+    const execFechaMap = {}
+    for (const e of ejecuciones) {
+      execFechaMap[e.id] = e.fecha_ejecucion
+    }
+
+    const ultimaFechaPorEmpleado = {}
+    for (const rel of (relaciones || [])) {
+      const fecha = execFechaMap[rel.ejecucion_id]
+      if (!ultimaFechaPorEmpleado[rel.empleado_id] || fecha > ultimaFechaPorEmpleado[rel.empleado_id]) {
+        ultimaFechaPorEmpleado[rel.empleado_id] = fecha
+      }
+    }
+
+    const resultado = empleados.map(emp => {
+      const ultimaFecha = ultimaFechaPorEmpleado[emp.id] || null
+      let dias_desde = null
+      if (ultimaFecha) {
+        const f = new Date(ultimaFecha)
+        f.setHours(0, 0, 0, 0)
+        dias_desde = Math.floor((hoy - f) / (1000 * 60 * 60 * 24))
+      }
+      return {
+        ...emp,
+        dias_desde,
+        ultima_fecha: ultimaFecha,
+      }
+    })
+
+    // Ordenar: nunca hicieron primero, luego por más días sin hacer
+    resultado.sort((a, b) => {
+      if (a.dias_desde === null && b.dias_desde === null) return a.nombre.localeCompare(b.nombre)
+      if (a.dias_desde === null) return -1
+      if (b.dias_desde === null) return 1
+      return b.dias_desde - a.dias_desde
+    })
+
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error al obtener recomendación:', err)
+    res.status(500).json({ error: 'Error al obtener recomendación' })
+  }
+})
+
 // POST /api/tareas/ejecutar — Completar tarea
 router.post('/ejecutar', verificarAuth, async (req, res) => {
   try {
