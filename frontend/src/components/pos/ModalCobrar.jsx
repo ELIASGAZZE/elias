@@ -59,6 +59,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [mpRefundingIdx, setMpRefundingIdx] = useState(null) // índice del pago que se está anulando
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
+  const mpPollingBusyRef = useRef(false)
   const cobrarRootRef = useRef(null)
 
   // Cleanup polling + timeout on unmount, y cancelar orden si hay una pendiente
@@ -194,12 +195,21 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMpMontoIntent(montoACobrar)
       setMpEstado('esperando')
 
-      // Polling estado de la orden cada 3 segundos
+      // Timeout: si el posnet no responde en 90 segundos, cancelar
+      mpTimeoutRef.current = setTimeout(() => {
+        if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+        mpTimeoutRef.current = null
+        setMpEstado('error')
+        setMpError('Tiempo agotado esperando respuesta del posnet. Verificá el estado del pago antes de reintentar.')
+      }, 90000)
+
+      // Polling estado de la orden cada 3 segundos (con guard anti-overlap)
       mpPollingRef.current = setInterval(async () => {
+        if (mpPollingBusyRef.current) return
+        mpPollingBusyRef.current = true
         try {
           const { data: order } = await api.get(`/api/mp-point/order/${data.id}`)
           const state = order.status
-          console.log('[MP Point] Polling:', state, JSON.stringify(order.transactions?.payments?.map(p => ({ status: p.status, detail: p.status_detail }))))
 
           if (state === 'processing') {
             setMpEstado('procesando')
@@ -271,6 +281,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           }
         } catch (err) {
           console.error('[MP Point] Error polling:', err.message)
+        } finally {
+          mpPollingBusyRef.current = false
         }
       }, 3000)
     } catch (err) {
@@ -482,8 +494,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setGiftCardsAplicadas(prev => prev.filter(g => g.codigo !== codigo))
   }
 
+  const submittingRef = useRef(false)
+
   async function confirmarVenta() {
-    if (!montoSuficiente) return
+    if (!montoSuficiente || submittingRef.current) return
+    submittingRef.current = true
     setGuardando(true)
     setError('')
 
@@ -586,6 +601,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       }
     } finally {
       setGuardando(false)
+      submittingRef.current = false
     }
   }
 
