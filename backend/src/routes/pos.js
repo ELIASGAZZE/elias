@@ -717,12 +717,17 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
       return res.json({ cae: null, cae_vencimiento: null, comprobante: venta.centum_comprobante, mensaje: 'Venta no registrada en Centum' })
     }
 
-    // Determinar clasificación: PRUEBA (division 2) no tiene CAE (factura manual)
-    // Solo EMPRESA (division 3) tiene factura electrónica con CAE de AFIP
+    // Obtener datos del cliente para determinar tipo factura y para el comprobante
+    let cliente = null
     let condIva = 'CF'
-    if (venta.id_cliente_centum) {
-      const { data: cli } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', venta.id_cliente_centum).single()
-      condIva = cli?.condicion_iva || 'CF'
+    if (venta.id_cliente_centum && venta.id_cliente_centum > 0) {
+      const { data: cli } = await supabase.from('clientes')
+        .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo')
+        .eq('id_centum', venta.id_cliente_centum).single()
+      if (cli) {
+        condIva = cli.condicion_iva || 'CF'
+        cliente = cli
+      }
     }
     const esFacturaA = condIva === 'RI' || condIva === 'MT'
     const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
@@ -730,8 +735,10 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
     const esPrueba = !esFacturaA && soloEfectivo
 
+    const baseResponse = { comprobante: venta.centum_comprobante, esFacturaA, cliente }
+
     if (esPrueba) {
-      return res.json({ cae: null, cae_vencimiento: null, comprobante: venta.centum_comprobante, mensaje: 'Factura manual (División Prueba) - sin CAE' })
+      return res.json({ ...baseResponse, cae: null, cae_vencimiento: null, mensaje: 'Factura manual (División Prueba) - sin CAE' })
     }
 
     // Consultar Centum REST API para obtener CAE (solo funciona para factura electrónica / div 3)
@@ -740,7 +747,7 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
     const cae = centumData.CAE || null
     const caeVto = centumData.FechaVencimientoCAE || null
 
-    res.json({ cae, cae_vencimiento: caeVto, comprobante: venta.centum_comprobante })
+    res.json({ ...baseResponse, cae, cae_vencimiento: caeVto })
   } catch (err) {
     console.error('[POS] Error al obtener CAE:', err.message)
     res.status(500).json({ error: 'Error al obtener CAE: ' + err.message })

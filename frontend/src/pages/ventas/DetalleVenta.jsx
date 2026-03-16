@@ -34,45 +34,59 @@ async function imprimirComprobanteVenta(venta, caeData) {
   const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
   const pagos = venta.pagos || []
   const esNC = venta.tipo === 'nota_credito'
-  const tipoDoc = esNC ? 'Nota de Crédito' : 'Factura'
-  const letraDoc = 'B'
-  const codigoDoc = esNC ? '08' : '06'
+  const esFacturaA = caeData?.esFacturaA || false
+  const cliente = caeData?.cliente || null
 
-  // Número de comprobante
+  // Tipo documento y letra
+  const letraDoc = esFacturaA ? 'A' : 'B'
+  const tipoDoc = esNC ? 'Nota de Crédito' : 'Factura'
+  // Código AFIP: A=01, B=06, NC-A=03, NC-B=08
+  const codigoDoc = esNC ? (esFacturaA ? '03' : '08') : (esFacturaA ? '01' : '06')
+
+  // Número de comprobante: "A PV19-3" → "A00019-00000003"
   const numero = venta.centum_comprobante
-    ? venta.centum_comprobante.replace(/^[A-Z]\s*/, '') // "B PV19-1213" -> "PV19-1213"
+    ? venta.centum_comprobante.replace(/^[A-Z]\s*/, '')
     : `INT-${String(venta.numero_venta || '0').padStart(8, '0')}`
 
-  // Fecha formateada DD/MM/YYYY
   const fechaObj = new Date(venta.created_at)
   const fechaStr = fechaObj.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
-  // IVA contenido (21% incluido en precio para factura B)
   const totalNum = parseFloat(venta.total) || 0
-  const ivaContenido = (totalNum / 1.21 * 0.21).toFixed(2)
+
+  // Factura A: precios NETO (sin IVA), IVA discriminado
+  // Factura B: precios con IVA incluido, IVA contenido informativo
+  const netoTotal = Math.round(totalNum / 1.21 * 100) / 100
+  const ivaTotal = Math.round((totalNum - netoTotal) * 100) / 100
 
   // Items tabla
   let filasItems = ''
   items.forEach(item => {
-    const precio = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
+    const precioConIva = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
     const cant = parseFloat(item.cantidad || 1)
-    const sub = precio * cant
+    const ivaTasa = parseFloat(item.iva_tasa || item.ivaTasa || 21)
+    // Factura A: precio neto (sin IVA). Factura B: precio final (con IVA)
+    const precioMostrar = esFacturaA ? Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100 : precioConIva
+    const sub = Math.round(precioMostrar * cant * 100) / 100
     filasItems += `<tr>
       <td class="td">${escapeHtml(item.codigo || '')}</td>
       <td class="td" style="text-align:center">${cant.toFixed(2)}</td>
       <td class="td">${escapeHtml(item.nombre)}</td>
-      <td class="td" style="text-align:right">${formatPrecio(precio)}</td>
+      <td class="td" style="text-align:right">${formatPrecio(precioMostrar)}</td>
       <td class="td" style="text-align:right">${formatPrecio(sub)}</td>
     </tr>`
   })
 
-  // Forma de pago
   const formaPago = pagos.map(p => MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean).join(', ') || 'Cuenta Corriente'
 
   // CAE info
   const cae = caeData?.cae || null
   const caeVto = caeData?.cae_vencimiento || null
   const caeVtoStr = caeVto ? new Date(caeVto).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
+
+  // Condición IVA del cliente
+  const COND_IVA_LABELS = { RI: 'Responsable Inscripto', MT: 'Monotributista', CF: 'Consumidor Final', EX: 'Exento' }
+  const condIvaCliente = cliente?.condicion_iva ? (COND_IVA_LABELS[cliente.condicion_iva] || cliente.condicion_iva) : 'Consumidor Final'
+  const direccionCliente = cliente ? [cliente.direccion, cliente.localidad, cliente.codigo_postal].filter(Boolean).join(' - ') : ''
 
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
@@ -82,7 +96,6 @@ async function imprimirComprobanteVenta(venta, caeData) {
 
   .page { border: 1px solid #000; padding: 0; }
 
-  /* === HEADER === */
   .hdr { display: flex; border-bottom: 2px solid #000; }
   .hdr-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
   .hdr-letra { width: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid #000; padding: 6px; }
@@ -98,18 +111,15 @@ async function imprimirComprobanteVenta(venta, caeData) {
   .fiscal-data { font-size: 10px; margin-top: 8px; color: #333; line-height: 1.5; }
   .fiscal-data span { display: inline-block; width: 130px; }
 
-  /* === CLIENTE === */
   .cliente { border-bottom: 1px solid #000; padding: 8px 14px; font-size: 11px; line-height: 1.6; }
   .cliente-row { display: flex; gap: 20px; }
-  .cliente-row .lbl { color: #555; min-width: 100px; }
+  .cliente-row .lbl { color: #555; min-width: 110px; }
 
-  /* === ITEMS === */
   .items { padding: 0; }
   .items table { width: 100%; border-collapse: collapse; }
   .items th { background: #eee; padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; border-bottom: 1px solid #000; border-top: 1px solid #000; }
   .td { padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 11px; }
 
-  /* === FOOTER ZONA === */
   .footer-zone { display: flex; border-top: 2px solid #000; }
   .footer-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
   .footer-right { width: 240px; padding: 10px 14px; }
@@ -117,7 +127,6 @@ async function imprimirComprobanteVenta(venta, caeData) {
   .totales-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
   .totales-row.total { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 4px; }
 
-  /* === CAE + TRANSPARENCIA === */
   .cae-zone { border-top: 1px solid #000; padding: 8px 14px; display: flex; justify-content: space-between; align-items: flex-start; }
   .cae-left { font-size: 10px; }
   .cae-right { text-align: right; font-size: 10px; }
@@ -125,7 +134,6 @@ async function imprimirComprobanteVenta(venta, caeData) {
 </style></head><body>
 
 <div class="page">
-  <!-- HEADER -->
   <div class="hdr">
     <div class="hdr-left">
       <div class="empresa-nombre">Comercial Padano SRL</div>
@@ -149,19 +157,23 @@ async function imprimirComprobanteVenta(venta, caeData) {
     </div>
   </div>
 
-  <!-- CLIENTE -->
   <div class="cliente">
     <div class="cliente-row">
       <div><span class="lbl">Razon Social:</span> <strong>${escapeHtml(venta.nombre_cliente || 'CONSUMIDOR FINAL')}</strong></div>
-      <div><span class="lbl">Condicion IVA:</span> Consumidor Final</div>
+      ${cliente?.cuit ? `<div><span class="lbl">CUIT:</span> ${escapeHtml(cliente.cuit)}</div>` : ''}
     </div>
+    ${direccionCliente ? `<div class="cliente-row">
+      <div><span class="lbl">Direccion:</span> ${escapeHtml(direccionCliente)}</div>
+      <div><span class="lbl">Condicion IVA:</span> ${escapeHtml(condIvaCliente)}</div>
+    </div>` : `<div class="cliente-row">
+      <div><span class="lbl">Condicion IVA:</span> ${escapeHtml(condIvaCliente)}</div>
+    </div>`}
     <div class="cliente-row">
       <div><span class="lbl">Condicion Venta:</span> CONTADO</div>
       <div><span class="lbl">Moneda:</span> Peso Argentino</div>
     </div>
   </div>
 
-  <!-- ITEMS -->
   <div class="items">
     <table>
       <thead>
@@ -179,7 +191,6 @@ async function imprimirComprobanteVenta(venta, caeData) {
     </table>
   </div>
 
-  <!-- FOOTER: FIRMA + TOTALES -->
   <div class="footer-zone">
     <div class="footer-left">
       <div style="font-size:10px;color:#555;margin-bottom:10px">RECIBI CONFORME</div>
@@ -189,27 +200,35 @@ async function imprimirComprobanteVenta(venta, caeData) {
       <div class="firma-line">Forma de Pago: ${escapeHtml(formaPago)}</div>
     </div>
     <div class="footer-right">
-      <div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(venta.subtotal || venta.total)}</span></div>
-      ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatPrecio(venta.descuento_total)}</span></div>` : ''}
-      <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
-      <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
-      <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(venta.total)}</span></div>
+      ${esFacturaA
+        ? `<div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(netoTotal)}</span></div>
+           ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatPrecio(venta.descuento_total)}</span></div>` : ''}
+           <div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(netoTotal)}</span></div>
+           <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
+           <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
+           <div class="totales-row"><span>IVA:</span><span>${formatPrecio(ivaTotal)}</span></div>
+           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>`
+        : `<div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(venta.subtotal || venta.total)}</span></div>
+           ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatPrecio(venta.descuento_total)}</span></div>` : ''}
+           <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
+           <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
+           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>`
+      }
     </div>
   </div>
 
-  <!-- CAE + TRANSPARENCIA FISCAL -->
   <div class="cae-zone">
     <div class="cae-left">
       ${cae
-        ? `<div><strong>CAE N°:</strong> ${escapeHtml(cae)}</div>
-           <div><strong>Fecha Vto CAE:</strong> ${escapeHtml(caeVtoStr)}</div>`
+        ? `<div><strong>CAE:</strong> ${escapeHtml(cae)}</div>
+           <div style="margin-top:2px">${escapeHtml(caeVtoStr)}</div>`
         : `<div style="margin-bottom:6px">Gracias por su compra</div>`
       }
-      <div class="transparencia">
+      ${!esFacturaA ? `<div class="transparencia">
         <div><strong>Regimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong></div>
-        <div>IVA Contenido: $ ${ivaContenido}</div>
+        <div>IVA Contenido: ${formatPrecio(netoTotal * 0.21)}</div>
         <div>Otros Impuestos Nacionales Indirectos</div>
-      </div>
+      </div>` : ''}
     </div>
     <div class="cae-right">
       ${cae
