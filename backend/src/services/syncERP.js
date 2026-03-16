@@ -32,7 +32,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
   const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
   const apiKey = process.env.CENTUM_API_KEY
   const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
-  const clientId = process.env.CENTUM_CLIENT_ID || '2'
+  const clientId = parseInt(process.env.CENTUM_CLIENT_ID) || 2
 
   if (!apiKey) {
     throw new Error('Falta CENTUM_API_KEY en las variables de entorno')
