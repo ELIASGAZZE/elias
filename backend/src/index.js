@@ -49,7 +49,7 @@ app.use(helmet())
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL_2,
-  'http://localhost:5173',
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173'] : []),
 ].filter(Boolean)
 
 app.use(cors({

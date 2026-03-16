@@ -91,7 +91,7 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 
     const insert = { nombre: nombre.trim(), codigo: codigo.trim() }
     if (sucursal_id) insert.sucursal_id = sucursal_id
-    if (empresa) insert.empresa = empresa
+    if (empresa) insert.empresa = empresa.toLowerCase()
     if (fecha_cumpleanos !== undefined) insert.fecha_cumpleanos = fecha_cumpleanos || null
 
     const { data, error } = await supabase
@@ -125,7 +125,7 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (sucursal_id !== undefined) updates.sucursal_id = sucursal_id
     if (activo !== undefined) updates.activo = activo
     if (codigo !== undefined) updates.codigo = codigo.trim()
-    if (empresa !== undefined) updates.empresa = empresa
+    if (empresa !== undefined) updates.empresa = empresa.toLowerCase()
     if (fecha_cumpleanos !== undefined) updates.fecha_cumpleanos = fecha_cumpleanos || null
 
     if (Object.keys(updates).length === 0) {

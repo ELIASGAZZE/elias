@@ -52,8 +52,8 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
   }
 })
 
-// GET /api/mp-point/devices — listar dispositivos (sin auth para config terminal)
-router.get('/devices', async (req, res) => {
+// GET /api/mp-point/devices — listar dispositivos
+router.get('/devices', verificarAuth, async (req, res) => {
   try {
     const resp = await fetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
     const data = await resp.json()

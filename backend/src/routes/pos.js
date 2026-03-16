@@ -5,6 +5,7 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum } = require('../services/centumVentasPOS')
+const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
@@ -368,19 +369,29 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           .maybeSingle()
 
         if (giftCard) {
-          const nuevoSaldo = Math.round((parseFloat(giftCard.saldo) - gc.monto) * 100) / 100
+          const saldoActual = parseFloat(giftCard.saldo)
+          const montoDescontar = Math.min(gc.monto, saldoActual)
+          const nuevoSaldo = Math.round((saldoActual - montoDescontar) * 100) / 100
           const nuevoEstado = nuevoSaldo <= 0 ? 'agotada' : 'activa'
 
-          await supabase
+          // Update atómico: solo actualiza si el saldo no cambió desde que lo leímos
+          const { data: updated, error: gcErr } = await supabase
             .from('gift_cards')
             .update({ saldo: Math.max(0, nuevoSaldo), estado: nuevoEstado })
             .eq('id', giftCard.id)
+            .eq('saldo', giftCard.saldo)
+            .select('id')
+
+          if (gcErr || !updated || updated.length === 0) {
+            console.error(`[POS] Gift card ${gc.codigo} conflicto de concurrencia — saldo cambió durante la operación`)
+            continue
+          }
 
           await supabase
             .from('movimientos_gift_card')
             .insert({
               gift_card_id: giftCard.id,
-              monto: -gc.monto,
+              monto: -montoDescontar,
               motivo: 'Uso en venta',
               venta_pos_id: ventaId,
               created_by: req.perfil.id,
