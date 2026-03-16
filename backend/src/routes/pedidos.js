@@ -2,7 +2,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
-const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const webpush = require('web-push')
 
 // Configurar web-push con VAPID keys
@@ -134,8 +134,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Pedido no encontrado' })
     }
 
-    // El operario solo puede ver sus propios pedidos
-    if (req.perfil.rol !== 'admin' && data.usuario_id !== req.perfil.id) {
+    // El operario solo puede ver sus propios pedidos (admin y gestor ven todos)
+    if (!['admin', 'gestor'].includes(req.perfil.rol) && data.usuario_id !== req.perfil.id) {
       return res.status(403).json({ error: 'No tenés acceso a este pedido' })
     }
 
@@ -215,7 +215,7 @@ router.post('/', verificarAuth, async (req, res) => {
 
 // PUT /api/pedidos/:id/estado
 // Admin: cambia el estado de un pedido
-router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id/estado', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { estado } = req.body
@@ -242,7 +242,7 @@ router.put('/:id/estado', verificarAuth, soloAdmin, async (req, res) => {
 
 // PUT /api/pedidos/:id
 // Admin: modifica los items de un pedido
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { items, estado } = req.body
@@ -281,7 +281,7 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
 // DELETE /api/pedidos/:id
 // Admin: elimina un pedido
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
 
@@ -301,7 +301,7 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
 // GET /api/pedidos/:id/txt
 // Admin: descarga solo artículos ERP (automatico) como TXT "codigo cantidad"
-router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/:id/txt', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
 
@@ -332,7 +332,7 @@ router.get('/:id/txt', verificarAuth, soloAdmin, async (req, res) => {
 // Admin: descarga PDF solo con artículos manuales del pedido
 const PDFDocument = require('pdfkit')
 
-router.get('/:id/pdf', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/:id/pdf', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
 

@@ -23,7 +23,7 @@ const COLORES_ESTADO = {
 const DetallePedido = () => {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { esAdmin } = useAuth()
+  const { esAdmin, esGestor } = useAuth()
 
   const [pedido, setPedido] = useState(null)
   const [cargando, setCargando] = useState(true)
@@ -158,7 +158,7 @@ const DetallePedido = () => {
         </div>
 
         {/* Acciones admin */}
-        {esAdmin && (
+        {(esAdmin || esGestor) && (
           <div className="tarjeta mb-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-2">Acciones</h3>
             <div className="flex flex-wrap gap-2">
