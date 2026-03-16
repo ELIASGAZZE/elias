@@ -1,4 +1,4 @@
-// Panel de administrador: configuración general (usuarios, empleados, cajas, denominaciones, formas de cobro, rubros y sucursales)
+// Panel de administrador: configuración general (usuarios, cajas, denominaciones, formas de cobro, rubros y sucursales)
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
@@ -65,7 +65,6 @@ const BotonActivo = ({ activo, onClick }) => (
 
 const TITULOS_SECCION = {
   usuarios: 'Usuarios',
-  empleados: 'Empleados',
   cajas: 'Cajas',
   denominaciones: 'Denominaciones',
   'formas-cobro': 'Formas de Cobro',
@@ -117,15 +116,6 @@ const AdminConfiguracion = () => {
   const [editUsuarioData, setEditUsuarioData] = useState({ nombre: '', rol: '', sucursal_id: '', username: '', password: '' })
   const [guardandoUsuario, setGuardandoUsuario] = useState(false)
   const [mensajeEditUsuario, setMensajeEditUsuario] = useState('')
-
-  // Empleados
-  const [empleados, setEmpleados] = useState([])
-  const [cargandoEmpleados, setCargandoEmpleados] = useState(true)
-  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', sucursal_id: '', codigo: '' })
-  const [creandoEmpleado, setCreandoEmpleado] = useState(false)
-  const [mensajeEmpleado, setMensajeEmpleado] = useState('')
-  const [editandoEmpleadoId, setEditandoEmpleadoId] = useState(null)
-  const [editandoEmpleadoData, setEditandoEmpleadoData] = useState({ nombre: '', sucursal_id: '', codigo: '' })
 
   // Cajas
   const [cajas, setCajas] = useState([])
@@ -187,17 +177,6 @@ const AdminConfiguracion = () => {
     }
   }
 
-  const cargarEmpleados = async () => {
-    try {
-      const { data } = await api.get('/api/empleados?todas=true')
-      setEmpleados(data)
-    } catch (err) {
-      console.error('Error al cargar empleados:', err)
-    } finally {
-      setCargandoEmpleados(false)
-    }
-  }
-
   const cargarCajas = async () => {
     try {
       const { data } = await api.get('/api/cajas?todas=true')
@@ -232,12 +211,11 @@ const AdminConfiguracion = () => {
   }
 
   useEffect(() => {
-    // Sucursales se necesita para usuarios, empleados y cajas
-    if (['usuarios', 'empleados', 'cajas'].includes(seccion)) {
+    // Sucursales se necesita para usuarios y cajas
+    if (['usuarios', 'cajas'].includes(seccion)) {
       cargarSucursales()
     }
     if (seccion === 'usuarios') cargarUsuarios()
-    if (seccion === 'empleados') cargarEmpleados()
     if (seccion === 'cajas') cargarCajas()
     if (seccion === 'denominaciones') cargarDenominaciones()
     if (seccion === 'formas-cobro') cargarFormasCobro()
@@ -443,77 +421,6 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario(msg)
     } finally {
       setGuardandoUsuario(false)
-    }
-  }
-
-  // --- Empleados ---
-  const crearEmpleado = async (e) => {
-    e.preventDefault()
-    if (!nuevoEmpleado.nombre.trim()) {
-      setMensajeEmpleado('Ingresá el nombre del empleado')
-      return
-    }
-    if (!nuevoEmpleado.codigo.trim()) {
-      setMensajeEmpleado('Ingresá el código del empleado')
-      return
-    }
-    setCreandoEmpleado(true)
-    setMensajeEmpleado('')
-
-    try {
-      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim() })
-      setMensajeEmpleado('ok:Empleado creado correctamente')
-      setNuevoEmpleado({ nombre: '', sucursal_id: '', codigo: '' })
-      await cargarEmpleados()
-    } catch (err) {
-      const msg = err.response?.data?.error || 'Error al crear empleado'
-      setMensajeEmpleado(msg)
-    } finally {
-      setCreandoEmpleado(false)
-    }
-  }
-
-  const iniciarEdicionEmpleado = (empleado) => {
-    setEditandoEmpleadoId(empleado.id)
-    setEditandoEmpleadoData({ nombre: empleado.nombre, sucursal_id: empleado.sucursal_id, codigo: empleado.codigo || '' })
-  }
-
-  const cancelarEdicionEmpleado = () => {
-    setEditandoEmpleadoId(null)
-    setEditandoEmpleadoData({ nombre: '', sucursal_id: '', codigo: '' })
-  }
-
-  const guardarEdicionEmpleado = async (id) => {
-    if (!editandoEmpleadoData.nombre.trim()) return
-    try {
-      await api.put(`/api/empleados/${id}`, {
-        nombre: editandoEmpleadoData.nombre.trim(),
-        codigo: editandoEmpleadoData.codigo.trim(),
-      })
-      setEditandoEmpleadoId(null)
-      setEditandoEmpleadoData({ nombre: '', sucursal_id: '', codigo: '' })
-      await cargarEmpleados()
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al editar empleado')
-    }
-  }
-
-  const toggleActivoEmpleado = async (empleado) => {
-    try {
-      await api.put(`/api/empleados/${empleado.id}`, { activo: !empleado.activo })
-      await cargarEmpleados()
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al cambiar estado del empleado')
-    }
-  }
-
-  const eliminarEmpleado = async (empleado) => {
-    if (!confirm(`¿Eliminar al empleado "${empleado.nombre}"?`)) return
-    try {
-      await api.delete(`/api/empleados/${empleado.id}`)
-      await cargarEmpleados()
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al eliminar empleado')
     }
   }
 
@@ -833,115 +740,6 @@ const AdminConfiguracion = () => {
                           Eliminar
                         </button>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>}
-
-        {/* ===== EMPLEADOS ===== */}
-        {seccion === 'empleados' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
-          <form onSubmit={crearEmpleado} className="space-y-3 pt-4">
-            <input
-              type="text"
-              value={nuevoEmpleado.nombre}
-              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, nombre: e.target.value }))}
-              placeholder="Nombre del empleado"
-              className="campo-form text-sm"
-            />
-            <input
-              type="text"
-              value={nuevoEmpleado.codigo}
-              onChange={(e) => setNuevoEmpleado(prev => ({ ...prev, codigo: e.target.value }))}
-              placeholder="Código único del empleado"
-              className="campo-form text-sm"
-            />
-            <button type="submit" disabled={creandoEmpleado} className="btn-primario">
-              {creandoEmpleado ? 'Creando...' : 'Crear empleado'}
-            </button>
-            <MensajeForm mensaje={mensajeEmpleado} />
-          </form>
-
-          {cargandoEmpleados ? (
-            <div className="flex justify-center py-6">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-            </div>
-          ) : (
-            <div className="mt-4">
-              {empleados.length === 0 ? (
-                <p className="text-gray-400 text-sm text-center py-4">No hay empleados creados</p>
-              ) : (
-                <div className="space-y-0 divide-y divide-gray-100">
-                  {empleados.map(empleado => (
-                    <div key={empleado.id} className="flex items-center justify-between gap-2 py-2.5">
-                      {editandoEmpleadoId === empleado.id ? (
-                        <div className="flex items-center gap-2 flex-1 flex-wrap">
-                          <input
-                            type="text"
-                            value={editandoEmpleadoData.nombre}
-                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, nombre: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') guardarEdicionEmpleado(empleado.id)
-                              if (e.key === 'Escape') cancelarEdicionEmpleado()
-                            }}
-                            autoFocus
-                            placeholder="Nombre"
-                            className="campo-form text-sm flex-1 min-w-[120px]"
-                          />
-                          <input
-                            type="text"
-                            value={editandoEmpleadoData.codigo}
-                            onChange={(e) => setEditandoEmpleadoData(prev => ({ ...prev, codigo: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') guardarEdicionEmpleado(empleado.id)
-                              if (e.key === 'Escape') cancelarEdicionEmpleado()
-                            }}
-                            placeholder="Código"
-                            className="campo-form text-sm w-28"
-                          />
-                          <button
-                            onClick={() => guardarEdicionEmpleado(empleado.id)}
-                            className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            OK
-                          </button>
-                          <button
-                            onClick={cancelarEdicionEmpleado}
-                            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            X
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <div
-                            className="min-w-0 flex-1 cursor-pointer"
-                            onClick={() => iniciarEdicionEmpleado(empleado)}
-                          >
-                            <p className="text-sm font-medium text-gray-800 truncate">
-                              {empleado.nombre}
-                              {empleado.codigo && <span className="text-xs text-gray-400 ml-2">[{empleado.codigo}]</span>}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <BotonActivo activo={empleado.activo} onClick={() => toggleActivoEmpleado(empleado)} />
-                            <button
-                              onClick={() => iniciarEdicionEmpleado(empleado)}
-                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              onClick={() => eliminarEmpleado(empleado)}
-                              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg transition-colors"
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </>
-                      )}
                     </div>
                   ))}
                 </div>

@@ -21,6 +21,21 @@ const TareaCard = ({ tarea, onCompletar, grande }) => {
           {tarea.descripcion && (
             <p className="text-sm text-gray-500 mb-2">{tarea.descripcion}</p>
           )}
+          {tarea.empleado_recomendado && (
+            <div className={`flex items-center gap-1.5 ${grande ? 'mt-2 mb-1' : 'mb-1'}`}>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-700 text-xs rounded-full font-medium">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                </svg>
+                {tarea.empleado_recomendado}
+                {tarea.dias_sin_hacer != null && (
+                  <span className="text-orange-500 font-normal">
+                    · {tarea.dias_sin_hacer === null ? 'nunca la hizo' : tarea.dias_sin_hacer === 0 ? 'hoy' : `hace ${tarea.dias_sin_hacer}d`}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
           <div className={`flex items-center gap-3 text-gray-400 ${grande ? 'text-sm mt-3' : 'text-xs'}`}>
             {tarea.repetitiva ? (
               <>

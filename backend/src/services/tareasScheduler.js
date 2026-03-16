@@ -317,6 +317,81 @@ async function obtenerTareasPendientes(sucursalId) {
     })
   }
 
+  // Enriquecer con empleado recomendado (quien hace más tiempo no la hizo)
+  if (pendientes.length > 0) {
+    const configIds = pendientes.map(p => p.tarea_config_id)
+
+    // Traer empleados activos de zaatar
+    const { data: empleadosZaatar } = await supabase
+      .from('empleados')
+      .select('id, nombre')
+      .eq('activo', true)
+      .eq('empresa', 'zaatar')
+
+    if (empleadosZaatar && empleadosZaatar.length > 0) {
+      // Traer ejecuciones de todas las tareas pendientes
+      const { data: execsRecom } = await supabase
+        .from('ejecuciones_tarea')
+        .select('id, tarea_config_id, fecha_ejecucion')
+        .in('tarea_config_id', configIds)
+        .order('fecha_ejecucion', { ascending: false })
+
+      let relRecom = []
+      if (execsRecom && execsRecom.length > 0) {
+        const execRecomIds = execsRecom.map(e => e.id)
+        const { data: rels } = await supabase
+          .from('ejecuciones_empleados')
+          .select('ejecucion_id, empleado_id')
+          .in('ejecucion_id', execRecomIds)
+        relRecom = rels || []
+      }
+
+      const execFechaRecom = {}
+      const execConfigRecom = {}
+      for (const e of (execsRecom || [])) {
+        execFechaRecom[e.id] = e.fecha_ejecucion
+        execConfigRecom[e.id] = e.tarea_config_id
+      }
+
+      for (const p of pendientes) {
+        // Última fecha por empleado para esta tarea
+        const ultimaPorEmp = {}
+        for (const rel of relRecom) {
+          if (execConfigRecom[rel.ejecucion_id] !== p.tarea_config_id) continue
+          const fecha = execFechaRecom[rel.ejecucion_id]
+          if (!ultimaPorEmp[rel.empleado_id] || fecha > ultimaPorEmp[rel.empleado_id]) {
+            ultimaPorEmp[rel.empleado_id] = fecha
+          }
+        }
+
+        // Encontrar el que hace más tiempo no la hizo (o nunca)
+        let mejorEmp = null
+        let mejorDias = -1
+        for (const emp of empleadosZaatar) {
+          const ultima = ultimaPorEmp[emp.id] || null
+          if (ultima === null) {
+            // Nunca la hizo → máxima prioridad
+            mejorEmp = emp
+            mejorDias = null
+            break
+          }
+          const f = new Date(ultima)
+          f.setHours(0, 0, 0, 0)
+          const dias = Math.floor((hoy - f) / (1000 * 60 * 60 * 24))
+          if (dias > mejorDias) {
+            mejorDias = dias
+            mejorEmp = emp
+          }
+        }
+
+        if (mejorEmp) {
+          p.empleado_recomendado = mejorEmp.nombre
+          p.dias_sin_hacer = mejorDias
+        }
+      }
+    }
+  }
+
   // Enriquecer subtareas de tareas repetitivas con última fecha de ejecución
   const repetitivas = pendientes.filter(p => p.repetitiva && p.subtareas.length > 0)
   if (repetitivas.length > 0) {
