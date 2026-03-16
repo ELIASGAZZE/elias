@@ -70,8 +70,19 @@ async function syncClientesRecientes(horasAtras = 2) {
   const { getPool } = require('../config/centum')
   const sql = require('mssql')
   const supabase = require('../config/supabase')
+  const inicioSync = Date.now()
 
-  const db = await getPool()
+  let db
+  try {
+  db = await getPool()
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_clientes_bi', endpoint: 'Clientes_VIEW (BI SQL)', metodo: 'QUERY',
+      estado: 'error', duracion_ms: Date.now() - inicioSync,
+      error_mensaje: err.message, origen: 'cron',
+    })
+    throw err
+  }
   const desde = new Date(Date.now() - horasAtras * 60 * 60 * 1000)
 
   // Traer clientes nuevos (creados recientemente)
@@ -257,7 +268,19 @@ async function syncClientesRecientes(horasAtras = 2) {
     console.warn('[SyncClientes] Error al verificar clientes reactivados:', err.message)
   }
 
-  return { nuevos: nuevosCount, actualizados: actualizadosCount, desactivados: desactivadosCount, reactivados: reactivadosCount }
+  const resultado = { nuevos: nuevosCount, actualizados: actualizadosCount, desactivados: desactivadosCount, reactivados: reactivadosCount }
+
+  registrarLlamada({
+    servicio: 'centum_clientes_bi',
+    endpoint: 'Clientes_VIEW (BI SQL)',
+    metodo: 'QUERY',
+    estado: 'ok',
+    duracion_ms: Date.now() - inicioSync,
+    items_procesados: nuevosCount + actualizadosCount,
+    origen: 'cron',
+  })
+
+  return resultado
 }
 
 /**
@@ -267,6 +290,7 @@ async function syncClientesRecientes(horasAtras = 2) {
  */
 async function retrySyncCentum() {
   const supabase = require('../config/supabase')
+  const inicioRetry = Date.now()
 
   const { data: pendientes, error } = await supabase
     .from('clientes')
@@ -278,6 +302,11 @@ async function retrySyncCentum() {
     .limit(10)
 
   if (error || !pendientes || pendientes.length === 0) {
+    registrarLlamada({
+      servicio: 'centum_clientes_retry', endpoint: 'clientes (retry)', metodo: 'BATCH',
+      estado: error ? 'error' : 'ok', duracion_ms: Date.now() - inicioRetry,
+      items_procesados: 0, error_mensaje: error?.message || null, origen: 'cron',
+    })
     return { reintentados: 0, exitosos: 0, fallidos: 0 }
   }
 
@@ -316,7 +345,18 @@ async function retrySyncCentum() {
     }
   }
 
-  return { reintentados: pendientes.length, exitosos, fallidos }
+  const resultado = { reintentados: pendientes.length, exitosos, fallidos }
+
+  registrarLlamada({
+    servicio: 'centum_clientes_retry', endpoint: 'clientes (retry)', metodo: 'BATCH',
+    estado: fallidos === pendientes.length ? 'error' : 'ok',
+    duracion_ms: Date.now() - inicioRetry,
+    items_procesados: exitosos,
+    error_mensaje: fallidos > 0 ? `${fallidos} fallidos de ${pendientes.length}` : null,
+    origen: 'cron',
+  })
+
+  return resultado
 }
 
 // Mapping de condición IVA para Centum

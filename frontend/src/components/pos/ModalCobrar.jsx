@@ -1172,6 +1172,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           ) : null}
         </div>
 
+        {/* Advertencia: Factura A sin email */}
+        {(cliente?.condicion_iva === 'RI' || cliente?.condicion_iva === 'MT') && !cliente?.email && (
+          <div className="mt-3 bg-amber-500/20 border border-amber-500/40 rounded-xl px-4 py-2.5 text-amber-200 text-xs text-center">
+            Este cliente no tiene email cargado. No se podrá enviar el comprobante por email.
+          </div>
+        )}
+
         {/* Botón confirmar */}
         <button
           onClick={confirmarVenta}

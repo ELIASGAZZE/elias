@@ -267,6 +267,10 @@ const DetalleVenta = () => {
   const [reenvioMsg, setReenvioMsg] = useState('')
   const [eliminando, setEliminando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
+  const [enviandoEmail, setEnviandoEmail] = useState(false)
+  const [emailMsg, setEmailMsg] = useState('')
+  const [emailInput, setEmailInput] = useState('')
+  const [mostrarEmailForm, setMostrarEmailForm] = useState(false)
 
   useEffect(() => {
     const cargar = async () => {
@@ -744,6 +748,74 @@ const DetalleVenta = () => {
         >
           {imprimiendo ? 'Obteniendo datos fiscales...' : 'Imprimir comprobante A4'}
         </button>
+
+        {/* Enviar por email — solo comprobantes Empresa con CAE */}
+        {(() => {
+          if (!venta.centum_comprobante) return false
+          const pagos = venta.pagos || []
+          const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+          const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+          const condIva = venta.condicion_iva || 'CF'
+          const esFacturaA = condIva === 'RI' || condIva === 'MT'
+          const esPrueba = !esFacturaA && soloEfectivo
+          return !esPrueba
+        })() && (!mostrarEmailForm ? (
+          <button
+            onClick={() => {
+              setMostrarEmailForm(true)
+              setEmailInput(venta.email_cliente || '')
+              setEmailMsg('')
+            }}
+            className="w-full py-3 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            Enviar comprobante por email
+          </button>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-700">Enviar por email</h3>
+              <button onClick={() => setMostrarEmailForm(false)} className="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+            </div>
+            <input
+              type="email"
+              value={emailInput}
+              onChange={e => setEmailInput(e.target.value)}
+              placeholder="Email del cliente"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && emailInput.trim()) {
+                  e.preventDefault()
+                  document.getElementById('btn-enviar-email')?.click()
+                }
+              }}
+            />
+            <button
+              id="btn-enviar-email"
+              onClick={async () => {
+                if (!emailInput.trim()) return
+                setEnviandoEmail(true)
+                setEmailMsg('')
+                try {
+                  const { data } = await api.post(`/api/pos/ventas/${id}/enviar-email`, { email: emailInput.trim() })
+                  setEmailMsg(data.mensaje || 'Enviado correctamente')
+                } catch (err) {
+                  setEmailMsg('Error: ' + (err.response?.data?.error || err.message))
+                } finally {
+                  setEnviandoEmail(false)
+                }
+              }}
+              disabled={enviandoEmail || !emailInput.trim()}
+              className="w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {enviandoEmail ? 'Enviando...' : 'Enviar'}
+            </button>
+            {emailMsg && (
+              <p className={`text-xs ${emailMsg.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                {emailMsg}
+              </p>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )
