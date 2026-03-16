@@ -80,15 +80,12 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       return res.status(400).json({ error: 'El nombre del empleado es requerido' })
     }
 
-    if (!sucursal_id) {
-      return res.status(400).json({ error: 'La sucursal es requerida' })
-    }
-
     if (!codigo || !codigo.trim()) {
       return res.status(400).json({ error: 'El código del empleado es requerido' })
     }
 
-    const insert = { nombre: nombre.trim(), sucursal_id, codigo: codigo.trim() }
+    const insert = { nombre: nombre.trim(), codigo: codigo.trim() }
+    if (sucursal_id) insert.sucursal_id = sucursal_id
     if (fecha_cumpleanos !== undefined) insert.fecha_cumpleanos = fecha_cumpleanos || null
 
     const { data, error } = await supabase
