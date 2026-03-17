@@ -411,7 +411,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
 
   try {
     const db = await getPool()
-    const result = await db.request()
+    const queryPromise = db.request()
       .input('id', sql.Int, idCentum)
       .query(`
         SELECT ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente,
@@ -419,6 +419,8 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
         FROM Clientes_VIEW
         WHERE ClienteID = @id
       `)
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout verificando cliente en BI')), 6000))
+    const result = await Promise.race([queryPromise, timeoutPromise])
 
     if (!result.recordset || result.recordset.length === 0) {
       return res.status(404).json({ error: 'Cliente no encontrado en Centum' })

@@ -1594,12 +1594,12 @@ const POS = () => {
     }
     setCliente(clienteLocal)
 
-    // Verificar en Centum que el cliente esté activo (en background)
+    // Verificar en Centum que el cliente esté activo (en background, con timeout)
     let emailFinal = clienteLocal.email
     let condicionFinal = clienteLocal.condicion_iva
     if (cli.id_centum) {
       try {
-        const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`)
+        const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`, { timeout: 8000 })
         emailFinal = data.email || ''
         condicionFinal = data.condicion_iva || condicionFinal
         // Actualizar con datos frescos de Centum
@@ -1618,7 +1618,7 @@ const POS = () => {
           setSeleccionandoCliente(false)
           return
         }
-        // Si falla la verificación, ya tiene los datos locales cargados
+        // Si falla o timeout, ya tiene los datos locales cargados
       }
     }
     setSeleccionandoCliente(false)
