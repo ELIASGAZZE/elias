@@ -771,10 +771,10 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     const fechaHasta = hasta || fechaArgentina().hoyStr
 
-    // Traer ejecuciones con empleados y config de tarea
+    // Traer ejecuciones con empleados, calificación y config de tarea
     let ejQuery = supabase
       .from('ejecuciones_tarea')
-      .select('id, tarea_config_id, fecha_ejecucion, ejecuciones_empleados(empleado:empleados(id, nombre))')
+      .select('id, tarea_config_id, fecha_ejecucion, calificacion, ejecuciones_empleados(empleado:empleados(id, nombre))')
       .gte('fecha_ejecucion', fechaDesde)
       .lte('fecha_ejecucion', fechaHasta)
 
@@ -800,28 +800,42 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
       ejecsFiltradas = ejecuciones.filter(e => ids.includes(e.tarea_config_id))
     }
 
-    // Contar por empleado + detalle de tareas
+    // Contar por empleado + detalle de tareas + calificaciones
     const conteo = {}
     for (const ej of ejecsFiltradas) {
       const nombreTarea = configNombreMap[ej.tarea_config_id] || 'Tarea'
       for (const ee of (ej.ejecuciones_empleados || [])) {
         const emp = ee.empleado
         if (emp) {
-          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0, tareas: {} }
+          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0, tareas: {}, sumaCalif: 0, countCalif: 0 }
           conteo[emp.id].cantidad++
           conteo[emp.id].tareas[nombreTarea] = (conteo[emp.id].tareas[nombreTarea] || 0) + 1
+          if (ej.calificacion != null) {
+            conteo[emp.id].sumaCalif += ej.calificacion
+            conteo[emp.id].countCalif++
+          }
         }
       }
     }
 
     const ranking = Object.values(conteo)
-      .map(e => ({
-        ...e,
-        tareas: Object.entries(e.tareas)
-          .map(([nombre, cantidad]) => ({ nombre, cantidad }))
-          .sort((a, b) => b.cantidad - a.cantidad),
-      }))
-      .sort((a, b) => b.cantidad - a.cantidad)
+      .map(e => {
+        const califProm = e.countCalif > 0 ? Math.round((e.sumaCalif / e.countCalif) * 10) / 10 : null
+        // Score = completadas × (calificación promedio / 5)
+        // Si no hay calificaciones, score = completadas × 0.6 (penalización por falta de dato)
+        const factorCalidad = califProm != null ? califProm / 5 : 0.6
+        const score = Math.round(e.cantidad * factorCalidad * 10) / 10
+        return {
+          nombre: e.nombre,
+          cantidad: e.cantidad,
+          calificacion_promedio: califProm,
+          score,
+          tareas: Object.entries(e.tareas)
+            .map(([nombre, cantidad]) => ({ nombre, cantidad }))
+            .sort((a, b) => b.cantidad - a.cantidad),
+        }
+      })
+      .sort((a, b) => b.score - a.score)
     res.json(ranking)
   } catch (err) {
     console.error('Error analytics por-empleado:', err)

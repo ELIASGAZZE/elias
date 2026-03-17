@@ -157,6 +157,8 @@ const TareasAnalytics = () => {
   const dataEmpleados = ranking.map(emp => ({
     nombre: emp.nombre,
     cantidad: emp.cantidad,
+    score: emp.score || 0,
+    calificacion_promedio: emp.calificacion_promedio,
     tareas: emp.tareas || [],
   }))
 
@@ -368,13 +370,25 @@ const TareasAnalytics = () => {
             {/* Ranking empleados */}
             {tab === 'empleados' && (
               <div className="space-y-4">
-                {/* Gráfico barras horizontal ranking */}
+                {/* Explicación del score */}
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-orange-800 mb-1">Como se calcula el score</p>
+                  <p className="text-xs text-orange-700">
+                    <span className="font-mono bg-orange-100 px-1.5 py-0.5 rounded">Score = Tareas completadas x (Calificacion promedio / 5)</span>
+                  </p>
+                  <p className="text-xs text-orange-600 mt-1">
+                    Combina cantidad y calidad. Un empleado con muchas tareas pero baja calificacion tendra score similar a uno con pocas tareas bien hechas.
+                    {' '}Si no hay calificaciones, se usa factor 0.6 por defecto.
+                  </p>
+                </div>
+
+                {/* Gráfico barras horizontal ranking por score */}
                 {dataEmpleados.length > 0 && (
                   <div className="bg-white rounded-xl border border-gray-200 p-5">
                     <h3 className="font-semibold text-gray-800 mb-3">Ranking de empleados</h3>
                     <ResponsiveContainer width="100%" height={Math.max(200, dataEmpleados.length * 40)}>
                       <BarChart data={dataEmpleados} layout="vertical" margin={{ left: 20 }}>
-                        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
+                        <XAxis type="number" tick={{ fontSize: 12 }} />
                         <YAxis type="category" dataKey="nombre" tick={{ fontSize: 12 }} width={100} />
                         <Tooltip content={({ active, payload }) => {
                           if (!active || !payload?.[0]) return null
@@ -382,9 +396,13 @@ const TareasAnalytics = () => {
                           return (
                             <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 max-w-xs">
                               <p className="font-semibold text-gray-800 text-sm">{data.nombre}</p>
-                              <p className="text-xs text-gray-500 mb-2">{data.cantidad} tarea{data.cantidad !== 1 ? 's' : ''}</p>
+                              <div className="text-xs text-gray-600 mt-1 space-y-0.5">
+                                <p>Score: <span className="font-bold text-orange-600">{data.score}</span></p>
+                                <p>Tareas: {data.cantidad} | Calificacion: {data.calificacion_promedio != null ? `★${data.calificacion_promedio}` : 'Sin datos'}</p>
+                                <p className="text-gray-400 font-mono text-[10px]">{data.cantidad} x ({data.calificacion_promedio != null ? data.calificacion_promedio : '3.0'}/5) = {data.score}</p>
+                              </div>
                               {data.tareas?.length > 0 && (
-                                <div className="border-t border-gray-100 pt-2 space-y-1">
+                                <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
                                   {data.tareas.map((t, i) => (
                                     <div key={i} className="flex items-center justify-between gap-3">
                                       <span className="text-xs text-gray-600 truncate">{t.nombre}</span>
@@ -396,21 +414,28 @@ const TareasAnalytics = () => {
                             </div>
                           )
                         }} />
-                        <Bar dataKey="cantidad" fill={NARANJA} radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="score" name="Score" fill={NARANJA} radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 )}
 
-                {/* Lista textual */}
+                {/* Lista detallada con desglose */}
                 <div className="bg-white rounded-xl border border-gray-200">
                   {ranking.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-8">Sin datos en el periodo</p>
                   ) : (
-                    <div className="divide-y divide-gray-100">
-                      {ranking.map((emp, i) => (
-                        <div key={i} className="flex items-center justify-between px-5 py-3">
-                          <div className="flex items-center gap-3">
+                    <>
+                      <div className="grid grid-cols-[2.5rem_1fr_4.5rem_5rem_4.5rem] gap-2 px-5 py-2 border-b border-gray-200 text-xs font-medium text-gray-500">
+                        <span>#</span>
+                        <span>Empleado</span>
+                        <span className="text-right">Tareas</span>
+                        <span className="text-right">Calific.</span>
+                        <span className="text-right">Score</span>
+                      </div>
+                      <div className="divide-y divide-gray-100">
+                        {ranking.map((emp, i) => (
+                          <div key={i} className="grid grid-cols-[2.5rem_1fr_4.5rem_5rem_4.5rem] gap-2 items-center px-5 py-3">
                             <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                               i === 0 ? 'bg-yellow-100 text-yellow-700' :
                               i === 1 ? 'bg-gray-100 text-gray-600' :
@@ -420,11 +445,19 @@ const TareasAnalytics = () => {
                               {i + 1}
                             </span>
                             <span className="text-sm font-medium text-gray-800">{emp.nombre}</span>
+                            <span className="text-sm text-gray-600 text-right">{emp.cantidad}</span>
+                            <span className="text-sm text-right">
+                              {emp.calificacion_promedio != null ? (
+                                <span className="text-yellow-600">★ {emp.calificacion_promedio}</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </span>
+                            <span className="text-sm font-bold text-orange-600 text-right">{emp.score}</span>
                           </div>
-                          <span className="text-sm font-semibold text-orange-600">{emp.cantidad} tareas</span>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
 
