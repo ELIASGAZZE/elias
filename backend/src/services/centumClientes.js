@@ -113,17 +113,35 @@ async function syncClientesRecientes(horasAtras = 2) {
     ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
   })
 
-  // Obtener todos los clientes locales con id_centum
+  // Obtener todos los clientes locales (con y sin id_centum) para evitar duplicados por CUIT
   const { data: todosLocales } = await supabase
     .from('clientes')
     .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva')
-    .not('id_centum', 'is', null)
+    .eq('activo', true)
 
-  const existentesMap = new Map((todosLocales || []).map(e => [e.id_centum, e]))
+  const existentesMap = new Map((todosLocales || []).filter(e => e.id_centum).map(e => [e.id_centum, e]))
+  const cuitMap = new Map((todosLocales || []).filter(e => e.cuit).map(e => [e.cuit.replace(/\D/g, ''), e]))
 
-  // Separar nuevos de los recién creados en Centum
-  const nuevosBI = resultNuevos.recordset.filter(r => !existentesMap.has(r.ClienteID))
-  const existentesBI = resultNuevos.recordset.filter(r => existentesMap.has(r.ClienteID))
+  // Separar: existentes por id_centum, o por CUIT (linkear), o realmente nuevos
+  const nuevosBI = []
+  const existentesBI = []
+  for (const r of resultNuevos.recordset) {
+    if (existentesMap.has(r.ClienteID)) {
+      existentesBI.push(r)
+    } else {
+      // Verificar si existe por CUIT
+      const cuit = (r.CUITCliente || '').replace(/\D/g, '')
+      const localPorCuit = cuit.length >= 7 ? cuitMap.get(cuit) : null
+      if (localPorCuit && !localPorCuit.id_centum) {
+        // Linkear id_centum al existente
+        await supabase.from('clientes').update({ id_centum: r.ClienteID, ...mapearCliente(r) }).eq('id', localPorCuit.id)
+        console.log(`[SyncClientes] Linkeado ${r.RazonSocialCliente} (CUIT ${cuit}) → id_centum ${r.ClienteID}`)
+      } else if (!localPorCuit) {
+        nuevosBI.push(r)
+      }
+      // Si localPorCuit ya tiene id_centum, ignorar (duplicado en Centum)
+    }
+  }
 
   // También actualizar todos los clientes locales activos con datos de Centum BI
   const { data: localesActivos } = await supabase
@@ -798,16 +816,37 @@ async function syncClientesFaltantes() {
     WHERE ActivoCliente = 1
   `)
 
-  // Traer todos los id_centum locales
-  const { data: locales } = await supabase
-    .from('clientes')
-    .select('id_centum')
-    .not('id_centum', 'is', null)
+  // Traer todos los clientes locales (id_centum y cuit) para evitar duplicados
+  let locales = []
+  let from = 0
+  while (true) {
+    const { data } = await supabase
+      .from('clientes')
+      .select('id, id_centum, cuit')
+      .eq('activo', true)
+      .range(from, from + 999)
+    locales = locales.concat(data || [])
+    if (!data || data.length < 1000) break
+    from += 1000
+  }
 
-  const localesSet = new Set((locales || []).map(c => c.id_centum))
+  const localesIdSet = new Set(locales.filter(c => c.id_centum).map(c => c.id_centum))
+  const localesCuitSet = new Set(locales.filter(c => c.cuit).map(c => c.cuit.replace(/\D/g, '')).filter(c => c.length >= 7))
 
-  // Filtrar los que faltan localmente
-  const faltantes = resCentum.recordset.filter(r => !localesSet.has(r.ClienteID))
+  // Filtrar los que faltan: no existe por id_centum NI por CUIT
+  const faltantes = resCentum.recordset.filter(r => {
+    if (localesIdSet.has(r.ClienteID)) return false
+    const cuit = (r.CUITCliente || '').replace(/\D/g, '')
+    if (cuit.length >= 7 && localesCuitSet.has(cuit)) {
+      // Ya existe por CUIT pero sin id_centum — linkear en vez de crear
+      const local = locales.find(l => l.cuit && l.cuit.replace(/\D/g, '') === cuit && !l.id_centum)
+      if (local) {
+        supabase.from('clientes').update({ id_centum: r.ClienteID }).eq('id', local.id).then(() => {})
+      }
+      return false
+    }
+    return true
+  })
 
   if (faltantes.length === 0) {
     registrarLlamada({
