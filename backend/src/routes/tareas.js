@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
-const { obtenerTareasPendientes } = require('../services/tareasScheduler')
+const { obtenerTareasPendientes, fechaArgentina } = require('../services/tareasScheduler')
 
 // ── CRUD Tareas (admin) ─────────────────────────────────────────────────────
 
@@ -240,7 +240,7 @@ router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
       dias_semana: dias_semana || null,
       dia_preferencia: dia_preferencia || null,
       reprogramar_siguiente: reprogramar_siguiente !== false,
-      fecha_inicio: fecha_inicio || new Date().toISOString().split('T')[0],
+      fecha_inicio: fecha_inicio || fechaArgentina().hoyStr,
     }
 
     const { data, error } = await supabase
@@ -311,9 +311,7 @@ router.delete('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
 // GET /api/tareas/panel-general — Estado de todas las tareas en todas las sucursales
 router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    const hoy = new Date()
-    hoy.setHours(0, 0, 0, 0)
-    const hoyStr = hoy.toISOString().split('T')[0]
+    const { hoy, hoyStr } = fechaArgentina()
 
     // Traer TODAS las configs activas con tarea y sucursal
     const { data: configs, error: errCfg } = await supabase
@@ -477,8 +475,7 @@ router.get('/recomendacion/:tarea_config_id', verificarAuth, async (req, res) =>
 
     if (errExec) throw errExec
 
-    const hoy = new Date()
-    hoy.setHours(0, 0, 0, 0)
+    const { hoy } = fechaArgentina()
 
     if (!ejecuciones || ejecuciones.length === 0) {
       // Nunca ejecutada: todos los empleados con dias_desde = null
@@ -567,14 +564,14 @@ router.post('/ejecutar', verificarAuth, async (req, res) => {
     }
 
     // Calcular fecha programada con query liviana (sin cargar todas las pendientes)
-    const { calcularProximaFecha } = require('../services/tareasScheduler')
+    const { calcularProximaFecha, fechaArgentina } = require('../services/tareasScheduler')
     const [{ data: configFull }, { data: ultimaEjec }] = await Promise.all([
       supabase.from('tareas_config_sucursal').select('frecuencia_dias, dia_preferencia, fecha_inicio').eq('id', tarea_config_id).single(),
       supabase.from('ejecuciones_tarea').select('fecha_ejecucion').eq('tarea_config_id', tarea_config_id).order('fecha_ejecucion', { ascending: false }).limit(1).maybeSingle(),
     ])
     const proximaFecha = calcularProximaFecha(configFull, ultimaEjec?.fecha_ejecucion || null)
-    const hoyStr = new Date().toISOString().split('T')[0]
-    const fechaProgramada = proximaFecha <= new Date() ? proximaFecha.toISOString().split('T')[0] : hoyStr
+    const { hoy: hoyDate, hoyStr } = fechaArgentina()
+    const fechaProgramada = proximaFecha <= hoyDate ? proximaFecha.toISOString().split('T')[0] : hoyStr
 
     // Validar calificación si viene
     const calif = calificacion ? parseInt(calificacion) : null
@@ -635,7 +632,7 @@ router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, async (req, re
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     // Obtener todas las configs activas
     let configQuery = supabase
@@ -759,7 +756,7 @@ router.get('/analytics/timeline', verificarAuth, soloGestorOAdmin, async (req, r
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     let ejQuery = supabase
       .from('ejecuciones_tarea')
@@ -807,7 +804,7 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     // Traer ejecuciones con empleados y config de tarea
     let ejQuery = supabase
@@ -872,7 +869,7 @@ router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, async (
   try {
     const { sucursal_id, desde, hasta } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     // Obtener todas las configs activas
     let configQuery = supabase
@@ -977,7 +974,7 @@ router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, 
   try {
     const { desde, hasta, sucursal_id, tarea_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     let query = supabase
       .from('ejecuciones_tarea')
@@ -1024,17 +1021,18 @@ router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, 
 router.get('/ranking', verificarAuth, async (req, res) => {
   try {
     const { periodo, mes } = req.query
-    const hoy = new Date()
+    const { hoyStr: hoyArgStr } = fechaArgentina()
+    const [hoyY, hoyM] = hoyArgStr.split('-')
 
     let fechaDesde, fechaHasta, etiqueta
     if (periodo === 'anual') {
-      const anio = mes ? mes.split('-')[0] : hoy.getFullYear().toString()
+      const anio = mes ? mes.split('-')[0] : hoyY
       fechaDesde = `${anio}-01-01`
       fechaHasta = `${anio}-12-31`
       etiqueta = anio
     } else {
       // mensual por defecto
-      const ref = mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`
+      const ref = mes || `${hoyY}-${hoyM}`
       const [y, m] = ref.split('-')
       fechaDesde = `${y}-${m}-01`
       const ultimo = new Date(parseInt(y), parseInt(m), 0).getDate()
@@ -1108,7 +1106,7 @@ router.get('/analytics/tarea-detalle', verificarAuth, soloGestorOAdmin, async (r
     if (!tarea_id) return res.status(400).json({ error: 'tarea_id es requerido' })
 
     const fechaDesde = desde || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     // Configs de esta tarea
     let cfgQuery = supabase
@@ -1238,7 +1236,7 @@ router.get('/analytics/calidad', verificarAuth, soloGestorOAdmin, async (req, re
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const fechaHasta = hasta || new Date().toISOString().split('T')[0]
+    const fechaHasta = hasta || fechaArgentina().hoyStr
 
     // Traer ejecuciones con calificación, observaciones, empleados, tarea
     let cfgFilter = supabase
