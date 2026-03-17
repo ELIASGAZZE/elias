@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import AdminPromociones from '../../components/pos/AdminPromociones'
-import AdminDescuentosEmpleados from '../../components/pos/AdminDescuentosEmpleados'
 import api from '../../services/api'
 
 const ChevronIcon = ({ abierta }) => (
@@ -1332,13 +1331,6 @@ const AdminConfiguracion = () => {
             )}
           </div>
           <AdminPromociones />
-
-          {/* Descuentos empleados */}
-          <div className="mt-6 border-t border-gray-200 pt-4">
-            <h3 className="text-base font-semibold text-gray-700 mb-1">Descuentos Empleados</h3>
-            <p className="text-xs text-gray-400 mb-2">Descuentos por rubro y topes mensuales para retiros de mercadería</p>
-            <AdminDescuentosEmpleados />
-          </div>
         </div>}
 
         {/* ===== BLOQUEOS DE PEDIDOS ===== */}

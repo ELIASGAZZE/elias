@@ -61,7 +61,8 @@ const AdminPromociones = () => {
     // forma_pago
     forma_cobro_nombre: '',
     // condicional
-    articulo_condicion: null, // { id, nombre, codigo }
+    grupos_condicion: [[]], // array de grupos, cada grupo es array de artículos {id, nombre, codigo, cantidad}
+    grupo_activo: 0,
     articulos_beneficio: [], // [{ id, nombre, codigo }]
     tipo_descuento: 'porcentaje',
     descuento_en_ambos: false,
@@ -173,7 +174,7 @@ const AdminPromociones = () => {
       llevar: '3', pagar: '2',
       precio_combo: '', articulos_combo: [],
       forma_cobro_nombre: '',
-      articulo_condicion: null, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null,
+      grupos_condicion: [[]], grupo_activo: 0, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null,
     })
     setBusqueda('')
     setResultados([])
@@ -203,7 +204,10 @@ const AdminPromociones = () => {
       precio_combo: reglas.precio_combo != null ? String(reglas.precio_combo) : '',
       articulos_combo: reglas.articulos || [],
       forma_cobro_nombre: reglas.forma_cobro_nombre || '',
-      articulo_condicion: reglas.articulo_condicion || null,
+      grupos_condicion: reglas.grupos_condicion
+        || (reglas.articulos_condicion ? [reglas.articulos_condicion] : null)
+        || (reglas.articulo_condicion ? [[{ ...reglas.articulo_condicion, cantidad: reglas.cantidad_minima || 1 }]] : [[]]),
+      grupo_activo: 0,
       articulos_beneficio: reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : []),
       tipo_descuento: reglas.tipo_descuento || 'porcentaje',
       descuento_en_ambos: reglas.descuento_en_ambos || false,
@@ -248,8 +252,7 @@ const AdminPromociones = () => {
         }
       case 'condicional':
         return {
-          articulo_condicion: form.articulo_condicion,
-          cantidad_minima: parseInt(cantidad_minima) || 1,
+          grupos_condicion: form.grupos_condicion.filter(g => g.length > 0),
           articulos_beneficio: form.articulos_beneficio,
           tipo_descuento: form.tipo_descuento,
           descuento_en_ambos: form.descuento_en_ambos,
@@ -299,8 +302,8 @@ const AdminPromociones = () => {
       }
     }
     if (form.tipo === 'condicional') {
-      if (!reglas.articulo_condicion) {
-        setMensaje('Seleccioná el artículo condición')
+      if (!reglas.grupos_condicion || reglas.grupos_condicion.length === 0 || reglas.grupos_condicion.every(g => g.length === 0)) {
+        setMensaje('Seleccioná al menos un artículo condición')
         return
       }
       if (!reglas.articulos_beneficio || reglas.articulos_beneficio.length === 0) {
@@ -587,55 +590,186 @@ const AdminPromociones = () => {
 
           {form.tipo === 'condicional' && (
             <div className="space-y-3">
-              {/* Artículo condición */}
+              {/* Grupos condición (OR entre grupos, AND dentro) */}
               <div>
-                <label className="text-xs text-gray-500 font-medium">Artículo condición (el que debe comprar)</label>
-                {form.articulo_condicion ? (
-                  <div className="flex items-center gap-2 bg-pink-50 border border-pink-200 rounded-lg px-3 py-2 mt-1">
-                    <span className="flex-1 text-sm text-gray-700">{form.articulo_condicion.nombre}</span>
-                    <button type="button" onClick={() => setForm(prev => ({ ...prev, articulo_condicion: null }))} className="text-pink-400 hover:text-pink-600">&times;</button>
-                  </div>
-                ) : (
-                  <div className="relative mt-1">
-                    <input
-                      type="text"
-                      value={form.buscando_campo === 'condicion' ? busqueda : ''}
-                      onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'condicion' }))}
-                      onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'condicion' })); setBusqueda(e.target.value) }}
-                      placeholder="Buscar artículo condición..."
-                      className="campo-form text-sm"
-                    />
-                    {form.buscando_campo === 'condicion' && resultados.length > 0 && (
-                      <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {resultados.map(item => (
-                          <button key={item.id} type="button" onClick={() => { setForm(prev => ({ ...prev, articulo_condicion: { id: item.id, nombre: item.nombre, codigo: item.codigo }, buscando_campo: null })); setBusqueda(''); setResultados([]) }} className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b last:border-b-0">
-                            <span className="font-medium">{item.nombre}</span>
-                            <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Cantidad mínima */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-gray-500">Cantidad mínima</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.cantidad_minima}
-                    onChange={e => setForm(prev => ({ ...prev, cantidad_minima: e.target.value }))}
-                    className="campo-form text-sm"
-                  />
+                <label className="text-xs text-gray-500 font-medium">Condiciones (los que debe comprar)</label>
+                {/* Tabs de grupos */}
+                <div className="flex items-center gap-1 mt-1 mb-2 flex-wrap">
+                  {form.grupos_condicion.map((grupo, gi) => (
+                    <div key={gi} className="flex items-center gap-1">
+                      {gi > 0 && <span className="text-xs font-bold text-orange-500 mx-1">O</span>}
+                      <button
+                        type="button"
+                        onClick={() => setForm(prev => ({ ...prev, grupo_activo: gi }))}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${form.grupo_activo === gi ? 'bg-pink-500 text-white border-pink-500' : 'bg-white text-gray-600 border-gray-300 hover:border-pink-300'}`}
+                      >
+                        Grupo {gi + 1} ({grupo.length})
+                      </button>
+                      {form.grupos_condicion.length > 1 && (
+                        <button type="button" onClick={() => setForm(prev => {
+                          const nuevos = prev.grupos_condicion.filter((_, i) => i !== gi)
+                          return { ...prev, grupos_condicion: nuevos, grupo_activo: Math.min(prev.grupo_activo, nuevos.length - 1) }
+                        })} className="text-gray-400 hover:text-red-500 text-xs" title="Eliminar grupo">&times;</button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setForm(prev => ({ ...prev, grupos_condicion: [...prev.grupos_condicion, []], grupo_activo: prev.grupos_condicion.length }))} className="px-2 py-1 rounded-full text-xs font-medium border border-dashed border-orange-300 text-orange-500 hover:bg-orange-50">
+                    + Agregar O
+                  </button>
                 </div>
+                {/* Artículos del grupo activo */}
+                {(() => {
+                  const gi = form.grupo_activo
+                  const grupo = form.grupos_condicion[gi] || []
+                  return (
+                    <div className="border border-pink-200 rounded-lg p-2 bg-pink-50/30">
+                      {(() => {
+                        // Separar en secciones visuales: obligatorios y alternativas
+                        const obligatorios = grupo.filter((_, i) => i === 0 || !grupo[i].o)
+                        const alternativas = grupo.filter((_, i) => i > 0 && grupo[i].o)
+                        const hayAmbos = obligatorios.length > 0 && alternativas.length > 0
+                        return grupo.length > 0 && (
+                        <div className="mb-2">
+                          {/* Obligatorios */}
+                          {obligatorios.length > 0 && (
+                            <div className="space-y-1">
+                              {hayAmbos && <div className="text-xs font-semibold text-pink-500 mb-1">Obligatorio(s):</div>}
+                              {grupo.map((ac, idx) => {
+                                if (idx > 0 && ac.o) return null
+                                return (
+                                  <div key={ac.id}>
+                                    {idx > 0 && <div className="text-center text-xs font-bold text-pink-400 py-0.5">Y</div>}
+                                    <div className="flex items-center gap-2 bg-white border border-pink-200 rounded-lg px-3 py-2">
+                                      {idx > 0 && (
+                                        <button type="button" onClick={() => setForm(prev => {
+                                          const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                            i === gi ? g.map((item, j) => j === idx ? { ...item, o: true } : item) : g
+                                          )
+                                          return { ...prev, grupos_condicion: nuevosGrupos }
+                                        })} className="px-1.5 py-0.5 rounded text-xs font-bold border bg-pink-100 border-pink-300 text-pink-600 hover:opacity-80" title="Cambiar a alternativa (O)">
+                                          Y
+                                        </button>
+                                      )}
+                                      <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
+                                      <input type="number" min="1" value={ac.cantidad}
+                                        onChange={e => setForm(prev => {
+                                          const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                            i === gi ? g.map((item, j) => j === idx ? { ...item, cantidad: parseInt(e.target.value) || 1 } : item) : g
+                                          )
+                                          return { ...prev, grupos_condicion: nuevosGrupos }
+                                        })}
+                                        className="w-14 text-center border rounded px-1 py-0.5 text-xs" title="Cantidad requerida"
+                                      />
+                                      <button type="button" onClick={() => setForm(prev => {
+                                        const nuevosGrupos = prev.grupos_condicion.map((g, i) => i === gi ? g.filter((_, j) => j !== idx) : g)
+                                        return { ...prev, grupos_condicion: nuevosGrupos }
+                                      })} className="text-pink-400 hover:text-pink-600">&times;</button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {/* Separador + Alternativas */}
+                          {alternativas.length > 0 && (
+                            <div className="mt-2">
+                              {hayAmbos && <div className="text-center text-xs font-bold text-gray-400 py-1">+</div>}
+                              <div className="text-xs font-semibold text-orange-500 mb-1">{hayAmbos ? 'Cualquiera de estos:' : 'Cualquiera de estos (al menos 1):'}</div>
+                              <div className="space-y-1 border border-orange-200 rounded-lg p-2 bg-orange-50/30">
+                                {grupo.map((ac, idx) => {
+                                  if (idx === 0 || !ac.o) return null
+                                  const orIdx = grupo.slice(0, idx).filter((_, i) => i > 0 && grupo[i].o).length
+                                  return (
+                                    <div key={ac.id}>
+                                      {orIdx > 0 && <div className="text-center text-xs font-bold text-orange-400 py-0.5">o</div>}
+                                      <div className="flex items-center gap-2 bg-white border border-orange-200 rounded-lg px-3 py-2">
+                                        <button type="button" onClick={() => setForm(prev => {
+                                          const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                            i === gi ? g.map((item, j) => j === idx ? { ...item, o: false } : item) : g
+                                          )
+                                          return { ...prev, grupos_condicion: nuevosGrupos }
+                                        })} className="px-1.5 py-0.5 rounded text-xs font-bold border bg-orange-100 border-orange-300 text-orange-600 hover:opacity-80" title="Cambiar a obligatorio (Y)">
+                                          O
+                                        </button>
+                                        <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
+                                        <input type="number" min="1" value={ac.cantidad}
+                                          onChange={e => setForm(prev => {
+                                            const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                              i === gi ? g.map((item, j) => j === idx ? { ...item, cantidad: parseInt(e.target.value) || 1 } : item) : g
+                                            )
+                                            return { ...prev, grupos_condicion: nuevosGrupos }
+                                          })}
+                                          className="w-14 text-center border rounded px-1 py-0.5 text-xs" title="Cantidad requerida"
+                                        />
+                                        <button type="button" onClick={() => setForm(prev => {
+                                          const nuevosGrupos = prev.grupos_condicion.map((g, i) => i === gi ? g.filter((_, j) => j !== idx) : g)
+                                          return { ...prev, grupos_condicion: nuevosGrupos }
+                                        })} className="text-pink-400 hover:text-pink-600">&times;</button>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {/* Si no hay alternativas, mostrar todos como items normales con toggle */}
+                          {alternativas.length === 0 && obligatorios.length > 0 && (
+                            <div className="text-xs text-gray-400 mt-1">Todos obligatorios. Click <b>Y</b> en un artículo para hacerlo alternativa.</div>
+                          )}
+                        </div>
+                        )
+                      })()}
+                      {grupo.length === 0 && <div className="text-xs text-gray-400 mb-1">Grupo vacío — agregá artículos abajo</div>}
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={form.buscando_campo === 'condicion' ? busqueda : ''}
+                          onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'condicion' }))}
+                          onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'condicion' })); setBusqueda(e.target.value) }}
+                          placeholder="Buscar artículo condición..."
+                          className="campo-form text-sm"
+                        />
+                        {form.buscando_campo === 'condicion' && resultados.length > 0 && (
+                          <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                            {resultados.map(item => (
+                              <button key={item.id} type="button" onClick={() => {
+                                const grupoActual = form.grupos_condicion[gi] || []
+                                if (grupoActual.find(c => c.id === item.id)) return
+                                setForm(prev => {
+                                  const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                    i === gi ? [...g, { id: item.id, nombre: item.nombre, codigo: item.codigo, cantidad: 1 }] : g
+                                  )
+                                  return { ...prev, grupos_condicion: nuevosGrupos, buscando_campo: null }
+                                })
+                                setBusqueda(''); setResultados([])
+                              }} className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b last:border-b-0">
+                                <span className="font-medium">{item.nombre}</span>
+                                <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Artículos beneficio */}
               <div>
-                <label className="text-xs text-gray-500 font-medium">Artículo(s) beneficio (a los que se aplica el descuento)</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-500 font-medium">Artículo(s) beneficio (a los que se aplica el descuento)</label>
+                  {form.grupos_condicion.some(g => g.length > 0) && (
+                    <button type="button" onClick={() => {
+                      const todos = form.grupos_condicion.flat()
+                      const nuevos = todos.filter(c => !form.articulos_beneficio.find(b => b.id === c.id && b.codigo === c.codigo))
+                        .map(c => ({ id: c.id, nombre: c.nombre, codigo: c.codigo }))
+                      if (nuevos.length > 0) setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, ...nuevos] }))
+                    }} className="text-xs text-green-600 hover:text-green-700 font-medium">
+                      Copiar de condición
+                    </button>
+                  )}
+                </div>
                 {form.articulos_beneficio.length > 0 && (
                   <div className="space-y-1 mt-1 mb-2">
                     {form.articulos_beneficio.map((ab, idx) => (
@@ -671,17 +805,6 @@ const AdminPromociones = () => {
                   )}
                 </div>
               </div>
-
-              {/* Descuento en ambos */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.descuento_en_ambos}
-                  onChange={e => setForm(prev => ({ ...prev, descuento_en_ambos: e.target.checked }))}
-                  className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
-                />
-                <span className="text-sm text-gray-700">Aplicar descuento en ambos (condición + beneficio)</span>
-              </label>
 
               {/* Tipo y valor de descuento */}
               <div className="grid grid-cols-3 gap-2">
@@ -901,7 +1024,17 @@ const AdminPromociones = () => {
             else if (promo.tipo === 'forma_pago') detalle = `${reglas.valor}% off en ${reglas.forma_cobro_nombre}`
             else if (promo.tipo === 'condicional') {
               const benefNombres = (reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])).map(b => b.nombre).join(' / ')
-              detalle = `${reglas.cantidad_minima || 1}x ${reglas.articulo_condicion?.nombre || '?'} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off${reglas.descuento_en_ambos ? ' en ambos' : ` en ${benefNombres || '?'}`}`
+              const grupos = reglas.grupos_condicion
+                || (reglas.articulos_condicion ? [reglas.articulos_condicion] : null)
+                || (reglas.articulo_condicion ? [[{ ...reglas.articulo_condicion, cantidad: reglas.cantidad_minima || 1 }]] : [])
+              const condNombres = grupos.map(g => {
+                const parts = g.map((c, i) => {
+                  const conn = i > 0 ? (c.o ? ' o ' : ' + ') : ''
+                  return `${conn}${c.cantidad || 1}x ${c.nombre}`
+                }).join('')
+                return grupos.length > 1 ? `(${parts})` : parts
+              }).join(' o ')
+              detalle = `${condNombres} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off${reglas.descuento_en_ambos ? ' en ambos' : ` en ${benefNombres || '?'}`}`
             }
 
             const entidades = promo.tipo === 'combo'
@@ -909,7 +1042,7 @@ const AdminPromociones = () => {
               : promo.tipo === 'forma_pago'
               ? reglas.forma_cobro_nombre || ''
               : promo.tipo === 'condicional'
-              ? `${reglas.articulo_condicion?.nombre || '?'} → ${(reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])).map(b => b.nombre).join(' / ') || '?'}`
+              ? `${(reglas.grupos_condicion || (reglas.articulos_condicion ? [reglas.articulos_condicion] : [[reglas.articulo_condicion || {}]])).map(g => g.map((c, i) => `${i > 0 ? (c.o ? ' o ' : ' + ') : ''}${c.nombre}`).join('')).join(' | ')} → ${(reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])).map(b => b.nombre).join(' / ') || '?'}`
               : (reglas.aplicar_a || []).map(a => a.tipo === 'todos' ? 'Todos' : a.nombre).join(', ')
 
             return (

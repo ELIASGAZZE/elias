@@ -25,13 +25,6 @@ function formatCumple(fecha) {
   return `${parseInt(d)} de ${MESES[parseInt(m) - 1]}`
 }
 
-const MedalIcon = ({ puesto }) => {
-  if (puesto === 1) return <span className="text-3xl">🥇</span>
-  if (puesto === 2) return <span className="text-3xl">🥈</span>
-  if (puesto === 3) return <span className="text-3xl">🥉</span>
-  return null
-}
-
 const StarDisplay = ({ valor }) => {
   return (
     <div className="flex items-center gap-0.5">
@@ -191,22 +184,15 @@ const TareasEquipo = () => {
           </div>
         ) : (
           <div className="grid grid-cols-5 gap-4">
-            {ranking.map((emp, idx) => {
-              const puesto = idx + 1
+            {ranking.map((emp) => {
               const tieneScore = emp.score > 0
               const diasCumple = cumpleProximo(emp.fecha_cumpleanos)
               const esCumpleHoy = diasCumple === 0
               const cumpleSemana = diasCumple !== null && diasCumple > 0 && diasCumple <= 7
 
-              const borderColor = puesto === 1 ? 'border-yellow-400'
-                : puesto === 2 ? 'border-gray-300'
-                : puesto === 3 ? 'border-amber-600'
-                : 'border-gray-200'
+              const borderColor = 'border-gray-200'
 
-              const avatarBg = puesto === 1 ? 'bg-yellow-400 text-white'
-                : puesto === 2 ? 'bg-gray-400 text-white'
-                : puesto === 3 ? 'bg-amber-600 text-white'
-                : tieneScore ? 'bg-orange-100 text-orange-600'
+              const avatarBg = tieneScore ? 'bg-orange-100 text-orange-600'
                 : 'bg-gray-100 text-gray-400'
 
               return (
@@ -214,13 +200,6 @@ const TareasEquipo = () => {
                   key={emp.id}
                   className={`relative bg-white rounded-2xl border-2 ${borderColor} p-5 text-center transition-shadow hover:shadow-lg ${!tieneScore ? 'opacity-50' : ''}`}
                 >
-                  {/* Medalla */}
-                  {puesto <= 3 && tieneScore && (
-                    <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                      <MedalIcon puesto={puesto} />
-                    </div>
-                  )}
-
                   {/* Cumpleaños */}
                   {esCumpleHoy && (
                     <div className="absolute -top-3 right-2 bg-pink-100 text-pink-600 text-xs font-bold px-2 py-0.5 rounded-full">
@@ -232,9 +211,6 @@ const TareasEquipo = () => {
                       🎂 {diasCumple}d
                     </div>
                   )}
-
-                  {/* Puesto */}
-                  <div className="absolute top-2 left-3 text-xs font-bold text-gray-300">#{puesto}</div>
 
                   {/* Avatar */}
                   <div className={`w-14 h-14 mx-auto rounded-full flex items-center justify-center text-xl font-bold mt-2 ${avatarBg}`}>

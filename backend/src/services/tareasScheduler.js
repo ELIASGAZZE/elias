@@ -1,6 +1,28 @@
 // Lógica de cálculo de tareas pendientes por sucursal
 const supabase = require('../config/supabase')
 
+/**
+ * Obtiene la fecha actual en zona horaria Argentina (UTC-3).
+ * Retorna { hoy: Date (midnight local), hoyStr: 'YYYY-MM-DD' }
+ */
+function fechaArgentina() {
+  const ahora = new Date()
+  // Convertir a string en timezone Argentina para obtener la fecha correcta
+  const fechaStr = ahora.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+  // fechaStr = 'YYYY-MM-DD'
+  const [y, m, d] = fechaStr.split('-').map(Number)
+  const hoy = new Date(y, m - 1, d) // midnight local
+  return { hoy, hoyStr: fechaStr }
+}
+
+/**
+ * Parsea 'YYYY-MM-DD' como fecha local (no UTC) para evitar desfase de timezone.
+ */
+function parseFechaLocal(str) {
+  const [y, m, d] = str.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 const DIAS_SEMANA = {
   domingo: 0, lunes: 1, martes: 2, miercoles: 3,
   jueves: 4, viernes: 5, sabado: 6,
@@ -18,8 +40,7 @@ function evaluarDiaFijo(config, hoy, ultimaEjecucionFecha) {
   if (diasSemana.length === 0) return { programada: false }
 
   const hoyNombre = NOMBRE_DIA[hoy.getDay()]
-  const fechaInicio = new Date(config.fecha_inicio)
-  fechaInicio.setHours(0, 0, 0, 0)
+  const fechaInicio = parseFechaLocal(config.fecha_inicio)
 
   if (hoy < fechaInicio) return { programada: false }
 
@@ -71,8 +92,7 @@ function proximaFechaDiaFijo(config, desdeDate) {
   if (diasSemana.length === 0) return null
 
   const periodo = config.frecuencia_dias
-  const fechaInicio = new Date(config.fecha_inicio)
-  fechaInicio.setHours(0, 0, 0, 0)
+  const fechaInicio = parseFechaLocal(config.fecha_inicio)
 
   // Buscar el próximo día configurado (máx 60 días adelante)
   const cursor = new Date(desdeDate)
@@ -87,14 +107,19 @@ function proximaFechaDiaFijo(config, desdeDate) {
 
 /**
  * Para tipo "frecuencia": calcula la próxima fecha (cada N días desde última ejecución o fecha_inicio).
+ * Parsea fechas como locales (no UTC) para evitar desfase de timezone.
  */
 function calcularProximaFechaFrecuencia(config, ultimaEjecucionFecha) {
   if (ultimaEjecucionFecha) {
-    const base = new Date(ultimaEjecucionFecha)
+    // Parsear como fecha local (YYYY-MM-DD → año, mes, día)
+    const [y, m, d] = ultimaEjecucionFecha.split('-').map(Number)
+    const base = new Date(y, m - 1, d)
     base.setDate(base.getDate() + config.frecuencia_dias)
     return base
   }
-  return new Date(config.fecha_inicio)
+  // fecha_inicio también como local
+  const [y, m, d] = config.fecha_inicio.split('-').map(Number)
+  return new Date(y, m - 1, d)
 }
 
 /**
@@ -103,9 +128,9 @@ function calcularProximaFechaFrecuencia(config, ultimaEjecucionFecha) {
 function calcularProximaFecha(config, ultimaEjecucionFecha) {
   if (config.tipo === 'dia_fijo') {
     if (ultimaEjecucionFecha) {
-      return proximaFechaDiaFijo(config, new Date(ultimaEjecucionFecha))
+      return proximaFechaDiaFijo(config, parseFechaLocal(ultimaEjecucionFecha))
     }
-    return new Date(config.fecha_inicio)
+    return parseFechaLocal(config.fecha_inicio)
   }
   // tipo = 'frecuencia' (default, también para configs legacy)
   return calcularProximaFechaFrecuencia(config, ultimaEjecucionFecha)
@@ -115,9 +140,7 @@ function calcularProximaFecha(config, ultimaEjecucionFecha) {
  * Obtiene las tareas pendientes para una sucursal en la fecha actual.
  */
 async function obtenerTareasPendientes(sucursalId) {
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
-  const hoyStr = hoy.toISOString().split('T')[0]
+  const { hoy, hoyStr } = fechaArgentina()
 
   // Traer todas las configs activas de esta sucursal con su tarea y subtareas
   const { data: configs, error } = await supabase
@@ -155,8 +178,7 @@ async function obtenerTareasPendientes(sucursalId) {
 
     // ── Tareas repetitivas (con subtareas): siempre aparecen ──
     if (esRepetitiva) {
-      const fechaInicio = new Date(config.fecha_inicio)
-      fechaInicio.setHours(0, 0, 0, 0)
+      const fechaInicio = parseFechaLocal(config.fecha_inicio)
       if (fechaInicio > hoy) continue
 
       const { count: ejecucionesHoy } = await supabase
@@ -219,7 +241,7 @@ async function obtenerTareasPendientes(sucursalId) {
       // Hoy NO toca. Verificar si hay tarea pendiente reprogramada de días anteriores.
       if (config.reprogramar_siguiente && ultimaFecha) {
         // Buscar la última fecha programada que no fue completada
-        const proxDespuesUltima = proximaFechaDiaFijo(config, new Date(ultimaFecha))
+        const proxDespuesUltima = proximaFechaDiaFijo(config, parseFechaLocal(ultimaFecha))
         if (proxDespuesUltima) {
           proxDespuesUltima.setHours(0, 0, 0, 0)
           if (proxDespuesUltima <= hoy) {
@@ -246,9 +268,8 @@ async function obtenerTareasPendientes(sucursalId) {
         }
       } else if (config.reprogramar_siguiente && !ultimaFecha) {
         // Nunca ejecutada, verificar si ya pasó algún día programado
-        const fechaInicio = new Date(config.fecha_inicio)
-        fechaInicio.setHours(0, 0, 0, 0)
-        if (fechaInicio <= hoy) {
+        const fechaInicio = parseFechaLocal(config.fecha_inicio)
+          if (fechaInicio <= hoy) {
           // Buscar primer día programado desde fecha_inicio
           const cursor = new Date(fechaInicio)
           let primerDia = null
@@ -458,4 +479,4 @@ async function obtenerTareasPendientes(sucursalId) {
   return pendientes
 }
 
-module.exports = { obtenerTareasPendientes, calcularProximaFecha }
+module.exports = { obtenerTareasPendientes, calcularProximaFecha, fechaArgentina, parseFechaLocal }
