@@ -313,11 +313,55 @@ async function retrySyncCentum() {
   let exitosos = 0
   let fallidos = 0
 
+  // Intentar obtener pool de BI para buscar duplicados
+  let db = null
+  try {
+    const { getPool } = require('../config/centum')
+    const sql = require('mssql')
+    db = await getPool()
+  } catch (_) { /* BI no disponible, se intentará crear directo */ }
+
   for (const cliente of pendientes) {
     try {
-      const condicion = cliente.condicion_iva || 'CF'
-      const resultado = await crearClienteEnCentum(cliente, condicion)
-      const idCentum = resultado.IdCliente || resultado.Id || null
+      let idCentum = null
+
+      // Primero buscar en Centum BI si ya existe por CUIT (evitar duplicados)
+      if (db && cliente.cuit) {
+        const sql = require('mssql')
+        const cuitLimpio = cliente.cuit.replace(/\D/g, '')
+        if (cuitLimpio.length >= 7) {
+          const res = await db.request()
+            .input('cuit', sql.VarChar, `%${cuitLimpio}%`)
+            .query(`SELECT TOP 1 ClienteID FROM Clientes_VIEW WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1`)
+          if (res.recordset.length > 0) {
+            idCentum = res.recordset[0].ClienteID
+            console.log(`[RetryCentum] Cliente ${cliente.razon_social} ya existe en Centum (ID: ${idCentum}), linkeando`)
+          }
+        }
+      }
+
+      // Si no se encontró en BI, intentar crear
+      if (!idCentum) {
+        try {
+          const condicion = cliente.condicion_iva || 'CF'
+          const resultado = await crearClienteEnCentum(cliente, condicion)
+          idCentum = resultado.IdCliente || resultado.Id || null
+        } catch (errCrear) {
+          // Si es YaExiste, buscar por CUIT en BI para linkear
+          if (errCrear.message?.includes('YaExiste') && db && cliente.cuit) {
+            const sql = require('mssql')
+            const cuitLimpio = cliente.cuit.replace(/\D/g, '')
+            const res = await db.request()
+              .input('cuit', sql.VarChar, `%${cuitLimpio}%`)
+              .query(`SELECT TOP 1 ClienteID FROM Clientes_VIEW WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1`)
+            if (res.recordset.length > 0) {
+              idCentum = res.recordset[0].ClienteID
+              console.log(`[RetryCentum] Cliente ${cliente.razon_social} YaExiste, linkeando ID: ${idCentum}`)
+            }
+          }
+          if (!idCentum) throw errCrear
+        }
+      }
 
       if (idCentum) {
         await supabase
