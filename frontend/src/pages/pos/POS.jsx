@@ -1144,6 +1144,7 @@ const POS = () => {
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
+  const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF' }
 
@@ -3261,7 +3262,7 @@ const POS = () => {
                       Verificando...
                     </div>
                   )}
-                  {clientesCentum.length > 0 && (
+                  {(clientesCentum.length > 0 || (busquedaCliente.trim().length >= 2 && !buscandoClientes)) && (
                     <div className="absolute z-20 w-full bg-white border rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
                       {clientesCentum.map(cli => (
                         <button
@@ -3273,7 +3274,25 @@ const POS = () => {
                           {cli.cuit && <span className="text-gray-500 ml-1">CUIT: {cli.cuit}</span>}
                         </button>
                       ))}
+                      <button
+                        onClick={() => { setMostrarCrearClienteCaja(true); setClientesCentum([]) }}
+                        className="w-full text-left px-2 py-2 hover:bg-violet-50 text-xs border-t border-dashed border-gray-300 text-violet-600 font-medium flex items-center gap-1.5"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                        Crear cliente nuevo
+                      </button>
                     </div>
+                  )}
+                  {mostrarCrearClienteCaja && (
+                    <NuevoClienteModal
+                      onClose={() => setMostrarCrearClienteCaja(false)}
+                      onCreado={(cli) => {
+                        setMostrarCrearClienteCaja(false)
+                        setBusquedaCliente('')
+                        seleccionarCliente(cli)
+                      }}
+                      cuitInicial={busquedaCliente.trim()}
+                    />
                   )}
                 </div>
               </div>
