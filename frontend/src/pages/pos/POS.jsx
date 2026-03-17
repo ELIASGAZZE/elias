@@ -149,13 +149,20 @@ function calcularPromocionesLocales(carrito, promociones) {
 
       case 'condicional': {
         const artCond = reglas.articulo_condicion
-        const artBenef = reglas.articulo_beneficio
-        if (!artCond || !artBenef) break
+        // Soportar array de beneficios o single (backwards compatible)
+        const listaBenef = reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])
+        if (!artCond || listaBenef.length === 0) break
         const itemCondicion = carrito.find(i => i.articulo.id === artCond.id)
         if (!itemCondicion) break
         const cantMin = reglas.cantidad_minima || 1
         if (itemCondicion.cantidad < cantMin) break
-        const itemBeneficio = carrito.find(i => i.articulo.id === artBenef.id)
+        // Buscar primer beneficio presente en el carrito
+        let itemBeneficio = null
+        let artBenefMatch = null
+        for (const ab of listaBenef) {
+          const found = carrito.find(i => i.articulo.id === ab.id)
+          if (found) { itemBeneficio = found; artBenefMatch = ab; break }
+        }
         if (!itemBeneficio) break
         const vecesCondicion = Math.floor(itemCondicion.cantidad / cantMin)
         const cantBeneficiada = Math.min(vecesCondicion, itemBeneficio.cantidad)
@@ -166,14 +173,25 @@ function calcularPromocionesLocales(carrito, promociones) {
         } else {
           descuento = Math.min(reglas.valor || 0, precioBenef) * cantBeneficiada
         }
+        // Descuento en ambos: también descontar el artículo condición
+        if (reglas.descuento_en_ambos) {
+          const precioCond = calcularPrecioConDescuentosBase(itemCondicion.articulo)
+          const cantCondDescontada = Math.min(vecesCondicion * cantMin, itemCondicion.cantidad)
+          if (reglas.tipo_descuento === 'porcentaje') {
+            descuento += precioCond * cantCondDescontada * ((reglas.valor || 0) / 100)
+          } else {
+            descuento += Math.min(reglas.valor || 0, precioCond) * cantCondDescontada
+          }
+        }
         if (descuento <= 0) break
+        const nombresB = listaBenef.map(b => b.nombre).join(' / ')
         aplicadas.push({
           promoId: promo.id,
           promoNombre: promo.nombre,
           tipoPromo: 'condicional',
-          detalle: `${cantMin}x ${artCond.nombre} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off en ${artBenef.nombre}`,
+          detalle: `${cantMin}x ${artCond.nombre} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off${reglas.descuento_en_ambos ? ' en ambos' : ` en ${artBenefMatch.nombre}`}`,
           descuento,
-          itemsAfectados: [artCond.id, artBenef.id],
+          itemsAfectados: [artCond.id, itemBeneficio.articulo.id],
         })
         break
       }

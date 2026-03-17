@@ -62,8 +62,9 @@ const AdminPromociones = () => {
     forma_cobro_nombre: '',
     // condicional
     articulo_condicion: null, // { id, nombre, codigo }
-    articulo_beneficio: null, // { id, nombre, codigo }
+    articulos_beneficio: [], // [{ id, nombre, codigo }]
     tipo_descuento: 'porcentaje',
+    descuento_en_ambos: false,
     buscando_campo: null, // 'condicion' | 'beneficio'
   })
 
@@ -172,7 +173,7 @@ const AdminPromociones = () => {
       llevar: '3', pagar: '2',
       precio_combo: '', articulos_combo: [],
       forma_cobro_nombre: '',
-      articulo_condicion: null, articulo_beneficio: null, tipo_descuento: 'porcentaje', buscando_campo: null,
+      articulo_condicion: null, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null,
     })
     setBusqueda('')
     setResultados([])
@@ -203,8 +204,9 @@ const AdminPromociones = () => {
       articulos_combo: reglas.articulos || [],
       forma_cobro_nombre: reglas.forma_cobro_nombre || '',
       articulo_condicion: reglas.articulo_condicion || null,
-      articulo_beneficio: reglas.articulo_beneficio || null,
+      articulos_beneficio: reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : []),
       tipo_descuento: reglas.tipo_descuento || 'porcentaje',
+      descuento_en_ambos: reglas.descuento_en_ambos || false,
       buscando_campo: null,
     })
     setEditandoId(promo.id)
@@ -248,8 +250,9 @@ const AdminPromociones = () => {
         return {
           articulo_condicion: form.articulo_condicion,
           cantidad_minima: parseInt(cantidad_minima) || 1,
-          articulo_beneficio: form.articulo_beneficio,
+          articulos_beneficio: form.articulos_beneficio,
           tipo_descuento: form.tipo_descuento,
+          descuento_en_ambos: form.descuento_en_ambos,
           valor: parseFloat(valor) || 0,
         }
       default:
@@ -300,8 +303,8 @@ const AdminPromociones = () => {
         setMensaje('Seleccioná el artículo condición')
         return
       }
-      if (!reglas.articulo_beneficio) {
-        setMensaje('Seleccioná el artículo beneficio')
+      if (!reglas.articulos_beneficio || reglas.articulos_beneficio.length === 0) {
+        setMensaje('Seleccioná al menos un artículo beneficio')
         return
       }
       if (!reglas.valor || reglas.valor <= 0) {
@@ -630,37 +633,55 @@ const AdminPromociones = () => {
                 </div>
               </div>
 
-              {/* Artículo beneficio */}
+              {/* Artículos beneficio */}
               <div>
-                <label className="text-xs text-gray-500 font-medium">Artículo beneficio (al que se aplica el descuento)</label>
-                {form.articulo_beneficio ? (
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mt-1">
-                    <span className="flex-1 text-sm text-gray-700">{form.articulo_beneficio.nombre}</span>
-                    <button type="button" onClick={() => setForm(prev => ({ ...prev, articulo_beneficio: null }))} className="text-green-400 hover:text-green-600">&times;</button>
-                  </div>
-                ) : (
-                  <div className="relative mt-1">
-                    <input
-                      type="text"
-                      value={form.buscando_campo === 'beneficio' ? busqueda : ''}
-                      onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'beneficio' }))}
-                      onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'beneficio' })); setBusqueda(e.target.value) }}
-                      placeholder="Buscar artículo beneficio..."
-                      className="campo-form text-sm"
-                    />
-                    {form.buscando_campo === 'beneficio' && resultados.length > 0 && (
-                      <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {resultados.map(item => (
-                          <button key={item.id} type="button" onClick={() => { setForm(prev => ({ ...prev, articulo_beneficio: { id: item.id, nombre: item.nombre, codigo: item.codigo }, buscando_campo: null })); setBusqueda(''); setResultados([]) }} className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm border-b last:border-b-0">
-                            <span className="font-medium">{item.nombre}</span>
-                            <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
-                          </button>
-                        ))}
+                <label className="text-xs text-gray-500 font-medium">Artículo(s) beneficio (a los que se aplica el descuento)</label>
+                {form.articulos_beneficio.length > 0 && (
+                  <div className="space-y-1 mt-1 mb-2">
+                    {form.articulos_beneficio.map((ab, idx) => (
+                      <div key={ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        <span className="flex-1 text-sm text-gray-700">{ab.nombre}</span>
+                        <button type="button" onClick={() => setForm(prev => ({ ...prev, articulos_beneficio: prev.articulos_beneficio.filter((_, i) => i !== idx) }))} className="text-green-400 hover:text-green-600">&times;</button>
                       </div>
-                    )}
+                    ))}
                   </div>
                 )}
+                <div className="relative mt-1">
+                  <input
+                    type="text"
+                    value={form.buscando_campo === 'beneficio' ? busqueda : ''}
+                    onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'beneficio' }))}
+                    onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'beneficio' })); setBusqueda(e.target.value) }}
+                    placeholder="Buscar artículo beneficio..."
+                    className="campo-form text-sm"
+                  />
+                  {form.buscando_campo === 'beneficio' && resultados.length > 0 && (
+                    <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                      {resultados.map(item => (
+                        <button key={item.id} type="button" onClick={() => {
+                          if (form.articulos_beneficio.find(b => b.id === item.id)) return
+                          setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, { id: item.id, nombre: item.nombre, codigo: item.codigo }], buscando_campo: null }))
+                          setBusqueda(''); setResultados([])
+                        }} className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm border-b last:border-b-0">
+                          <span className="font-medium">{item.nombre}</span>
+                          <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Descuento en ambos */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.descuento_en_ambos}
+                  onChange={e => setForm(prev => ({ ...prev, descuento_en_ambos: e.target.checked }))}
+                  className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                />
+                <span className="text-sm text-gray-700">Aplicar descuento en ambos (condición + beneficio)</span>
+              </label>
 
               {/* Tipo y valor de descuento */}
               <div className="grid grid-cols-3 gap-2">
@@ -878,14 +899,17 @@ const AdminPromociones = () => {
             else if (promo.tipo === 'nxm') detalle = `${reglas.llevar}x${reglas.pagar}`
             else if (promo.tipo === 'combo') detalle = `Combo ${formatPrecio(reglas.precio_combo)}`
             else if (promo.tipo === 'forma_pago') detalle = `${reglas.valor}% off en ${reglas.forma_cobro_nombre}`
-            else if (promo.tipo === 'condicional') detalle = `${reglas.cantidad_minima || 1}x ${reglas.articulo_condicion?.nombre || '?'} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off en ${reglas.articulo_beneficio?.nombre || '?'}`
+            else if (promo.tipo === 'condicional') {
+              const benefNombres = (reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])).map(b => b.nombre).join(' / ')
+              detalle = `${reglas.cantidad_minima || 1}x ${reglas.articulo_condicion?.nombre || '?'} → ${reglas.valor}${reglas.tipo_descuento === 'porcentaje' ? '%' : '$'} off${reglas.descuento_en_ambos ? ' en ambos' : ` en ${benefNombres || '?'}`}`
+            }
 
             const entidades = promo.tipo === 'combo'
               ? (reglas.articulos || []).map(a => a.nombre).join(', ')
               : promo.tipo === 'forma_pago'
               ? reglas.forma_cobro_nombre || ''
               : promo.tipo === 'condicional'
-              ? `${reglas.articulo_condicion?.nombre || '?'} → ${reglas.articulo_beneficio?.nombre || '?'}`
+              ? `${reglas.articulo_condicion?.nombre || '?'} → ${(reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])).map(b => b.nombre).join(' / ') || '?'}`
               : (reglas.aplicar_a || []).map(a => a.tipo === 'todos' ? 'Todos' : a.nombre).join(', ')
 
             return (
