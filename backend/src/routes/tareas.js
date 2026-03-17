@@ -801,13 +801,17 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
     }
 
     // Contar por empleado + detalle de tareas + calificaciones
+    // Deduplicar: misma tarea (nombre) + mismo día + mismo empleado = 1 ejecución
     const conteo = {}
     for (const ej of ejecsFiltradas) {
       const nombreTarea = configNombreMap[ej.tarea_config_id] || 'Tarea'
       for (const ee of (ej.ejecuciones_empleados || [])) {
         const emp = ee.empleado
         if (emp) {
-          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0, tareas: {}, sumaCalif: 0, countCalif: 0 }
+          if (!conteo[emp.id]) conteo[emp.id] = { nombre: emp.nombre, cantidad: 0, tareas: {}, sumaCalif: 0, countCalif: 0, _visto: {} }
+          const dedupKey = `${nombreTarea}|${ej.fecha_ejecucion}`
+          if (conteo[emp.id]._visto[dedupKey]) continue // ya contada
+          conteo[emp.id]._visto[dedupKey] = true
           conteo[emp.id].cantidad++
           conteo[emp.id].tareas[nombreTarea] = (conteo[emp.id].tareas[nombreTarea] || 0) + 1
           if (ej.calificacion != null) {
@@ -1414,6 +1418,24 @@ router.get('/analytics/rendimiento-empleado', verificarAuth, soloGestorOAdmin, a
       const idsConfig = configsData.filter(c => c.sucursal_id === sucursal_id).map(c => c.id)
       ejecutadas = ejecs.filter(e => idsConfig.includes(e.tarea_config_id))
     }
+
+    // Deduplicar: si la misma tarea (por nombre) se ejecutó varias veces el mismo día
+    // (ej: configurada en múltiples sucursales), contar solo 1 vez.
+    // Se queda con la mejor calificación si hay varias.
+    const dedup = {}
+    for (const e of ejecutadas) {
+      const nombre = configMap[e.tarea_config_id]?.tarea || 'Tarea'
+      const key = `${nombre}|${e.fecha_ejecucion}`
+      if (!dedup[key]) {
+        dedup[key] = { ...e, _nombre: nombre }
+      } else {
+        // Quedarse con la mejor calificación
+        if (e.calificacion != null && (dedup[key].calificacion == null || e.calificacion > dedup[key].calificacion)) {
+          dedup[key] = { ...e, _nombre: nombre }
+        }
+      }
+    }
+    ejecutadas = Object.values(dedup)
 
     // --- KPIs ---
     const total = ejecutadas.length
