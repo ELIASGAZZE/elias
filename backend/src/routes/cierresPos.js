@@ -129,10 +129,8 @@ router.get('/', verificarAuth, async (req, res) => {
 
     const { rol, sucursal_id } = req.perfil
 
-    if (rol === 'operario') {
-      query = query.eq('cajero_id', req.perfil.id)
-    }
-    // Gestor y admin: filtramos después por sucursal de la caja
+    // Operario y gestor: filtrar por sucursal de la caja (post-query)
+    // Admin: sin filtro
 
     if (req.query.fecha) {
       query = query.eq('fecha', req.query.fecha)
@@ -147,9 +145,9 @@ router.get('/', verificarAuth, async (req, res) => {
     const { data, error } = await query
     if (error) throw error
 
-    // Gestor: filtrar solo cierres de cajas de su sucursal
+    // Operario y gestor: filtrar solo cierres de cajas de su sucursal
     let filtered = data
-    if (rol === 'gestor') {
+    if (rol === 'operario' || rol === 'gestor') {
       filtered = data.filter(c => c.caja?.sucursal_id === sucursal_id)
     }
 
@@ -234,13 +232,8 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
     const { rol, sucursal_id } = req.perfil
 
-    // Operario solo puede ver sus propios cierres
-    if (rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
-      return res.status(403).json({ error: 'No tenés acceso a este cierre' })
-    }
-
-    // Gestor solo puede ver cierres de cajas de su sucursal
-    if (rol === 'gestor' && cierre.caja?.sucursal_id !== sucursal_id) {
+    // Operario y gestor solo pueden ver cierres de cajas de su sucursal
+    if ((rol === 'operario' || rol === 'gestor') && cierre.caja?.sucursal_id !== sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a este cierre' })
     }
 
@@ -396,7 +389,7 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres_pos')
-      .select('id, cajero_id, estado')
+      .select('id, cajero_id, caja_id, estado')
       .eq('id', req.params.id)
       .single()
 
@@ -408,8 +401,16 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'Esta caja ya fue cerrada' })
     }
 
-    if (req.perfil.rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
-      return res.status(403).json({ error: 'Solo podés cerrar tu propia caja' })
+    // Operario puede cerrar cualquier caja de su sucursal
+    if (req.perfil.rol === 'operario') {
+      const { data: cajaData } = await supabase
+        .from('cajas_pos')
+        .select('sucursal_id')
+        .eq('id', cierre.caja_id)
+        .single()
+      if (!cajaData || cajaData.sucursal_id !== req.perfil.sucursal_id) {
+        return res.status(403).json({ error: 'Solo podés cerrar cajas de tu sucursal' })
+      }
     }
 
     const {
