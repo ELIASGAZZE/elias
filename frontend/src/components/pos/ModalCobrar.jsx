@@ -195,13 +195,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMpMontoIntent(montoACobrar)
       setMpEstado('esperando')
 
-      // Timeout: si el posnet no responde en 90 segundos, cancelar
+      // Timeout: si el posnet no responde en 5 minutos (igual que expiración MP), cancelar
       mpTimeoutRef.current = setTimeout(() => {
         if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
         mpTimeoutRef.current = null
         setMpEstado('error')
         setMpError('Tiempo agotado esperando respuesta del posnet. Verificá el estado del pago antes de reintentar.')
-      }, 90000)
+      }, 300000)
 
       // Polling estado de la orden cada 3 segundos (con guard anti-overlap)
       mpPollingRef.current = setInterval(async () => {
