@@ -1099,13 +1099,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
       {/* ====== DERECHA: Total + confirmar ====== */}
       <div className="w-80 p-5 flex flex-col border-l border-white/10 overflow-y-auto">
-        {/* Advertencia: Factura A sin email */}
-        {(cliente?.condicion_iva === 'RI' || cliente?.condicion_iva === 'MT') && !cliente?.email && (
-          <div className="mb-3 bg-amber-500/20 border border-amber-500/40 rounded-xl px-4 py-2.5 text-amber-200 text-xs text-center flex-shrink-0">
-            Este cliente no tiene email cargado. No se podrá enviar el comprobante por email.
-          </div>
-        )}
-
         {/* Bloque total */}
         <div className={`flex-1 rounded-2xl flex flex-col items-center justify-center p-6 transition-colors duration-300 ${
           montoSuficiente ? 'bg-emerald-500' : 'bg-slate-700'
