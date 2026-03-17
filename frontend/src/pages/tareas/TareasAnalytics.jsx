@@ -89,6 +89,14 @@ const TareasAnalytics = () => {
         case 'empleados': {
           const { data } = await api.get(`/api/tareas/analytics/por-empleado?${params}`)
           setRanking(data)
+          // Si hay empleado seleccionado, cargar su rendimiento también
+          if (empleadoSeleccionado) {
+            params.set('empleado_id', empleadoSeleccionado)
+            const { data: rend } = await api.get(`/api/tareas/analytics/rendimiento-empleado?${params}`)
+            setRendimiento(rend)
+          } else {
+            setRendimiento(null)
+          }
           break
         }
         case 'incumplimiento': {
@@ -115,16 +123,6 @@ const TareasAnalytics = () => {
           }
           break
         }
-        case 'rendimiento': {
-          if (empleadoSeleccionado) {
-            params.set('empleado_id', empleadoSeleccionado)
-            const { data } = await api.get(`/api/tareas/analytics/rendimiento-empleado?${params}`)
-            setRendimiento(data)
-          } else {
-            setRendimiento(null)
-          }
-          break
-        }
       }
     } catch (err) {
       console.error('Error cargando analytics:', err)
@@ -139,7 +137,6 @@ const TareasAnalytics = () => {
     { id: 'incumplimiento', label: 'Incumplimiento' },
     { id: 'calidad', label: 'Calidad' },
     { id: 'historial', label: 'Historial' },
-    { id: 'rendimiento', label: 'Rendimiento' },
   ]
 
   // Datos para gráfico torta
@@ -427,6 +424,173 @@ const TareasAnalytics = () => {
                           <span className="text-sm font-semibold text-orange-600">{emp.cantidad} tareas</span>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Rendimiento individual */}
+                <div className="border-t-2 border-orange-200 pt-4 mt-2">
+                  <h3 className="font-semibold text-gray-800 mb-3 text-lg">Rendimiento individual</h3>
+                  <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+                    <select
+                      value={empleadoSeleccionado}
+                      onChange={e => setEmpleadoSeleccionado(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    >
+                      <option value="">-- Seleccionar empleado --</option>
+                      {empleados.filter(e => e.activo).map(e => (
+                        <option key={e.id} value={e.id}>{e.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {!empleadoSeleccionado && (
+                    <div className="text-center py-8 text-gray-400">
+                      <svg className="w-10 h-10 mx-auto text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                      </svg>
+                      <p className="text-sm">Selecciona un empleado para ver su rendimiento detallado</p>
+                    </div>
+                  )}
+
+                  {empleadoSeleccionado && rendimiento && (
+                    <div className="space-y-4">
+                      {/* KPIs */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
+                          <p className="text-3xl font-bold text-orange-600">{rendimiento.kpis.total_completadas}</p>
+                          <p className="text-sm text-gray-500 mt-1">Tareas completadas</p>
+                        </div>
+                        <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
+                          <p className="text-3xl font-bold text-yellow-500">
+                            {rendimiento.kpis.calificacion_promedio != null ? `★ ${rendimiento.kpis.calificacion_promedio}` : '-'}
+                          </p>
+                          <p className="text-sm text-gray-500 mt-1">Calificacion promedio</p>
+                        </div>
+                        <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
+                          <p className="text-3xl font-bold text-gray-800">{rendimiento.kpis.tareas_por_dia}</p>
+                          <p className="text-sm text-gray-500 mt-1">Tareas/dia</p>
+                        </div>
+                      </div>
+
+                      {/* Comparación vs equipo */}
+                      {rendimiento.comparacion_equipo && (
+                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                          <h3 className="font-semibold text-gray-800 mb-4">Comparacion vs equipo</h3>
+                          <div className="grid grid-cols-2 gap-6">
+                            {(() => {
+                              const c = rendimiento.comparacion_equipo
+                              const items = [
+                                { label: 'Tareas completadas', emp: c.empleado_completadas, equipo: c.equipo_promedio_completadas, suffix: '' },
+                                { label: 'Calificacion', emp: c.empleado_calificacion, equipo: c.equipo_promedio_calificacion, suffix: '', prefix: '★ ' },
+                              ]
+                              return items.map((item, i) => {
+                                const mejor = item.emp != null && item.equipo != null && item.emp >= item.equipo
+                                return (
+                                  <div key={i} className="text-center">
+                                    <p className="text-xs text-gray-500 mb-2">{item.label}</p>
+                                    <div className="flex items-center justify-center gap-4">
+                                      <div>
+                                        <p className={`text-2xl font-bold ${mejor ? 'text-green-600' : 'text-red-500'}`}>
+                                          {item.prefix || ''}{item.emp != null ? item.emp : '-'}{item.suffix}
+                                        </p>
+                                        <p className="text-xs text-gray-400">Empleado</p>
+                                      </div>
+                                      <span className="text-gray-300 text-lg">vs</span>
+                                      <div>
+                                        <p className="text-2xl font-bold text-gray-400">
+                                          {item.prefix || ''}{item.equipo != null ? item.equipo : '-'}{item.suffix}
+                                        </p>
+                                        <p className="text-xs text-gray-400">Promedio equipo</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })
+                            })()}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Evolución diaria */}
+                      {rendimiento.evolucion_diaria.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                          <h3 className="font-semibold text-gray-800 mb-3">Evolucion diaria</h3>
+                          <ResponsiveContainer width="100%" height={220}>
+                            <BarChart data={rendimiento.evolucion_diaria}>
+                              <XAxis dataKey="fecha" tickFormatter={formatFechaCorta} tick={{ fontSize: 11 }} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                              <Tooltip labelFormatter={formatFecha} />
+                              <Bar dataKey="completadas" name="Completadas" fill={NARANJA} radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Por tipo de tarea */}
+                      {rendimiento.por_tipo_tarea.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                          <h3 className="font-semibold text-gray-800 mb-3">Tareas que realiza</h3>
+                          <ResponsiveContainer width="100%" height={Math.max(180, rendimiento.por_tipo_tarea.length * 40)}>
+                            <BarChart data={rendimiento.por_tipo_tarea} layout="vertical" margin={{ left: 20 }}>
+                              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
+                              <YAxis type="category" dataKey="tarea" tick={{ fontSize: 12 }} width={120} />
+                              <Tooltip content={({ active, payload }) => {
+                                if (!active || !payload?.[0]) return null
+                                const d = payload[0].payload
+                                return (
+                                  <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                                    <p className="font-semibold text-sm">{d.tarea}</p>
+                                    <p className="text-xs text-gray-500">{d.cantidad} ejecuciones</p>
+                                    <p className="text-xs text-gray-500">Puntualidad: {d.puntualidad_pct}%</p>
+                                    {d.calificacion_promedio != null && (
+                                      <p className="text-xs text-yellow-600">★ {d.calificacion_promedio}</p>
+                                    )}
+                                  </div>
+                                )
+                              }} />
+                              <Bar dataKey="cantidad" fill={NARANJA} radius={[0, 4, 4, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Calidad: distribución de calificaciones */}
+                      {rendimiento.calidad.total_calificadas > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                          <h3 className="font-semibold text-gray-800 mb-3">Distribucion de calificaciones</h3>
+                          <ResponsiveContainer width="100%" height={180}>
+                            <BarChart data={rendimiento.calidad.distribucion}>
+                              <XAxis dataKey="estrellas" tick={{ fontSize: 12 }} tickFormatter={v => `★${v}`} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                              <Tooltip labelFormatter={v => `${v} estrellas`} />
+                              <Bar dataKey="cantidad" fill="#eab308" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Detalle rendimiento por tarea (tabla) */}
+                      {rendimiento.por_tipo_tarea.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                          <h3 className="font-semibold text-gray-800 mb-3">Rendimiento por tarea</h3>
+                          <div className="space-y-2">
+                            {rendimiento.por_tipo_tarea.map((t, i) => (
+                              <div key={i} className="flex items-center justify-between px-3 py-2.5 bg-gray-50 rounded-lg">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-sm font-medium text-gray-800">{t.tarea}</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className="text-sm font-semibold text-orange-600">{t.cantidad}x</span>
+                                  {t.calificacion_promedio != null && (
+                                    <span className="text-sm text-yellow-600 font-medium">★ {t.calificacion_promedio}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -931,220 +1095,6 @@ const TareasAnalytics = () => {
               </div>
             )}
 
-            {/* Rendimiento individual */}
-            {tab === 'rendimiento' && (
-              <div className="space-y-4">
-                {/* Selector de empleado */}
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Seleccionar empleado para analizar</label>
-                  <select
-                    value={empleadoSeleccionado}
-                    onChange={e => setEmpleadoSeleccionado(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                  >
-                    <option value="">-- Seleccionar empleado --</option>
-                    {empleados.filter(e => e.activo).map(e => (
-                      <option key={e.id} value={e.id}>{e.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {!empleadoSeleccionado && (
-                  <div className="text-center py-12 text-gray-400">
-                    <svg className="w-12 h-12 mx-auto text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                    </svg>
-                    <p>Selecciona un empleado para ver su rendimiento</p>
-                  </div>
-                )}
-
-                {empleadoSeleccionado && rendimiento && (
-                  <>
-                    {/* KPIs */}
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
-                        <p className="text-3xl font-bold text-orange-600">{rendimiento.kpis.total_completadas}</p>
-                        <p className="text-sm text-gray-500 mt-1">Tareas completadas</p>
-                      </div>
-                      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
-                        <p className={`text-3xl font-bold ${rendimiento.kpis.puntualidad_pct >= 80 ? 'text-green-600' : rendimiento.kpis.puntualidad_pct >= 50 ? 'text-orange-600' : 'text-red-600'}`}>
-                          {rendimiento.kpis.puntualidad_pct}%
-                        </p>
-                        <p className="text-sm text-gray-500 mt-1">Puntualidad</p>
-                      </div>
-                      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
-                        <p className="text-3xl font-bold text-yellow-500">
-                          {rendimiento.kpis.calificacion_promedio != null ? `★ ${rendimiento.kpis.calificacion_promedio}` : '-'}
-                        </p>
-                        <p className="text-sm text-gray-500 mt-1">Calificacion promedio</p>
-                      </div>
-                      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
-                        <p className="text-3xl font-bold text-gray-800">{rendimiento.kpis.tareas_por_dia}</p>
-                        <p className="text-sm text-gray-500 mt-1">Tareas/dia</p>
-                      </div>
-                    </div>
-
-                    {/* Comparación vs equipo */}
-                    {rendimiento.comparacion_equipo && (
-                      <div className="bg-white rounded-xl border border-gray-200 p-5">
-                        <h3 className="font-semibold text-gray-800 mb-4">Comparacion vs equipo</h3>
-                        <div className="grid grid-cols-3 gap-6">
-                          {(() => {
-                            const c = rendimiento.comparacion_equipo
-                            const items = [
-                              { label: 'Tareas completadas', emp: c.empleado_completadas, equipo: c.equipo_promedio_completadas, suffix: '' },
-                              { label: 'Puntualidad', emp: c.empleado_puntualidad, equipo: c.equipo_promedio_puntualidad, suffix: '%' },
-                              { label: 'Calificacion', emp: c.empleado_calificacion, equipo: c.equipo_promedio_calificacion, suffix: '', prefix: '★ ' },
-                            ]
-                            return items.map((item, i) => {
-                              const mejor = item.emp != null && item.equipo != null && item.emp >= item.equipo
-                              return (
-                                <div key={i} className="text-center">
-                                  <p className="text-xs text-gray-500 mb-2">{item.label}</p>
-                                  <div className="flex items-center justify-center gap-4">
-                                    <div>
-                                      <p className={`text-2xl font-bold ${mejor ? 'text-green-600' : 'text-red-500'}`}>
-                                        {item.prefix || ''}{item.emp != null ? item.emp : '-'}{item.suffix}
-                                      </p>
-                                      <p className="text-xs text-gray-400">Empleado</p>
-                                    </div>
-                                    <span className="text-gray-300 text-lg">vs</span>
-                                    <div>
-                                      <p className="text-2xl font-bold text-gray-400">
-                                        {item.prefix || ''}{item.equipo != null ? item.equipo : '-'}{item.suffix}
-                                      </p>
-                                      <p className="text-xs text-gray-400">Promedio equipo</p>
-                                    </div>
-                                  </div>
-                                </div>
-                              )
-                            })
-                          })()}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Evolución diaria + Puntualidad */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Evolución diaria */}
-                      {rendimiento.evolucion_diaria.length > 0 && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                          <h3 className="font-semibold text-gray-800 mb-3">Evolucion diaria</h3>
-                          <ResponsiveContainer width="100%" height={220}>
-                            <BarChart data={rendimiento.evolucion_diaria}>
-                              <XAxis dataKey="fecha" tickFormatter={formatFechaCorta} tick={{ fontSize: 11 }} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                              <Tooltip labelFormatter={formatFecha} />
-                              <Legend />
-                              <Bar dataKey="a_tiempo" name="A tiempo" stackId="a" fill={VERDE} />
-                              <Bar dataKey="atrasadas" name="Atrasadas" stackId="a" fill={ROJO} radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-
-                      {/* Puntualidad pie */}
-                      {rendimiento.kpis.total_completadas > 0 && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                          <h3 className="font-semibold text-gray-800 mb-3">Puntualidad</h3>
-                          <ResponsiveContainer width="100%" height={220}>
-                            <PieChart>
-                              <Pie
-                                data={[
-                                  { name: 'A tiempo', value: rendimiento.puntualidad.a_tiempo },
-                                  { name: 'Atrasadas', value: rendimiento.puntualidad.atrasadas },
-                                ].filter(d => d.value > 0)}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={45}
-                                outerRadius={80}
-                                paddingAngle={3}
-                                dataKey="value"
-                                label={({ name, value }) => `${name}: ${value}`}
-                              >
-                                <Cell fill={VERDE} />
-                                <Cell fill={ROJO} />
-                              </Pie>
-                              <Tooltip />
-                              <Legend />
-                            </PieChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Por tipo de tarea */}
-                    {rendimiento.por_tipo_tarea.length > 0 && (
-                      <div className="bg-white rounded-xl border border-gray-200 p-5">
-                        <h3 className="font-semibold text-gray-800 mb-3">Tareas que realiza</h3>
-                        <ResponsiveContainer width="100%" height={Math.max(180, rendimiento.por_tipo_tarea.length * 40)}>
-                          <BarChart data={rendimiento.por_tipo_tarea} layout="vertical" margin={{ left: 20 }}>
-                            <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
-                            <YAxis type="category" dataKey="tarea" tick={{ fontSize: 12 }} width={120} />
-                            <Tooltip content={({ active, payload }) => {
-                              if (!active || !payload?.[0]) return null
-                              const d = payload[0].payload
-                              return (
-                                <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-                                  <p className="font-semibold text-sm">{d.tarea}</p>
-                                  <p className="text-xs text-gray-500">{d.cantidad} ejecuciones</p>
-                                  <p className="text-xs text-gray-500">Puntualidad: {d.puntualidad_pct}%</p>
-                                  {d.calificacion_promedio != null && (
-                                    <p className="text-xs text-yellow-600">★ {d.calificacion_promedio}</p>
-                                  )}
-                                </div>
-                              )
-                            }} />
-                            <Bar dataKey="cantidad" fill={NARANJA} radius={[0, 4, 4, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-
-                    {/* Calidad distribución + Detalle atrasadas */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Distribución de calificaciones */}
-                      {rendimiento.calidad.total_calificadas > 0 && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                          <h3 className="font-semibold text-gray-800 mb-3">Distribucion de calificaciones</h3>
-                          <ResponsiveContainer width="100%" height={180}>
-                            <BarChart data={rendimiento.calidad.distribucion}>
-                              <XAxis dataKey="estrellas" tick={{ fontSize: 12 }} tickFormatter={v => `★${v}`} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                              <Tooltip labelFormatter={v => `${v} estrellas`} />
-                              <Bar dataKey="cantidad" fill="#eab308" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-
-                      {/* Detalle de tareas atrasadas */}
-                      {rendimiento.puntualidad.detalle_atrasadas.length > 0 && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                          <h3 className="font-semibold text-gray-800 mb-3">
-                            Tareas atrasadas
-                            <span className="ml-2 text-sm font-normal text-red-500">({rendimiento.puntualidad.atrasadas})</span>
-                          </h3>
-                          <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                            {rendimiento.puntualidad.detalle_atrasadas.map((t, i) => (
-                              <div key={i} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                <div>
-                                  <p className="text-sm font-medium text-gray-800">{t.tarea}</p>
-                                  <p className="text-xs text-gray-400">{t.sucursal} · Programada {formatFecha(t.fecha_programada)}</p>
-                                </div>
-                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-600">
-                                  +{t.dias_atraso}d
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
           </>
         )}
       </div>
