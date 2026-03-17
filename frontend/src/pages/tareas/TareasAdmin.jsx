@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import TareasNav from '../../components/tareas/TareasNav'
 import api from '../../services/api'
 
 const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
@@ -295,7 +296,8 @@ const TareasAdmin = () => {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navbar titulo="Tareas - Configuración" sinTabs volverA="/tareas" />
+      <Navbar titulo="Tareas" sinTabs />
+      <TareasNav />
 
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Header */}

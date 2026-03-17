@@ -1,7 +1,7 @@
 // Panel general: estado en tiempo real de tareas por sucursal (admin/gestor)
 import React, { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import TareasNav from '../../components/tareas/TareasNav'
 import api from '../../services/api'
 
 const REFRESH_MS = 30000 // Auto-refresh cada 30 segundos
@@ -39,7 +39,8 @@ const TareasPanel = () => {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navbar titulo="Panel de Tareas" sinTabs volverA="/tareas" />
+      <Navbar titulo="Tareas" sinTabs />
+      <TareasNav />
 
       <div className="max-w-5xl mx-auto px-4 py-6">
         {/* KPIs globales */}

@@ -1,8 +1,8 @@
 // Vista de equipo: fichas de empleados con ranking y score
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
+import TareasNav from '../../components/tareas/TareasNav'
 import api from '../../services/api'
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
@@ -88,6 +88,7 @@ const TareasEquipo = () => {
   return (
     <div className="min-h-screen bg-gray-100">
       <Navbar titulo="Tareas" sinTabs />
+      <TareasNav />
 
       {/* Nav tabs */}
       <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2">
