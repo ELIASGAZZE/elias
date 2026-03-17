@@ -376,6 +376,7 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
 
       const ultimaFecha = ultimaMap[config.id] || null
       const proximaFecha = calcularProximaFecha(config, ultimaFecha)
+      if (!proximaFecha) continue
       proximaFecha.setHours(0, 0, 0, 0)
 
       // Determinar si debía hacerse hoy o antes
