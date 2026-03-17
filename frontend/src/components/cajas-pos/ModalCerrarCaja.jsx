@@ -63,9 +63,6 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   const [gastos, setGastos] = useState([])
   const [mostrarGasto, setMostrarGasto] = useState(false)
 
-  // Eliminaciones y cancelaciones del turno
-  const [eliminaciones, setEliminaciones] = useState([])
-  const [cancelaciones, setCancelaciones] = useState([])
 
   // Denominaciones y formas de cobro
   const [denomBilletes, setDenomBilletes] = useState([])
@@ -90,20 +87,16 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes, elimRes, cancelRes] = await Promise.all([
+        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes] = await Promise.all([
           api.get(`/api/cierres-pos/${cierreId}`),
           api.get('/api/denominaciones'),
           api.get('/api/formas-cobro'),
           api.get(`/api/cierres-pos/${cierreId}/retiros`).catch(() => ({ data: [] })),
           api.get(`/api/cierres-pos/${cierreId}/gastos`).catch(() => ({ data: [] })),
-          api.get(`/api/cierres-pos/${cierreId}/eliminaciones`).catch(() => ({ data: [] })),
-          api.get(`/api/cierres-pos/${cierreId}/cancelaciones`).catch(() => ({ data: [] })),
         ])
 
         setRetiros(retirosRes.data || [])
         setGastos(gastosRes.data || [])
-        setEliminaciones(elimRes.data || [])
-        setCancelaciones(cancelRes.data || [])
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
@@ -380,65 +373,6 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                   </div>
                 )}
               </div>
-
-              {/* Articulos eliminados del ticket */}
-              {eliminaciones.length > 0 && (() => {
-                const totalItemsElim = eliminaciones.reduce((s, e) => s + (e.items || []).length, 0)
-                const totalImporteElim = eliminaciones.reduce((s, e) =>
-                  s + (e.items || []).reduce((si, it) => si + (parseFloat(it.precio) || 0) * (parseFloat(it.cantidad) || 1), 0), 0)
-                return (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-red-800">
-                        Articulos eliminados: {totalItemsElim}
-                      </span>
-                      <span className="text-sm font-bold text-red-800">{formatMonto(totalImporteElim)}</span>
-                    </div>
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {eliminaciones.map((e, idx) => (e.items || []).map((it, j) => (
-                        <div key={`${idx}-${j}`} className="flex items-center justify-between text-xs text-red-700 bg-white/60 rounded-lg px-2 py-1">
-                          <span className="truncate flex-1">{it.cantidad}x {it.nombre}</span>
-                          <span className="font-medium ml-2">{formatMonto((parseFloat(it.precio) || 0) * (parseFloat(it.cantidad) || 1))}</span>
-                          <span className="text-red-400 ml-2">{it.hora ? new Date(it.hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
-                        </div>
-                      )))}
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {/* Tickets cancelados */}
-              {cancelaciones.length > 0 && (() => {
-                const totalImporteCancelados = cancelaciones.reduce((s, c) => s + parseFloat(c.total || 0), 0)
-                return (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-red-800">
-                        Tickets cancelados: {cancelaciones.length}
-                      </span>
-                      <span className="text-sm font-bold text-red-800">{formatMonto(totalImporteCancelados)}</span>
-                    </div>
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                      {cancelaciones.map(c => {
-                        const items = c.items || []
-                        const totalItems = items.reduce((s, it) => s + (parseFloat(it.precio) || 0) * (parseFloat(it.cantidad) || 1), 0)
-                        return (
-                          <div key={c.id} className="bg-white/60 rounded-lg px-3 py-2">
-                            <div className="flex items-center justify-between text-xs text-red-700">
-                              <span className="font-medium">{c.motivo}</span>
-                              <span className="font-bold">{formatMonto(c.total)}</span>
-                            </div>
-                            <div className="flex items-center justify-between text-[10px] text-red-400 mt-0.5">
-                              <span>{items.length} articulos — importe items: {formatMonto(totalItems)}</span>
-                              <span>{new Date(c.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })()}
 
               {/* Cambio que queda en caja */}
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
