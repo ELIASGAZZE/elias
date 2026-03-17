@@ -2,7 +2,7 @@
 const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
-const { syncClientesRecientes, retrySyncCentum } = require('../services/centumClientes')
+const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 
@@ -67,6 +67,18 @@ function iniciarCronJobs() {
     }
   })
 
+  // Full scan clientes faltantes: cada hora (minuto 30, para no chocar con stock)
+  cron.schedule('30 * * * *', async () => {
+    try {
+      const resultado = await syncClientesFaltantes()
+      if (resultado.insertados > 0) {
+        console.log(`[SyncFaltantes] ${resultado.insertados} clientes faltantes importados de Centum BI`)
+      }
+    } catch (err) {
+      console.error('[SyncFaltantes] Error:', err.message)
+    }
+  })
+
   // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
   // Analiza los cierres del día anterior
   cron.schedule('0 8 * * *', async () => {
@@ -99,6 +111,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Keep-alive programado: cada 14 minutos')
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
+  console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 

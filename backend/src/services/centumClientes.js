@@ -724,4 +724,111 @@ async function crearPedidoVentaCentum({ idCliente, fechaEntrega, tipo, observaci
   return data
 }
 
-module.exports = { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, crearPedidoVentaCentum }
+/**
+ * Full scan: detecta clientes activos en Centum BI que no existen localmente y los crea.
+ * Más pesado que el incremental — corre cada hora.
+ */
+async function syncClientesFaltantes() {
+  const { getPool } = require('../config/centum')
+  const supabase = require('../config/supabase')
+  const inicioSync = Date.now()
+
+  let db
+  try {
+    db = await getPool()
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_clientes_bi', endpoint: 'Clientes_VIEW (full scan)', metodo: 'QUERY',
+      estado: 'error', duracion_ms: Date.now() - inicioSync,
+      error_mensaje: err.message, origen: 'cron',
+    })
+    throw err
+  }
+
+  // Traer todos los ClienteID activos de Centum BI
+  const resCentum = await db.request().query(`
+    SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
+           DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
+           CondicionIVAClienteID
+    FROM Clientes_VIEW
+    WHERE ActivoCliente = 1
+  `)
+
+  // Traer todos los id_centum locales
+  const { data: locales } = await supabase
+    .from('clientes')
+    .select('id_centum')
+    .not('id_centum', 'is', null)
+
+  const localesSet = new Set((locales || []).map(c => c.id_centum))
+
+  // Filtrar los que faltan localmente
+  const faltantes = resCentum.recordset.filter(r => !localesSet.has(r.ClienteID))
+
+  if (faltantes.length === 0) {
+    registrarLlamada({
+      servicio: 'centum_clientes_bi', endpoint: 'Clientes_VIEW (full scan)', metodo: 'QUERY',
+      estado: 'ok', duracion_ms: Date.now() - inicioSync,
+      items_procesados: 0, origen: 'cron',
+    })
+    return { faltantes_encontrados: 0, insertados: 0 }
+  }
+
+  const mapCondicionIVA = (id) => {
+    if (id === 1895) return 'RI'
+    if (id === 1894) return 'MT'
+    if (id === 1893) return 'EX'
+    return 'CF'
+  }
+
+  // Generar códigos CLI-XXXX
+  const { data: ultimo } = await supabase
+    .from('clientes')
+    .select('codigo')
+    .like('codigo', 'CLI-%')
+    .order('codigo', { ascending: false })
+    .limit(1)
+
+  let siguiente = 1
+  if (ultimo && ultimo.length > 0) {
+    const match = ultimo[0].codigo.match(/CLI-(\d+)/)
+    if (match) siguiente = parseInt(match[1]) + 1
+  }
+
+  const inserts = faltantes.map((r, i) => ({
+    codigo: `CLI-${String(siguiente + i).padStart(4, '0')}`,
+    razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
+    cuit: r.CUITCliente?.trim() || null,
+    direccion: r.DireccionCliente?.trim() || null,
+    localidad: r.LocalidadCliente?.trim() || null,
+    codigo_postal: r.CodigoPostalCliente?.trim() || null,
+    telefono: r.Telefono1Cliente?.trim() || null,
+    condicion_iva: r.CondicionIVAClienteID != null ? mapCondicionIVA(r.CondicionIVAClienteID) : 'CF',
+    id_centum: r.ClienteID,
+    activo: true,
+  }))
+
+  // Insertar en lotes de 200
+  let insertados = 0
+  for (let i = 0; i < inserts.length; i += 200) {
+    const lote = inserts.slice(i, i + 200)
+    const { error } = await supabase.from('clientes').insert(lote)
+    if (error) {
+      console.warn(`[SyncFaltantes] Error insertando lote ${i}:`, error.message)
+    } else {
+      insertados += lote.length
+    }
+  }
+
+  console.log(`[SyncFaltantes] ${insertados} clientes faltantes importados de Centum BI`)
+
+  registrarLlamada({
+    servicio: 'centum_clientes_bi', endpoint: 'Clientes_VIEW (full scan)', metodo: 'QUERY',
+    estado: 'ok', duracion_ms: Date.now() - inicioSync,
+    items_procesados: insertados, origen: 'cron',
+  })
+
+  return { faltantes_encontrados: faltantes.length, insertados }
+}
+
+module.exports = { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, syncClientesFaltantes, crearPedidoVentaCentum }

@@ -144,4 +144,17 @@ router.post('/sync/clientes-retry', verificarAuth, soloAdmin, async (req, res) =
   }
 })
 
+// POST /api/api-logs/sync/clientes-faltantes
+// Admin: full scan — importa clientes de Centum que no existen localmente
+router.post('/sync/clientes-faltantes', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { syncClientesFaltantes } = require('../services/centumClientes')
+    const resultado = await syncClientesFaltantes()
+    res.json({ ok: true, ...resultado })
+  } catch (err) {
+    console.error('Error en sync clientes faltantes manual:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
