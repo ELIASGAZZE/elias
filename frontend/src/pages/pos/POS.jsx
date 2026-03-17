@@ -1102,27 +1102,38 @@ const POS = () => {
     setCliente(clienteLocal)
 
     // Verificar en Centum que el cliente esté activo (en background)
+    let emailFinal = clienteLocal.email
+    let condicionFinal = clienteLocal.condicion_iva
     if (cli.id_centum) {
       try {
         const { data } = await api.get(`/api/clientes/refresh/${cli.id_centum}`)
+        emailFinal = data.email || ''
+        condicionFinal = data.condicion_iva || condicionFinal
         // Actualizar con datos frescos de Centum
         setCliente(prev => ({
           ...prev,
           codigo: data.codigo || prev.codigo,
           razon_social: data.razon_social || prev.razon_social,
-          email: data.email || prev.email,
+          email: emailFinal,
           celular: data.celular || prev.celular,
-          condicion_iva: data.condicion_iva || prev.condicion_iva,
+          condicion_iva: condicionFinal,
         }))
       } catch (err) {
         if (err.response?.status === 410) {
           alert('Este cliente está desactivado en Centum y no se puede usar.')
           setCliente({ ...CLIENTE_DEFAULT })
+          setSeleccionandoCliente(false)
+          return
         }
         // Si falla la verificación, ya tiene los datos locales cargados
       }
     }
     setSeleccionandoCliente(false)
+
+    // Alerta si es Factura A y no tiene email
+    if ((condicionFinal === 'RI' || condicionFinal === 'MT') && !emailFinal) {
+      alert('Este cliente no tiene email cargado. No se podrá enviar el comprobante por email.')
+    }
   }
 
   async function guardarContactoCliente() {
