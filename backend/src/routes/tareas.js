@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
-const { obtenerTareasPendientes, fechaArgentina } = require('../services/tareasScheduler')
+const { obtenerTareasPendientes, fechaArgentina, calcularProximaFecha } = require('../services/tareasScheduler')
 
 // ── CRUD Tareas (admin) ─────────────────────────────────────────────────────
 
@@ -309,25 +309,33 @@ router.delete('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
 // ── Panel general: todas las sucursales (admin/gestor) ─────────────────────
 
 // GET /api/tareas/panel-general — Estado de todas las tareas en todas las sucursales
+// Reutiliza obtenerTareasPendientes para que la lógica sea idéntica a la vista de sucursal
 router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    const { hoy, hoyStr } = fechaArgentina()
+    const { hoyStr } = fechaArgentina()
 
-    // Traer TODAS las configs activas con tarea y sucursal
+    // Obtener todas las sucursales que tienen configs activas
     const { data: configs, error: errCfg } = await supabase
       .from('tareas_config_sucursal')
-      .select('*, tarea:tareas(id, nombre, descripcion, activo), sucursal:sucursales(id, nombre)')
+      .select('sucursal_id, sucursal:sucursales(id, nombre)')
       .eq('activo', true)
 
     if (errCfg) throw errCfg
     if (!configs || configs.length === 0) return res.json([])
 
-    const configsActivas = configs.filter(c => c.tarea && c.tarea.activo)
+    // Sucursales únicas
+    const sucursalesMap = {}
+    for (const c of configs) {
+      const id = c.sucursal?.id || c.sucursal_id
+      if (!sucursalesMap[id]) {
+        sucursalesMap[id] = c.sucursal?.nombre || 'Sin sucursal'
+      }
+    }
 
-    // Traer todas las ejecuciones de hoy de una sola vez
+    // Traer ejecuciones de hoy para saber cuáles están completadas
     const { data: ejecucionesHoy, error: errEj } = await supabase
       .from('ejecuciones_tarea')
-      .select('id, tarea_config_id, fecha_ejecucion, completada_por:perfiles(nombre), created_at')
+      .select('tarea_config_id, completada_por:perfiles(nombre), created_at')
       .eq('fecha_ejecucion', hoyStr)
 
     if (errEj) throw errEj
@@ -337,84 +345,40 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
       ejMap[ej.tarea_config_id] = ej
     }
 
-    // Para cada config, obtener última ejecución para calcular si está pendiente hoy
-    // Traer últimas ejecuciones de cada config (más eficiente: una sola query)
-    const configIds = configsActivas.map(c => c.id)
-    const { data: ultimasEjecuciones, error: errUlt } = await supabase
-      .from('ejecuciones_tarea')
-      .select('tarea_config_id, fecha_ejecucion')
-      .in('tarea_config_id', configIds)
-      .order('fecha_ejecucion', { ascending: false })
+    // Para cada sucursal, usar la misma lógica que la vista de operario
+    const resultado = []
+    for (const [sucId, sucNombre] of Object.entries(sucursalesMap)) {
+      const pendientes = await obtenerTareasPendientes(sucId)
 
-    if (errUlt) throw errUlt
-
-    // Mapear última ejecución por config
-    const ultimaMap = {}
-    for (const ej of (ultimasEjecuciones || [])) {
-      if (!ultimaMap[ej.tarea_config_id]) {
-        ultimaMap[ej.tarea_config_id] = ej.fecha_ejecucion
-      }
-    }
-
-    // Importar lógica del scheduler
-    const { calcularProximaFecha } = require('../services/tareasScheduler')
-
-    // Construir resultado agrupado por sucursal
-    const porSucursal = {}
-
-    for (const config of configsActivas) {
-      const sucNombre = config.sucursal?.nombre || 'Sin sucursal'
-      const sucId = config.sucursal?.id || config.sucursal_id
-
-      if (!porSucursal[sucId]) {
-        porSucursal[sucId] = {
-          sucursal_id: sucId,
-          sucursal_nombre: sucNombre,
-          tareas: [],
+      const tareas = pendientes.map(t => {
+        const ejecucion = ejMap[t.tarea_config_id]
+        const completada = !!ejecucion
+        return {
+          tarea_config_id: t.tarea_config_id,
+          tarea_id: t.tarea_id,
+          nombre: t.nombre,
+          descripcion: t.descripcion,
+          frecuencia_dias: t.frecuencia_dias,
+          fecha_programada: t.fecha_programada,
+          completada,
+          atrasada: t.atrasada,
+          dias_atraso: t.dias_atraso,
+          completada_por: ejecucion?.completada_por?.nombre || null,
+          hora_completada: ejecucion?.created_at || null,
         }
-      }
+      })
 
-      const ultimaFecha = ultimaMap[config.id] || null
-      const proximaFecha = calcularProximaFecha(config, ultimaFecha)
-      if (!proximaFecha) continue
-      proximaFecha.setHours(0, 0, 0, 0)
-
-      // Determinar si debía hacerse hoy o antes
-      const debiaHacerse = proximaFecha <= hoy
-      // Si no reprogramar y ya pasó, no aplica
-      if (!config.reprogramar_siguiente && proximaFecha < hoy) continue
-
-      if (!debiaHacerse) continue // No toca hoy, skip
-
-      const ejecucion = ejMap[config.id]
-      const completada = !!ejecucion
-      const atrasada = proximaFecha < hoy
-
-      porSucursal[sucId].tareas.push({
-        tarea_config_id: config.id,
-        tarea_id: config.tarea.id,
-        nombre: config.tarea.nombre,
-        descripcion: config.tarea.descripcion,
-        frecuencia_dias: config.frecuencia_dias,
-        fecha_programada: proximaFecha.toISOString().split('T')[0],
-        completada,
-        atrasada,
-        dias_atraso: atrasada ? Math.floor((hoy - proximaFecha) / (1000 * 60 * 60 * 24)) : 0,
-        completada_por: ejecucion?.completada_por?.nombre || null,
-        hora_completada: ejecucion?.created_at || null,
+      resultado.push({
+        sucursal_id: sucId,
+        sucursal_nombre: sucNombre,
+        tareas,
+        total: tareas.length,
+        completadas: tareas.filter(t => t.completada).length,
+        pendientes: tareas.filter(t => !t.completada).length,
       })
     }
 
-    // Convertir a array y ordenar: sucursales con pendientes primero
-    const resultado = Object.values(porSucursal)
-      .map(s => ({
-        ...s,
-        total: s.tareas.length,
-        completadas: s.tareas.filter(t => t.completada).length,
-        pendientes: s.tareas.filter(t => !t.completada).length,
-      }))
-      .sort((a, b) => b.pendientes - a.pendientes || a.sucursal_nombre.localeCompare(b.sucursal_nombre))
-
+    resultado.sort((a, b) => b.pendientes - a.pendientes || a.sucursal_nombre.localeCompare(b.sucursal_nombre))
     res.json(resultado)
   } catch (err) {
     console.error('Error panel general:', err)
