@@ -107,15 +107,10 @@ router.get('/cierres-pos/:cierreId/retiros', verificarAuth, async (req, res) => 
 
     const { rol } = req.perfil
 
-    // Operario solo puede ver sus propios cierres
-    if (rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
-      return res.status(403).json({ error: 'No tenés acceso a este cierre' })
-    }
-
-    // Gestor: verificar misma sucursal
-    if (rol === 'gestor') {
+    // Operario y gestor: verificar misma sucursal
+    if (rol === 'operario' || rol === 'gestor') {
       const { data: caja } = await supabase
-        .from('cajas')
+        .from('cajas_pos')
         .select('sucursal_id')
         .eq('id', cierre.caja_id)
         .single()
