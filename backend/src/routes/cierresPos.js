@@ -404,7 +404,7 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
     // Operario puede cerrar cualquier caja de su sucursal
     if (req.perfil.rol === 'operario') {
       const { data: cajaData } = await supabase
-        .from('cajas_pos')
+        .from('cajas')
         .select('sucursal_id')
         .eq('id', cierre.caja_id)
         .single()

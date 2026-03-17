@@ -77,7 +77,7 @@ router.get('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => {
     // Operario y gestor: verificar misma sucursal
     if (rol === 'operario' || rol === 'gestor') {
       const { data: caja } = await supabase
-        .from('cajas_pos')
+        .from('cajas')
         .select('sucursal_id')
         .eq('id', cierre.caja_id)
         .single()
