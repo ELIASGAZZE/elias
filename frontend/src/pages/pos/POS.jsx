@@ -2735,7 +2735,10 @@ const POS = () => {
                   )}
                 </div>
                 {(cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT') && !cliente.email && (
-                  <p className="text-[10px] text-amber-600 mt-1">Sin email — no se podrá enviar comprobante por email</p>
+                  <div className="mt-1.5 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-1 flex items-center gap-1.5">
+                    <span className="text-amber-500 text-sm">⚠</span>
+                    <span className="text-xs font-medium text-amber-700">Sin email — no se podrá enviar comprobante</span>
+                  </div>
                 )}
                 <div className="relative mt-2">
                   <input
