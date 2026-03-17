@@ -1,14 +1,12 @@
 // Vista operario: tareas pendientes hoy
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
+import TareasNav from '../../components/tareas/TareasNav'
 import TareaCard from '../../components/tareas/TareaCard'
 import ModalCompletarTarea from '../../components/tareas/ModalCompletarTarea'
 import api from '../../services/api'
 
 const TareasHome = () => {
-  const { esAdmin, esGestor } = useAuth()
   const [pendientes, setPendientes] = useState([])
   const [cargando, setCargando] = useState(true)
   const [tareaActiva, setTareaActiva] = useState(null)
@@ -35,43 +33,7 @@ const TareasHome = () => {
   return (
     <div className="min-h-screen bg-gray-100">
       <Navbar titulo="Tareas" sinTabs />
-
-      {/* Nav tabs */}
-      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2">
-        <span className="text-sm px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg font-medium">
-          Pendientes
-        </span>
-        <Link
-          to="/tareas/equipo"
-          className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-        >
-          Equipo
-        </Link>
-        {(esAdmin || esGestor) && (
-          <>
-            <Link
-              to="/tareas/panel"
-              className="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
-            >
-              Panel general
-            </Link>
-            <Link
-              to="/tareas/analytics"
-              className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-            >
-              Analisis
-            </Link>
-          </>
-        )}
-        {esAdmin && (
-          <Link
-            to="/tareas/admin"
-            className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-          >
-            Configurar
-          </Link>
-        )}
-      </div>
+      <TareasNav />
 
       <div className="px-6 py-6" style={{ height: 'calc(100vh - 110px)' }}>
         {cargando ? (

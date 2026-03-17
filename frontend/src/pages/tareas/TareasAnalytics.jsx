@@ -1,6 +1,7 @@
 // Dashboard análisis: cumplimiento, rankings, historial + gráficos Recharts
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
+import TareasNav from '../../components/tareas/TareasNav'
 import api from '../../services/api'
 import {
   PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
@@ -153,7 +154,8 @@ const TareasAnalytics = () => {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navbar titulo="Tareas - Analisis" sinTabs volverA="/tareas" />
+      <Navbar titulo="Tareas" sinTabs />
+      <TareasNav />
 
       <div className="w-full px-6 py-6">
         {/* Tabs */}
