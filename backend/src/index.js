@@ -32,6 +32,10 @@ const tareasRoutes = require('./routes/tareas')
 const auditoriaRoutes = require('./routes/auditoria')
 const mpPointRoutes = require('./routes/mpPoint')
 const cuentaEmpleadosRoutes = require('./routes/cuentaCorrienteEmpleados')
+const fichajesRoutes = require('./routes/fichajes')
+const turnosRoutes = require('./routes/turnos')
+const licenciasRoutes = require('./routes/licencias')
+const feriadosRoutes = require('./routes/feriados')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -92,6 +96,10 @@ app.use('/api/tareas', tareasRoutes)
 app.use('/api/auditoria', auditoriaRoutes)
 app.use('/api/mp-point', mpPointRoutes)
 app.use('/api/cuenta-empleados', cuentaEmpleadosRoutes)
+app.use('/api/fichajes', fichajesRoutes)
+app.use('/api/turnos', turnosRoutes)
+app.use('/api/licencias', licenciasRoutes)
+app.use('/api/feriados', feriadosRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

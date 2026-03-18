@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
+import VentasTabBar from '../../components/ventas/VentasTabBar'
 import api from '../../services/api'
 
 const formatFechaHora = (fecha) => {
@@ -127,6 +128,7 @@ const VentasHome = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar sinTabs titulo="Ventas" volverA="/apps" />
+      <VentasTabBar />
 
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* Filtros */}

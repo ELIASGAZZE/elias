@@ -565,6 +565,47 @@ router.post('/ventas', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/pos/ventas/reportes/promociones?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+// Datos crudos de ventas para reporte de promociones (solo admin)
+router.get('/ventas/reportes/promociones', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const desde = req.query.desde || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+    const hasta = req.query.hasta || new Date().toISOString().split('T')[0]
+
+    const PAGE_SIZE = 1000
+    let allData = []
+    let from = 0
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('ventas_pos')
+        .select('id, items, subtotal, total, descuento_total, promociones_aplicadas, created_at, nombre_cliente, cajero_id, perfiles:cajero_id(nombre)')
+        .eq('tipo', 'venta')
+        .gte('created_at', `${desde}T00:00:00`)
+        .lte('created_at', `${hasta}T23:59:59`)
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+      allData = allData.concat(data)
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+
+    // Mapear nombre cajero al nivel raíz
+    const ventas = allData.map(v => ({
+      ...v,
+      cajero_nombre: v.perfiles?.nombre || 'Sin nombre',
+    }))
+
+    res.json({ ventas })
+  } catch (err) {
+    console.error('[POS] Error reporte promociones:', err.message)
+    res.status(500).json({ error: 'Error al generar reporte de promociones' })
+  }
+})
+
 // GET /api/pos/ventas?fecha=YYYY-MM-DD&sucursal_id=X&cajero_id=X&buscar=texto&articulo=texto
 // Lista ventas del día con filtros opcionales
 router.get('/ventas', verificarAuth, async (req, res) => {

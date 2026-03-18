@@ -24,7 +24,7 @@ function calcularPrecioConDescuentosBase(articulo) {
 }
 
 // Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
-const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100 }
+const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100, '1': 50, '2': 20 }
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
 const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta }) => {
@@ -452,6 +452,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setPagos(prev => [...prev, { tipo: formaSeleccionada.nombre, monto, detalle: { forma_cobro_id: formaSeleccionada.id } }])
     setMontoFormaPago('')
     setFormaSeleccionada(null)
+    // Devolver foco al root para que Enter cierre la venta
+    setTimeout(() => cobrarRootRef.current?.focus(), 50)
   }
 
   // Gift Cards

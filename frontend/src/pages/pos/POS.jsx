@@ -1889,28 +1889,40 @@ const POS = () => {
       if (idx < 0) return prev
       const nuevaCantidad = Math.round((prev[idx].cantidad + paso * delta) * 1000) / 1000
       if (nuevaCantidad <= 0) {
-        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
-        return prev
+        const item = prev[idx]
+        const precio = item.precioOverride ?? item.articulo.precio ?? 0
+        api.post('/api/pos/log-eliminacion', {
+          usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
+          cierre_id: cierreActivo?.id || null,
+          items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
+        }).catch(err => console.error('Error registrando eliminación:', err))
+        return prev.filter(i => i.articulo.id !== articuloId)
       }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: nuevaCantidad }
       return nuevo
     })
-  }, [])
+  }, [cierreActivo, usuario])
 
   const setCantidadDirecta = useCallback((articuloId, cantidad) => {
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
       if (cantidad <= 0) {
-        setConfirmEliminar({ articuloId, nombre: prev[idx].articulo.nombre, cantidad: prev[idx].cantidad })
-        return prev
+        const item = prev[idx]
+        const precio = item.precioOverride ?? item.articulo.precio ?? 0
+        api.post('/api/pos/log-eliminacion', {
+          usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
+          cierre_id: cierreActivo?.id || null,
+          items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
+        }).catch(err => console.error('Error registrando eliminación:', err))
+        return prev.filter(i => i.articulo.id !== articuloId)
       }
       const nuevo = [...prev]
       nuevo[idx] = { ...nuevo[idx], cantidad: Math.round(cantidad * 1000) / 1000 }
       return nuevo
     })
-  }, [])
+  }, [cierreActivo, usuario])
 
 
   const quitarDelCarrito = useCallback((articuloId) => {
@@ -2915,6 +2927,16 @@ const POS = () => {
               </button>
             )}
             <button
+              onClick={() => window.open('/fichaje', '_blank')}
+              className="bg-cyan-700 hover:bg-cyan-600 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
+              title="Registrar asistencia"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Asistencia
+            </button>
+            <button
               onClick={() => setMostrarProblema(true)}
               className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
             >
@@ -3362,8 +3384,12 @@ const POS = () => {
             ) : (
               <div className="divide-y">
                 {carrito.map((item, itemIdx) => {
-                  const precioOriginal = precioConDescEmpleado(item.articulo)
-                  const precioUnit = item.precioOverride != null ? item.precioOverride : precioOriginal
+                  const precioBase = calcularPrecioConDescuentosBase(item.articulo)
+                  const precioDescEmpleado = precioConDescEmpleado(item.articulo)
+                  const precioOriginal = precioDescEmpleado
+                  // Mostrar precio base (sin desc empleado) para consistencia con subtotal
+                  const precioDisplay = empleadoActivo ? precioBase : precioDescEmpleado
+                  const precioUnit = item.precioOverride != null ? item.precioOverride : precioDisplay
                   const lineTotal = precioUnit * item.cantidad
                   const tieneOverride = item.precioOverride != null
                   const estaEditando = editandoPrecio === item.articulo.id

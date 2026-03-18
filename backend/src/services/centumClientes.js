@@ -110,13 +110,14 @@ async function syncClientesRecientes(horasAtras = 2) {
     localidad: r.LocalidadCliente?.trim() || null,
     codigo_postal: r.CodigoPostalCliente?.trim() || null,
     telefono: r.Telefono1Cliente?.trim() || null,
+    codigo_centum: r.CodigoCliente?.trim() || null,
     ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
   })
 
   // Obtener todos los clientes locales (con y sin id_centum) para evitar duplicados por CUIT
   const { data: todosLocales } = await supabase
     .from('clientes')
-    .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva')
+    .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo_centum')
     .eq('activo', true)
 
   const existentesMap = new Map((todosLocales || []).filter(e => e.id_centum).map(e => [e.id_centum, e]))
@@ -156,7 +157,7 @@ async function syncClientesRecientes(horasAtras = 2) {
     for (let i = 0; i < idsActivos.length; i += 500) {
       const lote = idsActivos.slice(i, i + 500)
       const resCentum = await db.request().query(
-        `SELECT ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID
+        `SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID
          FROM Clientes_VIEW
          WHERE ActivoCliente = 1 AND ClienteID IN (${lote.join(',')})`
       )
@@ -886,6 +887,7 @@ async function syncClientesFaltantes() {
     localidad: r.LocalidadCliente?.trim() || null,
     codigo_postal: r.CodigoPostalCliente?.trim() || null,
     telefono: r.Telefono1Cliente?.trim() || null,
+    codigo_centum: r.CodigoCliente?.trim() || null,
     condicion_iva: r.CondicionIVAClienteID != null ? mapCondicionIVA(r.CondicionIVAClienteID) : 'CF',
     id_centum: r.ClienteID,
     activo: true,

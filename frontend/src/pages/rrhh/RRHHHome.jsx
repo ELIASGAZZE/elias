@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react'
 import api from '../../services/api'
 import Navbar from '../../components/layout/Navbar'
 import { imprimirCierreCuentaEmpleado } from '../../utils/imprimirComprobante'
+import TabDashboard from '../control-horario/TabDashboard'
+import TabCalendario from '../control-horario/TabCalendario'
+import TabTurnos from '../control-horario/TabTurnos'
+import TabLicencias from '../control-horario/TabLicencias'
+import TabFeriados from '../control-horario/TabFeriados'
+import TabAutorizaciones from '../control-horario/TabAutorizaciones'
+import TabReportes from '../control-horario/TabReportes'
 
 const formatPrecio = (n) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0 }).format(n || 0)
@@ -17,6 +24,12 @@ const TABS = [
   { id: 'cuenta', label: 'Cuenta Corriente' },
   { id: 'descuentos', label: 'Descuentos' },
   { id: 'topes', label: 'Topes' },
+  { id: 'asistencia', label: 'Asistencia' },
+  { id: 'turnos', label: 'Turnos' },
+  { id: 'licencias', label: 'Licencias' },
+  { id: 'feriados', label: 'Feriados' },
+  { id: 'autorizaciones', label: 'Autorizaciones' },
+  { id: 'reportes-horario', label: 'Reportes Horario' },
 ]
 
 // ===== TAB: EMPLEADOS (ABM) =====
@@ -750,12 +763,12 @@ const RRHHHome = () => {
 
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Tabs */}
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 overflow-x-auto">
           {TABS.map(tab => (
             <button
               key={tab.id}
               onClick={() => setTabActivo(tab.id)}
-              className={`flex-1 text-sm font-medium py-2 px-3 rounded-lg transition-colors ${
+              className={`text-sm font-medium py-2 px-3 rounded-lg transition-colors whitespace-nowrap ${
                 tabActivo === tab.id
                   ? 'bg-white text-cyan-700 shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
@@ -771,6 +784,12 @@ const RRHHHome = () => {
         {tabActivo === 'cuenta' && <TabCuentaCorriente />}
         {tabActivo === 'descuentos' && <TabDescuentos />}
         {tabActivo === 'topes' && <TabTopes />}
+        {tabActivo === 'asistencia' && <TabDashboard />}
+        {tabActivo === 'turnos' && <TabTurnos />}
+        {tabActivo === 'licencias' && <TabLicencias />}
+        {tabActivo === 'feriados' && <TabFeriados />}
+        {tabActivo === 'autorizaciones' && <TabAutorizaciones />}
+        {tabActivo === 'reportes-horario' && <TabReportes />}
       </div>
     </div>
   )

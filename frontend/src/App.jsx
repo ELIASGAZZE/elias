@@ -41,6 +41,7 @@ import RRHHHome from './pages/rrhh/RRHHHome'
 // Páginas de la app Ventas
 import VentasHome from './pages/ventas/VentasHome'
 import DetalleVenta from './pages/ventas/DetalleVenta'
+import ReportesPromociones from './pages/ventas/ReportesPromociones'
 
 // Páginas de la app Tareas
 import TareasHome from './pages/tareas/TareasHome'
@@ -51,6 +52,9 @@ import TareasEquipo from './pages/tareas/TareasEquipo'
 
 // Páginas de la app Auditoría
 import AuditoriaHome from './pages/auditoria/AuditoriaHome'
+
+// Página de fichaje (ruta pública)
+import Fichaje from './pages/fichaje/Fichaje'
 
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
@@ -77,6 +81,9 @@ const App = () => {
         <Routes>
           {/* Ruta pública */}
           <Route path="/login" element={<Login />} />
+
+          {/* Ruta pública: fichaje */}
+          <Route path="/fichaje" element={<Fichaje />} />
 
           {/* Redirige la raíz */}
           <Route path="/" element={<RedirigirHome />} />
@@ -212,6 +219,11 @@ const App = () => {
           <Route path="/ventas" element={
             <RutaProtegida>
               <VentasHome />
+            </RutaProtegida>
+          } />
+          <Route path="/ventas/reportes/promociones" element={
+            <RutaProtegida soloAdmin>
+              <ReportesPromociones />
             </RutaProtegida>
           } />
           <Route path="/ventas/:id" element={

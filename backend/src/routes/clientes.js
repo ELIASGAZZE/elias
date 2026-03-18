@@ -206,6 +206,18 @@ router.post('/importar-centum', verificarAuth, async (req, res) => {
       return res.json(existente)
     }
 
+    // Obtener codigo_centum desde BI
+    let codigo_centum = null
+    try {
+      const db = await getPool()
+      const biRes = await db.request()
+        .input('id', sql.Int, id_centum)
+        .query(`SELECT CodigoCliente FROM Clientes_VIEW WHERE ClienteID = @id`)
+      if (biRes.recordset.length > 0) {
+        codigo_centum = biRes.recordset[0].CodigoCliente?.trim() || null
+      }
+    } catch (_) { /* BI no disponible, continuar sin codigo_centum */ }
+
     // Generar código CLI-XXXX
     const { data: ultimo } = await supabase
       .from('clientes')
@@ -231,17 +243,79 @@ router.post('/importar-centum', verificarAuth, async (req, res) => {
         localidad: localidad?.trim() || null,
         telefono: telefono?.trim() || null,
         id_centum,
+        codigo_centum,
         activo: true,
       })
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      // Unique constraint violation — ya existe (race condition)
+      if (error.code === '23505') {
+        const { data: yaExiste } = await supabase
+          .from('clientes')
+          .select('*')
+          .eq('id_centum', id_centum)
+          .maybeSingle()
+        if (yaExiste) return res.json(yaExiste)
+      }
+      throw error
+    }
 
     res.status(201).json(data)
   } catch (err) {
     console.error('Error al importar cliente de Centum:', err)
     res.status(500).json({ error: 'Error al importar cliente' })
+  }
+})
+
+// GET /api/clientes/duplicados
+// Admin: detecta clientes duplicados por id_centum o CUIT
+router.get('/duplicados', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    // Buscar duplicados por id_centum
+    const { data: todos } = await supabase
+      .from('clientes')
+      .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, activo, created_at')
+      .eq('activo', true)
+      .not('id_centum', 'is', null)
+      .order('id_centum', { ascending: true })
+
+    const porIdCentum = new Map()
+    for (const c of (todos || [])) {
+      const arr = porIdCentum.get(c.id_centum) || []
+      arr.push(c)
+      porIdCentum.set(c.id_centum, arr)
+    }
+    const duplicados_id_centum = [...porIdCentum.values()].filter(arr => arr.length > 1)
+
+    // Buscar duplicados por CUIT normalizado
+    const { data: conCuit } = await supabase
+      .from('clientes')
+      .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, activo, created_at')
+      .eq('activo', true)
+      .not('cuit', 'is', null)
+      .order('cuit', { ascending: true })
+
+    const porCuit = new Map()
+    for (const c of (conCuit || [])) {
+      const norm = c.cuit.replace(/\D/g, '')
+      if (norm.length < 7) continue
+      const arr = porCuit.get(norm) || []
+      arr.push(c)
+      porCuit.set(norm, arr)
+    }
+    const duplicados_cuit = [...porCuit.values()].filter(arr => arr.length > 1)
+
+    res.json({
+      duplicados_id_centum,
+      duplicados_cuit,
+      total_id_centum: duplicados_id_centum.length,
+      total_cuit: duplicados_cuit.length,
+    })
+  } catch (err) {
+    console.error('Error buscando duplicados:', err)
+    res.status(500).json({ error: 'Error al buscar duplicados' })
   }
 })
 
@@ -414,7 +488,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
     const queryPromise = db.request()
       .input('id', sql.Int, idCentum)
       .query(`
-        SELECT ClienteID, RazonSocialCliente, CUITCliente, DireccionCliente,
+        SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente,
                LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, ActivoCliente
         FROM Clientes_VIEW
         WHERE ClienteID = @id
@@ -447,6 +521,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       localidad: r.LocalidadCliente?.trim() || null,
       codigo_postal: r.CodigoPostalCliente?.trim() || null,
       telefono: r.Telefono1Cliente?.trim() || null,
+      codigo_centum: r.CodigoCliente?.trim() || null,
       condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID),
     }
 
@@ -454,7 +529,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       .from('clientes')
       .update(updates)
       .eq('id_centum', idCentum)
-      .select('id, id_centum, codigo, razon_social, cuit, condicion_iva, email, celular, telefono')
+      .select('id, id_centum, codigo, codigo_centum, razon_social, cuit, condicion_iva, email, celular, telefono')
       .single()
 
     if (error) throw error
@@ -469,7 +544,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
 // Editar cliente local + sync a Centum
 router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
   const idCentum = parseInt(req.params.idCentum)
-  const { razon_social, cuit, condicion_iva, telefono, email, celular } = req.body
+  const { razon_social, cuit, condicion_iva, direccion, localidad, codigo_postal, telefono, email, celular } = req.body
 
   if (!idCentum) {
     return res.status(400).json({ error: 'ID Centum requerido' })
@@ -481,6 +556,9 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
     if (razon_social !== undefined) updates.razon_social = razon_social?.trim() || null
     if (cuit !== undefined) updates.cuit = cuit?.trim() || null
     if (condicion_iva !== undefined) updates.condicion_iva = condicion_iva
+    if (direccion !== undefined) updates.direccion = direccion?.trim() || null
+    if (localidad !== undefined) updates.localidad = localidad?.trim() || null
+    if (codigo_postal !== undefined) updates.codigo_postal = codigo_postal?.trim() || null
     if (telefono !== undefined) updates.telefono = telefono?.trim() || null
     if (email !== undefined) updates.email = email?.trim() || null
     if (celular !== undefined) updates.celular = celular?.trim() || null
@@ -565,7 +643,6 @@ router.post('/sincronizar-centum', verificarAuth, soloAdmin, async (req, res) =>
 
       // Mapear campos del ERP a nuestro schema
       const clientesMapeados = items.map(c => ({
-        codigo: c.Codigo != null ? String(c.Codigo).trim() : '',
         razon_social: c.RazonSocial || c.Nombre || 'Sin nombre',
         cuit: c.CUIT || null,
         direccion: c.Direccion || null,
@@ -574,15 +651,16 @@ router.post('/sincronizar-centum', verificarAuth, soloAdmin, async (req, res) =>
         provincia: c.Provincia || null,
         telefono: c.Telefono || null,
         id_centum: c.IdCliente || c.Id || null,
+        codigo_centum: c.Codigo != null ? String(c.Codigo).trim() : null,
         activo: true,
-      })).filter(c => c.codigo) // Filtrar clientes sin código
+      })).filter(c => c.id_centum) // Filtrar clientes sin id_centum
 
-      // Upsert en lotes
+      // Upsert en lotes por id_centum (evita duplicados)
       for (let i = 0; i < clientesMapeados.length; i += BATCH_SIZE) {
         const lote = clientesMapeados.slice(i, i + BATCH_SIZE)
         const { error } = await supabase
           .from('clientes')
-          .upsert(lote, { onConflict: 'codigo' })
+          .upsert(lote, { onConflict: 'id_centum', ignoreDuplicates: false })
 
         if (error) throw error
         totalImportados += lote.length

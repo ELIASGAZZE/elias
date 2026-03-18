@@ -1,6 +1,7 @@
 // Rutas para gestión de empleados
 const express = require('express')
 const router = express.Router()
+const bcrypt = require('bcryptjs')
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
@@ -167,6 +168,109 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al eliminar empleado:', err)
     res.status(500).json({ error: 'Error al eliminar empleado' })
+  }
+})
+
+// ── PIN de fichaje ──────────────────────────────────────────────────────────
+
+// POST /api/empleados/:id/pin — Asignar/cambiar PIN (admin)
+router.post('/:id/pin', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { pin, temporal } = req.body
+
+    if (!pin || pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin)) {
+      return res.status(400).json({ error: 'El PIN debe ser de 4-6 dígitos numéricos' })
+    }
+
+    // Verificar que el PIN no esté en uso por otro empleado
+    const { data: empleados } = await supabase
+      .from('empleados')
+      .select('id, pin_fichaje')
+      .eq('activo', true)
+      .not('pin_fichaje', 'is', null)
+      .neq('id', id)
+
+    for (const emp of (empleados || [])) {
+      const match = await bcrypt.compare(pin, emp.pin_fichaje)
+      if (match) {
+        return res.status(409).json({ error: 'Ese PIN ya está en uso por otro empleado' })
+      }
+    }
+
+    const hash = await bcrypt.hash(pin, 10)
+
+    const { data, error } = await supabase
+      .from('empleados')
+      .update({ pin_fichaje: hash, pin_fichaje_temp: temporal === true })
+      .eq('id', id)
+      .select('id, nombre, pin_fichaje_temp')
+      .single()
+
+    if (error) throw error
+    res.json({ ...data, mensaje: 'PIN asignado correctamente' })
+  } catch (err) {
+    console.error('Error al asignar PIN:', err)
+    res.status(500).json({ error: 'Error al asignar PIN' })
+  }
+})
+
+// POST /api/empleados/cambiar-pin — Empleado cambia su propio PIN
+router.post('/cambiar-pin', async (req, res) => {
+  try {
+    const { empleado_id, pin_actual, pin_nuevo } = req.body
+
+    if (!empleado_id || !pin_actual || !pin_nuevo) {
+      return res.status(400).json({ error: 'empleado_id, pin_actual y pin_nuevo son requeridos' })
+    }
+
+    if (pin_nuevo.length < 4 || pin_nuevo.length > 6 || !/^\d+$/.test(pin_nuevo)) {
+      return res.status(400).json({ error: 'El PIN nuevo debe ser de 4-6 dígitos numéricos' })
+    }
+
+    // Verificar PIN actual
+    const { data: emp, error: empError } = await supabase
+      .from('empleados')
+      .select('id, pin_fichaje')
+      .eq('id', empleado_id)
+      .single()
+
+    if (empError || !emp || !emp.pin_fichaje) {
+      return res.status(404).json({ error: 'Empleado no encontrado o sin PIN' })
+    }
+
+    const pinValido = await bcrypt.compare(pin_actual, emp.pin_fichaje)
+    if (!pinValido) {
+      return res.status(401).json({ error: 'PIN actual incorrecto' })
+    }
+
+    // Verificar que el nuevo PIN no esté en uso
+    const { data: otrosEmpleados } = await supabase
+      .from('empleados')
+      .select('id, pin_fichaje')
+      .eq('activo', true)
+      .not('pin_fichaje', 'is', null)
+      .neq('id', empleado_id)
+
+    for (const otro of (otrosEmpleados || [])) {
+      const match = await bcrypt.compare(pin_nuevo, otro.pin_fichaje)
+      if (match) {
+        return res.status(409).json({ error: 'Ese PIN ya está en uso por otro empleado' })
+      }
+    }
+
+    const hash = await bcrypt.hash(pin_nuevo, 10)
+
+    const { error } = await supabase
+      .from('empleados')
+      .update({ pin_fichaje: hash, pin_fichaje_temp: false })
+      .eq('id', empleado_id)
+
+    if (error) throw error
+    res.json({ mensaje: 'PIN cambiado correctamente' })
+  } catch (err) {
+    console.error('Error al cambiar PIN:', err)
+    res.status(500).json({ error: 'Error al cambiar PIN' })
   }
 })
 
