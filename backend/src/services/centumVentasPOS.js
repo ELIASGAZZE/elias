@@ -558,4 +558,162 @@ async function obtenerVentaCentum(idVenta) {
   return data
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum }
+/**
+ * Retry automático: busca ventas con centum_sync=false de las últimas 24h y las reenvía.
+ * Diseñado para correr desde un cron job.
+ */
+async function retrySyncVentasCentum() {
+  const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+  // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
+  const { data: pendientes, error } = await supabase
+    .from('ventas_pos')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, condicion_iva, tipo, venta_origen_id, nombre_cliente')
+    .eq('centum_sync', false)
+    .not('caja_id', 'is', null)
+    .gte('created_at', hace24h)
+    .order('created_at', { ascending: true })
+    .limit(20)
+
+  if (error || !pendientes?.length) {
+    return { reintentadas: 0, exitosas: 0, fallidas: 0 }
+  }
+
+  let exitosas = 0
+  let fallidas = 0
+
+  for (const venta of pendientes) {
+    try {
+      // Obtener config de caja/sucursal
+      const { data: cajaData } = await supabase
+        .from('cajas')
+        .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+        .eq('id', venta.caja_id)
+        .single()
+
+      const puntoVenta = cajaData?.punto_venta_centum
+      const sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+      if (!puntoVenta || !sucursalFisicaId) {
+        await supabase.from('ventas_pos').update({ centum_error: 'Retry: sin config Centum en caja/sucursal' }).eq('id', venta.id)
+        fallidas++
+        continue
+      }
+
+      const centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+      const centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
+
+      // Determinar condición IVA y división
+      let condicionIva = venta.condicion_iva || 'CF'
+      if (!venta.condicion_iva && venta.id_cliente_centum) {
+        const { data: cliente } = await supabase
+          .from('clientes').select('condicion_iva')
+          .eq('id_centum', venta.id_cliente_centum).single()
+        condicionIva = cliente?.condicion_iva || 'CF'
+      }
+
+      const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+      const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+      const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
+      const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+      const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+      const operadorMovilUser = idDivisionEmpresa === 2
+        ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+        : (centumOperadorEmpresa || null)
+
+      const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
+      let resultado
+
+      if (venta.tipo === 'nota_credito') {
+        // NC: valores positivos
+        const itemsPositivos = items.map(it => ({
+          ...it,
+          precio_unitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+          precioUnitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+          precio: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
+          cantidad: Math.abs(parseFloat(it.cantidad || 1)),
+        }))
+
+        let comprobanteOriginal = null
+        let idClienteNC = venta.id_cliente_centum || 2
+        let condicionIvaNC = condicionIva
+        let idDivisionNC = idDivisionEmpresa
+        let operadorNC = operadorMovilUser
+
+        if (venta.venta_origen_id) {
+          const { data: ventaOrigen } = await supabase
+            .from('ventas_pos').select('centum_comprobante, id_cliente_centum, pagos')
+            .eq('id', venta.venta_origen_id).single()
+          comprobanteOriginal = ventaOrigen?.centum_comprobante || null
+          if (ventaOrigen) {
+            idClienteNC = ventaOrigen.id_cliente_centum || 2
+            let condIvaOrig = 'CF'
+            if (ventaOrigen.id_cliente_centum) {
+              const { data: cliOrig } = await supabase
+                .from('clientes').select('condicion_iva')
+                .eq('id_centum', ventaOrigen.id_cliente_centum).single()
+              condIvaOrig = cliOrig?.condicion_iva || 'CF'
+            }
+            condicionIvaNC = condIvaOrig
+            const esFacturaAOrig = condIvaOrig === 'RI' || condIvaOrig === 'MT'
+            const pagosOrig = Array.isArray(ventaOrigen.pagos) ? ventaOrigen.pagos : []
+            const soloEfectivoOrig = pagosOrig.length === 0 || pagosOrig.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+            idDivisionNC = esFacturaAOrig ? 3 : (soloEfectivoOrig ? 2 : 3)
+            operadorNC = idDivisionNC === 2
+              ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+              : (centumOperadorEmpresa || null)
+          }
+        }
+
+        const esNCConcepto = items.some(it => it.precio_cobrado != null && it.precio_correcto != null)
+        if (esNCConcepto) {
+          const descripcionItems = items.map(it =>
+            `${it.cantidad || 1}x ${it.nombre}: $${it.precio_cobrado} → $${it.precio_correcto}`
+          ).join(', ')
+          resultado = await crearNotaCreditoConceptoPOS({
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: idDivisionNC, puntoVenta,
+            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: condicionIvaNC,
+            descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
+            operadorMovilUser: operadorNC, comprobanteOriginal,
+          })
+        } else {
+          resultado = await crearNotaCreditoPOS({
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: idDivisionNC, puntoVenta,
+            items: itemsPositivos, total: Math.abs(parseFloat(venta.total) || 0),
+            condicionIva: condicionIvaNC, operadorMovilUser: operadorNC, comprobanteOriginal,
+          })
+        }
+      } else {
+        resultado = await crearVentaPOS({
+          idCliente: venta.id_cliente_centum || 2,
+          sucursalFisicaId, idDivisionEmpresa, puntoVenta,
+          items, pagos, total: parseFloat(venta.total) || 0,
+          condicionIva, operadorMovilUser,
+        })
+      }
+
+      const numDoc = resultado?.NumeroDocumento
+      const comprobante = numDoc
+        ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+        : null
+
+      await supabase.from('ventas_pos').update({
+        id_venta_centum: resultado?.IdVenta || null,
+        centum_comprobante: comprobante,
+        centum_sync: true,
+        centum_error: null,
+      }).eq('id', venta.id)
+
+      console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
+      exitosas++
+    } catch (err) {
+      console.error(`[RetryCentumVentas] Error venta ${venta.id}:`, err.message)
+      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message}` }).eq('id', venta.id).catch(() => {})
+      fallidas++
+    }
+  }
+
+  return { reintentadas: pendientes.length, exitosas, fallidas }
+}
+
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, retrySyncVentasCentum }

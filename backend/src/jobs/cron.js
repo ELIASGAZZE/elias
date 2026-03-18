@@ -3,6 +3,7 @@ const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
+const { retrySyncVentasCentum } = require('../services/centumVentasPOS')
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 
@@ -79,6 +80,18 @@ function iniciarCronJobs() {
     }
   })
 
+  // Retry ventas pendientes de Centum: cada 5 minutos (offset 3 min)
+  cron.schedule('3-58/5 * * * *', async () => {
+    try {
+      const resultado = await retrySyncVentasCentum()
+      if (resultado.reintentadas > 0) {
+        console.log(`[RetryCentumVentas] ${resultado.exitosas}/${resultado.reintentadas} ventas sincronizadas a Centum (${resultado.fallidas} fallidas)`)
+      }
+    } catch (err) {
+      console.error('[RetryCentumVentas] Error:', err.message)
+    }
+  })
+
   // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
   // Analiza los cierres del día anterior
   cron.schedule('0 8 * * *', async () => {
@@ -112,6 +125,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
+  console.log('[CRON] Retry ventas pendientes Centum: cada 5 minutos (offset 3)')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 
