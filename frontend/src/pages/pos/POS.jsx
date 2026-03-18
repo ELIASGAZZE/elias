@@ -1552,6 +1552,8 @@ const POS = () => {
 
   // Buscar clientes en Centum (debounced) — offline: busca en IndexedDB
   useEffect(() => {
+    let cancelled = false
+
     if (!busquedaCliente.trim() || busquedaCliente.trim().length < 2) {
       setClientesCentum([])
       return
@@ -1564,26 +1566,26 @@ const POS = () => {
           const { data } = await api.get('/api/clientes', {
             params: { buscar: busquedaCliente.trim(), limit: 10 }
           })
-          setClientesCentum(data.clientes || data.data || [])
+          if (!cancelled) setClientesCentum(data.clientes || data.data || [])
         } else {
           const cached = await getClientes(busquedaCliente.trim())
-          setClientesCentum(cached.slice(0, 10))
+          if (!cancelled) setClientesCentum(cached.slice(0, 10))
         }
       } catch (err) {
         console.error('Error buscando clientes:', err)
         // Fallback a IndexedDB si la API falla
-        if (isNetworkError(err)) {
+        if (!cancelled && isNetworkError(err)) {
           try {
             const cached = await getClientes(busquedaCliente.trim())
-            setClientesCentum(cached.slice(0, 10))
+            if (!cancelled) setClientesCentum(cached.slice(0, 10))
           } catch {}
         }
       } finally {
-        setBuscandoClientes(false)
+        if (!cancelled) setBuscandoClientes(false)
       }
     }, 400)
 
-    return () => clearTimeout(timeout)
+    return () => { cancelled = true; clearTimeout(timeout) }
   }, [busquedaCliente, isOnline])
 
   // Cargar artículos desde DB local (precios minoristas, sync 1x/día)
@@ -3865,9 +3867,9 @@ const POS = () => {
                         </span>
                       )}
                       <div className="p-3 flex flex-col items-center text-center min-h-[100px] justify-center">
-                        <span className="text-base font-bold text-gray-800">{formatPrecio(precioFinal)}</span>
-                        <span className="text-xs text-gray-600 mt-1.5 line-clamp-2 leading-tight">{art.nombre}</span>
-                        {art.codigo && <span className="text-[10px] text-gray-500 mt-1 font-mono">{art.codigo}</span>}
+                        {art.codigo && <span className="text-xl font-bold text-gray-800 font-mono">{art.codigo}</span>}
+                        <span className="text-xs font-semibold text-gray-700 mt-1 line-clamp-2 leading-tight">{art.nombre}</span>
+                        <span className="text-[11px] text-gray-500 mt-1.5">{formatPrecio(precioFinal)}</span>
                       </div>
                     </div>
                   )
