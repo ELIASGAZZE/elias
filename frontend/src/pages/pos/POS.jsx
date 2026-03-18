@@ -1268,6 +1268,68 @@ const POS = () => {
 
   // Modal cobrar
   const [mostrarCobrar, setMostrarCobrar] = useState(false)
+
+  // Buscador de cliente para montos altos (AFIP)
+  const MONTO_LIMITE_DNI = 180000
+  const [mostrarDniPopup, setMostrarDniPopup] = useState(false)
+  const [busquedaDniCliente, setBusquedaDniCliente] = useState('')
+  const [clientesDni, setClientesDni] = useState([])
+  const [buscandoDniCliente, setBuscandoDniCliente] = useState(false)
+  const [mostrarCrearClienteDni, setMostrarCrearClienteDni] = useState(false)
+  const inputDniClienteRef = useRef(null)
+
+  function handleCobrar() {
+    if (totalConGiftCards > MONTO_LIMITE_DNI && (!cliente.id_centum || cliente.id_centum === 0)) {
+      setBusquedaDniCliente('')
+      setClientesDni([])
+      setMostrarDniPopup(true)
+      setTimeout(() => inputDniClienteRef.current?.focus(), 100)
+      return
+    }
+    setMostrarCobrar(true)
+  }
+
+  function seleccionarClienteDni(cli) {
+    if (!cli.id_centum) return
+    setCliente({
+      id_centum: cli.id_centum,
+      codigo: cli.codigo || '',
+      razon_social: cli.razon_social,
+      condicion_iva: cli.condicion_iva || 'CF',
+      email: cli.email || '',
+      celular: cli.celular || '',
+      lista_precio_id: cli.lista_precio_id || 1,
+    })
+    setMostrarDniPopup(false)
+    setMostrarCobrar(true)
+  }
+
+  function onClienteDniCreado(clienteNuevo) {
+    setMostrarCrearClienteDni(false)
+    if (clienteNuevo?.id_centum) {
+      seleccionarClienteDni(clienteNuevo)
+    }
+  }
+
+  // Debounce búsqueda cliente por DNI/CUIT únicamente
+  useEffect(() => {
+    if (!mostrarDniPopup) return
+    const termino = busquedaDniCliente.trim().replace(/\D/g, '')
+    if (termino.length < 7) { setClientesDni([]); return }
+    setBuscandoDniCliente(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/api/clientes', { params: { buscar: termino, solo_dni: 'true', limit: 10 } })
+        setClientesDni(data.clientes || data || [])
+      } catch { setClientesDni([]) }
+      finally { setBuscandoDniCliente(false) }
+    }, 400)
+    return () => clearTimeout(timeout)
+  }, [busquedaDniCliente, mostrarDniPopup])
+
+  useEffect(() => {
+    if (mostrarDniPopup) setTimeout(() => inputDniClienteRef.current?.focus(), 100)
+  }, [mostrarDniPopup])
   // Modal venta empleado
   const [mostrarVentaEmpleado, setMostrarVentaEmpleado] = useState(false)
 
@@ -2012,7 +2074,7 @@ const POS = () => {
       // F11 = Cobrar
       if (e.key === 'F11' && tieneItems) {
         e.preventDefault()
-        setMostrarCobrar(true)
+        handleCobrar()
       }
       // + / - = Cantidad del item seleccionado (o último) (solo si no hay foco en input)
       if ((e.key === '+' || e.key === '-') && carrito.length > 0 && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
@@ -3606,7 +3668,7 @@ const POS = () => {
                       {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
                     <button
-                      onClick={() => setMostrarCobrar(true)}
+                      onClick={handleCobrar}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
                       title="F11"
                     >
@@ -3626,7 +3688,7 @@ const POS = () => {
                 {/* Si hay pedido en proceso NO pagado y NO editando: cobrar primero */}
                 {pedidoEnProceso && !pedidoEnProceso.editando && !pedidoEnProceso.esPagado && (
                   <button
-                    onClick={() => setMostrarCobrar(true)}
+                    onClick={handleCobrar}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"
                     title="F11"
                   >
@@ -5291,6 +5353,85 @@ const POS = () => {
         </div>
       )}
 
+
+      {/* Buscador de cliente para montos > $180.000 (AFIP) */}
+      {mostrarDniPopup && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center" onClick={() => setMostrarDniPopup(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3 relative" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setMostrarDniPopup(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <h2 className="text-base font-semibold text-gray-800">Seleccionar cliente</h2>
+            <p className="text-xs text-gray-400">Para ventas mayores a {formatPrecio(MONTO_LIMITE_DNI)} es obligatorio identificar al consumidor final.</p>
+            <input
+              ref={inputDniClienteRef}
+              type="text"
+              inputMode="numeric"
+              value={busquedaDniCliente}
+              onChange={e => setBusquedaDniCliente(e.target.value.replace(/\D/g, ''))}
+              placeholder="Ingresá DNI o CUIT..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-green-400"
+              maxLength={11}
+              autoFocus
+            />
+            {buscandoDniCliente && (
+              <div className="flex justify-center py-4">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-600" />
+              </div>
+            )}
+            {!buscandoDniCliente && clientesDni.length > 0 && (
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {clientesDni.map(c => (
+                  <button
+                    key={c.id || c.id_centum}
+                    onClick={() => seleccionarClienteDni(c)}
+                    disabled={!c.id_centum}
+                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                      c.id_centum
+                        ? 'border-gray-100 hover:border-green-300 hover:bg-green-50/50'
+                        : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-800 truncate">{c.razon_social}</span>
+                      {!c.id_centum && (
+                        <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">Sin Centum</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {c.cuit && <span>{c.cuit}</span>}
+                      {c.condicion_iva && <span> · {c.condicion_iva}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!buscandoDniCliente && busquedaDniCliente.trim().length >= 7 && clientesDni.length === 0 && (
+              <div className="text-center py-4 space-y-3">
+                <p className="text-sm text-gray-400">No se encontraron clientes</p>
+                <button
+                  onClick={() => setMostrarCrearClienteDni(true)}
+                  className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border-2 border-dashed border-gray-200 hover:border-green-400 hover:bg-green-50/50 text-gray-500 hover:text-green-700 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  </svg>
+                  <span className="text-sm font-medium">Crear nuevo cliente</span>
+                </button>
+              </div>
+            )}
+
+            {/* Modal crear cliente superpuesto */}
+            {mostrarCrearClienteDni && (
+              <NuevoClienteModal
+                onClose={() => setMostrarCrearClienteDni(false)}
+                onCreado={onClienteDniCreado}
+                cuitInicial={busquedaDniCliente.trim()}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Modal de cobro */}
       {mostrarCobrar && (

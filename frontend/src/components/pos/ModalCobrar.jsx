@@ -1191,6 +1191,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           {guardando ? 'Guardando...' : montoSuficiente ? (<>{totalEfectivoConGC <= 0 ? 'Confirmar (cubierto)' : 'Confirmar venta'} <span className="text-[9px] opacity-50">Enter</span></>) : 'Ingresá el pago'}
         </button>
       </div>
+
     </div>
   )
 }
