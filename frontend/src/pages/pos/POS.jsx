@@ -39,6 +39,7 @@ function itemMatcheaRegla(item, aplicarA) {
     if (regla.tipo === 'articulo' && item.articulo.id === regla.id) return true
     if (regla.tipo === 'rubro' && item.articulo.rubro?.id === regla.id) return true
     if (regla.tipo === 'subrubro' && item.articulo.subRubro?.id === regla.id) return true
+    if (regla.tipo === 'atributo' && item.articulo.atributos?.some(a => a.id_valor === regla.id_valor)) return true
   }
   return false
 }
@@ -250,8 +251,10 @@ function calcularPromocionesLocales(carrito, promociones) {
         if (cantidadTotal < llevar) break
         const gruposNxM = Math.floor(cantidadTotal / llevar)
         const unidadesGratis = gruposNxM * (llevar - pagar)
-        const precioMasBajo = Math.min(...itemsMatch.map(i => calcularPrecioConDescuentosBase(i.articulo)))
-        const descuento = unidadesGratis * precioMasBajo
+        const precioDescuento = reglas.descuento_en === 'mas_caro'
+          ? Math.max(...itemsMatch.map(i => calcularPrecioConDescuentosBase(i.articulo)))
+          : Math.min(...itemsMatch.map(i => calcularPrecioConDescuentosBase(i.articulo)))
+        const descuento = unidadesGratis * precioDescuento
         // Distribuir descuento proporcionalmente por item
         const descuentoPorItem = {}
         const cantPorItem = {}

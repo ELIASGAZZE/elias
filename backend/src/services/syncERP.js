@@ -115,6 +115,24 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     descuento2: art.PorcentajeDescuento2 || 0,
     descuento3: art.PorcentajeDescuento3 || 0,
     iva_tasa: art.CategoriaImpuestoIVA?.Tasa != null ? art.CategoriaImpuestoIVA.Tasa : 21,
+    atributos: (art.AtributosArticulo || art.Atributos || []).flatMap(attr => {
+      // Formato nested: { IdAtributoArticulo, Nombre, Valores: [{ IdAtributoArticuloValor, Valor }] }
+      if (attr.Valores && Array.isArray(attr.Valores)) {
+        return attr.Valores.map(v => ({
+          id: attr.IdAtributoArticulo,
+          nombre: attr.Nombre || '',
+          valor: v.Valor || '',
+          id_valor: v.IdAtributoArticuloValor,
+        }))
+      }
+      // Formato plano
+      return [{
+        id: attr.IdAtributoArticulo || attr.IdAtributo,
+        nombre: attr.Nombre || attr.NombreAtributo || '',
+        valor: attr.Valor || '',
+        id_valor: attr.IdAtributoArticuloValor || attr.IdValor || null,
+      }]
+    }),
   }))
 
   // Comparar con precios actuales para solo actualizar los que cambiaron
@@ -251,6 +269,68 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     console.log(`[Sync] ${barcodesSincronizados} artículos con códigos de barra sincronizados`)
   } catch (err) {
     console.error('[Sync] Error al sincronizar códigos de barra:', err.message)
+  }
+
+  // Sincronizar atributos de artículos desde Centum BI
+  let atributosSincronizados = 0
+  if (!skipBarcodes) try {
+    const { getPool } = require('../config/centum')
+    const db = await getPool()
+
+    // 1. Traer nombres de atributos
+    const attrNombresResult = await db.request().query(`
+      SELECT AtributoArticuloID, NombreAtributoArticulo
+      FROM AtributosArticulos_VIEW
+    `)
+    const attrNombres = {}
+    for (const row of attrNombresResult.recordset) {
+      attrNombres[row.AtributoArticuloID] = row.NombreAtributoArticulo
+    }
+
+    // 2. Traer valores de atributos
+    const attrValoresResult = await db.request().query(`
+      SELECT AtributoArticuloValorID, AtributoArticuloID, ValorAtributoArticulo
+      FROM AtributosArticulosValores_VIEW
+    `)
+    const attrValores = {}
+    for (const row of attrValoresResult.recordset) {
+      attrValores[row.AtributoArticuloValorID] = {
+        id: row.AtributoArticuloID,
+        nombre: attrNombres[row.AtributoArticuloID] || '',
+        valor: row.ValorAtributoArticulo,
+        id_valor: row.AtributoArticuloValorID,
+      }
+    }
+
+    // 3. Traer relación artículo → atributo valor
+    const relResult = await db.request().query(`
+      SELECT ArticuloID, AtributoArticuloValorID
+      FROM Articulos_AtributosArticulosValores_VIEW
+    `)
+    const attrPorArticulo = {}
+    for (const row of relResult.recordset) {
+      const val = attrValores[row.AtributoArticuloValorID]
+      if (!val) continue
+      if (!attrPorArticulo[row.ArticuloID]) attrPorArticulo[row.ArticuloID] = []
+      attrPorArticulo[row.ArticuloID].push(val)
+    }
+
+    // 4. Actualizar artículos en Supabase
+    const attrEntries = Object.entries(attrPorArticulo)
+    const ATTR_BATCH = 50
+    for (let i = 0; i < attrEntries.length; i += ATTR_BATCH) {
+      const lote = attrEntries.slice(i, i + ATTR_BATCH)
+      await Promise.all(lote.map(([idCentum, attrs]) =>
+        supabase
+          .from('articulos')
+          .update({ atributos: attrs })
+          .eq('id_centum', parseInt(idCentum))
+          .then(() => atributosSincronizados++)
+      ))
+    }
+    console.log(`[Sync] ${atributosSincronizados} artículos con atributos sincronizados`)
+  } catch (err) {
+    console.error('[Sync] Error al sincronizar atributos:', err.message)
   }
 
   const duracion = Date.now() - inicioFetch

@@ -23,6 +23,7 @@ const TIPO_ENTIDAD = [
   { value: 'articulo', label: 'Artículo' },
   { value: 'rubro', label: 'Rubro' },
   { value: 'subrubro', label: 'Sub Rubro' },
+  { value: 'atributo', label: 'Atributo' },
   { value: 'todos', label: 'Todos los artículos' },
 ]
 
@@ -67,6 +68,7 @@ const AdminPromociones = () => {
     tipo_descuento: 'porcentaje',
     descuento_en_ambos: false,
     buscando_campo: null, // 'condicion' | 'beneficio'
+    descuento_en: 'mas_barato', // 'mas_barato' | 'mas_caro' (solo NxM)
   })
 
   // Buscador de artículos
@@ -75,9 +77,10 @@ const AdminPromociones = () => {
   const [buscando, setBuscando] = useState(false)
   const [tipoEntidad, setTipoEntidad] = useState('articulo')
 
-  // Rubros y subrubros de Centum
+  // Rubros, subrubros y atributos de Centum
   const [rubros, setRubros] = useState([])
   const [subrubros, setSubrubros] = useState([])
+  const [atributosDisponibles, setAtributosDisponibles] = useState([])
 
   const cargar = async () => {
     try {
@@ -98,14 +101,16 @@ const AdminPromociones = () => {
 
   async function cargarRubrosSubrubros() {
     try {
-      const [resR, resS] = await Promise.all([
+      const [resR, resS, resA] = await Promise.all([
         api.get('/api/pos/rubros'),
         api.get('/api/pos/subrubros'),
+        api.get('/api/pos/atributos-articulo'),
       ])
       setRubros(resR.data.rubros || [])
       setSubrubros(resS.data.subrubros || [])
+      setAtributosDisponibles(resA.data.atributos || [])
     } catch (err) {
-      console.error('Error cargando rubros/subrubros:', err)
+      console.error('Error cargando rubros/subrubros/atributos:', err)
     }
   }
 
@@ -175,6 +180,7 @@ const AdminPromociones = () => {
       precio_combo: '', articulos_combo: [],
       forma_cobro_nombre: '',
       grupos_condicion: [[]], grupo_activo: 0, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null,
+      descuento_en: 'mas_barato',
     })
     setBusqueda('')
     setResultados([])
@@ -212,6 +218,7 @@ const AdminPromociones = () => {
       tipo_descuento: reglas.tipo_descuento || 'porcentaje',
       descuento_en_ambos: reglas.descuento_en_ambos || false,
       buscando_campo: null,
+      descuento_en: reglas.descuento_en || 'mas_barato',
     })
     setEditandoId(promo.id)
     setMostrarForm(true)
@@ -239,6 +246,7 @@ const AdminPromociones = () => {
           llevar: parseInt(llevar) || 3,
           pagar: parseInt(pagar) || 2,
           aplicar_a: aplicar_a.length > 0 ? aplicar_a : [{ tipo: 'todos' }],
+          descuento_en: form.descuento_en || 'mas_barato',
         }
       case 'combo':
         return {
@@ -394,6 +402,13 @@ const AdminPromociones = () => {
           ...prev,
           aplicar_a: [...prev.aplicar_a.filter(a => a.tipo !== 'todos'), { tipo: 'subrubro', id: item.subRubro.id, nombre: item.subRubro.nombre }],
         }))
+      } else if (tipoEntidad === 'atributo') {
+        // item here is { id_valor, nombre_attr, valor } from atributo selector
+        if (form.aplicar_a.find(a => a.tipo === 'atributo' && a.id_valor === item.id_valor)) return
+        setForm(prev => ({
+          ...prev,
+          aplicar_a: [...prev.aplicar_a.filter(a => a.tipo !== 'todos'), { tipo: 'atributo', id_valor: item.id_valor, nombre: `${item.nombre_attr}: ${item.valor}` }],
+        }))
       }
     }
     setBusqueda('')
@@ -539,6 +554,29 @@ const AdminPromociones = () => {
                   onChange={e => setForm(prev => ({ ...prev, pagar: e.target.value }))}
                   className="campo-form text-sm"
                 />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-gray-500">Descontar al</label>
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, descuento_en: 'mas_barato' }))}
+                    className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                      form.descuento_en !== 'mas_caro' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border'
+                    }`}
+                  >
+                    Más barato
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, descuento_en: 'mas_caro' }))}
+                    className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                      form.descuento_en === 'mas_caro' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border'
+                    }`}
+                  >
+                    Más caro
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -940,6 +978,35 @@ const AdminPromociones = () => {
               </select>
             )}
 
+            {/* Dropdown de atributos */}
+            {tipoEntidad === 'atributo' && form.tipo !== 'combo' && (
+              <select
+                className="campo-form text-sm"
+                value=""
+                onChange={e => {
+                  const [attrId, valId] = e.target.value.split('|')
+                  const attr = atributosDisponibles.find(a => String(a.id) === attrId)
+                  if (!attr) return
+                  const val = attr.valores.find(v => String(v.id_valor) === valId)
+                  if (!val) return
+                  if (form.aplicar_a.find(a => a.tipo === 'atributo' && a.id_valor === val.id_valor)) return
+                  setForm(prev => ({
+                    ...prev,
+                    aplicar_a: [...prev.aplicar_a.filter(a => a.tipo !== 'todos'), { tipo: 'atributo', id_valor: val.id_valor, nombre: `${attr.nombre}: ${val.valor}` }],
+                  }))
+                }}
+              >
+                <option value="">Seleccionar atributo...</option>
+                {atributosDisponibles.map(attr => (
+                  <optgroup key={attr.id} label={attr.nombre}>
+                    {attr.valores.map(v => (
+                      <option key={v.id_valor} value={`${attr.id}|${v.id_valor}`}>{v.valor}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            )}
+
             {/* Input búsqueda de artículos (solo para tipo articulo o combo) */}
             {((tipoEntidad === 'articulo' && form.tipo !== 'combo') || form.tipo === 'combo') && (
               <div className="relative">
@@ -1019,7 +1086,7 @@ const AdminPromociones = () => {
             let detalle = ''
             if (promo.tipo === 'porcentaje') detalle = `${reglas.valor}% off${reglas.cantidad_minima > 1 ? ` (min ${reglas.cantidad_minima})` : ''}`
             else if (promo.tipo === 'monto_fijo') detalle = `${formatPrecio(reglas.valor)} off${reglas.cantidad_minima > 1 ? ` (min ${reglas.cantidad_minima})` : ''}`
-            else if (promo.tipo === 'nxm') detalle = `${reglas.llevar}x${reglas.pagar}`
+            else if (promo.tipo === 'nxm') detalle = `${reglas.llevar}x${reglas.pagar}${reglas.descuento_en === 'mas_caro' ? ' (más caro gratis)' : ''}`
             else if (promo.tipo === 'combo') detalle = `Combo ${formatPrecio(reglas.precio_combo)}`
             else if (promo.tipo === 'forma_pago') detalle = `${reglas.valor}% off en ${reglas.forma_cobro_nombre}`
             else if (promo.tipo === 'condicional') {

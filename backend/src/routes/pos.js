@@ -11,7 +11,7 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras'
+    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos'
 
     // Supabase limita a 1000 por defecto — paginar para traer todos
     const PAGE_SIZE = 1000
@@ -51,6 +51,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       descuento3: parseFloat(a.descuento3) || 0,
       esPesable: a.es_pesable || false,
       codigosBarras: a.codigos_barras || [],
+      atributos: a.atributos || [],
     }))
 
     res.json({ articulos, total: articulos.length })
@@ -143,6 +144,48 @@ router.get('/subrubros', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al obtener subrubros:', err.message)
     res.status(500).json({ error: 'Error al obtener subrubros' })
+  }
+})
+
+// GET /api/pos/atributos-articulo
+// Lista atributos únicos desde la columna JSONB de artículos
+router.get('/atributos-articulo', verificarAuth, async (req, res) => {
+  try {
+    // Leer artículos que tengan atributos no vacíos
+    const { data, error } = await supabase
+      .from('articulos')
+      .select('atributos')
+      .not('atributos', 'eq', '[]')
+      .not('atributos', 'is', null)
+
+    if (error) throw error
+
+    // Extraer atributos únicos agrupados por nombre
+    const attrMap = {} // { nombreAttr: { id, nombre, valores: { id_valor: valor } } }
+    for (const art of (data || [])) {
+      for (const attr of (art.atributos || [])) {
+        if (!attr.id || !attr.id_valor) continue
+        if (!attrMap[attr.id]) {
+          attrMap[attr.id] = { id: attr.id, nombre: attr.nombre, valores: {} }
+        }
+        attrMap[attr.id].valores[attr.id_valor] = attr.valor
+      }
+    }
+
+    // Convertir a array con valores como sub-array
+    const atributos = Object.values(attrMap).map(a => ({
+      id: a.id,
+      nombre: a.nombre,
+      valores: Object.entries(a.valores).map(([id_valor, valor]) => ({
+        id_valor: parseInt(id_valor),
+        valor,
+      })),
+    }))
+
+    res.json({ atributos })
+  } catch (err) {
+    console.error('[POS] Error al listar atributos:', err.message)
+    res.status(500).json({ error: 'Error al listar atributos' })
   }
 })
 
