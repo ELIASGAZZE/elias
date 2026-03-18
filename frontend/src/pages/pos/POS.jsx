@@ -5644,8 +5644,9 @@ const POS = () => {
                     ref={inputClientePedidoRef}
                     type="text"
                     value={busquedaClientePedido}
-                    onChange={e => setBusquedaClientePedido(e.target.value)}
-                    placeholder="Buscar por DNI o CUIT..."
+                    onChange={e => setBusquedaClientePedido(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    inputMode="numeric"
+                    placeholder="DNI (7-8 dígitos) o CUIT (11 dígitos)"
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
                   />
                   {buscandoClientePedido && (

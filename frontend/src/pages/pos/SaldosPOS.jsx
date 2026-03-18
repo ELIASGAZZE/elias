@@ -355,8 +355,9 @@ function VistaConsulta({ embebido }) {
             <input
               type="text"
               value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
-              placeholder="DNI o CUIT..."
+              onChange={e => setBusqueda(e.target.value.replace(/\D/g, '').slice(0, 11))}
+              inputMode="numeric"
+              placeholder="DNI (7-8 dígitos) o CUIT (11 dígitos)"
               className="w-full text-sm border rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               autoFocus
             />

@@ -265,8 +265,9 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
                   ref={inputRef}
                   type="text"
                   value={busqueda}
-                  onChange={e => setBusqueda(e.target.value)}
-                  placeholder="Ej: 20-12345678-9 o 12345678"
+                  onChange={e => setBusqueda(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                  inputMode="numeric"
+                  placeholder="DNI (7-8 dígitos) o CUIT (11 dígitos)"
                   className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400"
                 />
               </div>
@@ -354,7 +355,8 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
                 <input
                   type="text"
                   value={form.cuit}
-                  onChange={e => actualizarForm('cuit', e.target.value)}
+                  onChange={e => actualizarForm('cuit', e.target.value.replace(/\D/g, '').slice(0, 11))}
+                  inputMode="numeric"
                   className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400"
                 />
               </div>
