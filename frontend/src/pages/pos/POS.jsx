@@ -5369,10 +5369,9 @@ const POS = () => {
               type="text"
               inputMode="numeric"
               value={busquedaDniCliente}
-              onChange={e => setBusquedaDniCliente(e.target.value.replace(/\D/g, ''))}
+              onChange={e => setBusquedaDniCliente(e.target.value.replace(/\D/g, '').slice(0, 11))}
               placeholder="DNI (7-8 dígitos) o CUIT (11 dígitos)"
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-green-400"
-              maxLength={11}
               autoFocus
             />
             {busquedaDniCliente.length === 9 || busquedaDniCliente.length === 10 ? (
