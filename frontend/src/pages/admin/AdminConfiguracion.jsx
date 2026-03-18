@@ -4,6 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import AdminPromociones from '../../components/pos/AdminPromociones'
 import api from '../../services/api'
+import SeccionClientes from '../../components/admin/SeccionClientes'
+import AdminArticulosAtributos from '../../components/admin/AdminArticulosAtributos'
 
 const ChevronIcon = ({ abierta }) => (
   <svg
@@ -69,7 +71,9 @@ const TITULOS_SECCION = {
   'formas-cobro': 'Formas de Cobro',
   rubros: 'Rubros',
   sucursales: 'Sucursales',
+  'articulos-atributos': 'Artículos',
   promociones: 'Promociones POS',
+  clientes: 'Clientes',
   'bloqueos-pedidos': 'Bloqueos de Pedidos',
 }
 
@@ -1303,6 +1307,11 @@ const AdminConfiguracion = () => {
           )}
         </div>}
 
+        {/* ===== ARTÍCULOS Y ATRIBUTOS ===== */}
+        {seccion === 'articulos-atributos' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+          <AdminArticulosAtributos />
+        </div>}
+
         {/* ===== PROMOCIONES POS ===== */}
         {seccion === 'promociones' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <div className="mb-4 flex items-center gap-3">
@@ -1331,6 +1340,11 @@ const AdminConfiguracion = () => {
             )}
           </div>
           <AdminPromociones />
+        </div>}
+
+        {/* ===== CLIENTES ===== */}
+        {seccion === 'clientes' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+          <SeccionClientes />
         </div>}
 
         {/* ===== BLOQUEOS DE PEDIDOS ===== */}
