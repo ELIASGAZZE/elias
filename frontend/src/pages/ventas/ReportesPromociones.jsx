@@ -54,7 +54,16 @@ const ReportesPromociones = () => {
     if (!desde || !hasta) return
     setCargando(true)
     api.get(`/api/pos/ventas/reportes/promociones?desde=${desde}&hasta=${hasta}`)
-      .then(r => setVentas(r.data.ventas || []))
+      .then(r => {
+        const raw = r.data.ventas || []
+        // Normalizar promociones_aplicadas (puede venir como string JSON)
+        setVentas(raw.map(v => ({
+          ...v,
+          promociones_aplicadas: typeof v.promociones_aplicadas === 'string'
+            ? JSON.parse(v.promociones_aplicadas || '[]')
+            : (v.promociones_aplicadas || [])
+        })))
+      })
       .catch(err => console.error('Error cargando reporte promociones:', err))
       .finally(() => setCargando(false))
   }, [desde, hasta])
