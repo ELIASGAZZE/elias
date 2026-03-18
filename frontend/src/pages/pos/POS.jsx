@@ -152,17 +152,15 @@ function calcularPromoCondicional(reglas, carrito) {
   for (const grupo of grupos) {
     for (const c of grupo) { allCondIds.add(c.id); if (c.codigo) allCondIds.add(c.codigo) }
   }
-  let benefRest = vecesPromo
   const findBenefInCarrito = (ab) => carrito.find(i =>
     i.articulo.id === ab.id || (ab.codigo && String(i.articulo.codigo) === String(ab.codigo))
   )
   for (const ab of listaBenef) {
-    if (benefRest <= 0) break
     if (descontados.has(ab.id)) continue
     if (allCondIds.has(ab.id) || allCondIds.has(ab.codigo)) continue
     const found = findBenefInCarrito(ab)
     if (!found || descontados.has(found.articulo.id)) continue
-    const cantBenef = Math.min(benefRest, found.cantidad)
+    const cantBenef = Math.min(vecesPromo, found.cantidad)
     const precio = calcularPrecioConDescuentosBase(found.articulo)
     const d = reglas.tipo_descuento === 'porcentaje'
       ? precio * cantBenef * ((reglas.valor || 0) / 100)
@@ -170,7 +168,6 @@ function calcularPromoCondicional(reglas, carrito) {
     descuento += d
     descuentoPorItem[found.articulo.id] = (descuentoPorItem[found.articulo.id] || 0) + d
     cantPorItem[found.articulo.id] = (cantPorItem[found.articulo.id] || 0) + cantBenef
-    benefRest -= cantBenef
     descontados.add(found.articulo.id)
   }
   if (descuento <= 0) return null
@@ -456,15 +453,13 @@ function calcularPromocionesLocales(carrito, promociones) {
             if (c.codigo) allCondIds.add(c.codigo)
           }
         }
-        let benefRestantes = vecesPromo
         for (const ab of listaBenef) {
-          if (benefRestantes <= 0) break
           if (descontados.has(ab.id)) continue
           // Skip si este beneficio aparece en algún grupo condición (no participó pero podría haber)
           if (allCondIds.has(ab.id) || allCondIds.has(ab.codigo)) continue
           const found = findBenefInCarrito(ab)
           if (!found || descontados.has(found.articulo.id)) continue
-          const cantBenef = Math.min(benefRestantes, found.cantidad)
+          const cantBenef = Math.min(vecesPromo, found.cantidad)
           const precio = calcularPrecioConDescuentosBase(found.articulo)
           let itemDesc = 0
           if (reglas.tipo_descuento === 'porcentaje') {
@@ -475,7 +470,6 @@ function calcularPromocionesLocales(carrito, promociones) {
           descuento += itemDesc
           descuentoPorItem[found.articulo.id] = (descuentoPorItem[found.articulo.id] || 0) + itemDesc
           cantPorItem[found.articulo.id] = (cantPorItem[found.articulo.id] || 0) + cantBenef
-          benefRestantes -= cantBenef
           descontados.add(found.articulo.id)
         }
         if (descuento <= 0) break
