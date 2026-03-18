@@ -648,15 +648,39 @@ const DetalleVenta = () => {
         {promociones.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Promociones aplicadas</h2>
-            <div className="space-y-2">
-              {promociones.map((promo, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-700">{promo.nombre || promo.tipo || 'Promocion'}</span>
-                  {promo.descuento != null && (
-                    <span className="text-green-600 font-medium">-{formatPrecio(promo.descuento)}</span>
-                  )}
-                </div>
-              ))}
+            <div className="space-y-3">
+              {promociones.map((promo, i) => {
+                const tieneDetalle = promo.itemsAfectados && promo.descuentoPorItem
+                return (
+                  <div key={i} className={tieneDetalle ? 'border-b border-gray-100 pb-3 last:border-0 last:pb-0' : ''}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-700 font-medium">{promo.promoNombre || promo.nombre || promo.tipo || 'Promocion'}</span>
+                      {promo.descuento != null && (
+                        <span className="text-green-600 font-medium">-{formatPrecio(promo.descuento)}</span>
+                      )}
+                    </div>
+                    {promo.detalle && (
+                      <p className="text-xs text-gray-400 mt-0.5">{promo.detalle}</p>
+                    )}
+                    {tieneDetalle && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {promo.itemsAfectados.map(artId => {
+                          const descItem = promo.descuentoPorItem[artId]
+                          if (!descItem) return null
+                          const itemVenta = items.find(it => String(it.articulo_id || it.id) === String(artId))
+                          const nombre = itemVenta?.nombre || itemVenta?.codigo || `Art. ${artId}`
+                          return (
+                            <div key={artId} className="flex justify-between text-xs pl-2">
+                              <span className="text-gray-500">· {nombre}</span>
+                              <span className="text-green-600">-{formatPrecio(descItem)}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
@@ -698,17 +722,51 @@ const DetalleVenta = () => {
               <span className="text-gray-800">{formatPrecio(venta.total)}</span>
             </div>
 
-            {/* Medios de pago */}
-            {pagos.length > 0 && (
-              <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
-                {pagos.map((p, i) => (
-                  <div key={i} className="flex justify-between text-gray-600">
-                    <span>{MEDIOS_LABELS[p.medio] || p.medio}</span>
-                    <span>{formatPrecio(p.monto)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Medios de pago - agrupados */}
+            {pagos.length > 0 && (() => {
+              // Agrupar: efectivo por denominación, otros por tipo
+              const grupos = {}
+              pagos.forEach(p => {
+                const tipo = p.tipo || p.medio || 'efectivo'
+                const tipoKey = tipo.toLowerCase()
+                const esEfectivo = tipoKey === 'efectivo'
+                const key = esEfectivo ? `${tipoKey}_${p.monto}` : tipoKey
+                if (!grupos[key]) {
+                  grupos[key] = { tipo: tipoKey, monto: 0, cantidad: 0, denominacion: esEfectivo ? p.monto : null }
+                }
+                grupos[key].monto += p.monto
+                grupos[key].cantidad += 1
+              })
+              const agrupados = Object.values(grupos)
+              // Separar efectivo del resto
+              const efectivoItems = agrupados.filter(g => g.tipo === 'efectivo').sort((a, b) => b.denominacion - a.denominacion)
+              const otrosItems = agrupados.filter(g => g.tipo !== 'efectivo')
+              const totalEfectivo = efectivoItems.reduce((s, g) => s + g.monto, 0)
+
+              return (
+                <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
+                  {efectivoItems.length > 0 && (
+                    <div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>{MEDIOS_LABELS['efectivo']}</span>
+                        <span>{formatPrecio(totalEfectivo)}</span>
+                      </div>
+                      {efectivoItems.length > 1 && (
+                        <p className="text-xs text-gray-400 ml-1 mt-0.5">
+                          {efectivoItems.map(g => `${g.cantidad} × ${formatPrecio(g.denominacion)}`).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {otrosItems.map((g, i) => (
+                    <div key={i} className="flex justify-between text-gray-600">
+                      <span>{MEDIOS_LABELS[g.tipo] || g.tipo}</span>
+                      <span>{formatPrecio(g.monto)}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
 
             {parseFloat(venta.monto_pagado) > parseFloat(venta.total) && (
               <div className="flex justify-between text-gray-500 border-t border-gray-100 pt-2">

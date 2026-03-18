@@ -527,9 +527,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     const promosParaGuardar = promosAplicadas.map(p => ({
       promoId: p.promoId,
       promoNombre: p.promoNombre,
+      tipoPromo: p.tipoPromo,
+      detalle: p.detalle,
       porcentajeDescuento: p.porcentajeDescuento,
       descuento: p.descuento,
       entidadNombre: p.entidadNombre,
+      itemsAfectados: p.itemsAfectados,
+      descuentoPorItem: p.descuentoPorItem,
     }))
 
     const totalOriginalSinSaldo = totalConDescFormaPago
