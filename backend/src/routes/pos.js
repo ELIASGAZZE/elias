@@ -28,12 +28,14 @@ router.get('/articulos', verificarAuth, async (req, res) => {
 
       if (req.query.buscar) {
         query = query.or(`nombre.ilike.%${req.query.buscar}%,codigo.ilike.%${req.query.buscar}%`)
+        query = query.limit(100)
       }
 
       const { data, error } = await query
       if (error) throw error
       if (!data || data.length === 0) break
       allData = allData.concat(data)
+      if (req.query.buscar) break // con búsqueda, no paginar (ya tiene limit)
       if (data.length < PAGE_SIZE) break
       from += PAGE_SIZE
     }
@@ -451,7 +453,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             await supabase
               .from('ventas_pos')
               .update({ centum_error: err.message })
-              .eq('id', data.id).catch(() => {})
+              .eq('id', data.id).catch(updateErr => console.error(`[Centum POS] No se pudo guardar centum_error para venta ${data.id}:`, updateErr.message))
           }
         })()
       }
@@ -664,7 +666,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     const articulo = req.query.articulo?.trim()?.toLowerCase()
     if (articulo) {
       ventas = ventas.filter(v => {
-        const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
+        const items = (() => { try { return typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []) } catch { return [] } })()
         return items.some(i => (i.nombre || '').toLowerCase().includes(articulo))
       })
     }
@@ -762,33 +764,33 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
       data.venta_origen = origen || null
     }
 
-    // 2. Traer NCs y ventas hijas (creadas a partir de esta venta)
-    const { data: hijas } = await supabase
-      .from('ventas_pos')
-      .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
-      .eq('venta_origen_id', data.id)
-      .order('created_at', { ascending: true })
-    data.ventas_relacionadas = hijas || []
+    // 2. Traer NCs/hijas + movimiento saldo en paralelo
+    const [hijasRes, movSaldoRes] = await Promise.all([
+      supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+        .eq('venta_origen_id', data.id)
+        .order('created_at', { ascending: true }),
+      data.tipo === 'nota_credito'
+        ? supabase
+            .from('movimientos_saldo_pos')
+            .select('id, monto, motivo, nombre_cliente, id_cliente_centum, created_at')
+            .eq('venta_pos_id', data.id)
+            .single()
+        : Promise.resolve({ data: null }),
+    ])
+    data.ventas_relacionadas = hijasRes.data || []
+    data.movimiento_saldo = movSaldoRes.data || null
 
-    // 3. Movimiento de saldo asociado a esta venta (si es NC de devolución o dif. precio)
-    if (data.tipo === 'nota_credito') {
-      const { data: movSaldo } = await supabase
-        .from('movimientos_saldo_pos')
-        .select('id, monto, motivo, nombre_cliente, id_cliente_centum, created_at')
-        .eq('venta_pos_id', data.id)
+    // Si es NC de corrección cliente, buscar la venta nueva (hermana con tipo=venta y mismo venta_origen_id)
+    if (data.tipo === 'nota_credito' && data.venta_origen_id && !data.movimiento_saldo) {
+      const { data: ventaNueva } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+        .eq('venta_origen_id', data.venta_origen_id)
+        .eq('tipo', 'venta')
         .single()
-      data.movimiento_saldo = movSaldo || null
-
-      // Si es NC de corrección cliente, buscar la venta nueva (hermana con tipo=venta y mismo venta_origen_id)
-      if (data.venta_origen_id && !movSaldo) {
-        const { data: ventaNueva } = await supabase
-          .from('ventas_pos')
-          .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
-          .eq('venta_origen_id', data.venta_origen_id)
-          .eq('tipo', 'venta')
-          .single()
-        data.venta_nueva_correccion = ventaNueva || null
-      }
+      data.venta_nueva_correccion = ventaNueva || null
     }
 
     res.json({ venta: data })
@@ -1024,7 +1026,7 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
     const yaDevuelto = {} // { indice: cantidadDevuelta }
     if (ncPrevias) {
       for (const nc of ncPrevias) {
-        const ncItems = typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || [])
+        const ncItems = (() => { try { return typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || []) } catch { return [] } })()
         for (const ncItem of ncItems) {
           if (ncItem.indice_original != null) {
             yaDevuelto[ncItem.indice_original] = (yaDevuelto[ncItem.indice_original] || 0) + (ncItem.cantidad || 0)
@@ -1322,7 +1324,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
       const formaPago = esAnticipado ? 'anticipado' : 'efectivo'
 
       // Crear venta_pos para cada pedido
-      const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
+      const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
       const pedidoTotal = parseFloat(pedido.total) || 0
 
       // Aplicar descuento efectivo si corresponde
@@ -1390,7 +1392,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
             }
           } catch (err) {
             console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
-            await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id).catch(() => {})
+            await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id).catch(e => console.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
           }
         })()
       }
@@ -1658,7 +1660,7 @@ router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
 
       if (!porDia[fecha]) porDia[fecha] = {}
 
-      const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
+      const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
       for (const item of (items || [])) {
         const key = item.articulo_id || item.nombre
         if (!porDia[fecha][key]) {
@@ -1943,10 +1945,18 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
 
 // POST /api/pos/webhook-mp
 // Webhook de Mercado Pago — SIN auth (viene de servidores de MP)
+// Se valida re-consultando el pago a la API de MP (no se confía en el body)
 router.post('/webhook-mp', async (req, res) => {
   try {
+    // Validar que el request tenga estructura esperada de MP
+    if (!req.body || !req.body.type || !req.body.data) {
+      return res.sendStatus(400)
+    }
     if (req.body.type === 'payment') {
       const paymentId = req.body.data?.id
+      if (!paymentId || isNaN(Number(paymentId))) {
+        return res.sendStatus(400)
+      }
       if (paymentId) {
         const pago = await obtenerPago(paymentId)
         if (pago.status === 'approved' && pago.external_reference) {
@@ -2217,7 +2227,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
     const yaDevuelto = {} // { indice: cantidadDevuelta }
     if (ncPrevias) {
       for (const nc of ncPrevias) {
-        const ncItems = typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || [])
+        const ncItems = (() => { try { return typeof nc.items === 'string' ? JSON.parse(nc.items) : (nc.items || []) } catch { return [] } })()
         for (const ncItem of ncItems) {
           if (ncItem.indice_original != null) {
             yaDevuelto[ncItem.indice_original] = (yaDevuelto[ncItem.indice_original] || 0) + (ncItem.cantidad || 0)
@@ -2227,7 +2237,7 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
     }
 
     // Calcular subtotal de items devueltos, validando que no se excedan cantidades
-    const itemsVenta = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
+    const itemsVenta = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
     let subtotalDevuelto = 0
     for (const dev of items_devueltos) {
       const itemOriginal = itemsVenta[dev.indice]
@@ -2438,11 +2448,9 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Venta no encontrada' })
     }
 
-    const itemsOriginal = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
-    const pagosOriginal = typeof venta.pagos === 'string' ? JSON.parse(venta.pagos) : (venta.pagos || [])
-    const promosOriginal = venta.promociones_aplicadas
-      ? (typeof venta.promociones_aplicadas === 'string' ? JSON.parse(venta.promociones_aplicadas) : venta.promociones_aplicadas)
-      : null
+    const itemsOriginal = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
+    const pagosOriginal = (() => { try { return typeof venta.pagos === 'string' ? JSON.parse(venta.pagos) : (venta.pagos || []) } catch { return [] } })()
+    const promosOriginal = (() => { try { return venta.promociones_aplicadas ? (typeof venta.promociones_aplicadas === 'string' ? JSON.parse(venta.promociones_aplicadas) : venta.promociones_aplicadas) : null } catch { return null } })()
 
     // 1. Crear nota de crédito (anula la venta original)
     const { data: notaCredito, error: ncErr } = await supabase
@@ -2848,7 +2856,7 @@ router.post('/log-eliminacion', verificarAuth, async (req, res) => {
 })
 
 // Reintentar envío de venta a Centum
-router.post('/ventas/:id/reenviar-centum', async (req, res) => {
+router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
   try {
     const ventaId = req.params.id
 
@@ -2888,7 +2896,7 @@ router.post('/ventas/:id/reenviar-centum', async (req, res) => {
     }
 
     // Preparar datos igual que registrarVentaPOSEnCentum pero sin catch silencioso
-    const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
+    const items = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
     const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
 
     // Obtener condición IVA del cliente

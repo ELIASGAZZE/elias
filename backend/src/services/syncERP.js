@@ -444,6 +444,10 @@ async function _sincronizarStockInternal(fullSync, origen) {
 
     if (items.length < PAGE_SIZE) break
     pagina++
+    if (pagina > 1000) {
+      console.warn('[Stock] Se alcanzó el límite de 1000 páginas, deteniendo sync')
+      break
+    }
   }
 
   const totalProcesados = Object.keys(stockPorIdCentum).length

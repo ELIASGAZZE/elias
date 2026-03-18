@@ -99,22 +99,28 @@ api.interceptors.response.use(
 )
 
 // Refresh preventivo cada 45 minutos (token expira en 1 hora)
-setInterval(async () => {
-  const refreshToken = localStorage.getItem('refresh_token')
-  const token = localStorage.getItem('token')
-  if (!refreshToken || !token) return
+// Se guarda el ID para evitar duplicados con HMR
+let _refreshIntervalId = null
+function iniciarRefreshPreventivo() {
+  if (_refreshIntervalId) return
+  _refreshIntervalId = setInterval(async () => {
+    const refreshToken = localStorage.getItem('refresh_token')
+    const token = localStorage.getItem('token')
+    if (!refreshToken || !token) return
 
-  try {
-    const { data } = await axios.post(
-      `${api.defaults.baseURL}/api/auth/refresh`,
-      { refresh_token: refreshToken }
-    )
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('refresh_token', data.refresh_token)
-  } catch {
-    // Si falla el refresh preventivo, no hacemos nada — el interceptor lo maneja después
-  }
-}, 45 * 60 * 1000)
+    try {
+      const { data } = await axios.post(
+        `${api.defaults.baseURL}/api/auth/refresh`,
+        { refresh_token: refreshToken }
+      )
+      localStorage.setItem('token', data.token)
+      localStorage.setItem('refresh_token', data.refresh_token)
+    } catch {
+      // Si falla el refresh preventivo, no hacemos nada — el interceptor lo maneja después
+    }
+  }, 45 * 60 * 1000)
+}
+iniciarRefreshPreventivo()
 
 export function isNetworkError(err) {
   return !err.response && (err.code === 'ERR_NETWORK' || err.message === 'Network Error')

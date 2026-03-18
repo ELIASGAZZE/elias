@@ -310,7 +310,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           }
         } catch (centumErr) {
           console.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
-          if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: centumErr.message }).eq('id', ventaPosId).catch(() => {})
+          if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: centumErr.message }).eq('id', ventaPosId).catch(e => console.error(`[CuentaCorrienteEmpleados] No se pudo guardar centum_error para venta ${ventaPosId}:`, e.message))
         }
       })()
     }

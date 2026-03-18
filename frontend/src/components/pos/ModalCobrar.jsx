@@ -70,6 +70,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }, [])
 
+  // Cleanup polling cuando el pago MP se resuelve (aprobado/cancelado/error)
+  useEffect(() => {
+    if (mpEstado === 'aprobado' || mpEstado === 'cancelado' || mpEstado === 'error') {
+      if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+      if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+    }
+  }, [mpEstado])
+
   useEffect(() => {
     // Cargar cache primero (instantáneo), luego refrescar desde API en background
     async function cargarDesdeCache() {
@@ -195,13 +203,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMpMontoIntent(montoACobrar)
       setMpEstado('esperando')
 
-      // Timeout: si el posnet no responde en 5 minutos (igual que expiración MP), cancelar
+      // Safety timeout: si el polling no detecta cambio de estado en 3 minutos, mostrar error
+      // El flujo normal se maneja por polling (detecta expired/canceled del posnet)
       mpTimeoutRef.current = setTimeout(() => {
         if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
         mpTimeoutRef.current = null
         setMpEstado('error')
         setMpError('Tiempo agotado esperando respuesta del posnet. Verificá el estado del pago antes de reintentar.')
-      }, 300000)
+      }, 180000)
 
       // Polling estado de la orden cada 3 segundos (con guard anti-overlap)
       mpPollingRef.current = setInterval(async () => {
@@ -415,12 +424,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   const [cantidadModal, setCantidadModal] = React.useState(null) // { valor, cantidad }
 
-  // Auto-focus el div root para que capture teclas (también al cerrar modal cantidad)
+  // Auto-focus el div root para que capture teclas después de cualquier cambio de estado
+  // Esto garantiza que Enter y F-keys funcionen siempre, sin importar qué acción se hizo
   useEffect(() => {
-    if (!cantidadModal) {
-      setTimeout(() => cobrarRootRef.current?.focus(), 50)
-    }
-  }, [cantidadModal])
+    if (cantidadModal) return // no robar foco si hay modal de cantidad abierto
+    const timer = setTimeout(() => {
+      const active = document.activeElement
+      const enInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')
+      if (!enInput) {
+        cobrarRootRef.current?.focus()
+      }
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [cantidadModal, pagos, mpEstado, formaSeleccionada, giftCardsAplicadas, guardando])
 
   function confirmarCantidadBilletes() {
     const cant = parseInt(cantidadModal.cantidad)
@@ -452,8 +468,6 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setPagos(prev => [...prev, { tipo: formaSeleccionada.nombre, monto, detalle: { forma_cobro_id: formaSeleccionada.id } }])
     setMontoFormaPago('')
     setFormaSeleccionada(null)
-    // Devolver foco al root para que Enter cierre la venta
-    setTimeout(() => cobrarRootRef.current?.focus(), 50)
   }
 
   // Gift Cards
@@ -498,11 +512,20 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   const submittingRef = useRef(false)
 
+  const ventaTimeoutRef = useRef(null)
+
   async function confirmarVenta() {
     if (!montoSuficiente || submittingRef.current) return
     submittingRef.current = true
     setGuardando(true)
     setError('')
+
+    // Safety timeout: si el request se cuelga, reactivar el botón después de 30s
+    ventaTimeoutRef.current = setTimeout(() => {
+      submittingRef.current = false
+      setGuardando(false)
+      setError('Tiempo agotado al guardar la venta. Verificá si se registró antes de reintentar.')
+    }, 30000)
 
     // Modo soloPago: no necesita items ni venta, solo datos de pago
     if (soloPago) {
@@ -606,6 +629,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         setError(err.response?.data?.error || 'Error al guardar la venta')
       }
     } finally {
+      if (ventaTimeoutRef.current) { clearTimeout(ventaTimeoutRef.current); ventaTimeoutRef.current = null }
       setGuardando(false)
       submittingRef.current = false
     }

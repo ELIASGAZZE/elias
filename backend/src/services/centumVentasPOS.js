@@ -708,7 +708,7 @@ async function retrySyncVentasCentum() {
       exitosas++
     } catch (err) {
       console.error(`[RetryCentumVentas] Error venta ${venta.id}:`, err.message)
-      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message}` }).eq('id', venta.id).catch(() => {})
+      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message}` }).eq('id', venta.id).catch(e => console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
       fallidas++
     }
   }

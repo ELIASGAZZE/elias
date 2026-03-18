@@ -121,7 +121,7 @@ router.post('/order', verificarAuth, async (req, res) => {
       type: 'point',
       external_reference: extRef,
       description: description || 'Venta POS',
-      expiration_time: 'PT5M',
+      expiration_time: 'PT1M',
       transactions: {
         payments: [{ amount: amount.toFixed(2) }]
       },

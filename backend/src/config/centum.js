@@ -623,6 +623,7 @@ async function buscarComprobantesPorMonto(planillaId, monto, tolerancia = 100) {
       .input('planillaId', sql.Int, planillaId)
       .input('montoMin', sql.Decimal(12, 2), montoAbs - tolerancia)
       .input('montoMax', sql.Decimal(12, 2), montoAbs + tolerancia)
+      .input('montoAbs', sql.Decimal(12, 2), montoAbs)
       .query(`
         SELECT DISTINCT
           ven.VentaID,
@@ -644,7 +645,7 @@ async function buscarComprobantesPorMonto(planillaId, monto, tolerancia = 100) {
         LEFT JOIN Clientes_VIEW cl ON ven.ClienteID = cl.ClienteID
         WHERE pci.PlanillaCajaID = @planillaId
         AND ABS(ven.Total) BETWEEN @montoMin AND @montoMax
-        ORDER BY ABS(ven.Total - ${montoAbs}) ASC
+        ORDER BY ABS(ven.Total - @montoAbs) ASC
       `)
 
     const comprobantes = result.recordset.map(r => ({
