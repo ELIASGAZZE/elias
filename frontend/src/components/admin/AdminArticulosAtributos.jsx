@@ -198,6 +198,7 @@ const AdminArticulosAtributos = () => {
                   <th className="text-left px-3 py-2 font-medium text-gray-600">Rubro</th>
                   <th className="text-right px-3 py-2 font-medium text-gray-600">Precio</th>
                   <th className="text-left px-3 py-2 font-medium text-gray-600">Atributos</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-600">Actualizado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -219,6 +220,9 @@ const AdminArticulosAtributos = () => {
                           </span>
                         ))}
                       </div>
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-400 text-xs whitespace-nowrap">
+                      {art.updatedAt ? new Date(art.updatedAt).toLocaleDateString('es-AR') : '—'}
                     </td>
                   </tr>
                 ))}

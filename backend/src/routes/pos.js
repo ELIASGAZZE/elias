@@ -11,7 +11,7 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos'
+    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at'
 
     // Supabase limita a 1000 por defecto — paginar para traer todos
     const PAGE_SIZE = 1000
@@ -52,6 +52,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       esPesable: a.es_pesable || false,
       codigosBarras: a.codigos_barras || [],
       atributos: a.atributos || [],
+      updatedAt: a.updated_at || null,
     }))
 
     res.json({ articulos, total: articulos.length })
