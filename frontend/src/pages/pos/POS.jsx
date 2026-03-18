@@ -1315,7 +1315,8 @@ const POS = () => {
   useEffect(() => {
     if (!mostrarDniPopup) return
     const termino = busquedaDniCliente.trim().replace(/\D/g, '')
-    if (termino.length < 7) { setClientesDni([]); return }
+    // Solo buscar con DNI (7-8) o CUIT (11), no con 9-10 dígitos que son inválidos
+    if (termino.length < 7 || termino.length === 9 || termino.length === 10) { setClientesDni([]); return }
     setBuscandoDniCliente(true)
     const timeout = setTimeout(async () => {
       try {
@@ -5369,11 +5370,14 @@ const POS = () => {
               inputMode="numeric"
               value={busquedaDniCliente}
               onChange={e => setBusquedaDniCliente(e.target.value.replace(/\D/g, ''))}
-              placeholder="Ingresá DNI o CUIT..."
+              placeholder="DNI (7-8 dígitos) o CUIT (11 dígitos)"
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-green-400"
               maxLength={11}
               autoFocus
             />
+            {busquedaDniCliente.length === 9 || busquedaDniCliente.length === 10 ? (
+              <p className="text-amber-600 text-xs mt-1">Ingresá un DNI (7-8 dígitos) o CUIT completo (11 dígitos)</p>
+            ) : null}
             {buscandoDniCliente && (
               <div className="flex justify-center py-4">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-600" />
@@ -5406,7 +5410,7 @@ const POS = () => {
                 ))}
               </div>
             )}
-            {!buscandoDniCliente && busquedaDniCliente.trim().length >= 7 && clientesDni.length === 0 && (
+            {!buscandoDniCliente && busquedaDniCliente.trim().length >= 7 && busquedaDniCliente.trim().length !== 9 && busquedaDniCliente.trim().length !== 10 && clientesDni.length === 0 && (
               <div className="text-center py-4 space-y-3">
                 <p className="text-sm text-gray-400">No se encontraron clientes</p>
                 <button
