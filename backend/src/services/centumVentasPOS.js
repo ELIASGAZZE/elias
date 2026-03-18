@@ -563,7 +563,7 @@ async function obtenerVentaCentum(idVenta) {
  * Diseñado para correr desde un cron job.
  */
 async function retrySyncVentasCentum() {
-  const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
   // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
   const { data: pendientes, error } = await supabase
@@ -571,7 +571,7 @@ async function retrySyncVentasCentum() {
     .select('id, caja_id, id_cliente_centum, items, pagos, total, condicion_iva, tipo, venta_origen_id, nombre_cliente')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
-    .gte('created_at', hace24h)
+    .gte('created_at', hace7d)
     .order('created_at', { ascending: true })
     .limit(20)
 
