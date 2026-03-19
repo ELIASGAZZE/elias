@@ -1,9 +1,8 @@
 // Pagina principal de la app Control de Caja POS
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
-import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import ModalRetiroPos from '../../components/cajas-pos/ModalRetiroPos'
 import ModalGastoPos from '../../components/cajas-pos/ModalGastoPos'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
@@ -47,177 +46,9 @@ const CajasPosHome = () => {
   const [cierres, setCierres] = useState([])
   const [cargando, setCargando] = useState(true)
 
-  // Modal abrir caja
-  const [mostrarAbrir, setMostrarAbrir] = useState(false)
-  const [abriendo, setAbriendo] = useState(false)
-  const [errorAbrir, setErrorAbrir] = useState('')
-
-  // Selectores para abrir caja
-  const [sucursales, setSucursales] = useState([])
-  const [cajas, setCajas] = useState([])
-  const [sucursalId, setSucursalId] = useState('')
-  const [cajaId, setCajaId] = useState('')
-  const [cargandoCajas, setCargandoCajas] = useState(false)
-
-  // Codigo de empleado
-  const [codigoEmpleado, setCodigoEmpleado] = useState('')
-  const [empleadoResuelto, setEmpleadoResuelto] = useState(null) // { id, nombre }
-  const [errorEmpleado, setErrorEmpleado] = useState('')
-  const [validandoEmpleado, setValidandoEmpleado] = useState(false)
-
-  // Observaciones apertura
-  const [observacionesApertura, setObservacionesApertura] = useState('')
-
-  // Denominaciones para cambio inicial (billetes solamente)
-  const [denomBilletes, setDenomBilletes] = useState([])
-  const [billetesApertura, setBilletesApertura] = useState({})
-  const [cargandoDenominaciones, setCargandoDenominaciones] = useState(false)
-
-  // Ultimo cambio dejado en caja (para comparacion)
-  const [ultimoCambio, setUltimoCambio] = useState(null)
-  const [ultimoCambioCajaId, setUltimoCambioCajaId] = useState(null)
-
-  const totalCambioInicial = useMemo(
-    () => denomBilletes.reduce((sum, d) => sum + d.valor * (billetesApertura[d.valor] || 0), 0),
-    [denomBilletes, billetesApertura]
-  )
-
-  // Verificar si hay diferencia con el ultimo cierre para una denominacion
-  const hayUltimoCambio = ultimoCambio && (
-    Object.keys(ultimoCambio.cambio_billetes || {}).length > 0
-  )
-
-  const tieneDiferencia = (valor) => {
-    if (!hayUltimoCambio) return false
-    const anterior = (ultimoCambio.cambio_billetes || {})[String(valor)] || 0
-    const actual = billetesApertura[valor] || 0
-    return anterior !== actual
-  }
-
-  // Calcular diferencias_apertura
-  const calcularDiferencias = () => {
-    if (!hayUltimoCambio) return null
-    const diffs = {}
-
-    denomBilletes.forEach(d => {
-      const anterior = (ultimoCambio.cambio_billetes || {})[String(d.valor)] || 0
-      const actual = billetesApertura[d.valor] || 0
-      if (anterior !== actual) {
-        diffs[String(d.valor)] = { anterior, actual, tipo: 'billete' }
-      }
-    })
-
-    return Object.keys(diffs).length > 0 ? diffs : null
-  }
-
   useEffect(() => {
     cargarDatos()
   }, [])
-
-  // Cargar denominaciones al abrir el formulario
-  useEffect(() => {
-    if (!mostrarAbrir || denomBilletes.length > 0) return
-
-    const cargarDenominaciones = async () => {
-      setCargandoDenominaciones(true)
-      try {
-        const { data } = await api.get('/api/denominaciones')
-        const activas = (data || []).filter(d => d.activo)
-        setDenomBilletes(activas.filter(d => d.tipo === 'billete').sort((a, b) => b.valor - a.valor))
-      } catch (err) {
-        console.error('Error cargando denominaciones:', err)
-      } finally {
-        setCargandoDenominaciones(false)
-      }
-    }
-
-    cargarDenominaciones()
-  }, [mostrarAbrir])
-
-  // Cargar ultimo cambio cuando se selecciona una caja
-  useEffect(() => {
-    if (!cajaId || cajaId === ultimoCambioCajaId) return
-
-    const cargarUltimoCambio = async () => {
-      try {
-        const { data } = await api.get(`/api/cierres-pos/ultimo-cambio?caja_id=${cajaId}`)
-        setUltimoCambio(data)
-        setUltimoCambioCajaId(cajaId)
-      } catch (err) {
-        console.error('Error cargando ultimo cambio:', err)
-        setUltimoCambio(null)
-      }
-    }
-
-    cargarUltimoCambio()
-  }, [cajaId])
-
-  // Cargar sucursales al abrir el formulario
-  useEffect(() => {
-    if (!mostrarAbrir) return
-
-    const cargarSucursales = async () => {
-      try {
-        const { data } = await api.get('/api/sucursales')
-        setSucursales(data)
-
-        // Para operario: auto-seleccionar su sucursal
-        if (!esAdmin && usuario?.sucursal_id) {
-          setSucursalId(usuario.sucursal_id)
-        }
-      } catch (err) {
-        console.error('Error cargando sucursales:', err)
-      }
-    }
-
-    cargarSucursales()
-  }, [mostrarAbrir, esAdmin, usuario?.sucursal_id])
-
-  // Cargar cajas cuando cambia la sucursal seleccionada
-  useEffect(() => {
-    if (!sucursalId) {
-      setCajas([])
-      setCajaId('')
-      return
-    }
-
-    const cargarCajas = async () => {
-      setCargandoCajas(true)
-      setCajaId('')
-
-      try {
-        const { data } = await api.get(`/api/cajas?sucursal_id=${sucursalId}`)
-        setCajas(data)
-      } catch (err) {
-        console.error('Error cargando cajas:', err)
-      } finally {
-        setCargandoCajas(false)
-      }
-    }
-
-    cargarCajas()
-  }, [sucursalId])
-
-  const validarCodigoEmpleado = async () => {
-    const codigo = codigoEmpleado.trim()
-    if (!codigo) {
-      setEmpleadoResuelto(null)
-      setErrorEmpleado('')
-      return
-    }
-    setValidandoEmpleado(true)
-    setErrorEmpleado('')
-    try {
-      const { data } = await api.get(`/api/empleados/por-codigo/${encodeURIComponent(codigo)}`)
-      setEmpleadoResuelto(data)
-      setErrorEmpleado('')
-    } catch {
-      setEmpleadoResuelto(null)
-      setErrorEmpleado('Codigo no valido')
-    } finally {
-      setValidandoEmpleado(false)
-    }
-  }
 
   const cargarDatos = async () => {
     setCargando(true)
@@ -229,71 +60,6 @@ const CajasPosHome = () => {
     } finally {
       setCargando(false)
     }
-  }
-
-  const abrirCaja = async (e) => {
-    e.preventDefault()
-
-    if (!cajaId) {
-      setErrorAbrir('Selecciona una caja')
-      return
-    }
-    if (!empleadoResuelto) {
-      setErrorAbrir('Ingresa un codigo de empleado valido')
-      return
-    }
-
-    setAbriendo(true)
-    setErrorAbrir('')
-    try {
-      // Build fondo_fijo_billetes payload
-      const ffBilletes = {}
-      denomBilletes.forEach(d => {
-        const cant = billetesApertura[d.valor] || 0
-        if (cant > 0) ffBilletes[String(d.valor)] = cant
-      })
-
-      await api.post('/api/cierres-pos/abrir', {
-        caja_id: cajaId,
-        codigo_empleado: codigoEmpleado.trim(),
-        fondo_fijo: totalCambioInicial,
-        fondo_fijo_billetes: ffBilletes,
-        fondo_fijo_monedas: {},
-        diferencias_apertura: calcularDiferencias(),
-        observaciones_apertura: observacionesApertura.trim() || null,
-      })
-      // Resetear formulario
-      setBilletesApertura({})
-      setUltimoCambio(null)
-      setUltimoCambioCajaId(null)
-      setSucursalId(esAdmin ? '' : (usuario?.sucursal_id || ''))
-      setCajaId('')
-      setCodigoEmpleado('')
-      setEmpleadoResuelto(null)
-      setErrorEmpleado('')
-      setObservacionesApertura('')
-      setMostrarAbrir(false)
-      await cargarDatos()
-    } catch (err) {
-      setErrorAbrir(err.response?.data?.error || 'Error al abrir caja')
-    } finally {
-      setAbriendo(false)
-    }
-  }
-
-  const handleCerrarFormulario = () => {
-    setMostrarAbrir(false)
-    setErrorAbrir('')
-    setBilletesApertura({})
-    setUltimoCambio(null)
-    setUltimoCambioCajaId(null)
-    setSucursalId('')
-    setCajaId('')
-    setCodigoEmpleado('')
-    setEmpleadoResuelto(null)
-    setErrorEmpleado('')
-    setObservacionesApertura('')
-    setCajas([])
   }
 
   const [eliminando, setEliminando] = useState(null)
@@ -371,7 +137,7 @@ const CajasPosHome = () => {
   const cierresCerrados = cierres.filter(c => c.estado !== 'abierta')
 
   const getLinkCierre = (cierre) => {
-    if (cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin)) {
+    if (cierre.estado === 'abierta' && esAdmin) {
       return `/cajas-pos/cierre/${cierre.id}/cerrar`
     }
     if (esGestor && cierre.estado === 'pendiente_gestor') {
@@ -386,157 +152,8 @@ const CajasPosHome = () => {
 
       <div className="px-4 py-4 space-y-4 max-w-4xl mx-auto">
 
-        {/* Boton abrir caja (operario/admin) */}
-        {(usuario?.rol === 'operario' || esAdmin) && (
-          <button
-            onClick={() => mostrarAbrir ? handleCerrarFormulario() : setMostrarAbrir(true)}
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white py-3 rounded-xl font-medium transition-colors text-sm"
-          >
-            {mostrarAbrir ? 'Cancelar' : 'Abrir Caja'}
-          </button>
-        )}
-
-        {/* Formulario abrir caja */}
-        {mostrarAbrir && (
-          <form onSubmit={abrirCaja} className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
-            <h3 className="font-semibold text-gray-700">Abrir caja</h3>
-
-            {/* Selectores en fila para desktop */}
-            <div className="grid grid-cols-2 gap-4">
-              {/* Sucursal selector — solo visible para admin */}
-              {esAdmin && (
-                <div>
-                  <label className="text-xs font-medium text-gray-500 mb-1 block">Sucursal</label>
-                  <select
-                    value={sucursalId}
-                    onChange={(e) => setSucursalId(e.target.value)}
-                    className="campo-form text-sm"
-                  >
-                    <option value="">Seleccionar sucursal...</option>
-                    {sucursales.map(s => (
-                      <option key={s.id} value={s.id}>{s.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Caja selector */}
-              <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Caja</label>
-                <select
-                  value={cajaId}
-                  onChange={(e) => setCajaId(e.target.value)}
-                  className="campo-form text-sm"
-                  disabled={!sucursalId || cargandoCajas}
-                >
-                  <option value="">
-                    {cargandoCajas ? 'Cargando cajas...' : !sucursalId ? 'Selecciona una sucursal primero' : 'Seleccionar caja...'}
-                  </option>
-                  {cajas.map(c => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Codigo de empleado */}
-              <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Codigo de empleado</label>
-                <input
-                  type="text"
-                  value={codigoEmpleado}
-                  onChange={(e) => {
-                    setCodigoEmpleado(e.target.value)
-                    setEmpleadoResuelto(null)
-                    setErrorEmpleado('')
-                  }}
-                  onBlur={validarCodigoEmpleado}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); validarCodigoEmpleado() } }}
-                  placeholder="Ingresa el codigo"
-                  className={`campo-form text-sm ${empleadoResuelto ? 'border-green-400' : errorEmpleado ? 'border-red-400' : ''}`}
-                />
-                {validandoEmpleado && <p className="text-xs text-gray-400 mt-1">Validando...</p>}
-                {empleadoResuelto && <p className="text-xs text-green-600 mt-1">{empleadoResuelto.nombre}</p>}
-                {errorEmpleado && <p className="text-xs text-red-600 mt-1">{errorEmpleado}</p>}
-              </div>
-            </div>
-
-            {/* Cambio inicial — billetes siempre visibles */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-gray-700">Cambio inicial (billetes)</h4>
-                {totalCambioInicial > 0 && (
-                  <span className="text-sm font-bold text-teal-600">{formatMonto(totalCambioInicial)}</span>
-                )}
-              </div>
-
-              {cargandoDenominaciones ? (
-                <div className="flex justify-center py-4">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-600" />
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-2">
-                    {denomBilletes.map(d => (
-                      <ContadorDenominacion
-                        key={`ba-${d.id}`}
-                        valor={d.valor}
-                        cantidad={billetesApertura[d.valor] || 0}
-                        onChange={(val) => setBilletesApertura(prev => ({ ...prev, [d.valor]: val }))}
-                        alerta={tieneDiferencia(d.valor)}
-                      />
-                    ))}
-                  </div>
-
-                  {totalCambioInicial > 0 && (
-                    <div className="bg-teal-50 border border-teal-200 rounded-xl px-3 py-2 flex justify-between items-center mt-3">
-                      <span className="text-sm font-medium text-teal-800">Total cambio inicial</span>
-                      <span className="text-sm font-bold text-teal-700">{formatMonto(totalCambioInicial)}</span>
-                    </div>
-                  )}
-
-                  {hayUltimoCambio && calcularDiferencias() && (
-                    <div className="bg-red-50 border border-red-300 rounded-xl px-3 py-2 mt-2">
-                      <p className="text-xs font-semibold text-red-700">
-                        El cambio ingresado difiere del ultimo cierre de esta caja
-                      </p>
-                      <p className="text-xs text-red-600 mt-0.5">
-                        Las denominaciones con diferencia estan marcadas en rojo
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Observaciones apertura */}
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Observaciones (opcional)</label>
-              <textarea
-                value={observacionesApertura}
-                onChange={(e) => setObservacionesApertura(e.target.value)}
-                className="campo-form text-sm"
-                rows={2}
-                placeholder="Notas sobre la apertura..."
-              />
-            </div>
-
-            {errorAbrir && <p className="text-sm text-red-600">{errorAbrir}</p>}
-
-            <button
-              type="submit"
-              disabled={abriendo}
-              className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white py-2.5 rounded-xl font-medium transition-colors text-sm"
-            >
-              {abriendo ? 'Abriendo...' : 'Confirmar apertura'}
-            </button>
-          </form>
-        )}
-
-        {/* Ocultar listas cuando se esta abriendo caja */}
-        {!mostrarAbrir && (
-          <>
-            {/* Cajas abiertas (operario/admin) */}
-            {cajasAbiertas.length > 0 && (usuario?.rol === 'operario' || esAdmin) && (
+        {/* Cajas abiertas (solo admin) */}
+            {cajasAbiertas.length > 0 && esAdmin && (
               <div>
                 <h3 className="font-semibold text-gray-700 text-sm mb-3">Cajas abiertas</h3>
                 <div className="space-y-2">
@@ -756,8 +373,6 @@ const CajasPosHome = () => {
                 </div>
               )}
             </div>
-          </>
-        )}
       </div>
 
       {/* Modal retiro */}
