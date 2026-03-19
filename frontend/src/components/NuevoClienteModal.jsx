@@ -45,10 +45,16 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
             if (data.encontrado && data.datos) {
               const d = data.datos
               setDatosAfip(d)
+              const esCuit = cuitLimpio.length === 11
               setForm(prev => ({
                 ...prev,
-                // No pisar CUIT/DNI ni condición IVA — el cajero elige
                 razon_social: d.razon_social || prev.razon_social,
+                // Solo precargar CUIT y condición IVA si ingresó un CUIT (11 dígitos)
+                // Si ingresó un DNI, dejar como CF para que el cajero elija
+                ...(esCuit ? {
+                  cuit: d.cuit || prev.cuit,
+                  condicion_iva: d.condicion_iva || prev.condicion_iva,
+                } : {}),
               }))
               if (d.domicilio && (!direcciones[0]?.direccion)) {
                 setDirecciones([{ direccion: d.domicilio, localidad: d.localidad || '', referencia: '' }])
@@ -120,10 +126,15 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
         if (data.encontrado && data.datos) {
           const d = data.datos
           setDatosAfip(d)
+          const esCuit = cuitLimpio.length === 11
           setForm(prev => ({
             ...prev,
-            // No pisar CUIT/DNI ni condición IVA — el cajero elige
             razon_social: d.razon_social || prev.razon_social,
+            // Solo precargar CUIT y condición IVA si ingresó un CUIT (11 dígitos)
+            ...(esCuit ? {
+              cuit: d.cuit || prev.cuit,
+              condicion_iva: d.condicion_iva || prev.condicion_iva,
+            } : {}),
           }))
           // Prellenar dirección fiscal si no hay direcciones cargadas
           if (d.domicilio && (!direcciones[0]?.direccion)) {
