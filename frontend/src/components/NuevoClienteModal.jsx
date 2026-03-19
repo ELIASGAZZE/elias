@@ -47,9 +47,8 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
               setDatosAfip(d)
               setForm(prev => ({
                 ...prev,
-                // No pisar el CUIT/DNI que ingresó el cajero
+                // No pisar CUIT/DNI ni condición IVA — el cajero elige
                 razon_social: d.razon_social || prev.razon_social,
-                condicion_iva: d.condicion_iva || prev.condicion_iva,
               }))
               if (d.domicilio && (!direcciones[0]?.direccion)) {
                 setDirecciones([{ direccion: d.domicilio, localidad: d.localidad || '', referencia: '' }])
