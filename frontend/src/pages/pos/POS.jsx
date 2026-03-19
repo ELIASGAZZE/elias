@@ -3420,15 +3420,22 @@ const POS = () => {
                     value={busquedaCliente}
                     onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, ''); setBusquedaCliente(v); setClienteIdx(-1) }}
                     onKeyDown={e => {
-                      if (e.key === 'ArrowDown' && clientesCentum.length > 0) {
+                      const dropdownVisible = clientesCentum.length > 0 || (busquedaCliente.trim().length >= 2 && !buscandoClientes)
+                      const maxIdx = clientesCentum.length // último índice = "Crear cliente nuevo"
+                      if (e.key === 'ArrowDown' && dropdownVisible) {
                         e.preventDefault()
-                        setClienteIdx(prev => prev < clientesCentum.length - 1 ? prev + 1 : 0)
-                      } else if (e.key === 'ArrowUp' && clientesCentum.length > 0) {
+                        setClienteIdx(prev => prev < maxIdx ? prev + 1 : 0)
+                      } else if (e.key === 'ArrowUp' && dropdownVisible) {
                         e.preventDefault()
-                        setClienteIdx(prev => prev > 0 ? prev - 1 : clientesCentum.length - 1)
+                        setClienteIdx(prev => prev > 0 ? prev - 1 : maxIdx)
                       } else if (e.key === 'Enter' && clienteIdx >= 0 && clienteIdx < clientesCentum.length) {
                         e.preventDefault()
                         seleccionarCliente(clientesCentum[clienteIdx])
+                        setClienteIdx(-1)
+                      } else if (e.key === 'Enter' && clienteIdx === clientesCentum.length && dropdownVisible) {
+                        e.preventDefault()
+                        setMostrarCrearClienteCaja(true)
+                        setClientesCentum([])
                         setClienteIdx(-1)
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
@@ -3461,8 +3468,8 @@ const POS = () => {
                         </button>
                       ))}
                       <button
-                        onClick={() => { setMostrarCrearClienteCaja(true); setClientesCentum([]) }}
-                        className="w-full text-left px-2 py-2 hover:bg-violet-50 text-xs border-t border-dashed border-gray-300 text-violet-600 font-medium flex items-center gap-1.5"
+                        onClick={() => { setMostrarCrearClienteCaja(true); setClientesCentum([]); setClienteIdx(-1) }}
+                        className={`w-full text-left px-2 py-2 text-xs border-t border-dashed border-gray-300 text-violet-600 font-medium flex items-center gap-1.5 ${clienteIdx === clientesCentum.length ? 'bg-violet-100' : 'hover:bg-violet-50'}`}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                         Crear cliente nuevo
