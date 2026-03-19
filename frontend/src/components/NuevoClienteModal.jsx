@@ -47,7 +47,7 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
               setDatosAfip(d)
               setForm(prev => ({
                 ...prev,
-                cuit: d.cuit || prev.cuit,
+                // No pisar el CUIT/DNI que ingresó el cajero
                 razon_social: d.razon_social || prev.razon_social,
                 condicion_iva: d.condicion_iva || prev.condicion_iva,
               }))
@@ -123,9 +123,8 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
           setDatosAfip(d)
           setForm(prev => ({
             ...prev,
-            cuit: d.cuit || prev.cuit,
+            // No pisar CUIT/DNI ni condición IVA — el cajero elige
             razon_social: d.razon_social || prev.razon_social,
-            condicion_iva: d.condicion_iva || prev.condicion_iva,
           }))
           // Prellenar dirección fiscal si no hay direcciones cargadas
           if (d.domicilio && (!direcciones[0]?.direccion)) {
