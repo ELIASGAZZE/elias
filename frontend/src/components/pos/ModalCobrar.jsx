@@ -719,7 +719,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row outline-none" onKeyDown={handleCobrarKeyDown} tabIndex={-1} ref={cobrarRootRef}>
+    <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row outline-none" onKeyDown={handleCobrarKeyDown} tabIndex={-1} ref={cobrarRootRef} data-modal>
 
       {/* ====== IZQUIERDA: Denominaciones ====== */}
       <div className="flex-1 p-5 flex flex-col min-w-0 relative">
