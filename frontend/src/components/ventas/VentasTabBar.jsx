@@ -1,13 +1,15 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
-
-const tabs = [
-  { label: 'Historial', path: '/ventas' },
-  { label: 'Reportes', path: '/ventas/reportes/promociones' },
-]
+import { useAuth } from '../../context/AuthContext'
 
 const VentasTabBar = () => {
   const { pathname } = useLocation()
+  const { esAdmin } = useAuth()
+
+  const tabs = [
+    { label: 'Historial', path: '/ventas' },
+    ...(esAdmin ? [{ label: 'Reportes', path: '/ventas/reportes/promociones' }] : []),
+  ]
 
   return (
     <div className="bg-white border-b border-gray-200 flex">

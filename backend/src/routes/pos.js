@@ -76,6 +76,64 @@ router.post('/sincronizar-articulos', verificarAuth, soloAdmin, async (req, res)
   }
 })
 
+// ============ ARTÍCULOS DELIVERY ============
+
+// GET /api/pos/articulos-delivery — artículos con precio delivery configurado
+router.get('/articulos-delivery', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('articulos_delivery')
+      .select('id, articulo_id_centum, nombre, precio_delivery, activo')
+      .order('nombre')
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    console.error('[POS] Error al obtener artículos delivery:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/pos/articulos-delivery — upsert artículo delivery (admin)
+router.post('/articulos-delivery', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { articulo_id_centum, nombre, precio_delivery, activo } = req.body
+    if (!articulo_id_centum || !nombre || precio_delivery == null) {
+      return res.status(400).json({ error: 'articulo_id_centum, nombre y precio_delivery son requeridos' })
+    }
+    const { data, error } = await supabase
+      .from('articulos_delivery')
+      .upsert({
+        articulo_id_centum,
+        nombre,
+        precio_delivery,
+        activo: activo !== false,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'articulo_id_centum' })
+      .select()
+      .single()
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('[POS] Error al guardar artículo delivery:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/pos/articulos-delivery/:id — eliminar config delivery (admin)
+router.delete('/articulos-delivery/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('articulos_delivery')
+      .delete()
+      .eq('id', req.params.id)
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[POS] Error al eliminar artículo delivery:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ============ RUBROS / SUBRUBROS ============
 
 // GET /api/pos/rubros — rubros distintos de artículos Centum
@@ -310,7 +368,7 @@ router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => 
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre } = req.body
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
@@ -369,8 +427,11 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
         pagos: pagos || [],
         descuento_forma_pago: descuento_forma_pago || null,
+        descuento_grupo_cliente: parseFloat(descuento_grupo_cliente) || 0,
+        grupo_descuento_nombre: grupo_descuento_nombre || null,
       }
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
+      if (canal && canal !== 'pos') insertData.canal = canal
 
       const { data: ventaData, error } = await supabase
         .from('ventas_pos')
@@ -948,6 +1009,13 @@ router.post('/ventas/:id/enviar-email', verificarAuth, async (req, res) => {
       pdfBuffer: Buffer.from(pdfBuffer),
       pdfFilename,
     })
+
+    // Marcar email enviado en la venta
+    await supabase.from('ventas_pos').update({
+      email_enviado: true,
+      email_enviado_a: email.trim(),
+      email_enviado_at: new Date().toISOString()
+    }).eq('id', req.params.id)
 
     res.json({ ok: true, mensaje: `Comprobante enviado a ${email.trim()}` })
   } catch (err) {

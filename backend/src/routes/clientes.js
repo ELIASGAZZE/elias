@@ -21,7 +21,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('clientes')
-      .select('*', { count: 'exact' })
+      .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
       .eq('activo', true)
       .order('razon_social', { ascending: true })
       .range(from, to)
@@ -47,7 +47,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const dniQuery = supabase
           .from('clientes')
-          .select('*', { count: 'exact' })
+          .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
           .eq('activo', true)
           .or(orFilter)
           .order('razon_social', { ascending: true })
@@ -72,7 +72,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const cuitQuery = supabase
           .from('clientes')
-          .select('*', { count: 'exact' })
+          .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
           .eq('activo', true)
           .or(orFilter)
           .order('razon_social', { ascending: true })
@@ -345,7 +345,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
 router.post('/', verificarAuth, async (req, res) => {
   try {
     const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono,
-            email, celular, condicion_iva, direcciones_entrega } = req.body
+            email, celular, condicion_iva, direcciones_entrega, grupo_descuento_id } = req.body
 
     if (!razon_social || !razon_social.trim()) {
       return res.status(400).json({ error: 'La razón social es requerida' })
@@ -380,6 +380,7 @@ router.post('/', verificarAuth, async (req, res) => {
         email: email?.trim() || null,
         celular: celular?.trim() || null,
         condicion_iva: condicion_iva || 'CF',
+        grupo_descuento_id: grupo_descuento_id || null,
         activo: true,
       })
       .select()
@@ -544,7 +545,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
 // Editar cliente local + sync a Centum
 router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
   const idCentum = parseInt(req.params.idCentum)
-  const { razon_social, cuit, condicion_iva, direccion, localidad, codigo_postal, telefono, email, celular } = req.body
+  const { razon_social, cuit, condicion_iva, direccion, localidad, codigo_postal, telefono, email, celular, grupo_descuento_id } = req.body
 
   if (!idCentum) {
     return res.status(400).json({ error: 'ID Centum requerido' })
@@ -562,6 +563,7 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
     if (telefono !== undefined) updates.telefono = telefono?.trim() || null
     if (email !== undefined) updates.email = email?.trim() || null
     if (celular !== undefined) updates.celular = celular?.trim() || null
+    if (grupo_descuento_id !== undefined) updates.grupo_descuento_id = grupo_descuento_id || null
 
     if (Object.keys(updates).length > 0) {
       await supabase
@@ -595,7 +597,7 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
 // Editar cliente
 router.put('/:id', verificarAuth, async (req, res) => {
   try {
-    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono, activo } = req.body
+    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono, activo, grupo_descuento_id } = req.body
 
     const updates = {}
     if (razon_social !== undefined) updates.razon_social = razon_social.trim()
@@ -606,6 +608,7 @@ router.put('/:id', verificarAuth, async (req, res) => {
     if (provincia !== undefined) updates.provincia = provincia?.trim() || null
     if (telefono !== undefined) updates.telefono = telefono?.trim() || null
     if (activo !== undefined) updates.activo = activo
+    if (grupo_descuento_id !== undefined) updates.grupo_descuento_id = grupo_descuento_id || null
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No hay campos para actualizar' })

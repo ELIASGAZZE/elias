@@ -6,6 +6,8 @@ import AdminPromociones from '../../components/pos/AdminPromociones'
 import api from '../../services/api'
 import SeccionClientes from '../../components/admin/SeccionClientes'
 import AdminArticulosAtributos from '../../components/admin/AdminArticulosAtributos'
+import SeccionDelivery from './SeccionDelivery'
+import SeccionGruposDescuento from '../../components/admin/SeccionGruposDescuento'
 
 const ChevronIcon = ({ abierta }) => (
   <svg
@@ -74,7 +76,9 @@ const TITULOS_SECCION = {
   'articulos-atributos': 'Artículos',
   promociones: 'Promociones POS',
   clientes: 'Clientes',
+  'delivery': 'Precios Delivery',
   'bloqueos-pedidos': 'Bloqueos de Pedidos',
+  'grupos-descuento': 'Grupos de Descuento',
 }
 
 const AdminConfiguracion = () => {
@@ -1348,7 +1352,16 @@ const AdminConfiguracion = () => {
         </div>}
 
         {/* ===== BLOQUEOS DE PEDIDOS ===== */}
+        {seccion === 'delivery' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+          <SeccionDelivery />
+        </div>}
+
         {seccion === 'bloqueos-pedidos' && <SeccionBloqueosPedidos />}
+
+        {/* ===== GRUPOS DE DESCUENTO ===== */}
+        {seccion === 'grupos-descuento' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+          <SeccionGruposDescuento />
+        </div>}
 
       </div>
 

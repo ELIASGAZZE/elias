@@ -36,6 +36,7 @@ const fichajesRoutes = require('./routes/fichajes')
 const turnosRoutes = require('./routes/turnos')
 const licenciasRoutes = require('./routes/licencias')
 const feriadosRoutes = require('./routes/feriados')
+const gruposDescuentoRoutes = require('./routes/gruposDescuento')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -100,6 +101,7 @@ app.use('/api/fichajes', fichajesRoutes)
 app.use('/api/turnos', turnosRoutes)
 app.use('/api/licencias', licenciasRoutes)
 app.use('/api/feriados', feriadosRoutes)
+app.use('/api/grupos-descuento', gruposDescuentoRoutes)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {

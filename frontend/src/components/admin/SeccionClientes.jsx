@@ -25,6 +25,9 @@ const SeccionClientes = () => {
   const [duplicados, setDuplicados] = useState(null)
   const [dupExpandido, setDupExpandido] = useState(false)
 
+  // Grupos descuento
+  const [gruposDescuento, setGruposDescuento] = useState([])
+
   // Modal
   const [modal, setModal] = useState(null) // null | 'crear' | 'editar'
   const [form, setForm] = useState({})
@@ -57,6 +60,13 @@ const SeccionClientes = () => {
     cargar()
   }, [cargar])
 
+  // Cargar grupos de descuento
+  useEffect(() => {
+    api.get('/api/grupos-descuento')
+      .then(({ data }) => setGruposDescuento((data.grupos || []).filter(g => g.activo)))
+      .catch(() => {})
+  }, [])
+
   // Verificar duplicados al montar
   useEffect(() => {
     api.get('/api/clientes/duplicados')
@@ -79,7 +89,7 @@ const SeccionClientes = () => {
   }, [inputBuscar])
 
   const abrirCrear = () => {
-    setForm({ razon_social: '', cuit: '', condicion_iva: 'CF', direccion: '', email: '', celular: '', telefono: '' })
+    setForm({ razon_social: '', cuit: '', condicion_iva: 'CF', direccion: '', email: '', celular: '', telefono: '', grupo_descuento_id: '' })
     setErrorForm('')
     setModal('crear')
   }
@@ -95,6 +105,7 @@ const SeccionClientes = () => {
       email: cliente.email || '',
       celular: cliente.celular || '',
       telefono: cliente.telefono || '',
+      grupo_descuento_id: cliente.grupo_descuento_id || '',
     })
     setErrorForm('')
     setModal('editar')
@@ -202,6 +213,7 @@ const SeccionClientes = () => {
               <th className="text-left py-2 px-3 font-medium text-gray-500">Razón Social</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">CUIT</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">IVA</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Grupo Desc.</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Cód. Centum</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Actualizado</th>
               <th className="py-2 px-3"></th>
@@ -209,9 +221,9 @@ const SeccionClientes = () => {
           </thead>
           <tbody>
             {cargando ? (
-              <tr><td colSpan={7} className="text-center py-8 text-gray-400">Cargando...</td></tr>
+              <tr><td colSpan={8} className="text-center py-8 text-gray-400">Cargando...</td></tr>
             ) : clientes.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
+              <tr><td colSpan={8} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
             ) : clientes.map(c => (
               <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="py-2 px-3 font-mono text-xs text-gray-600">{c.codigo}</td>
@@ -226,6 +238,15 @@ const SeccionClientes = () => {
                   }`}>
                     {c.condicion_iva || 'CF'}
                   </span>
+                </td>
+                <td className="py-2 px-3">
+                  {c.grupos_descuento ? (
+                    <span className="bg-violet-50 text-violet-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                      {c.grupos_descuento.nombre} {c.grupos_descuento.porcentaje}%
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
                 </td>
                 <td className="py-2 px-3">
                   {c.codigo_centum ? (
@@ -323,6 +344,21 @@ const SeccionClientes = () => {
                   ))}
                 </select>
               </div>
+              {gruposDescuento.length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">Grupo de descuento</label>
+                  <select
+                    value={form.grupo_descuento_id || ''}
+                    onChange={e => setForm(f => ({ ...f, grupo_descuento_id: e.target.value || null }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">Sin grupo</option>
+                    {gruposDescuento.map(g => (
+                      <option key={g.id} value={g.id}>{g.nombre} ({g.porcentaje}%)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-gray-500 mb-1 block">Dirección</label>
                 <input

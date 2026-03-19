@@ -1143,7 +1143,7 @@ const POS = () => {
   const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
   const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
-  const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF' }
+  const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF', grupo_descuento_id: null, grupo_descuento_nombre: null, grupo_descuento_porcentaje: 0 }
 
   // Multi-ticket: 2 tickets en paralelo
   const [tickets, setTickets] = useState([
@@ -1299,6 +1299,9 @@ const POS = () => {
       email: cli.email || '',
       celular: cli.celular || '',
       lista_precio_id: cli.lista_precio_id || 1,
+      grupo_descuento_id: cli.grupo_descuento_id || null,
+      grupo_descuento_nombre: cli.grupos_descuento?.nombre || null,
+      grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
     })
     setMostrarDniPopup(false)
     setMostrarCobrar(true)
@@ -1373,6 +1376,10 @@ const POS = () => {
 
   // Vista activa: tabs estilo Chrome (venta vs pedidos vs saldos)
   const [vistaActiva, setVistaActiva] = useState('venta')
+
+  // Modo delivery: solo artículos configurados, precios delivery, sin promos ni descuentos
+  const [modoDelivery, setModoDelivery] = useState(false)
+  const [articulosDelivery, setArticulosDelivery] = useState([])
 
   // Gift cards para vender junto con artículos
   const [giftCardsEnVenta, setGiftCardsEnVenta] = useState([])
@@ -1507,6 +1514,7 @@ const POS = () => {
     cargarArticulos()
     cargarClientesCache()
     cargarFavoritos()
+    cargarArticulosDelivery()
   }, [])
 
   async function cargarFavoritos() {
@@ -1515,6 +1523,15 @@ const POS = () => {
       setFavoritos(data.articulo_ids || [])
     } catch (err) {
       console.error('Error cargando favoritos:', err)
+    }
+  }
+
+  async function cargarArticulosDelivery() {
+    try {
+      const { data } = await api.get('/api/pos/articulos-delivery')
+      setArticulosDelivery(data || [])
+    } catch (err) {
+      console.error('Error cargando artículos delivery:', err)
     }
   }
 
@@ -1653,6 +1670,9 @@ const POS = () => {
       email: cli.email || '',
       celular: cli.celular || '',
       condicion_iva: cli.condicion_iva || 'CF',
+      grupo_descuento_id: cli.grupo_descuento_id || null,
+      grupo_descuento_nombre: cli.grupos_descuento?.nombre || null,
+      grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
     }
     setCliente(clienteLocal)
 
@@ -1751,24 +1771,48 @@ const POS = () => {
     return Math.round(precioBase * (1 - descPct / 100) * 100) / 100
   }, [empleadoActivo, descuentosEmpleado])
 
+  // Mapa de precios delivery: articulo_id_centum → precio_delivery
+  const deliveryPriceMap = useMemo(() => {
+    const map = {}
+    articulosDelivery.filter(d => d.activo).forEach(d => { map[d.articulo_id_centum] = d.precio_delivery })
+    return map
+  }, [articulosDelivery])
+
+  // Toggle modo delivery
+  const toggleModoDelivery = useCallback(() => {
+    setModoDelivery(prev => {
+      setCarrito([])
+      setBusquedaArt('')
+      if (!prev) {
+        // Activando: desactivar modo empleado
+        setEmpleadoActivo(null)
+        setDescuentosEmpleado({})
+      }
+      return !prev
+    })
+  }, [])
+
   // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
-    const favs = articulos.filter(a => favoritos.includes(a.id))
+    let favs = articulos.filter(a => favoritos.includes(a.id))
+    if (modoDelivery) favs = favs.filter(a => a.id in deliveryPriceMap)
     const rubroOrden = {}
     rubros.forEach((r, i) => { rubroOrden[r.nombre] = i })
     favs.sort((a, b) => (rubroOrden[a.rubro?.nombre] ?? 999) - (rubroOrden[b.rubro?.nombre] ?? 999))
     return favs
-  }, [articulos, favoritos, rubros])
+  }, [articulos, favoritos, rubros, modoDelivery, deliveryPriceMap])
 
   // Resultados de búsqueda: dropdown autocompletado
   const resultadosBusqueda = useMemo(() => {
     if (!busquedaArt.trim()) return []
     const terminos = busquedaArt.toLowerCase().trim().split(/\s+/)
-    return articulos.filter(a => {
+    let filtered = articulos.filter(a => {
       const texto = `${a.codigo} ${a.nombre} ${a.rubro?.nombre || ''} ${a.subRubro?.nombre || ''}`.toLowerCase()
       return terminos.every(t => texto.includes(t))
-    }).slice(0, 30)
-  }, [articulos, busquedaArt])
+    })
+    if (modoDelivery) filtered = filtered.filter(a => a.id in deliveryPriceMap)
+    return filtered.slice(0, 30)
+  }, [articulos, busquedaArt, modoDelivery, deliveryPriceMap])
 
   // Agregar al carrito — pesables abren popup para ingresar peso, no pesables suman 1
   const agregarAlCarrito = useCallback((articulo) => {
@@ -1777,6 +1821,7 @@ const POS = () => {
       setPopupPesableKg('')
       return
     }
+    const deliveryPrice = modoDelivery ? deliveryPriceMap[articulo.id] : undefined
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articulo.id)
       if (idx >= 0) {
@@ -1784,19 +1829,20 @@ const POS = () => {
         nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + 1 }
         return nuevo
       }
-      return [...prev, { articulo, cantidad: 1 }]
+      return [...prev, { articulo, cantidad: 1, ...(deliveryPrice != null ? { precioOverride: parseFloat(deliveryPrice) } : {}) }]
     })
-  }, [])
+  }, [modoDelivery, deliveryPriceMap])
 
   const confirmarPesable = useCallback(() => {
     if (!popupPesable) return
     const kg = parseFloat(popupPesableKg)
     if (!kg || kg <= 0) return
-    setCarrito(prev => [...prev, { articulo: popupPesable.articulo, cantidad: Math.round(kg * 1000) / 1000 }])
+    const deliveryPrice = modoDelivery ? deliveryPriceMap[popupPesable.articulo.id] : undefined
+    setCarrito(prev => [...prev, { articulo: popupPesable.articulo, cantidad: Math.round(kg * 1000) / 1000, ...(deliveryPrice != null ? { precioOverride: parseFloat(deliveryPrice) } : {}) }])
     setPopupPesable(null)
     setPopupPesableKg('')
     setTimeout(() => inputBusquedaRef.current?.focus(), 50)
-  }, [popupPesable, popupPesableKg])
+  }, [popupPesable, popupPesableKg, modoDelivery, deliveryPriceMap])
 
   // Parsear código de barras de balanza Kretz (EAN-13, prefijo 20)
   // Formato: 20 PPPPP WWWWW C → PLU (5 dígitos) + Peso en gramos (5 dígitos) + check
@@ -1822,6 +1868,12 @@ const POS = () => {
     if (balanza) {
       const articuloPlu = articulos.find(a => a.codigo === balanza.plu)
       if (articuloPlu) {
+        // En modo delivery, rechazar si no está configurado
+        if (modoDelivery && !(articuloPlu.id in deliveryPriceMap)) {
+          setAlertaBarcode(codigo)
+          setBusquedaArt('')
+          return true
+        }
         // Detectar duplicado: mismo código de barras escaneado dos veces seguidas
         const ultimo = ultimoBarcodaBalanzaRef.current
         if (ultimo && ultimo === codigo) {
@@ -1833,7 +1885,8 @@ const POS = () => {
         // Guardar como último escaneado
         ultimoBarcodaBalanzaRef.current = codigo
         // Agregar como línea separada (no sumar al existente)
-        setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: balanza.pesoKg }])
+        const dPrice = modoDelivery ? deliveryPriceMap[articuloPlu.id] : undefined
+        setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: balanza.pesoKg, ...(dPrice != null ? { precioOverride: parseFloat(dPrice) } : {}) }])
         setBusquedaArt('')
         return true
       }
@@ -1848,6 +1901,12 @@ const POS = () => {
       encontrado = articulos.find(a => a.codigo === codigo)
     }
     if (encontrado) {
+      // En modo delivery, rechazar si no está configurado
+      if (modoDelivery && !(encontrado.id in deliveryPriceMap)) {
+        setAlertaBarcode(codigo)
+        setBusquedaArt('')
+        return true
+      }
       // Detectar duplicado: mismo barcode escaneado rápido (< 3 seg)
       const ahora = Date.now()
       const ultimo = ultimoBarcodeRef.current
@@ -1862,7 +1921,7 @@ const POS = () => {
       return true
     }
     return false
-  }, [articulos, agregarAlCarrito, parsearBarcodeBalanza])
+  }, [articulos, agregarAlCarrito, parsearBarcodeBalanza, modoDelivery, deliveryPriceMap])
 
   // Detectar entrada rápida tipo escáner de barras
   const ultimoInputRef = useRef({ time: 0 })
@@ -2162,7 +2221,7 @@ const POS = () => {
     const descEmpleado = Object.values(rubroMap)
     const totalDescEmpleado = descEmpleado.reduce((s, d) => s + d.descuento, 0)
 
-    const aplicadas = calcularPromocionesLocales(carrito, promociones)
+    const aplicadas = modoDelivery ? [] : calcularPromocionesLocales(carrito, promociones)
     const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
     return {
@@ -2174,7 +2233,7 @@ const POS = () => {
       total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
-  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado])
+  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, modoDelivery])
 
   function ejecutarCancelacion() {
     api.post('/api/auditoria/cancelacion', {
@@ -2201,8 +2260,14 @@ const POS = () => {
     setMostrarAgregarGC(false)
   }
 
+  // Descuento por grupo de cliente
+  const descuentoGrupoCliente = cliente.grupo_descuento_porcentaje > 0
+    ? Math.round(total * cliente.grupo_descuento_porcentaje / 100 * 100) / 100
+    : 0
+  const totalConDescGrupo = Math.round((total - descuentoGrupoCliente) * 100) / 100
+
   const totalGiftCardsEnVenta = giftCardsEnVenta.reduce((s, g) => s + g.monto, 0)
-  const totalConGiftCards = total + totalGiftCardsEnVenta
+  const totalConGiftCards = totalConDescGrupo + totalGiftCardsEnVenta
 
   function agregarGiftCardAVenta() {
     if (!gcCodigo.trim() || !gcMonto || parseFloat(gcMonto) <= 0) return
@@ -2887,7 +2952,7 @@ const POS = () => {
   return (
     <div className="h-screen bg-gray-100 flex flex-col overflow-hidden" onClick={handlePOSClick}>
       {/* Barra tipo Chrome: tabs + info terminal */}
-      <div className="bg-violet-900 flex-shrink-0">
+      <div className={`${modoDelivery ? 'bg-orange-800' : 'bg-violet-900'} flex-shrink-0 transition-colors`}>
         <div className="flex items-center justify-between">
           {/* Izquierda: botón volver + tabs */}
           <div className="flex items-center">
@@ -2956,6 +3021,20 @@ const POS = () => {
             <span className="bg-violet-700 text-violet-100 px-1.5 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
             <span className="text-violet-300">|</span>
             <span className="text-violet-200 font-medium">Cajero: {cierreActivo?.empleado?.nombre || usuario?.nombre}</span>
+            {/* Botón Delivery */}
+            <button
+              onClick={toggleModoDelivery}
+              className={`${modoDelivery
+                ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse'
+                : 'bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white'
+              } px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
+              title={modoDelivery ? 'Desactivar modo delivery' : 'Activar modo delivery'}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0H21a.375.375 0 00.375-.375v-3.375a3 3 0 00-3-3h-1.5m-6.375 7.5H10.5m0 0h-1.875M10.5 18.75v-7.5m0 0h6v1.875M10.5 11.25L3.375 11.25M16.5 13.125v-1.875m0 0L21 11.25" />
+              </svg>
+              Delivery{modoDelivery ? ' ✕' : ''}
+            </button>
             {empleadoActivo ? (
               <button
                 onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]); }}
@@ -2976,8 +3055,9 @@ const POS = () => {
             ) : (
               <button
                 onClick={() => setMostrarVentaEmpleado(true)}
-                className="bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
-                title="Venta a empleado (cta cte)"
+                disabled={modoDelivery}
+                className={`${modoDelivery ? 'opacity-30 cursor-not-allowed' : 'bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white'} px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
+                title={modoDelivery ? 'Desactivado en modo delivery' : 'Venta a empleado (cta cte)'}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
@@ -3070,6 +3150,12 @@ const POS = () => {
 
       {/* === TAB VENTA === */}
       {vistaActiva === 'venta' && <>
+      {/* Banner modo delivery */}
+      {modoDelivery && (
+        <div className="bg-orange-500 text-white text-center py-1.5 text-sm font-bold tracking-wide">
+          MODO DELIVERY — Solo artículos y precios configurados — Sin promos ni descuentos
+        </div>
+      )}
       {/* Banner pedido en proceso */}
       {pedidoEnProceso && (
         <div className="bg-violet-50 border-b border-violet-200">
@@ -3316,6 +3402,11 @@ const POS = () => {
                   }`}>
                     Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
                   </span>
+                  {cliente.grupo_descuento_nombre && (
+                    <span className="bg-violet-100 text-violet-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
+                      {cliente.grupo_descuento_nombre} -{cliente.grupo_descuento_porcentaje}%
+                    </span>
+                  )}
                   {saldoCliente > 0 && (
                     <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
                       Saldo: {formatPrecio(saldoCliente)}
@@ -3456,7 +3547,7 @@ const POS = () => {
                   return (
                     <div key={item.articulo.id} className={`px-3 py-2 ${seleccionadoEnCarrito ? 'bg-violet-100 border-l-4 border-l-violet-600' : 'hover:bg-gray-50/80'}`} ref={seleccionadoEnCarrito ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-gray-800 truncate flex-1">{item.articulo.nombre}</span>
+                        <span className="text-sm font-medium text-gray-800 truncate flex-1">{item.articulo.nombre} <span className="text-[10px] text-gray-400 font-normal">{item.articulo.codigo}</span></span>
                         <span className="text-sm font-bold text-gray-800 flex-shrink-0">{formatPrecio(lineTotal)}</span>
                       </div>
                       <div className="flex items-center gap-2 mt-1">
@@ -3626,6 +3717,12 @@ const POS = () => {
                 <div className="flex justify-between text-green-600">
                   <span>Promos</span>
                   <span>-{formatPrecio(descuentoTotal)}</span>
+                </div>
+              )}
+              {descuentoGrupoCliente > 0 && (
+                <div className="flex justify-between text-violet-600">
+                  <span>{cliente.grupo_descuento_nombre} {cliente.grupo_descuento_porcentaje}%</span>
+                  <span>-{formatPrecio(descuentoGrupoCliente)}</span>
                 </div>
               )}
               {totalGiftCardsEnVenta > 0 && (
@@ -5454,7 +5551,12 @@ const POS = () => {
           onVentaOffline={actualizarPendientes}
           pedidoPosId={pedidoEnProceso?.id || null}
           saldoCliente={saldoCliente}
+          canal={modoDelivery ? 'delivery' : 'pos'}
+          modoDelivery={modoDelivery}
           giftCardsEnVenta={giftCardsEnVenta}
+          descuentoGrupoCliente={descuentoGrupoCliente}
+          grupoDescuentoNombre={cliente.grupo_descuento_nombre}
+          grupoDescuentoPorcentaje={cliente.grupo_descuento_porcentaje}
         />
       )}
 

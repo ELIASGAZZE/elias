@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import VentasTabBar from '../../components/ventas/VentasTabBar'
 import api from '../../services/api'
+import { imprimirTicketPOS, imprimirComprobanteA4 } from '../../utils/imprimirComprobante'
 
 const formatFechaHora = (fecha) => {
   if (!fecha) return ''
@@ -254,7 +255,7 @@ const VentasHome = () => {
         </div>
 
         {/* Botón reintentar todas en Centum */}
-        {ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (
+        {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (
           <button
             onClick={reenviarTodasCentum}
             disabled={reenvioMasivo}
@@ -330,7 +331,7 @@ const VentasHome = () => {
                             {v.centum_comprobante}
                           </span>
                         )}
-                        {!v.centum_sync && !v.centum_comprobante && (
+                        {esAdmin && !v.centum_sync && !v.centum_comprobante && (
                           <button
                             onClick={(e) => reenviarCentum(e, v.id)}
                             disabled={reenviando === v.id}
@@ -354,8 +355,73 @@ const VentasHome = () => {
                         </div>
                       )}
                     </div>
-                    <div className="text-right ml-3">
+                    <div className="text-right ml-3 flex flex-col items-end gap-1.5">
                       <span className={`text-base font-semibold ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>{formatPrecio(v.total)}</span>
+                      <div className="flex items-center gap-1">
+                        {/* Imprimir ticket */}
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
+                            const pgos = v.pagos || []
+                            imprimirTicketPOS({
+                              items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario || i.precio })),
+                              cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente } : null,
+                              pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio, monto: parseFloat(p.monto) })),
+                              subtotal: parseFloat(v.subtotal || v.total),
+                              total: parseFloat(v.total),
+                              totalPagado: parseFloat(v.total),
+                              vuelto: parseFloat(v.vuelto || 0),
+                              numeroVenta: v.numero_venta,
+                            })
+                          }}
+                          className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
+                          title="Imprimir ticket"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                          </svg>
+                        </button>
+                        {/* Imprimir A4 */}
+                        <button
+                          onClick={async (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            try {
+                              let caeData = null
+                              if (v.id_venta_centum || v.centum_comprobante) {
+                                const { data } = await api.get(`/api/pos/ventas/${v.id}/cae`)
+                                caeData = data
+                              }
+                              await imprimirComprobanteA4(v, caeData)
+                            } catch {
+                              await imprimirComprobanteA4(v, null)
+                            }
+                          }}
+                          className="p-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 transition-colors"
+                          title="Imprimir A4"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                          </svg>
+                        </button>
+                        {/* Estado email — solo Factura A */}
+                        {v.centum_comprobante && /^A\s/.test(v.centum_comprobante) && (
+                          <span
+                            className={`p-1.5 rounded-lg ${v.email_enviado ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}
+                            title={v.email_enviado ? `Email enviado a ${v.email_enviado_a || ''}` : 'Email no enviado'}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              {v.email_enviado ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              )}
+                            </svg>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </Link>

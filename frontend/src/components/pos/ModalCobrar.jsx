@@ -27,7 +27,7 @@ function calcularPrecioConDescuentosBase(articulo) {
 const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100, '1': 50, '2': 20 }
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
-const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta }) => {
+const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
   const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
@@ -128,8 +128,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     return acc
   }, {})
 
-  // Calcular descuentos por forma de pago (sobre el monto pagado en esa forma, sin exceder el total)
-  const descuentosPorForma = promosPago.map(promo => {
+  // Calcular descuentos por forma de pago (desactivado en modo delivery)
+  const descuentosPorForma = (modoDelivery ? [] : promosPago).map(promo => {
     const reglas = promo.reglas || {}
     const nombreForma = reglas.forma_cobro_nombre
     const porcentaje = reglas.valor || 0
@@ -585,8 +585,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
       ],
     }
+    if (descuentoGrupoCliente > 0) {
+      payload.descuento_grupo_cliente = descuentoGrupoCliente
+      payload.grupo_descuento_nombre = grupoDescuentoNombre
+    }
     if (saldoAplicado > 0) payload.saldo_aplicado = saldoAplicado
     if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
+    if (canal && canal !== 'pos') payload.canal = canal
     if (giftCardsAplicadas.length > 0) {
       payload.gift_cards_aplicadas = giftCardsAplicadas.map(g => ({ codigo: g.codigo, monto: g.monto }))
     }
@@ -606,6 +611,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       total: totalEfectivo,
       totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
+      descuentoGrupoCliente,
+      grupoDescuentoNombre,
+      grupoDescuentoPorcentaje,
     }
 
     try {
@@ -671,15 +679,15 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       borrarPagos()
     }
 
-    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo
-    if (e.key === 'F1' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
+    // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
+    if (e.key === 'F1' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
       if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('credit_card')
     }
-    // F2 = QR (posnet MP) — solo si no hay pago MP activo
-    if (e.key === 'F2' && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
+    // F2 = QR (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
+    if (e.key === 'F2' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
       if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
@@ -700,6 +708,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (nombreForma) {
       e.preventDefault()
       setUltimoFKeyBillete(null)
+      // En modo delivery, solo permitir Rappi/PedidosYa
+      if (modoDelivery && !nombreForma.toLowerCase().includes('rappi') && !nombreForma.toLowerCase().includes('pedidosya')) return
       const found = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
       if (found) {
         setFormaSeleccionada(found)
@@ -826,7 +836,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div>
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Otros medios</h3>
             <div className="space-y-2">
-              {formasCobro.map((fc) => {
+              {formasCobro.filter(fc => !modoDelivery || fc.nombre.toLowerCase().includes('rappi') || fc.nombre.toLowerCase().includes('pedidosya') || fc.nombre.toLowerCase().includes('pedidos')).map((fc) => {
                 const fkeyMatch = Object.entries(FKEY_FORMAS).find(([,name]) => fc.nombre.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fc.nombre.toLowerCase()))
                 return (
                 <button
@@ -879,8 +889,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           </div>
         )}
 
-        {/* Gift Card */}
-        <div>
+        {/* Gift Card (oculto en delivery) */}
+        {!modoDelivery && <div>
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Gift Card</h3>
           <div className="flex gap-1.5">
             <input
@@ -931,10 +941,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               ))}
             </div>
           )}
-        </div>
+        </div>}
 
-        {/* Mercado Pago Posnet */}
-        <div>
+        {/* Mercado Pago Posnet (oculto en delivery) */}
+        {!modoDelivery && <div>
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Posnet MP</h3>
           {!mpEstado && (
             <div className="flex gap-2">
@@ -1042,7 +1052,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               </div>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Detalle de pagos cargados */}
         {pagos.length > 0 && (
@@ -1138,12 +1148,17 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           }`}>
             Total a cobrar
           </span>
-          {(totalDescuentoPagos > 0 || saldoAplicado > 0 || totalGiftCards > 0) ? (
+          {(descuentoGrupoCliente > 0 || totalDescuentoPagos > 0 || saldoAplicado > 0 || totalGiftCards > 0) ? (
             <>
               <span className="text-2xl font-bold text-white/40 line-through mb-1">
-                {formatPrecio(total)}
+                {formatPrecio(descuentoGrupoCliente > 0 ? total + descuentoGrupoCliente : total)}
               </span>
               <div className="flex flex-col items-center mb-2">
+                {descuentoGrupoCliente > 0 && (
+                  <span className="text-violet-300 text-xs font-medium">
+                    {grupoDescuentoNombre} {grupoDescuentoPorcentaje}%: -{formatPrecio(descuentoGrupoCliente)}
+                  </span>
+                )}
                 {descuentosPorForma.map(d => (
                   <span key={d.promoId} className="text-cyan-300 text-xs font-medium">
                     Desc. {d.formaCobro} {d.porcentaje}%: -{formatPrecio(d.descuento)}
