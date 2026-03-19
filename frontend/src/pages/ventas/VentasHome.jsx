@@ -221,7 +221,7 @@ const VentasHome = () => {
         </div>
 
         {/* Resumen del día */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
+        {esAdmin && <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-500 uppercase">Resumen del día</h2>
             <span className="text-xs text-gray-400">{soloVentas.length} venta{soloVentas.length !== 1 ? 's' : ''}{soloNC.length > 0 ? ` · ${soloNC.length} NC` : ''}</span>
@@ -252,7 +252,7 @@ const VentasHome = () => {
               ))}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Botón reintentar todas en Centum */}
         {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (
