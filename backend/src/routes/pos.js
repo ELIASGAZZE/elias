@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum } = require('../services/centumVentasPOS')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // GET /api/pos/articulos
@@ -500,9 +500,12 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                   centum_comprobante: comprobante,
                   centum_sync: true,
                   centum_error: null,
+                  numero_cae: resultado.CAE || null,
                 })
                 .eq('id', data.id)
               console.log(`[Centum POS] Venta ${data.id} registrada en Centum: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+              // Obtener CAE desde Centum (best effort, async)
+              fetchAndSaveCAE(data.id, resultado.IdVenta)
             } else {
               await supabase
                 .from('ventas_pos')
@@ -1455,8 +1458,10 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
                 centum_comprobante: comprobante,
                 centum_sync: true,
                 centum_error: null,
+                numero_cae: resultado.CAE || null,
               }).eq('id', venta.id)
               console.log(`[Guía Delivery] Venta ${venta.id} registrada en Centum: ${comprobante}`)
+              fetchAndSaveCAE(venta.id, resultado.IdVenta)
             }
           } catch (err) {
             console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
@@ -2468,9 +2473,11 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
           id_venta_centum: centumNC.IdVenta || null,
           centum_comprobante: comprobante,
           centum_sync: true,
+          numero_cae: centumNC.CAE || null,
         }).eq('id', notaCredito.id)
 
         console.log(`[POS] NC Centum creada para devolución: ${comprobante}`)
+        fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
       } catch (centumErr) {
         console.error('[POS] Error al crear NC en Centum (devolución):', centumErr.message)
         await supabase.from('ventas_pos').update({
@@ -2639,9 +2646,11 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             id_venta_centum: centumNC.IdVenta || null,
             centum_comprobante: comprobanteNC,
             centum_sync: true,
+            numero_cae: centumNC.CAE || null,
           }).eq('id', notaCredito.id)
           centumNCOk = true
           console.log(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
+          fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
         } catch (centumErr) {
           console.error('[POS] Error NC Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
@@ -2687,9 +2696,11 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             id_venta_centum: centumFCV.IdVenta || null,
             centum_comprobante: comprobanteFCV,
             centum_sync: true,
+            numero_cae: centumFCV.CAE || null,
           }).eq('id', nuevaVenta.id)
           centumFCVOk = true
           console.log(`[POS] FCV Centum corrección cliente: ${comprobanteFCV}`)
+          fetchAndSaveCAE(nuevaVenta.id, centumFCV.IdVenta)
         } catch (centumErr) {
           console.error('[POS] Error FCV Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
@@ -2877,9 +2888,11 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
           id_venta_centum: centumNC.IdVenta || null,
           centum_comprobante: comprobante,
           centum_sync: true,
+          numero_cae: centumNC.CAE || null,
         }).eq('id', notaCredito.id)
 
         console.log(`[POS] NC Concepto Centum creada para dif. precio: ${comprobante}`)
+        fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
       } catch (centumErr) {
         console.error('[POS] Error NC Concepto Centum (dif. precio):', centumErr.message)
         await supabase.from('ventas_pos').update({
@@ -3097,11 +3110,14 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
         centum_comprobante: comprobante,
         centum_sync: true,
         centum_error: null,
+        numero_cae: resultado.CAE || null,
       })
       .eq('id', ventaId)
 
     console.log(`[Centum POS] Reenvío venta ${ventaId} OK: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
-    return res.json({ ok: true, comprobante, idVentaCentum: resultado.IdVenta })
+    // Obtener CAE (await para que la respuesta ya lo incluya)
+    const cae = await fetchAndSaveCAE(ventaId, resultado.IdVenta)
+    return res.json({ ok: true, comprobante, idVentaCentum: resultado.IdVenta, cae })
 
   } catch (err) {
     console.error(`[Centum POS] Error reenvío venta ${req.params.id}:`, err.message)

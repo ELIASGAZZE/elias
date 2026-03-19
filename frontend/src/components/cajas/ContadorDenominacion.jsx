@@ -27,6 +27,7 @@ const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$', alerta
           min="0"
           value={cantidad != null ? cantidad : ''}
           onChange={(e) => onChange(Math.max(0, parseInt(e.target.value) || 0))}
+          onFocus={(e) => e.target.select()}
           className="w-12 text-center text-sm font-medium border border-gray-200 rounded-lg py-1 focus:outline-none focus:border-emerald-400"
           placeholder="0"
         />

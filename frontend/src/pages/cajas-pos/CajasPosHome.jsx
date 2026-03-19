@@ -6,6 +6,7 @@ import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import ModalRetiroPos from '../../components/cajas-pos/ModalRetiroPos'
 import ModalGastoPos from '../../components/cajas-pos/ModalGastoPos'
+import { imprimirCierre } from '../../utils/imprimirComprobante'
 import api from '../../services/api'
 
 const ESTADOS = {
@@ -299,6 +300,12 @@ const CajasPosHome = () => {
   const [retiroCierre, setRetiroCierre] = useState(null) // cierre para el modal de retiro
   const [gastoCierre, setGastoCierre] = useState(null) // cierre para el modal de gasto
 
+  // Modal de codigo de empleado para editar/reimprimir (operario)
+  const [modalEmpleado, setModalEmpleado] = useState(null) // { cierre, accion: 'editar'|'reimprimir' }
+  const [codigoModal, setCodigoModal] = useState('')
+  const [errorModal, setErrorModal] = useState('')
+  const [validandoModal, setValidandoModal] = useState(false)
+
   const eliminarCierre = async (e, cierre) => {
     e.preventDefault()
     e.stopPropagation()
@@ -311,6 +318,51 @@ const CajasPosHome = () => {
       alert(err.response?.data?.error || 'Error al eliminar')
     } finally {
       setEliminando(null)
+    }
+  }
+
+  const confirmarCodigoEmpleado = async () => {
+    if (!codigoModal.trim()) {
+      setErrorModal('Ingresa el codigo de empleado')
+      return
+    }
+    setValidandoModal(true)
+    setErrorModal('')
+    try {
+      const { data: emp } = await api.get(`/api/empleados/por-codigo/${encodeURIComponent(codigoModal.trim())}`)
+      // Verificar que es el empleado que cerro la caja
+      const cierre = modalEmpleado.cierre
+      if (emp.id !== cierre.cerrado_por_empleado_id) {
+        setErrorModal('El codigo no corresponde al empleado que cerro esta caja')
+        setValidandoModal(false)
+        return
+      }
+      const accion = modalEmpleado.accion
+      setModalEmpleado(null)
+      setCodigoModal('')
+      setErrorModal('')
+
+      if (accion === 'editar') {
+        navigate(`/cajas-pos/cierre/${cierre.id}/editar`)
+      } else if (accion === 'reimprimir') {
+        // Cargar datos del cierre y reimprimir
+        try {
+          const [cierreRes, denomRes, retirosRes, gastosRes] = await Promise.all([
+            api.get(`/api/cierres-pos/${cierre.id}`),
+            api.get('/api/denominaciones'),
+            api.get(`/api/cierres-pos/${cierre.id}/retiros`),
+            api.get(`/api/cierres-pos/${cierre.id}/gastos`),
+          ])
+          const denomActivas = (denomRes.data || []).filter(d => d.activo)
+          imprimirCierre(cierreRes.data, retirosRes.data || [], denomActivas, gastosRes.data || [])
+        } catch (err) {
+          alert('Error al reimprimir: ' + (err.response?.data?.error || err.message))
+        }
+      }
+    } catch {
+      setErrorModal('Codigo no valido')
+    } finally {
+      setValidandoModal(false)
     }
   }
 
@@ -613,24 +665,75 @@ const CajasPosHome = () => {
                               <span> · {cierre.empleado.nombre}</span>
                             )}
                           </div>
-                          {cierre.total_general !== undefined && !esGestor && (
+                          {cierre.total_general !== undefined && !esGestor && usuario?.rol !== 'operario' && (
                             <span className="text-sm font-medium text-gray-700">
                               {formatMonto(cierre.total_general)}
                             </span>
                           )}
                         </div>
                       </Link>
-                      {esAdmin && cierre.estado === 'pendiente_gestor' && (
-                        <Link
-                          to={`/cajas-pos/cierre/${cierre.id}/editar`}
-                          className="flex-shrink-0 p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                          title="Editar conteo"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </Link>
+                      {cierre.estado === 'pendiente_gestor' && (esAdmin || usuario?.rol === 'operario') && (
+                        <>
+                          {/* Boton editar */}
+                          {esAdmin ? (
+                            <Link
+                              to={`/cajas-pos/cierre/${cierre.id}/editar`}
+                              className="flex-shrink-0 p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                              title="Editar conteo"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </Link>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setModalEmpleado({ cierre, accion: 'editar' }) }}
+                              className="flex-shrink-0 p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                              title="Editar conteo"
+                            >
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          )}
+                          {/* Boton reimprimir */}
+                          {esAdmin ? (
+                            <button
+                              onClick={async (e) => {
+                                e.preventDefault(); e.stopPropagation()
+                                try {
+                                  const [cierreRes, denomRes, retirosRes, gastosRes] = await Promise.all([
+                                    api.get(`/api/cierres-pos/${cierre.id}`),
+                                    api.get('/api/denominaciones'),
+                                    api.get(`/api/cierres-pos/${cierre.id}/retiros`),
+                                    api.get(`/api/cierres-pos/${cierre.id}/gastos`),
+                                  ])
+                                  const denomActivas = (denomRes.data || []).filter(d => d.activo)
+                                  imprimirCierre(cierreRes.data, retirosRes.data || [], denomActivas, gastosRes.data || [])
+                                } catch (err) {
+                                  alert('Error al reimprimir: ' + (err.response?.data?.error || err.message))
+                                }
+                              }}
+                              className="flex-shrink-0 p-2 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"
+                              title="Reimprimir comprobante"
+                            >
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setModalEmpleado({ cierre, accion: 'reimprimir' }) }}
+                              className="flex-shrink-0 p-2 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"
+                              title="Reimprimir comprobante"
+                            >
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                            </button>
+                          )}
+                        </>
                       )}
                       {esAdmin && (
                         <button
@@ -675,6 +778,47 @@ const CajasPosHome = () => {
           onClose={() => setGastoCierre(null)}
           onGastoCreado={() => {}}
         />
+      )}
+
+      {/* Modal codigo de empleado para editar/reimprimir */}
+      {modalEmpleado && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="font-semibold text-gray-800">
+              {modalEmpleado.accion === 'editar' ? 'Editar conteo' : 'Reimprimir comprobante'}
+            </h3>
+            <p className="text-sm text-gray-500">
+              Ingresa el codigo del empleado que cerro esta caja para continuar.
+            </p>
+            <div>
+              <input
+                type="text"
+                value={codigoModal}
+                onChange={(e) => { setCodigoModal(e.target.value); setErrorModal('') }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmarCodigoEmpleado() } }}
+                placeholder="Codigo de empleado"
+                className={`campo-form text-sm w-full ${errorModal ? 'border-red-400' : ''}`}
+                autoFocus
+              />
+              {errorModal && <p className="text-xs text-red-600 mt-1">{errorModal}</p>}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setModalEmpleado(null); setCodigoModal(''); setErrorModal('') }}
+                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-xl text-sm font-medium hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarCodigoEmpleado}
+                disabled={validandoModal}
+                className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white py-2 rounded-xl text-sm font-medium"
+              >
+                {validandoModal ? 'Validando...' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

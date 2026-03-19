@@ -702,9 +702,12 @@ async function retrySyncVentasCentum() {
         centum_comprobante: comprobante,
         centum_sync: true,
         centum_error: null,
+        numero_cae: resultado?.CAE || null,
       }).eq('id', venta.id)
 
       console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
+      // Obtener CAE (best effort)
+      fetchAndSaveCAE(venta.id, resultado?.IdVenta)
       exitosas++
     } catch (err) {
       console.error(`[RetryCentumVentas] Error venta ${venta.id}:`, err.message)
@@ -716,4 +719,134 @@ async function retrySyncVentasCentum() {
   return { reintentadas: pendientes.length, exitosas, fallidas }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, retrySyncVentasCentum }
+/**
+ * Obtiene el CAE de una venta desde Centum (GET) y lo guarda en ventas_pos.
+ * Si obtiene CAE, dispara envío automático de email al cliente (si tiene email).
+ * Se llama después de un sync exitoso. No tira error si falla (best effort).
+ */
+async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
+  if (!idVentaCentum || !ventaPosId) return null
+  try {
+    const centumData = await obtenerVentaCentum(idVentaCentum)
+    const cae = centumData?.CAE || null
+    const caeVto = centumData?.FechaVencimientoCAE || null
+    if (cae) {
+      await supabase.from('ventas_pos').update({ numero_cae: cae }).eq('id', ventaPosId)
+      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}`)
+
+      // Envío automático de email (async, best effort)
+      enviarComprobanteAutomatico(ventaPosId, cae, caeVto).catch(err => {
+        console.warn(`[Email Auto] Error para venta ${ventaPosId}:`, err.message)
+      })
+    }
+    return cae
+  } catch (err) {
+    console.warn(`[Centum POS] No se pudo obtener CAE para venta ${ventaPosId}:`, err.message)
+    return null
+  }
+}
+
+/**
+ * Envía el comprobante PDF por email automáticamente si:
+ * - La venta es Factura A (RI/MT) o EMPRESA con pago electrónico
+ * - El cliente tiene email cargado
+ * - El email no fue enviado previamente
+ */
+async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
+  // Obtener venta completa
+  const { data: venta, error } = await supabase.from('ventas_pos').select('*').eq('id', ventaPosId).single()
+  if (error || !venta) return
+  if (venta.email_enviado) return // Ya se envió
+
+  // Obtener cliente y su email
+  if (!venta.id_cliente_centum) return
+  const { data: cli } = await supabase.from('clientes')
+    .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo, email')
+    .eq('id_centum', venta.id_cliente_centum).single()
+  if (!cli?.email) return // Sin email, no enviar
+
+  // Verificar que sea EMPRESA (no PRUEBA)
+  const condIva = cli.condicion_iva || 'CF'
+  const esFacturaA = condIva === 'RI' || condIva === 'MT'
+  const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
+  const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+  const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+  const esPrueba = !esFacturaA && soloEfectivo
+  if (esPrueba) return
+
+  const caeData = { cae, cae_vencimiento: caeVto, esFacturaA, cliente: cli }
+
+  // Generar HTML y PDF
+  const { generarComprobanteHTML } = require('./comprobanteHTML')
+  const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
+
+  const puppeteer = require('puppeteer')
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
+  const page = await browser.newPage()
+  await page.setContent(comprobanteHTML, { waitUntil: 'networkidle0' })
+  const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } })
+  await browser.close()
+
+  // Enviar email
+  const esNC = venta.tipo === 'nota_credito'
+  const tipoDoc = esNC ? 'Nota de Crédito' : 'Comprobante'
+  const numDoc = venta.centum_comprobante || `#${venta.numero_venta || ''}`
+  const pdfFilename = `${tipoDoc.replace(/ /g, '_')}_${numDoc.replace(/\s+/g, '_')}.pdf`
+
+  const escapeHtml = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  const { enviarEmail } = require('./email')
+  await enviarEmail({
+    to: cli.email.trim(),
+    subject: `${tipoDoc} ${numDoc} - Almacen Zaatar`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <p>Estimado/a <strong>${escapeHtml(venta.nombre_cliente || 'Cliente')}</strong>,</p>
+      <p>Adjuntamos su comprobante de ${esNC ? 'nota de crédito' : 'compra'} en formato PDF.</p>
+      <p style="color:#555;font-size:13px">Número: <strong>${escapeHtml(numDoc)}</strong><br>
+      Fecha: ${new Date(venta.created_at).toLocaleDateString('es-AR')}<br>
+      Total: <strong>$${parseFloat(venta.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong></p>
+      <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+      <p style="font-size:11px;color:#999">Comercial Padano SRL - Brasil 313, Rosario<br>
+      Este email fue enviado desde un sistema automatizado. No responder a esta dirección.</p>
+    </div>`,
+    pdfBuffer: Buffer.from(pdfBuffer),
+    pdfFilename,
+  })
+
+  // Marcar como enviado
+  await supabase.from('ventas_pos').update({
+    email_enviado: true,
+    email_enviado_a: cli.email.trim(),
+    email_enviado_at: new Date().toISOString(),
+  }).eq('id', ventaPosId)
+
+  console.log(`[Email Auto] Comprobante enviado a ${cli.email} para venta ${venta.numero_venta} (${numDoc})`)
+}
+
+/**
+ * Cron: busca ventas sincronizadas con Centum (últimas 48h) que no tienen CAE guardado
+ * e intenta obtenerlo. Si lo obtiene, dispara el envío automático de email.
+ */
+async function retrySyncCAE() {
+  const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  const { data: ventas, error } = await supabase.from('ventas_pos')
+    .select('id, numero_venta, id_venta_centum')
+    .eq('centum_sync', true)
+    .not('id_venta_centum', 'is', null)
+    .is('numero_cae', null)
+    .gte('created_at', hace48h)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  if (error || !ventas || ventas.length === 0) return { revisadas: 0, conCAE: 0 }
+
+  let conCAE = 0
+  for (const v of ventas) {
+    const cae = await fetchAndSaveCAE(v.id, v.id_venta_centum)
+    if (cae) conCAE++
+  }
+
+  return { revisadas: ventas.length, conCAE }
+}
+
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE }

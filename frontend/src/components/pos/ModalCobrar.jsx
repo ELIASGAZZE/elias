@@ -1,7 +1,7 @@
-// Modal de cobro — POS (pantalla completa, denominaciones desde config, pagos parciales, offline support)
+// Modal de cobro — POS (pantalla completa, numpad efectivo, pagos parciales, offline support)
 import React, { useState, useEffect, useRef } from 'react'
 import api, { isNetworkError } from '../../services/api'
-import { guardarDenominaciones, getDenominaciones, guardarFormasCobro, getFormasCobro as getFormasCobroDB, encolarVenta } from '../../services/offlineDB'
+import { guardarFormasCobro, getFormasCobro as getFormasCobroDB, encolarVenta } from '../../services/offlineDB'
 import { syncVentasPendientes } from '../../services/offlineSync'
 import { imprimirTicketPOS } from '../../utils/imprimirComprobante'
 
@@ -10,9 +10,9 @@ const formatPrecio = (n) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2 }).format(n)
 }
 
-const formatDenominacion = (valor) => {
-  if (valor >= 1000) return `$${new Intl.NumberFormat('es-AR').format(valor)}`
-  return `$${valor}`
+const formatMontoInput = (valor) => {
+  if (!valor && valor !== 0) return ''
+  return new Intl.NumberFormat('es-AR').format(valor)
 }
 
 function calcularPrecioConDescuentosBase(articulo) {
@@ -23,20 +23,20 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
+const redondearCentena = (monto) => Math.round(monto / 100) * 100
+
 // Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
-const FKEY_BILLETES = { F3: 20000, F4: 10000, F5: 2000, F6: 1000, F7: 500, F8: 200, F9: 100, '1': 50, '2': 20 }
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
 const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
-  const [denominaciones, setDenominaciones] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
   const [montoFormaPago, setMontoFormaPago] = useState('')
   const [formaSeleccionada, setFormaSeleccionada] = useState(null)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
-  const [ultimoPago, setUltimoPago] = useState(null) // flash feedback
   const [promosPago, setPromosPago] = useState([])
+  const [montoEfectivoInput, setMontoEfectivoInput] = useState('') // string numérico para el numpad
 
   // Gift Cards
   const [gcCodigo, setGcCodigo] = useState('')
@@ -79,13 +79,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }, [mpEstado])
 
   useEffect(() => {
-    // Cargar cache primero (instantáneo), luego refrescar desde API en background
     async function cargarDesdeCache() {
       try {
-        const [cachedDens, cachedFcs] = await Promise.all([getDenominaciones(), getFormasCobroDB()])
-        if (cachedDens.length > 0) {
-          setDenominaciones(cachedDens.filter(d => d.activo !== false).sort((a, b) => Number(a.valor) - Number(b.valor)))
-        }
+        const cachedFcs = await getFormasCobroDB()
         if (cachedFcs.length > 0) {
           setFormasCobro(cachedFcs.filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo'))
         }
@@ -97,16 +93,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   async function cargarConfigDesdeAPI() {
     try {
-      const [denRes, fcRes, promosRes] = await Promise.all([
-        api.get('/api/denominaciones'),
+      const [fcRes, promosRes] = await Promise.all([
         api.get('/api/formas-cobro'),
         api.get('/api/pos/promociones'),
       ])
-      const dens = (denRes.data.denominaciones || denRes.data || [])
-        .filter(d => d.activo !== false)
-        .sort((a, b) => Number(a.valor) - Number(b.valor))
-      setDenominaciones(dens)
-      guardarDenominaciones(dens).catch(() => {})
 
       const fcs = (fcRes.data.formas_cobro || fcRes.data || [])
         .filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo')
@@ -138,7 +128,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     // Si el efectivo cubre el total descontado → descuento completo sobre el total
     // Si no alcanza (pago mixto) → descuento solo sobre lo pagado en esta forma
     const totalDescontado = total * (1 - porcentaje / 100)
-    const baseDescuento = montoPagado >= totalDescontado ? total : montoPagado
+    // Tolerancia de $100 para cubrir diferencias por redondeo a centenas
+    const baseDescuento = (montoPagado >= totalDescontado || (totalDescontado - montoPagado) < 100) ? total : montoPagado
     return {
       promoId: promo.id,
       promoNombre: promo.nombre,
@@ -162,16 +153,37 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   const totalGiftCards = giftCardsAplicadas.reduce((s, g) => s + g.monto, 0)
   const totalEfectivoConGC = Math.round((totalEfectivo - totalGiftCards) * 100) / 100
+
   const totalPagado = pagos.reduce((s, p) => s + p.monto, 0)
-  const restante = Math.max(0, totalEfectivoConGC - totalPagado)
-  const montoSuficiente = totalEfectivoConGC <= 0 || totalPagado >= totalEfectivoConGC
-  const vuelto = Math.max(0, totalPagado - totalEfectivoConGC)
+  const efectivoPagado = resumenPagos['Efectivo'] || 0
+  // Cuando hay efectivo, redondear el total operativo a centenas (el cajero no maneja monedas)
+  const totalOperativo = efectivoPagado > 0 ? redondearCentena(totalEfectivoConGC) : totalEfectivoConGC
+  const restante = Math.max(0, totalOperativo - totalPagado)
+  const montoSuficiente = totalOperativo <= 0 || totalPagado >= totalOperativo
+  const vuelto = Math.max(0, totalPagado - totalOperativo)
+  const pagosNoEfectivo = pagos.filter(p => p.tipo !== 'Efectivo').reduce((s, p) => s + p.monto, 0)
+  const restanteParaEfectivo = Math.max(0, totalEfectivoConGC - pagosNoEfectivo - efectivoPagado)
+  const restanteEfectivoRedondeado = restanteParaEfectivo > 0 ? redondearCentena(restanteParaEfectivo) : 0
+  // Monto exacto en efectivo con descuento: si hay promo efectivo, calcular post-descuento redondeado
+  const montoExactoEnEfectivo = (() => {
+    if (!porcentajeDescEfectivo || porcentajeDescEfectivo <= 0 || modoDelivery) return null
+    const restanteSinEfectivo = totalEfectivoConGC - pagosNoEfectivo
+    if (restanteSinEfectivo <= 0) return 0
+    const totalDescontado = total * (1 - porcentajeDescEfectivo / 100)
+    if (restanteSinEfectivo >= totalDescontado || (totalDescontado - restanteSinEfectivo) < 100) {
+      const neto = totalDescontado - pagosNoEfectivo
+      return neto > 0 ? redondearCentena(neto) : 0
+    }
+    const neto = restanteSinEfectivo / (1 + porcentajeDescEfectivo / 100)
+    return neto > 0 ? redondearCentena(neto) : 0
+  })()
+  const montoExactoRestante = montoExactoEnEfectivo != null ? Math.max(0, montoExactoEnEfectivo - efectivoPagado) : null
 
   // Mercado Pago Point — funciones (Orders API: tarjeta + QR)
   async function iniciarPagoMP(paymentType) {
     // No iniciar si ya hay un pago MP en curso
     if (mpEstado && mpEstado !== 'error' && mpEstado !== 'cancelado' && mpEstado !== 'aprobado') return
-    const montoACobrar = restante > 0 ? restante : totalEfectivoConGC
+    const montoACobrar = restante
     if (montoACobrar <= 0) return
 
     setMpEstado('creando')
@@ -403,55 +415,35 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }
 
-  // Conteo de billetes por denominación para efectivo
-  const conteoBilletes = pagos
-    .filter(p => p.tipo === 'Efectivo' && p.detalle?.denominacion)
-    .reduce((acc, p) => {
-      const den = p.detalle.denominacion
-      if (!acc[den]) acc[den] = { cantidad: 0, total: 0 }
-      acc[den].cantidad += 1
-      acc[den].total += p.monto
-      return acc
-    }, {})
-
-  function agregarBillete(valor, cantidad = 1) {
-    const nuevos = Array.from({ length: cantidad }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
-    setPagos(prev => [...prev, ...nuevos])
-    // Flash feedback
-    setUltimoPago(valor)
-    setTimeout(() => setUltimoPago(null), 300)
+  function agregarEfectivo(monto) {
+    if (!monto || monto <= 0) return
+    setPagos(prev => [...prev, { tipo: 'Efectivo', monto, detalle: {} }])
+    setMontoEfectivoInput('')
   }
 
-  const [cantidadModal, setCantidadModal] = React.useState(null) // { valor, cantidad }
+  function handleNumpadKey(key) {
+    if (key === 'C') {
+      setMontoEfectivoInput('')
+    } else if (key === 'backspace') {
+      setMontoEfectivoInput(prev => prev.slice(0, -1))
+    } else if (key === '00') {
+      setMontoEfectivoInput(prev => prev + '00')
+    } else {
+      setMontoEfectivoInput(prev => prev + key)
+    }
+  }
 
   // Auto-focus el div root para que capture teclas después de cualquier cambio de estado
-  // Esto garantiza que Enter y F-keys funcionen siempre, sin importar qué acción se hizo
   useEffect(() => {
-    if (cantidadModal) return // no robar foco si hay modal de cantidad abierto
     const timer = setTimeout(() => {
       const active = document.activeElement
-      // Solo respetar inputs que estén DENTRO del modal (no el buscador del POS detrás)
       const enInputInterno = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT') && cobrarRootRef.current?.contains(active)
       if (!enInputInterno) {
         cobrarRootRef.current?.focus()
       }
     }, 50)
     return () => clearTimeout(timer)
-  }, [cantidadModal, pagos, mpEstado, formaSeleccionada, giftCardsAplicadas, guardando])
-
-  function confirmarCantidadBilletes() {
-    const cant = parseInt(cantidadModal.cantidad)
-    if (cant > 0) {
-      // Reemplazar: quitar todos los billetes de esta denominación y poner la cantidad indicada
-      const valor = cantidadModal.valor
-      setPagos(prev => {
-        const sinEstaDenom = prev.filter(p => !(p.tipo === 'Efectivo' && p.detalle?.denominacion === valor))
-        const nuevos = Array.from({ length: cant }, () => ({ tipo: 'Efectivo', monto: valor, detalle: { denominacion: valor } }))
-        return [...sinEstaDenom, ...nuevos]
-      })
-    }
-    setCantidadModal(null)
-  }
+  }, [pagos, mpEstado, formaSeleccionada, giftCardsAplicadas, guardando])
 
   function borrarPagos() {
     setPagos([])
@@ -578,7 +570,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         total: totalDescuentoPagos,
         detalle: descuentosPorForma,
       } : null,
-      total: totalOriginalSinSaldo,
+      total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
       monto_pagado: totalPagado + saldoAplicado,
       vuelto: vuelto > 0 ? vuelto : 0,
       pagos: [
@@ -609,7 +601,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       subtotal,
       descuentoTotal,
       totalDescuentoPagos,
-      total: totalEfectivo,
+      total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
       totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
       descuentoGrupoCliente,
@@ -644,14 +636,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }
 
-  // Track último billete seleccionado con F-key para Enter = abrir modal cantidad
-  const [ultimoFKeyBillete, setUltimoFKeyBillete] = useState(null)
-
   // Atajos de teclado globales del modal de cobro
-  // Se usa onKeyDown en el div root para capturar antes que el browser
   function handleCobrarKeyDown(e) {
-    // No interceptar si hay modal de cantidad abierto
-    if (cantidadModal) return
     const enInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
 
     // Escape = Cerrar modal (bloqueado si hay cobro MP en curso)
@@ -661,12 +647,12 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       onCerrar()
       return
     }
-    // Enter: si hay billete pendiente → abrir modal cantidad, sino confirmar venta
+    // Enter = si hay monto en el input de efectivo → agregar, sino confirmar venta
     if (e.key === 'Enter' && !enInput) {
       e.preventDefault()
-      if (ultimoFKeyBillete) {
-        setCantidadModal({ valor: ultimoFKeyBillete, cantidad: '' })
-        setUltimoFKeyBillete(null)
+      const montoNum = parseInt(montoEfectivoInput)
+      if (montoNum > 0) {
+        agregarEfectivo(montoNum)
       } else if (montoSuficiente && !guardando) {
         confirmarVenta()
       }
@@ -674,42 +660,48 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
     if (enInput) return
 
-    // Backspace = Borrar todo
+    // Teclas numéricas → alimentar input de efectivo
+    if (/^[0-9]$/.test(e.key)) {
+      e.preventDefault()
+      setMontoEfectivoInput(prev => prev + e.key)
+      return
+    }
+
+    // Backspace = borrar último dígito del input, o borrar pagos si input vacío
     if (e.key === 'Backspace') {
       e.preventDefault()
-      borrarPagos()
+      if (montoEfectivoInput.length > 0) {
+        setMontoEfectivoInput(prev => prev.slice(0, -1))
+      } else {
+        borrarPagos()
+      }
+      return
+    }
+
+    // Delete = borrar todo el input
+    if (e.key === 'Delete') {
+      e.preventDefault()
+      setMontoEfectivoInput('')
+      return
     }
 
     // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
     if (e.key === 'F1' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
-      setUltimoFKeyBillete(null)
       if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('credit_card')
     }
     // F2 = QR (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
     if (e.key === 'F2' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
-      setUltimoFKeyBillete(null)
       if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('qr')
-    }
-
-    // F3-F9 = Billetes
-    const valorBillete = FKEY_BILLETES[e.key]
-    if (valorBillete) {
-      e.preventDefault()
-      agregarBillete(valorBillete)
-      setUltimoFKeyBillete(valorBillete)
-      setTimeout(() => setUltimoFKeyBillete(prev => prev === valorBillete ? null : prev), 2000)
     }
 
     // F10-F12 = Formas de cobro (Transferencia, Payway, Rappi)
     const nombreForma = FKEY_FORMAS[e.key]
     if (nombreForma) {
       e.preventDefault()
-      setUltimoFKeyBillete(null)
-      // En modo delivery, solo permitir Rappi/PedidosYa
       if (modoDelivery && !nombreForma.toLowerCase().includes('rappi') && !nombreForma.toLowerCase().includes('pedidosya')) return
       const found = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
       if (found) {
@@ -722,16 +714,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   return (
     <div className="fixed inset-0 z-50 bg-slate-800 flex flex-col lg:flex-row outline-none" onKeyDown={handleCobrarKeyDown} tabIndex={-1} ref={cobrarRootRef} data-modal>
 
-      {/* ====== IZQUIERDA: Denominaciones ====== */}
+      {/* ====== IZQUIERDA: Efectivo (display grande + numpad compacto) ====== */}
       <div className="flex-1 p-5 flex flex-col min-w-0 relative">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-2">
           <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest">Efectivo</h3>
           <button
             onClick={() => {
-              if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) {
-                // No cerrar mientras hay un cobro MP en curso
-                return
-              }
+              if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) return
               onCerrar()
             }}
             className={`transition-colors flex items-center gap-1.5 ${
@@ -747,87 +736,92 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5 flex-1 content-start">
-          {denominaciones.map(den => (
-            <div key={den.id} className="flex rounded-xl overflow-hidden">
+        {/* Display del monto — protagonista */}
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <span className="text-white/30 text-sm font-medium mb-2">Monto en efectivo</span>
+          <span className={`text-7xl font-black tracking-tight ${montoEfectivoInput ? 'text-white' : 'text-white/15'}`}>
+            ${montoEfectivoInput ? formatMontoInput(parseInt(montoEfectivoInput)) : '0'}
+          </span>
+          {montoEfectivoInput && parseInt(montoEfectivoInput) > 0 && (
+            <span className="text-violet-400 text-sm font-medium mt-2">
+              Enter para agregar
+            </span>
+          )}
+        </div>
+
+        {/* Numpad compacto + acciones — anclado abajo */}
+        <div className="w-64 mx-auto">
+          {/* Monto exacto */}
+          <button
+            onClick={() => {
+              // Si hay descuento por efectivo, cargar el monto post-descuento redondeado
+              const montoEfectivo = montoExactoRestante != null && montoExactoRestante > 0
+                ? montoExactoRestante
+                : restanteEfectivoRedondeado
+              if (montoEfectivo > 0) {
+                agregarEfectivo(Math.ceil(montoEfectivo * 100) / 100)
+              }
+            }}
+            disabled={restanteEfectivoRedondeado <= 0 && (montoExactoRestante == null || montoExactoRestante <= 0)}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-white/30 text-white font-bold text-sm py-2.5 rounded-xl mb-2 transition-colors active:scale-[0.98]"
+          >
+            {(() => {
+              const monto = montoExactoRestante != null && montoExactoRestante > 0 ? montoExactoRestante : restanteEfectivoRedondeado
+              return `Monto exacto${monto > 0 ? ` (${formatPrecio(monto)})` : ''}`
+            })()}
+          </button>
+
+          {/* Numpad */}
+          <div className="grid grid-cols-3 gap-1.5">
+            {['1','2','3','4','5','6','7','8','9','00','0','backspace'].map(key => (
               <button
-                onClick={() => agregarBillete(den.valor)}
-                className={`flex-1 relative bg-slate-700 hover:bg-slate-600 active:bg-violet-600 text-white font-bold text-lg py-4 transition-all duration-150 active:scale-95 select-none ${
-                  ultimoPago === den.valor ? 'bg-violet-600 scale-95' : ''
+                key={key}
+                onClick={() => handleNumpadKey(key)}
+                className={`rounded-lg font-bold text-lg py-3 transition-all duration-100 active:scale-95 select-none ${
+                  key === 'backspace'
+                    ? 'bg-amber-600/80 hover:bg-amber-500 text-white'
+                    : 'bg-slate-700 hover:bg-slate-600 active:bg-violet-600 text-white'
                 }`}
               >
-                {formatDenominacion(den.valor)}
-                {Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor) && (
-                  <span className="absolute top-1 left-1.5 text-[9px] text-white/40">{Object.entries(FKEY_BILLETES).find(([,v]) => v === den.valor)[0]}</span>
-                )}
-                {conteoBilletes[den.valor]?.cantidad > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-white text-slate-800 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md">
-                    {conteoBilletes[den.valor].cantidad}
-                  </span>
-                )}
+                {key === 'backspace' ? (
+                  <svg className="w-5 h-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33z" />
+                  </svg>
+                ) : key}
               </button>
-              <button
-                onClick={() => setCantidadModal({ valor: den.valor, cantidad: '' })}
-                className="w-10 bg-violet-500 hover:bg-violet-400 text-white text-xs font-bold flex items-center justify-center"
-                title="Ingresar cantidad"
-              >
-                #
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Borrar / Deshacer */}
-        <div className="flex gap-2.5 mt-3">
-          {pagos.length > 0 && (
-            <button
-              onClick={borrarUltimoPago}
-              className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-3 rounded-xl transition-colors"
-            >
-              Deshacer
-            </button>
-          )}
-          <button
-            onClick={borrarPagos}
-            className={`${pagos.length > 0 ? 'flex-1' : 'w-full'} bg-red-500/80 hover:bg-red-500 text-white font-medium text-sm py-3 rounded-xl transition-colors`}
-          >
-            Borrar todo <span className="text-[9px] opacity-50">Backspace</span>
-          </button>
-        </div>
-
-        {/* Mini-modal cantidad de billetes (long press) */}
-        {cantidadModal && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-30 rounded-2xl">
-            <div className="bg-slate-700 rounded-xl p-5 w-64 shadow-2xl">
-              <p className="text-white text-sm font-medium mb-1 text-center">Cantidad de billetes</p>
-              <p className="text-violet-400 text-2xl font-bold text-center mb-4">{formatDenominacion(cantidadModal.valor)}</p>
-              <input
-                type="number"
-                min="1"
-                autoFocus
-                value={cantidadModal.cantidad}
-                onChange={e => setCantidadModal(prev => ({ ...prev, cantidad: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); confirmarCantidadBilletes() } if (e.key === 'Escape') { e.stopPropagation(); setCantidadModal(null) } }}
-                className="w-full text-center text-2xl font-bold border-2 border-violet-500 rounded-lg py-2 bg-slate-800 text-white focus:outline-none focus:border-violet-400"
-                placeholder="Ej: 50"
-              />
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => setCantidadModal(null)}
-                  className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-sm py-2.5 rounded-lg"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={confirmarCantidadBilletes}
-                  className="flex-1 bg-violet-600 hover:bg-violet-500 text-white font-medium text-sm py-2.5 rounded-lg"
-                >
-                  Agregar
-                </button>
-              </div>
-            </div>
+            ))}
           </div>
-        )}
+
+          {/* Agregar */}
+          <button
+            onClick={() => {
+              const montoNum = parseInt(montoEfectivoInput)
+              if (montoNum > 0) agregarEfectivo(montoNum)
+            }}
+            disabled={!montoEfectivoInput || parseInt(montoEfectivoInput) <= 0}
+            className="w-full bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-white/30 text-white font-bold text-sm py-2.5 rounded-xl mt-2 transition-colors active:scale-[0.98]"
+          >
+            Agregar {montoEfectivoInput && parseInt(montoEfectivoInput) > 0 ? formatPrecio(parseInt(montoEfectivoInput)) : ''}
+          </button>
+
+          {/* Borrar / Deshacer */}
+          <div className="flex gap-2 mt-2">
+            {pagos.length > 0 && (
+              <button
+                onClick={borrarUltimoPago}
+                className="flex-1 bg-slate-600 hover:bg-slate-500 text-white/80 font-medium text-xs py-2.5 rounded-xl transition-colors"
+              >
+                Deshacer
+              </button>
+            )}
+            <button
+              onClick={borrarPagos}
+              className={`${pagos.length > 0 ? 'flex-1' : 'w-full'} bg-red-500/80 hover:bg-red-500 text-white font-medium text-xs py-2.5 rounded-xl transition-colors`}
+            >
+              Borrar todo
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ====== CENTRO: Otros medios + detalle ====== */}
@@ -951,19 +945,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
             <div className="flex gap-2">
               <button
                 onClick={() => iniciarPagoMP('credit_card')}
-                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                disabled={montoSuficiente || restante <= 0}
                 className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
               >
                 <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
-                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                {formatPrecio(restante)}
               </button>
               <button
                 onClick={() => iniciarPagoMP('qr')}
-                disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                disabled={montoSuficiente || restante <= 0}
                 className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
               >
                 <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
-                {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                {formatPrecio(restante)}
               </button>
             </div>
           )}
@@ -1036,19 +1030,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               <div className="flex gap-2">
                 <button
                   onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('credit_card') }}
-                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  disabled={montoSuficiente || restante <= 0}
                   className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
                 >
                   <span className="block text-xs opacity-70">Tarjeta <span className="text-[9px] opacity-60">F1</span></span>
-                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                  {formatPrecio(restante)}
                 </button>
                 <button
                   onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('qr') }}
-                  disabled={restante <= 0 && totalEfectivoConGC <= 0}
+                  disabled={montoSuficiente || restante <= 0}
                   className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
                 >
                   <span className="block text-xs opacity-70">QR <span className="text-[9px] opacity-60">F2</span></span>
-                  {formatPrecio(restante > 0 ? restante : totalEfectivoConGC)}
+                  {formatPrecio(restante)}
                 </button>
               </div>
             </div>
@@ -1060,25 +1054,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div className="flex-1">
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Detalle</h3>
             <div className="bg-slate-700/40 rounded-xl p-3 space-y-1.5 max-h-60 overflow-y-auto">
-              {/* Efectivo con conteo de billetes */}
+              {/* Efectivo */}
               {resumenPagos['Efectivo'] && (
-                <div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-white/60 text-sm">Efectivo</span>
-                    <span className="text-white font-semibold text-sm">{formatPrecio(resumenPagos['Efectivo'])}</span>
-                  </div>
-                  {Object.keys(conteoBilletes).length > 0 && (
-                    <div className="ml-3 mt-0.5 space-y-0.5">
-                      {Object.entries(conteoBilletes)
-                        .sort(([a], [b]) => Number(b) - Number(a))
-                        .map(([den, info]) => (
-                          <div key={den} className="flex justify-between text-xs">
-                            <span className="text-white/40">{info.cantidad}x {formatDenominacion(Number(den))}</span>
-                            <span className="text-white/50">{formatPrecio(info.total)}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
+                <div className="flex justify-between items-center">
+                  <span className="text-white/60 text-sm">Efectivo</span>
+                  <span className="text-white font-semibold text-sm">{formatPrecio(resumenPagos['Efectivo'])}</span>
                 </div>
               )}
               {/* Otros medios de pago — pagos MP se muestran individual con botón anular */}
@@ -1177,12 +1157,12 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 )}
               </div>
               <span className="text-5xl font-black text-white mb-6">
-                {totalEfectivoConGC <= 0 ? '$0' : formatPrecio(totalEfectivoConGC)}
+                {totalOperativo <= 0 ? '$0' : formatPrecio(totalOperativo)}
               </span>
             </>
           ) : (
             <span className="text-5xl font-black text-white mb-8">
-              {formatPrecio(total)}
+              {formatPrecio(totalOperativo)}
             </span>
           )}
 
@@ -1192,13 +1172,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 Resta cobrar
               </span>
               <span className="text-white text-3xl font-bold">{formatPrecio(restante)}</span>
-              {porcentajeDescEfectivo > 0 && (
+              {montoExactoRestante != null && montoExactoRestante > 0 && montoExactoRestante < restante && (
                 <div className="mt-2 pt-2 border-t border-white/15">
                   <span className="text-cyan-300 text-xs font-medium block mb-0.5">
                     En efectivo ({porcentajeDescEfectivo}% desc.)
                   </span>
                   <span className="text-cyan-200 text-2xl font-bold">
-                    {formatPrecio(Math.round(restante * (1 - porcentajeDescEfectivo / 100) * 100) / 100)}
+                    {formatPrecio(montoExactoRestante)}
                   </span>
                 </div>
               )}

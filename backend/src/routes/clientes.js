@@ -351,19 +351,36 @@ router.post('/', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'La razón social es requerida' })
     }
 
-    // Generar código auto-incremental CLI-0001
-    const { data: ultimo } = await supabase
-      .from('clientes')
-      .select('codigo')
-      .like('codigo', 'CLI-%')
-      .order('codigo', { ascending: false })
-      .limit(1)
-
-    let siguiente = 1
-    if (ultimo && ultimo.length > 0) {
-      const match = ultimo[0].codigo.match(/CLI-(\d+)/)
-      if (match) siguiente = parseInt(match[1]) + 1
+    // Verificar si ya existe un cliente con ese CUIT
+    if (cuit && cuit.trim()) {
+      const { data: existente } = await supabase
+        .from('clientes')
+        .select('id, codigo, razon_social')
+        .eq('cuit', cuit.trim())
+        .limit(1)
+      if (existente && existente.length > 0) {
+        return res.status(409).json({
+          error: `Ya existe un cliente con CUIT ${cuit.trim()}: ${existente[0].razon_social} (${existente[0].codigo})`
+        })
+      }
     }
+
+    // Generar código auto-incremental CLI-XXXX
+    // Buscar el máximo en cada longitud posible (4,5,6 dígitos) porque Supabase ordena texto
+    let maxNum = 0
+    for (const pattern of ['CLI-______', 'CLI-_____', 'CLI-____']) {
+      const { data: top } = await supabase
+        .from('clientes')
+        .select('codigo')
+        .like('codigo', pattern)
+        .order('codigo', { ascending: false })
+        .limit(1)
+      if (top && top.length > 0) {
+        const m = top[0].codigo.match(/^CLI-(\d+)$/)
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
+      }
+    }
+    const siguiente = maxNum + 1
     const codigo = `CLI-${String(siguiente).padStart(4, '0')}`
 
     const { data, error } = await supabase
@@ -445,7 +462,8 @@ router.post('/', verificarAuth, async (req, res) => {
     res.status(201).json(respuesta)
   } catch (err) {
     console.error('Error al crear cliente:', err)
-    res.status(500).json({ error: 'Error al crear cliente' })
+    const detalle = err.message || err.details || JSON.stringify(err)
+    res.status(500).json({ error: `Error al crear cliente: ${detalle}` })
   }
 })
 

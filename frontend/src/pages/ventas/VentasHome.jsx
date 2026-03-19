@@ -300,6 +300,11 @@ const VentasHome = () => {
                             #{v.numero_venta}
                           </span>
                         )}
+                        {v.clasificacion === 'EMPRESA' && v.numero_cae && (
+                          <span className="text-xs bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-mono" title={`CAE: ${v.numero_cae}`}>
+                            CAE {v.numero_cae}
+                          </span>
+                        )}
                         <span className="text-sm font-medium text-gray-800">
                           {formatFechaHora(v.created_at)}
                         </span>
@@ -329,6 +334,11 @@ const VentasHome = () => {
                         {v.centum_comprobante && (
                           <span className="text-xs bg-green-50 text-green-600 px-1.5 py-0.5 rounded">
                             {v.centum_comprobante}
+                          </span>
+                        )}
+                        {v.clasificacion === 'EMPRESA' && v.centum_sync && !v.numero_cae && (
+                          <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded" title="Venta no autorizada por ARCA (sin CAE)">
+                            Sin autorizar ARCA
                           </span>
                         )}
                         {esAdmin && !v.centum_sync && !v.centum_comprobante && (

@@ -297,6 +297,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                 centum_comprobante: comprobante,
                 centum_sync: true,
                 centum_error: null,
+                numero_cae: resultado.CAE || null,
               }).eq('id', ventaPosId)
             }
             // Actualizar ventas_empleados con comprobante

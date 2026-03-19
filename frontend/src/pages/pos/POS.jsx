@@ -1138,6 +1138,7 @@ const POS = () => {
 
   // Estado cliente
   const [busquedaCliente, setBusquedaCliente] = useState('')
+  const [clienteIdx, setClienteIdx] = useState(-1)
   const [clientesCentum, setClientesCentum] = useState([])
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
@@ -1573,6 +1574,7 @@ const POS = () => {
 
     if (!busquedaCliente.trim() || busquedaCliente.trim().length < 2) {
       setClientesCentum([])
+      setClienteIdx(-1)
       return
     }
 
@@ -1704,6 +1706,7 @@ const POS = () => {
       }
     }
     setSeleccionandoCliente(false)
+    setTimeout(() => inputBusquedaRef.current?.focus(), 50)
 
     // Alerta si es Factura A y no tiene email
     if ((condicionFinal === 'RI' || condicionFinal === 'MT') && !emailFinal) {
@@ -3413,9 +3416,27 @@ const POS = () => {
                   <input
                     ref={inputClienteRef}
                     type="text"
-                    placeholder="Cambiar cliente… (F1)"
+                    placeholder="DNI / CUIT del cliente… (F1)"
                     value={busquedaCliente}
-                    onChange={e => setBusquedaCliente(e.target.value)}
+                    onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, ''); setBusquedaCliente(v); setClienteIdx(-1) }}
+                    onKeyDown={e => {
+                      if (e.key === 'ArrowDown' && clientesCentum.length > 0) {
+                        e.preventDefault()
+                        setClienteIdx(prev => prev < clientesCentum.length - 1 ? prev + 1 : 0)
+                      } else if (e.key === 'ArrowUp' && clientesCentum.length > 0) {
+                        e.preventDefault()
+                        setClienteIdx(prev => prev > 0 ? prev - 1 : clientesCentum.length - 1)
+                      } else if (e.key === 'Enter' && clienteIdx >= 0 && clienteIdx < clientesCentum.length) {
+                        e.preventDefault()
+                        seleccionarCliente(clientesCentum[clienteIdx])
+                        setClienteIdx(-1)
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setBusquedaCliente('')
+                        setClientesCentum([])
+                        setClienteIdx(-1)
+                      }
+                    }}
                     className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-violet-500 focus:border-transparent"
                   />
                   {buscandoClientes && (
@@ -3429,11 +3450,11 @@ const POS = () => {
                   )}
                   {(clientesCentum.length > 0 || (busquedaCliente.trim().length >= 2 && !buscandoClientes)) && (
                     <div className="absolute z-20 w-full bg-white border rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
-                      {clientesCentum.map(cli => (
+                      {clientesCentum.map((cli, idx) => (
                         <button
                           key={cli.id || cli.id_centum}
-                          onClick={() => seleccionarCliente(cli)}
-                          className="w-full text-left px-2 py-1.5 hover:bg-violet-50 text-xs border-b last:border-b-0"
+                          onClick={() => { seleccionarCliente(cli); setClienteIdx(-1) }}
+                          className={`w-full text-left px-2 py-1.5 text-xs border-b last:border-b-0 ${idx === clienteIdx ? 'bg-violet-100' : 'hover:bg-violet-50'}`}
                         >
                           <span className="font-medium">{cli.razon_social}</span>
                           {cli.cuit && <span className="text-gray-500 ml-1">CUIT: {cli.cuit}</span>}

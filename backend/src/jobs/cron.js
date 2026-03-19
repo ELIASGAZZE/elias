@@ -3,7 +3,7 @@ const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
-const { retrySyncVentasCentum } = require('../services/centumVentasPOS')
+const { retrySyncVentasCentum, retrySyncCAE } = require('../services/centumVentasPOS')
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 
@@ -92,6 +92,18 @@ function iniciarCronJobs() {
     }
   })
 
+  // Retry CAE + envío email automático: cada 5 minutos (offset 4 min)
+  cron.schedule('4-59/5 * * * *', async () => {
+    try {
+      const resultado = await retrySyncCAE()
+      if (resultado.revisadas > 0) {
+        console.log(`[RetryCAE] ${resultado.conCAE}/${resultado.revisadas} ventas obtuvieron CAE (+ email automático si aplica)`)
+      }
+    } catch (err) {
+      console.error('[RetryCAE] Error:', err.message)
+    }
+  })
+
   // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
   // Analiza los cierres del día anterior
   cron.schedule('0 8 * * *', async () => {
@@ -126,6 +138,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
   console.log('[CRON] Retry ventas pendientes Centum: cada 5 minutos (offset 3)')
+  console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 
