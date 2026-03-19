@@ -430,8 +430,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (cantidadModal) return // no robar foco si hay modal de cantidad abierto
     const timer = setTimeout(() => {
       const active = document.activeElement
-      const enInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')
-      if (!enInput) {
+      // Solo respetar inputs que estén DENTRO del modal (no el buscador del POS detrás)
+      const enInputInterno = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT') && cobrarRootRef.current?.contains(active)
+      if (!enInputInterno) {
         cobrarRootRef.current?.focus()
       }
     }, 50)
