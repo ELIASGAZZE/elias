@@ -40,6 +40,7 @@ const AuditoriaHome = () => {
           ...c,
           items: typeof c.items === 'string' ? JSON.parse(c.items) : (c.items || []),
         }))
+        if (!d.cambiosPrecio) d.cambiosPrecio = []
         return d
       })
       .then(d => setData(d))
@@ -66,6 +67,11 @@ const AuditoriaHome = () => {
       const nombre = e.empleado_nombre || e.usuario_nombre || 'Sin nombre'
       if (!map[id]) map[id] = nombre
     })
+    data.cambiosPrecio.forEach(cp => {
+      const id = cp.empleado_id || cp.cajero_id
+      const nombre = cp.empleado_nombre || cp.cajero_nombre || 'Sin nombre'
+      if (!map[id]) map[id] = nombre
+    })
     return Object.entries(map).map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre))
   }, [data])
 
@@ -78,13 +84,14 @@ const AuditoriaHome = () => {
       cancelaciones: data.cancelaciones.filter(c => (c.empleado_id || c.cajero_id) === cajeroFiltro),
       eliminaciones: data.eliminaciones.filter(e => (e.empleado_id || e.usuario_id) === cajeroFiltro),
       cierres: data.cierres.filter(c => c.empleado?.id === cajeroFiltro || c.cajero_id === cajeroFiltro),
+      cambiosPrecio: data.cambiosPrecio.filter(cp => (cp.empleado_id || cp.cajero_id) === cajeroFiltro),
     }
   }, [data, cajeroFiltro])
 
   // ═══ Métricas calculadas ═══
   const metricas = useMemo(() => {
     if (!filtrado) return null
-    const { ventas, cancelaciones, eliminaciones } = filtrado
+    const { ventas, cancelaciones, eliminaciones, cambiosPrecio } = filtrado
 
     // Total items eliminados
     const totalItemsEliminados = eliminaciones.reduce((sum, e) => {
@@ -109,9 +116,14 @@ const AuditoriaHome = () => {
       ? (totalItemsEliminados / totalItemsVendidos * 100)
       : 0
 
+    // Cambios de precio
+    const totalCambiosPrecio = cambiosPrecio.length
+    const importeCambiosPrecio = cambiosPrecio.reduce((s, cp) => s + parseFloat(cp.diferencia || 0) * parseFloat(cp.cantidad || 1), 0)
+
     return {
       totalVentas, totalCancelaciones, montoTotal, ticketPromedio,
       tasaCancelacion, totalItemsEliminados, totalItemsVendidos, ratioEliminacion,
+      totalCambiosPrecio, importeCambiosPrecio,
     }
   }, [filtrado])
 
@@ -254,6 +266,44 @@ const AuditoriaHome = () => {
     return Object.values(map).sort((a, b) => b.cantidad - a.cantidad).slice(0, 15)
   }, [filtrado])
 
+  // Cambios de precio por cajero
+  const cambiosPrecioPorCajero = useMemo(() => {
+    if (!data || cajeroFiltro !== 'todos') return []
+    const map = {}
+    data.cambiosPrecio.forEach(cp => {
+      const nombre = cp.empleado_nombre || cp.cajero_nombre || 'Sin nombre'
+      if (!map[nombre]) map[nombre] = { nombre, cantidad: 0, importe: 0 }
+      map[nombre].cantidad++
+      map[nombre].importe += parseFloat(cp.diferencia || 0) * parseFloat(cp.cantidad || 1)
+    })
+    return Object.values(map).sort((a, b) => b.cantidad - a.cantidad)
+  }, [data, cajeroFiltro])
+
+  // Cambios de precio por motivo
+  const cambiosPrecioPorMotivo = useMemo(() => {
+    if (!filtrado) return []
+    const map = {}
+    filtrado.cambiosPrecio.forEach(cp => {
+      const motivo = cp.motivo || 'Sin motivo'
+      if (!map[motivo]) map[motivo] = { name: motivo, value: 0 }
+      map[motivo].value++
+    })
+    return Object.values(map).sort((a, b) => b.value - a.value)
+  }, [filtrado])
+
+  // Ranking artículos con cambio de precio
+  const rankingArticulosCambioPrecio = useMemo(() => {
+    if (!filtrado) return []
+    const map = {}
+    filtrado.cambiosPrecio.forEach(cp => {
+      const nombre = cp.articulo_nombre || 'Sin nombre'
+      if (!map[nombre]) map[nombre] = { nombre, cantidad: 0, importe: 0 }
+      map[nombre].cantidad++
+      map[nombre].importe += parseFloat(cp.diferencia || 0) * parseFloat(cp.cantidad || 1)
+    })
+    return Object.values(map).sort((a, b) => b.cantidad - a.cantidad).slice(0, 15)
+  }, [filtrado])
+
   // Ranking artículos de tickets anulados
   const rankingArticulosAnulados = useMemo(() => {
     if (!filtrado) return []
@@ -352,6 +402,12 @@ const AuditoriaHome = () => {
               <KPI titulo="Items Vendidos" valor={metricas.totalItemsVendidos} color="teal" />
               <KPI titulo="Items Eliminados" valor={metricas.totalItemsEliminados} color="orange" />
               <KPI titulo="Ratio Eliminación" valor={`${metricas.ratioEliminacion.toFixed(1)}%`} color={metricas.ratioEliminacion > 5 ? 'red' : 'emerald'} />
+              {metricas.totalCambiosPrecio > 0 && (
+                <KPI titulo="Cambios de Precio" valor={metricas.totalCambiosPrecio} color="violet" />
+              )}
+              {metricas.totalCambiosPrecio > 0 && (
+                <KPI titulo="Impacto Cambios Precio" valor={formatPrecio(metricas.importeCambiosPrecio)} color={metricas.importeCambiosPrecio < 0 ? 'red' : 'emerald'} />
+              )}
             </div>
 
             {/* Gráficos fila 1 */}
@@ -580,6 +636,107 @@ const AuditoriaHome = () => {
                 </Card>
               )}
             </div>
+
+            {/* ═══ Cambios de Precio ═══ */}
+
+            {/* Cambios de precio por cajero */}
+            {cajeroFiltro === 'todos' && cambiosPrecioPorCajero.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card titulo="Cambios de Precio por Cajero">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={cambiosPrecioPorCajero}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="nombre" tick={{ fontSize: 11 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="cantidad" fill="#8B5CF6" name="Cambios" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+
+                {cambiosPrecioPorMotivo.length > 0 && (
+                  <Card titulo="Cambios de Precio por Motivo">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <PieChart>
+                        <Pie data={cambiosPrecioPorMotivo} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label={({ name, percent }) => `${name.substring(0, 20)}${name.length > 20 ? '...' : ''} ${(percent * 100).toFixed(0)}%`}>
+                          {cambiosPrecioPorMotivo.map((_, i) => (
+                            <Cell key={i} fill={COLORES[i % COLORES.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {/* Ranking artículos con cambio de precio */}
+            {rankingArticulosCambioPrecio.length > 0 && (
+              <Card titulo="Top Artículos con Cambio de Precio">
+                <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">#</th>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">Artículo</th>
+                        <th className="text-right px-3 py-2 text-gray-500 font-medium">Veces</th>
+                        <th className="text-right px-3 py-2 text-gray-500 font-medium">Impacto</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {rankingArticulosCambioPrecio.map((a, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                          <td className="px-3 py-2 text-gray-700">{a.nombre}</td>
+                          <td className="px-3 py-2 text-right font-medium text-violet-600">{a.cantidad}</td>
+                          <td className={`px-3 py-2 text-right font-medium ${a.importe < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatPrecio(a.importe)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+
+            {/* Detalle cambios de precio */}
+            {filtrado.cambiosPrecio.length > 0 && (
+              <Card titulo={`Detalle de Cambios de Precio (${filtrado.cambiosPrecio.length})`}>
+                <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">Fecha</th>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">Cajero</th>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">Artículo</th>
+                        <th className="text-right px-3 py-2 text-gray-500 font-medium">Original</th>
+                        <th className="text-right px-3 py-2 text-gray-500 font-medium">Nuevo</th>
+                        <th className="text-right px-3 py-2 text-gray-500 font-medium">Dif.</th>
+                        <th className="text-left px-3 py-2 text-gray-500 font-medium">Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filtrado.cambiosPrecio.map(cp => (
+                        <tr key={cp.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-700">{new Date(cp.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td className="px-3 py-2 text-gray-700">{cp.empleado_nombre || cp.cajero_nombre}</td>
+                          <td className="px-3 py-2 text-gray-700 max-w-[200px] truncate">{cp.articulo_nombre}</td>
+                          <td className="px-3 py-2 text-right text-gray-700">{formatPrecio(cp.precio_original)}</td>
+                          <td className="px-3 py-2 text-right text-gray-700">{formatPrecio(cp.precio_nuevo)}</td>
+                          <td className={`px-3 py-2 text-right font-medium ${parseFloat(cp.diferencia) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {parseFloat(cp.diferencia) > 0 ? '+' : ''}{formatPrecio(parseFloat(cp.diferencia) * parseFloat(cp.cantidad || 1))}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">{cp.motivo}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
 
             {/* Tabla detalle cancelaciones */}
             {filtrado.cancelaciones.length > 0 && (

@@ -56,7 +56,7 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
     if (!desde || !hasta) return res.status(400).json({ error: 'Parámetros desde y hasta requeridos' })
 
     // Traer todo en paralelo (tolerante a tablas faltantes)
-    const [ventas, cancelaciones, eliminaciones, cierres] = await Promise.all([
+    const [ventas, cancelaciones, eliminaciones, cierres, cambiosPrecio] = await Promise.all([
       safeQuery(
         supabase
           .from('ventas_pos')
@@ -85,6 +85,14 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
         supabase
           .from('cierres_pos')
           .select('*, caja:cajas(nombre), cajero:perfiles!cajero_id(nombre), empleado:empleados!empleado_id(id, nombre)')
+          .gte('created_at', desde)
+          .lte('created_at', hasta)
+          .order('created_at', { ascending: false })
+      ),
+      safeQuery(
+        supabase
+          .from('pos_cambios_precio_log')
+          .select('*')
           .gte('created_at', desde)
           .lte('created_at', hasta)
           .order('created_at', { ascending: false })
@@ -148,7 +156,23 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
       }
     })
 
-    res.json({ ventas, cancelaciones, eliminaciones, cierres })
+    // Enriquecer cambios de precio con nombre de empleado
+    cambiosPrecio.forEach(cp => {
+      if (cp.cierre_id && empleadoPorCierre[cp.cierre_id]) {
+        cp.empleado_nombre = empleadoPorCierre[cp.cierre_id].nombre
+        cp.empleado_id = empleadoPorCierre[cp.cierre_id].id
+      } else if (cp.caja_id) {
+        const sesiones = cierresPorCaja[cp.caja_id] || []
+        const sesion = sesiones.find(s => cp.created_at >= s.apertura && cp.created_at <= s.cierre)
+        cp.empleado_nombre = sesion?.empleado_nombre || cp.cajero_nombre || 'Sin asignar'
+        cp.empleado_id = sesion?.empleado_id || cp.cajero_id
+      } else {
+        cp.empleado_nombre = cp.cajero_nombre || 'Sin asignar'
+        cp.empleado_id = cp.cajero_id
+      }
+    })
+
+    res.json({ ventas, cancelaciones, eliminaciones, cierres, cambiosPrecio })
   } catch (err) {
     console.error('[Auditoria] Error dashboard:', err.message)
     res.status(500).json({ error: 'Error al obtener datos de auditoría' })

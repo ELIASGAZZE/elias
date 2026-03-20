@@ -540,6 +540,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       iva_tasa: i.articulo.iva?.tasa || 21,
       rubro: i.articulo.rubro?.nombre || null,
       subRubro: i.articulo.subRubro?.nombre || null,
+      ...(i.precioOverride != null && i.motivoCambioPrecio ? {
+        cambio_precio: {
+          precio_original: i.precioOriginalAntesCambio ?? calcularPrecioConDescuentosBase(i.articulo),
+          precio_nuevo: i.precioOverride,
+          motivo: i.motivoCambioPrecio,
+        }
+      } : {}),
     }))
 
     const promosParaGuardar = promosAplicadas.map(p => ({

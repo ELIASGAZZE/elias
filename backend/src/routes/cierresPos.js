@@ -869,4 +869,29 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/cierres-pos/:id/cambios-precio
+// Cambios de precio durante un cierre (solo admin)
+router.get('/:id/cambios-precio', verificarAuth, async (req, res) => {
+  try {
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' })
+
+    const { data, error } = await supabase
+      .from('pos_cambios_precio_log')
+      .select('*')
+      .eq('cierre_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
+        return res.json([])
+      }
+      throw error
+    }
+    res.json(data || [])
+  } catch (err) {
+    console.error('Error al obtener cambios de precio:', err)
+    res.status(500).json({ error: 'Error al obtener cambios de precio' })
+  }
+})
+
 module.exports = router

@@ -1375,6 +1375,16 @@ const POS = () => {
 
   // Edición inline de precio
   const [editandoPrecio, setEditandoPrecio] = useState(null) // articuloId o null
+  const [pendientePrecio, setPendientePrecio] = useState(null) // { articuloId, nuevoPrecio, precioOriginal }
+
+  const MOTIVOS_CAMBIO_PRECIO = [
+    'Precio mal cargado en sistema',
+    'Precio de góndola diferente',
+    'Autorizado por supervisor',
+    'Promoción no cargada',
+    'Precio especial cliente',
+    'Error de etiqueta',
+  ]
 
   // Saldo a favor del cliente seleccionado
   const [saldoCliente, setSaldoCliente] = useState(0)
@@ -2192,12 +2202,17 @@ const POS = () => {
     return () => window.removeEventListener('keydown', handler)
   }, [mostrarCancelar, cancelarMotivo, cancelarMotivoOtro, mostrarCobrar, carrito, giftCardsEnVenta.length, pedidoEnProceso, sincronizarPrecios, cambiarCantidad, carritoIdx, quitarDelCarrito, cierreActivo])
 
-  const setPrecioOverride = useCallback((articuloId, nuevoPrecio) => {
+  const setPrecioOverride = useCallback((articuloId, nuevoPrecio, motivo = null, precioOriginal = null) => {
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.articulo.id === articuloId)
       if (idx < 0) return prev
       const nuevo = [...prev]
-      nuevo[idx] = { ...nuevo[idx], precioOverride: nuevoPrecio }
+      if (nuevoPrecio == null) {
+        // Restaurar precio original
+        nuevo[idx] = { ...nuevo[idx], precioOverride: null, motivoCambioPrecio: null, precioOriginalAntesCambio: null }
+      } else {
+        nuevo[idx] = { ...nuevo[idx], precioOverride: nuevoPrecio, motivoCambioPrecio: motivo, precioOriginalAntesCambio: precioOriginal }
+      }
       return nuevo
     })
   }, [])
@@ -3611,8 +3626,10 @@ const POS = () => {
                             onKeyDown={e => {
                               if (e.key === 'Enter') {
                                 const val = parseFloat(e.target.value)
-                                if (!isNaN(val) && val >= 0) {
-                                  setPrecioOverride(item.articulo.id, val === precioOriginal ? null : val)
+                                if (!isNaN(val) && val >= 0 && val !== precioOriginal) {
+                                  setPendientePrecio({ articuloId: item.articulo.id, nuevoPrecio: val, precioOriginal, nombreArticulo: item.articulo.nombre })
+                                } else if (val === precioOriginal) {
+                                  setPrecioOverride(item.articulo.id, null)
                                 }
                                 setEditandoPrecio(null)
                               } else if (e.key === 'Escape') {
@@ -3621,8 +3638,10 @@ const POS = () => {
                             }}
                             onBlur={e => {
                               const val = parseFloat(e.target.value)
-                              if (!isNaN(val) && val >= 0) {
-                                setPrecioOverride(item.articulo.id, val === precioOriginal ? null : val)
+                              if (!isNaN(val) && val >= 0 && val !== precioOriginal) {
+                                setPendientePrecio({ articuloId: item.articulo.id, nuevoPrecio: val, precioOriginal, nombreArticulo: item.articulo.nombre })
+                              } else if (val === precioOriginal) {
+                                setPrecioOverride(item.articulo.id, null)
                               }
                               setEditandoPrecio(null)
                             }}
@@ -3632,7 +3651,7 @@ const POS = () => {
                           <span
                             onClick={() => setEditandoPrecio(item.articulo.id)}
                             className={`text-xs cursor-pointer hover:underline ${tieneOverride ? 'text-violet-600 font-semibold' : 'text-gray-500'}`}
-                            title="Click para editar precio"
+                            title={tieneOverride ? `Motivo: ${item.motivoCambioPrecio || 'Sin motivo'}` : 'Click para editar precio'}
                           >
                             {formatPrecio(precioUnit)} {item.articulo.esPesable ? '/kg' : 'c/u'}
                           </span>
@@ -6305,6 +6324,42 @@ const POS = () => {
       )}
 
       {/* Modal confirmación eliminación de artículo */}
+
+      {/* Modal selección de motivo para cambio de precio */}
+      {pendientePrecio && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={() => setPendientePrecio(null)}>
+          <div className="bg-white rounded-xl w-full max-w-sm shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-gray-100">
+              <h3 className="text-base font-semibold text-gray-800">Motivo del cambio de precio</h3>
+              <p className="text-xs text-gray-500 mt-1">
+                {pendientePrecio.nombreArticulo}: {formatPrecio(pendientePrecio.precioOriginal)} → {formatPrecio(pendientePrecio.nuevoPrecio)}
+              </p>
+            </div>
+            <div className="p-3 space-y-2">
+              {MOTIVOS_CAMBIO_PRECIO.map(motivo => (
+                <button
+                  key={motivo}
+                  onClick={() => {
+                    setPrecioOverride(pendientePrecio.articuloId, pendientePrecio.nuevoPrecio, motivo, pendientePrecio.precioOriginal)
+                    setPendientePrecio(null)
+                  }}
+                  className="w-full text-left px-4 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors border border-gray-100"
+                >
+                  {motivo}
+                </button>
+              ))}
+            </div>
+            <div className="p-3 border-t border-gray-100">
+              <button
+                onClick={() => setPendientePrecio(null)}
+                className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
