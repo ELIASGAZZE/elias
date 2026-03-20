@@ -669,7 +669,33 @@ function calcularPromocionesLocales(carrito, promociones) {
             }
             if (!cumple) break
           }
-          if (cumple && veces > 0) return reservas
+          if (cumple && veces > 0) {
+            // Escalar reservas por veces (reservas contiene 1x cantReq, necesitamos veces*cantReq)
+            if (veces > 1) {
+              const escaladas = []
+              // Agrupar por artId y escalar, respetando disponibilidad real
+              const porArt = {}
+              for (const { artId, cant } of reservas) {
+                porArt[artId] = (porArt[artId] || 0) + cant
+              }
+              let sobrante = 0
+              for (const [artId, cant1x] of Object.entries(porArt)) {
+                const cantReal = Math.min(cant1x * veces, disponible[artId] || 0)
+                escaladas.push({ artId: Number(artId), cant: cantReal })
+                sobrante += (cant1x * veces) - cantReal
+              }
+              // Si algún artículo no tuvo suficiente, distribuir sobrante entre los demás
+              if (sobrante > 0) {
+                for (const r of escaladas) {
+                  if (sobrante <= 0) break
+                  const extra = Math.min(sobrante, (disponible[r.artId] || 0) - r.cant)
+                  if (extra > 0) { r.cant += extra; sobrante -= extra }
+                }
+              }
+              return escaladas
+            }
+            return reservas
+          }
         }
         return null
       }
