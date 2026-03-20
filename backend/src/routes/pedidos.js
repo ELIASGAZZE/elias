@@ -312,7 +312,7 @@ router.get('/:id/txt', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     if (error) throw error
 
-    const erp = data.filter(item => item.articulos.tipo === 'automatico')
+    const erp = data.filter(item => item.articulos.tipo === 'automatico' || item.articulos.tipo === 'combo')
     const lineas = erp.map(item => `${item.articulos.codigo}\t${item.cantidad}`)
     const txt = lineas.join('\n')
 

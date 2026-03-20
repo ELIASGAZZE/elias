@@ -549,4 +549,183 @@ router.post('/importar', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/articulos/combos-erp
+// Admin: lista combos disponibles en Centum ERP, indicando cuáles ya están importados
+router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+    const clientId = process.env.CENTUM_CLIENT_ID || '2'
+
+    const accessToken = generateAccessToken(apiKey)
+    const hoy = new Date().toISOString().split('T')[0]
+
+    const response = await fetch(`${baseUrl}/Articulos/Venta`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify({
+        IdCliente: parseInt(clientId),
+        FechaDocumento: hoy,
+        Habilitado: true,
+        EsCombo: true,
+      }),
+    })
+
+    if (!response.ok) {
+      const texto = await response.text()
+      return res.status(502).json({ error: `ERP respondió ${response.status}`, detalle: texto })
+    }
+
+    const erpData = await response.json()
+    const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
+
+    // Obtener combos ya importados localmente
+    const { data: locales } = await supabase
+      .from('articulos')
+      .select('id_centum')
+      .eq('tipo', 'combo')
+    const importadosSet = new Set((locales || []).map(a => a.id_centum))
+
+    const combos = items
+      .filter(art => art.Habilitado !== false)
+      .map(art => ({
+        id_centum: art.IdArticulo,
+        codigo: String(art.Codigo || '').trim(),
+        nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
+        precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : 0,
+        rubro: art.Rubro?.Nombre || null,
+        marca: art.MarcaArticulo?.Nombre || null,
+        importado: importadosSet.has(art.IdArticulo),
+      }))
+
+    res.json({ combos, total: combos.length })
+  } catch (err) {
+    console.error('Error al obtener combos ERP:', err)
+    res.status(500).json({ error: 'Error al consultar combos del ERP' })
+  }
+})
+
+// POST /api/articulos/combos-importar
+// Admin: importa combos seleccionados desde Centum a la DB local
+router.post('/combos-importar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { ids_centum } = req.body
+    if (!Array.isArray(ids_centum) || ids_centum.length === 0) {
+      return res.status(400).json({ error: 'Se requiere ids_centum (array de IDs)' })
+    }
+
+    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+    const clientId = process.env.CENTUM_CLIENT_ID || '2'
+
+    const accessToken = generateAccessToken(apiKey)
+    const hoy = new Date().toISOString().split('T')[0]
+
+    const response = await fetch(`${baseUrl}/Articulos/Venta`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify({
+        IdCliente: parseInt(clientId),
+        FechaDocumento: hoy,
+        Habilitado: true,
+        EsCombo: true,
+      }),
+    })
+
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Error al consultar ERP' })
+    }
+
+    const erpData = await response.json()
+    const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
+
+    const idsSet = new Set(ids_centum)
+    const seleccionados = items.filter(art => idsSet.has(art.IdArticulo))
+
+    if (seleccionados.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron los combos seleccionados en Centum' })
+    }
+
+    // Mapear a schema local
+    const articulosMapeados = seleccionados.map(art => ({
+      codigo: String(art.Codigo || '').trim(),
+      nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
+      rubro: art.Rubro?.Nombre || null,
+      marca: art.MarcaArticulo?.Nombre || null,
+      tipo: 'combo',
+      es_pesable: false,
+      id_centum: art.IdArticulo || null,
+      precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : null,
+      subrubro: art.SubRubro?.Nombre || null,
+      rubro_id_centum: art.Rubro?.IdRubro || null,
+      subrubro_id_centum: art.SubRubro?.IdSubRubro || null,
+      descuento1: art.PorcentajeDescuento1 || 0,
+      descuento2: art.PorcentajeDescuento2 || 0,
+      descuento3: art.PorcentajeDescuento3 || 0,
+      iva_tasa: art.CategoriaImpuestoIVA?.Tasa != null
+        ? Math.round(parseFloat(art.CategoriaImpuestoIVA.Tasa) * 100) / 100
+        : 21,
+      updated_at: new Date().toISOString(),
+    }))
+
+    // Upsert por código
+    const { error: upsertErr } = await supabase
+      .from('articulos')
+      .upsert(articulosMapeados, { onConflict: 'codigo' })
+    if (upsertErr) throw upsertErr
+
+    // Crear relaciones por sucursal (deshabilitados por defecto)
+    const { data: sucursalesData } = await supabase.from('sucursales').select('id')
+    const { data: artInsertados } = await supabase
+      .from('articulos')
+      .select('id')
+      .in('codigo', articulosMapeados.map(a => a.codigo))
+
+    if (sucursalesData && artInsertados) {
+      const relaciones = []
+      for (const art of artInsertados) {
+        for (const suc of sucursalesData) {
+          relaciones.push({ articulo_id: art.id, sucursal_id: suc.id, habilitado: false })
+        }
+      }
+      if (relaciones.length > 0) {
+        await supabase.from('articulos_por_sucursal')
+          .upsert(relaciones, { onConflict: 'articulo_id,sucursal_id', ignoreDuplicates: true })
+      }
+    }
+
+    res.json({ importados: articulosMapeados.length, mensaje: `${articulosMapeados.length} combo(s) importado(s)` })
+  } catch (err) {
+    console.error('Error al importar combos:', err)
+    res.status(500).json({ error: 'Error al importar combos' })
+  }
+})
+
+// DELETE /api/articulos/combos/:id
+// Admin: elimina un combo importado
+router.delete('/combos/:id', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { data: art } = await supabase.from('articulos').select('tipo').eq('id', req.params.id).single()
+    if (!art) return res.status(404).json({ error: 'Artículo no encontrado' })
+    if (art.tipo !== 'combo') return res.status(400).json({ error: 'Solo se pueden eliminar artículos combo' })
+
+    const { error } = await supabase.from('articulos').delete().eq('id', req.params.id)
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Error al eliminar combo:', err)
+    res.status(500).json({ error: 'Error al eliminar combo' })
+  }
+})
+
 module.exports = router
