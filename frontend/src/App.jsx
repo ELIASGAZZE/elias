@@ -53,6 +53,18 @@ import TareasEquipo from './pages/tareas/TareasEquipo'
 // Páginas de la app Auditoría
 import AuditoriaHome from './pages/auditoria/AuditoriaHome'
 
+// Páginas de la app Compras
+import ComprasHome from './pages/compras/ComprasHome'
+import Proveedores from './pages/compras/Proveedores'
+import ProveedorDetalle from './pages/compras/ProveedorDetalle'
+import DemandaProveedor from './pages/compras/DemandaProveedor'
+import OrdenesCompra from './pages/compras/OrdenesCompra'
+import OrdenDetalle from './pages/compras/OrdenDetalle'
+import NuevaOrden from './pages/compras/NuevaOrden'
+import ChatCompras from './pages/compras/ChatCompras'
+import ConsumoInterno from './pages/compras/ConsumoInterno'
+import PedidosExtra from './pages/compras/PedidosExtra'
+
 // Página de fichaje (ruta pública)
 import Fichaje from './pages/fichaje/Fichaje'
 
@@ -222,7 +234,7 @@ const App = () => {
             </RutaProtegida>
           } />
           <Route path="/ventas/reportes/promociones" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <ReportesPromociones />
             </RutaProtegida>
           } />
@@ -238,6 +250,18 @@ const App = () => {
               <AuditoriaHome />
             </RutaProtegida>
           } />
+
+          {/* App: Compras */}
+          <Route path="/compras" element={<RutaProtegida soloAdmin><ComprasHome /></RutaProtegida>} />
+          <Route path="/compras/proveedores" element={<RutaProtegida soloAdmin><Proveedores /></RutaProtegida>} />
+          <Route path="/compras/proveedores/:id" element={<RutaProtegida soloAdmin><ProveedorDetalle /></RutaProtegida>} />
+          <Route path="/compras/demanda/:id" element={<RutaProtegida soloAdmin><DemandaProveedor /></RutaProtegida>} />
+          <Route path="/compras/ordenes" element={<RutaProtegida soloAdmin><OrdenesCompra /></RutaProtegida>} />
+          <Route path="/compras/ordenes/:id" element={<RutaProtegida soloAdmin><OrdenDetalle /></RutaProtegida>} />
+          <Route path="/compras/nueva-orden" element={<RutaProtegida soloAdmin><NuevaOrden /></RutaProtegida>} />
+          <Route path="/compras/chat" element={<RutaProtegida soloAdmin><ChatCompras /></RutaProtegida>} />
+          <Route path="/compras/consumo-interno" element={<RutaProtegida soloAdmin><ConsumoInterno /></RutaProtegida>} />
+          <Route path="/compras/pedidos-extra" element={<RutaProtegida soloAdmin><PedidosExtra /></RutaProtegida>} />
 
           {/* App: Tareas */}
           <Route path="/tareas" element={
@@ -278,12 +302,12 @@ const App = () => {
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <ConfiguracionHub />
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion/:seccion" element={
-            <RutaProtegida soloAdmin>
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminConfiguracion />
             </RutaProtegida>
           } />
