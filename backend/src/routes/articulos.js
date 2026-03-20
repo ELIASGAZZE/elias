@@ -592,7 +592,7 @@ router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
     const importadosSet = new Set((locales || []).map(a => a.id_centum))
 
     const combos = items
-      .filter(art => art.Habilitado !== false)
+      .filter(art => art.Habilitado !== false && art.EsCombo === true)
       .map(art => ({
         id_centum: art.IdArticulo,
         codigo: String(art.Codigo || '').trim(),
@@ -650,7 +650,7 @@ router.post('/combos-importar', verificarAuth, soloGestorOAdmin, async (req, res
     const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
 
     const idsSet = new Set(ids_centum)
-    const seleccionados = items.filter(art => idsSet.has(art.IdArticulo))
+    const seleccionados = items.filter(art => idsSet.has(art.IdArticulo) && art.EsCombo === true)
 
     if (seleccionados.length === 0) {
       return res.status(404).json({ error: 'No se encontraron los combos seleccionados en Centum' })
