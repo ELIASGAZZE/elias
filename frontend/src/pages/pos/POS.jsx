@@ -709,6 +709,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
   const [mpQrPosId, setMpQrPosId] = useState(configActual?.mp_qr_pos_id || '')
   const [mpQrCajas, setMpQrCajas] = useState([])
+  const [cargandoQrCajas, setCargandoQrCajas] = useState(true)
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -725,8 +726,12 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       .catch((err) => console.warn('MP Point devices no disponible:', err.message))
     // Cargar cajas QR de MP
     api.get('/api/mp-point/qr-cajas')
-      .then(({ data }) => setMpQrCajas(Array.isArray(data) ? data : []))
+      .then(({ data }) => {
+        console.log('[Config] QR cajas recibidas:', data)
+        setMpQrCajas(Array.isArray(data) ? data : [])
+      })
       .catch((err) => console.warn('MP QR cajas no disponible:', err.message))
+      .finally(() => setCargandoQrCajas(false))
   }, [])
 
   useEffect(() => {
@@ -857,7 +862,9 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
           {mpDeviceId && mpDeviceId.includes('N950') && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Caja QR Mercado Pago</label>
-              {mpQrCajas.length > 0 ? (
+              {cargandoQrCajas ? (
+                <p className="text-sm text-gray-400 py-2">Cargando cajas QR...</p>
+              ) : (
                 <select
                   value={mpQrPosId}
                   onChange={e => setMpQrPosId(e.target.value)}
@@ -870,14 +877,6 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
                     </option>
                   ))}
                 </select>
-              ) : (
-                <input
-                  type="text"
-                  value={mpQrPosId}
-                  onChange={e => setMpQrPosId(e.target.value)}
-                  placeholder="External ID de la caja QR (ej: QRAU01)"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-                />
               )}
               <p className="text-xs text-gray-400 mt-1">El N950 no muestra QR en pantalla. Seleccioná la caja QR impresa para cobros QR.</p>
             </div>
