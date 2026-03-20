@@ -114,7 +114,7 @@ router.get('/actualizaciones', verificarAuth, async (req, res) => {
 // POST /api/articulos/sincronizar-forzado
 // Fuerza un sync que marca updated_at en TODOS los artículos que cambiaron vs Centum
 // Útil cuando el cron ya corrió pero no existía updated_at
-router.post('/sincronizar-forzado', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/sincronizar-forzado', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     // 1. Traer precios actuales de Centum
     const { sincronizarERP } = require('../services/syncERP')
@@ -482,7 +482,7 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
 
 // POST /api/articulos/sincronizar-erp
 // Admin: sincroniza artículos desde ERP Centum (completa)
-router.post('/sincronizar-erp', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/sincronizar-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual')
     res.json(resultado)
@@ -507,7 +507,7 @@ router.post('/sincronizar-precios', verificarAuth, async (req, res) => {
 // POST /api/articulos/sincronizar-stock
 // Admin: sincroniza stock del depósito central desde ERP Centum
 // Responde inmediatamente y corre la sync en background (evita timeout de Render)
-router.post('/sincronizar-stock', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/sincronizar-stock', verificarAuth, soloGestorOAdmin, async (req, res) => {
   res.json({ mensaje: 'Sincronización de stock iniciada en background' })
 
   try {
