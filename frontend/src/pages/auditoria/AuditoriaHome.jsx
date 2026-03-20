@@ -24,7 +24,25 @@ const AuditoriaHome = () => {
     const desdeISO = new Date(desde + 'T00:00:00').toISOString()
     const hastaISO = new Date(hasta + 'T23:59:59').toISOString()
     api.get(`/api/auditoria/dashboard?desde=${desdeISO}&hasta=${hastaISO}`)
-      .then(r => setData(r.data))
+      .then(r => {
+        const d = r.data
+        // Parsear items si viene como string JSON
+        if (d.ventas) d.ventas = d.ventas.map(v => ({
+          ...v,
+          items: typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []),
+          pagos: typeof v.pagos === 'string' ? JSON.parse(v.pagos) : (v.pagos || []),
+        }))
+        if (d.eliminaciones) d.eliminaciones = d.eliminaciones.map(e => ({
+          ...e,
+          items: typeof e.items === 'string' ? JSON.parse(e.items) : (e.items || []),
+        }))
+        if (d.cancelaciones) d.cancelaciones = d.cancelaciones.map(c => ({
+          ...c,
+          items: typeof c.items === 'string' ? JSON.parse(c.items) : (c.items || []),
+        }))
+        return d
+      })
+      .then(d => setData(d))
       .catch(err => console.error('Error cargando auditoría:', err))
       .finally(() => setCargando(false))
   }, [desde, hasta])
