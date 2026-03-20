@@ -60,21 +60,25 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
   const mpPollingBusyRef = useRef(false)
+  const mpSSERef = useRef(null)
+  const mpResolvedRef = useRef(false) // guard anti-duplicado SSE+polling
   const cobrarRootRef = useRef(null)
 
-  // Cleanup polling + timeout on unmount, y cancelar orden si hay una pendiente
+  // Cleanup polling + SSE + timeout on unmount
   useEffect(() => {
     return () => {
       if (mpPollingRef.current) clearInterval(mpPollingRef.current)
       if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current)
+      if (mpSSERef.current) { mpSSERef.current.close(); mpSSERef.current = null }
     }
   }, [])
 
-  // Cleanup polling cuando el pago MP se resuelve (aprobado/cancelado/error)
+  // Cleanup cuando el pago MP se resuelve (aprobado/cancelado/error)
   useEffect(() => {
     if (mpEstado === 'aprobado' || mpEstado === 'cancelado' || mpEstado === 'error') {
       if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
       if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+      if (mpSSERef.current) { mpSSERef.current.close(); mpSSERef.current = null }
     }
   }, [mpEstado])
 
@@ -180,6 +184,72 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const montoExactoRestante = montoExactoEnEfectivo != null ? Math.max(0, montoExactoEnEfectivo - efectivoPagado) : null
 
   // Mercado Pago Point — funciones (Orders API: tarjeta + QR)
+  // Handler compartido para procesar cambios de estado (usado por SSE y polling)
+  async function handleMpOrderStatus(status, transactions, orderId, montoACobrar) {
+    if (mpResolvedRef.current) return // ya procesado (evitar duplicado SSE+polling)
+
+    if (status === 'processing') {
+      setMpEstado('procesando')
+    } else if (status === 'processed' || status === 'finished') {
+      mpResolvedRef.current = true
+      const payment = transactions?.payments?.find(p => p.status === 'approved' || p.status === 'processed')
+      const payId = payment?.payment_id || payment?.id
+      if (payId) {
+        setMpPaymentId(payId)
+        try {
+          const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
+          const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
+            : pd.payment_type_id === 'debit_card' ? 'Débito'
+            : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
+          setPagos(prev => [...prev, {
+            tipo: tipoPago,
+            monto: montoACobrar,
+            detalle: {
+              mp_payment_id: payId,
+              mp_order_id: orderId,
+              payment_type: pd.payment_type_id,
+              card_last_four: pd.card?.last_four_digits || null,
+              card_brand: pd.payment_method_id || null,
+            }
+          }])
+        } catch {
+          setPagos(prev => [...prev, {
+            tipo: 'Posnet MP',
+            monto: montoACobrar,
+            detalle: { mp_payment_id: payId, mp_order_id: orderId }
+          }])
+        }
+        setMpEstado('aprobado')
+      } else {
+        const detail = transactions?.payments?.[0]?.status_detail || ''
+        const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+          : detail.includes('expired') ? 'Tarjeta vencida'
+          : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+          : detail.includes('blocked') ? 'Tarjeta bloqueada'
+          : detail ? `Rechazado: ${detail}`
+          : 'Pago rechazado'
+        setMpEstado('cancelado')
+        setMpError(motivo)
+      }
+    } else if (status === 'canceled' || status === 'expired' || status === 'reverted') {
+      mpResolvedRef.current = true
+      setMpEstado('cancelado')
+      setMpError('Pago cancelado en el posnet')
+      setMpShowProblema(false)
+    } else if (status === 'rejected' || status === 'failed' || status === 'refunded') {
+      mpResolvedRef.current = true
+      const detail = transactions?.payments?.[0]?.status_detail || ''
+      const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
+        : detail.includes('expired') ? 'Tarjeta vencida'
+        : detail.includes('disabled') ? 'Tarjeta deshabilitada'
+        : detail.includes('blocked') ? 'Tarjeta bloqueada'
+        : 'Pago rechazado'
+      setMpEstado('cancelado')
+      setMpError(motivo)
+      setMpShowProblema(false)
+    }
+  }
+
   async function iniciarPagoMP(paymentType) {
     // No iniciar si ya hay un pago MP en curso
     if (mpEstado && mpEstado !== 'error' && mpEstado !== 'cancelado' && mpEstado !== 'aprobado') return
@@ -190,6 +260,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setMpError('')
     setMpPaymentId(null)
     setMpUltimoPaymentType(paymentType)
+    mpResolvedRef.current = false
 
     try {
       const terminalConfig = (() => { try { return JSON.parse(localStorage.getItem('pos_terminal_config') || '{}') } catch { return {} } })()
@@ -215,97 +286,50 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMpMontoIntent(montoACobrar)
       setMpEstado('esperando')
 
-      // Safety timeout: si el polling no detecta cambio de estado en 3 minutos, mostrar error
-      // El flujo normal se maneja por polling (detecta expired/canceled del posnet)
+      // Safety timeout: 3 minutos
       mpTimeoutRef.current = setTimeout(() => {
         if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+        if (mpSSERef.current) { mpSSERef.current.close(); mpSSERef.current = null }
         mpTimeoutRef.current = null
         setMpEstado('error')
         setMpError('Tiempo agotado esperando respuesta del posnet. Verificá el estado del pago antes de reintentar.')
       }, 180000)
 
-      // Polling estado de la orden cada 3 segundos (con guard anti-overlap)
+      // 1) SSE — canal principal (notificación instantánea via webhook de MP)
+      try {
+        const baseUrl = api.defaults.baseURL
+        const token = localStorage.getItem('token')
+        const sseUrl = `${baseUrl}/api/mp-point/order/${data.id}/events?token=${encodeURIComponent(token)}`
+        const es = new EventSource(sseUrl)
+        mpSSERef.current = es
+
+        es.addEventListener('order_update', (evt) => {
+          try {
+            const { status, transactions } = JSON.parse(evt.data)
+            handleMpOrderStatus(status, transactions, data.id, montoACobrar)
+          } catch {}
+        })
+
+        es.onerror = () => {
+          console.log('[MP SSE] Error de conexión, polling fallback activo')
+        }
+      } catch {
+        console.log('[MP SSE] No se pudo conectar, usando solo polling')
+      }
+
+      // 2) Polling como fallback cada 5s (con guard anti-overlap)
       mpPollingRef.current = setInterval(async () => {
-        if (mpPollingBusyRef.current) return
+        if (mpPollingBusyRef.current || mpResolvedRef.current) return
         mpPollingBusyRef.current = true
         try {
           const { data: order } = await api.get(`/api/mp-point/order/${data.id}`)
-          const state = order.status
-
-          if (state === 'processing') {
-            setMpEstado('procesando')
-          } else if (state === 'processed' || state === 'finished') {
-            clearInterval(mpPollingRef.current)
-            mpPollingRef.current = null
-            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
-            // Buscar el pago aprobado en la orden
-            const payment = order.transactions?.payments?.find(p => p.status === 'approved' || p.status === 'processed')
-            const payId = payment?.payment_id || payment?.id
-            if (payId) {
-              setMpPaymentId(payId)
-              try {
-                const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
-                const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
-                  : pd.payment_type_id === 'debit_card' ? 'Débito'
-                  : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
-                setPagos(prev => [...prev, {
-                  tipo: tipoPago,
-                  monto: montoACobrar,
-                  detalle: {
-                    mp_payment_id: payId,
-                    mp_order_id: data.id,
-                    payment_type: pd.payment_type_id,
-                    card_last_four: pd.card?.last_four_digits || null,
-                    card_brand: pd.payment_method_id || null,
-                  }
-                }])
-              } catch {
-                setPagos(prev => [...prev, {
-                  tipo: 'Posnet MP',
-                  monto: montoACobrar,
-                  detalle: { mp_payment_id: payId, mp_order_id: data.id }
-                }])
-              }
-              setMpEstado('aprobado')
-            } else {
-              // Orden procesada pero sin pago aprobado → rechazado
-              const detail = order.transactions?.payments?.[0]?.status_detail || ''
-              const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
-                : detail.includes('expired') ? 'Tarjeta vencida'
-                : detail.includes('disabled') ? 'Tarjeta deshabilitada'
-                : detail.includes('blocked') ? 'Tarjeta bloqueada'
-                : detail ? `Rechazado: ${detail}`
-                : 'Pago rechazado'
-              setMpEstado('cancelado')
-              setMpError(motivo)
-            }
-          } else if (state === 'canceled' || state === 'expired' || state === 'reverted') {
-            clearInterval(mpPollingRef.current)
-            mpPollingRef.current = null
-            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
-            setMpEstado('cancelado')
-            setMpError('Pago cancelado en el posnet')
-            setMpShowProblema(false)
-          } else if (state === 'rejected' || state === 'failed' || state === 'refunded') {
-            clearInterval(mpPollingRef.current)
-            mpPollingRef.current = null
-            if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
-            const detail = order.transactions?.payments?.[0]?.status_detail || ''
-            const motivo = detail.includes('insufficient') ? 'Fondos insuficientes'
-              : detail.includes('expired') ? 'Tarjeta vencida'
-              : detail.includes('disabled') ? 'Tarjeta deshabilitada'
-              : detail.includes('blocked') ? 'Tarjeta bloqueada'
-              : 'Pago rechazado'
-            setMpEstado('cancelado')
-            setMpError(motivo)
-            setMpShowProblema(false)
-          }
+          await handleMpOrderStatus(order.status, order.transactions, data.id, montoACobrar)
         } catch (err) {
           console.error('[MP Point] Error polling:', err.message)
         } finally {
           mpPollingBusyRef.current = false
         }
-      }, 3000)
+      }, 5000)
     } catch (err) {
       console.error('[MP Point] Error creando orden:', err)
       setMpError(err.response?.data?.error || err.response?.data?.errors?.[0]?.message || 'Error al enviar al posnet')
@@ -357,9 +381,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   // "Tengo problema" — resolver cobro MP con problema
   function resolverProblemaMP(tipoProblema) {
-    // Limpiar polling
+    // Limpiar polling + SSE
     if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
     if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+    if (mpSSERef.current) { mpSSERef.current.close(); mpSSERef.current = null }
     const monto = mpMontoIntent
 
     if (tipoProblema === 'cobro_sin_confirmar') {
