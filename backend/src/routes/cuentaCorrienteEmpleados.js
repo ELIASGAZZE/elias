@@ -18,7 +18,7 @@ router.get('/rubros', verificarAuth, async (req, res) => {
       const { data, error } = await supabase
         .from('articulos')
         .select('rubro, rubro_id_centum')
-        .eq('tipo', 'automatico')
+        .in('tipo', ['automatico', 'combo'])
         .gt('precio', 0)
         .not('rubro', 'is', null)
         .range(from, from + PAGE_SIZE - 1)

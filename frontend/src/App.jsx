@@ -71,6 +71,7 @@ import Fichaje from './pages/fichaje/Fichaje'
 // Páginas solo admin
 import AdminArticulos from './pages/admin/AdminArticulos'
 import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
+import AdminArticulosCombos from './pages/admin/AdminArticulosCombos'
 import ConfiguracionHub from './pages/admin/ConfiguracionHub'
 import AdminConfiguracion from './pages/admin/AdminConfiguracion'
 import AdminApiLogs from './pages/admin/AdminApiLogs'
@@ -299,6 +300,11 @@ const App = () => {
           <Route path="/admin/articulos-manuales" element={
             <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <AdminArticulosManuales />
+            </RutaProtegida>
+          } />
+          <Route path="/admin/articulos-combos" element={
+            <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
+              <AdminArticulosCombos />
             </RutaProtegida>
           } />
           <Route path="/admin/configuracion" element={
