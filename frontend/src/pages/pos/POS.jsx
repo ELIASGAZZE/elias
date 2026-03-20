@@ -40,6 +40,7 @@ function itemMatcheaRegla(item, aplicarA) {
     if (regla.tipo === 'rubro' && item.articulo.rubro?.id === regla.id) return true
     if (regla.tipo === 'subrubro' && item.articulo.subRubro?.id === regla.id) return true
     if (regla.tipo === 'atributo' && item.articulo.atributos?.some(a => a.id_valor === regla.id_valor)) return true
+    if (regla.tipo === 'marca' && item.articulo.marca === regla.nombre) return true
   }
   return false
 }
@@ -62,10 +63,13 @@ function calcularPromoCondicional(reglas, carrito) {
   const listaBenef = reglas.articulos_beneficio || (reglas.articulo_beneficio ? [reglas.articulo_beneficio] : [])
   if (!grupos || grupos.length === 0 || listaBenef.length === 0) return null
 
-  // Helper: buscar items del carrito que matchean una condición (artículo o atributo)
+  // Helper: buscar items del carrito que matchean una condición (artículo, atributo o marca)
   const findAllInCarrito = (cond) => {
     if (cond.tipo === 'atributo') {
       return carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
+    }
+    if (cond.tipo === 'marca') {
+      return carrito.filter(i => i.articulo.marca === cond.nombre)
     }
     const found = carrito.find(i => i.articulo.id === cond.id || (cond.codigo && String(i.articulo.codigo) === String(cond.codigo)))
     return found ? [found] : []
@@ -126,6 +130,7 @@ function calcularPromoCondicional(reglas, carrito) {
   // Helper: ¿un item del carrito matchea un beneficio?
   const itemMatchesBenef = (cartItem, benef) => {
     if (benef.tipo === 'atributo') return cartItem.articulo.atributos?.some(a => a.id_valor === benef.id_valor)
+    if (benef.tipo === 'marca') return cartItem.articulo.marca === benef.nombre
     return cartItem.articulo.id === benef.id || (benef.codigo && String(cartItem.articulo.codigo) === String(benef.codigo))
   }
 
@@ -138,7 +143,7 @@ function calcularPromoCondicional(reglas, carrito) {
   // (cuando un atributo matchea múltiples items, no descontar más que vecesPromo * cantReq en total)
   const condGroups = new Map() // condRef key → { items, cantReq, isOr }
   for (const entry of itemsCondicion) {
-    const key = entry.condRef?.tipo === 'atributo' ? `attr:${entry.condRef.id_valor}` : `art:${entry.item.articulo.id}`
+    const key = entry.condRef?.tipo === 'atributo' ? `attr:${entry.condRef.id_valor}` : entry.condRef?.tipo === 'marca' ? `mrc:${entry.condRef.nombre}` : `art:${entry.item.articulo.id}`
     if (!condGroups.has(key)) condGroups.set(key, { items: [], cantReq: entry.cantReq, isOr: entry.isOr })
     condGroups.get(key).items.push(entry.item)
   }
@@ -367,19 +372,21 @@ function calcularPromocionesLocales(carrito, promociones) {
           const matchedNames = []
           let cumple = true
           const findInCarrito = (cond) => {
-            if (cond.tipo === 'atributo') return null // atributos usan findAllInCarritoAttr
+            if (cond.tipo === 'atributo' || cond.tipo === 'marca') return null // usan findAllInCarritoGroup
             return carrito.find(i =>
               i.articulo.id === cond.id || (cond.codigo && String(i.articulo.codigo) === String(cond.codigo))
             )
           }
-          const findAllInCarritoAttr = (cond) =>
-            carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
+          const findAllInCarritoGroup = (cond) =>
+            cond.tipo === 'marca'
+              ? carrito.filter(i => i.articulo.marca === cond.nombre)
+              : carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
           for (const seg of segmentos) {
             if (seg.tipo === 'and') {
               // Todos deben estar
               for (const cond of seg.items) {
-                if (cond.tipo === 'atributo') {
-                  const attrItems = findAllInCarritoAttr(cond)
+                if (cond.tipo === 'atributo' || cond.tipo === 'marca') {
+                  const attrItems = findAllInCarritoGroup(cond)
                   const totalCant = attrItems.reduce((s, i) => s + i.cantidad, 0)
                   const cantReq = cond.cantidad || 1
                   if (totalCant < cantReq) { cumple = false; break }
@@ -402,8 +409,8 @@ function calcularPromocionesLocales(carrito, promociones) {
               const orMatches = []
               for (const cond of seg.items) {
                 const cantReq = cond.cantidad || 1
-                if (cond.tipo === 'atributo') {
-                  const attrItems = findAllInCarritoAttr(cond)
+                if (cond.tipo === 'atributo' || cond.tipo === 'marca') {
+                  const attrItems = findAllInCarritoGroup(cond)
                   const totalCant = attrItems.reduce((s, i) => s + i.cantidad, 0)
                   if (totalCant >= cantReq) {
                     totalOrUnits += Math.floor(totalCant / cantReq)
@@ -441,6 +448,7 @@ function calcularPromocionesLocales(carrito, promociones) {
         // Determinar qué items se descuentan
         const itemMatchesBenefLocal = (cartItem, ab) => {
           if (ab.tipo === 'atributo') return cartItem.articulo.atributos?.some(a => a.id_valor === ab.id_valor)
+          if (ab.tipo === 'marca') return cartItem.articulo.marca === ab.nombre
           return cartItem.articulo.id === ab.id || (ab.codigo && String(cartItem.articulo.codigo) === String(ab.codigo))
         }
         // 1) Artículos que participaron en la condición Y están en beneficios
@@ -594,9 +602,11 @@ function calcularPromocionesLocales(carrito, promociones) {
         if (!grupos || grupos.length === 0) return null
 
         const findDisp = (cond) => {
-          if (cond.tipo === 'atributo') {
-            // Para atributos, sumar disponibilidad de todos los items que matchean
-            const matches = carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
+          if (cond.tipo === 'atributo' || cond.tipo === 'marca') {
+            // Para atributos/marcas, sumar disponibilidad de todos los items que matchean
+            const matches = cond.tipo === 'marca'
+              ? carrito.filter(i => i.articulo.marca === cond.nombre)
+              : carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
             if (matches.length === 0) return null
             const totalDisp = matches.reduce((s, i) => s + (disponible[i.articulo.id] || 0), 0)
             return totalDisp > 0 ? { item: matches[0], dispCant: totalDisp, items: matches } : null
