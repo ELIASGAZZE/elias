@@ -366,39 +366,63 @@ function calcularPromocionesLocales(carrito, promociones) {
           const itemsGrupo = []
           const matchedNames = []
           let cumple = true
-          const findInCarrito = (cond) => carrito.find(i =>
-            i.articulo.id === cond.id || (cond.codigo && String(i.articulo.codigo) === String(cond.codigo))
-          )
+          const findInCarrito = (cond) => {
+            if (cond.tipo === 'atributo') return null // atributos usan findAllInCarritoAttr
+            return carrito.find(i =>
+              i.articulo.id === cond.id || (cond.codigo && String(i.articulo.codigo) === String(cond.codigo))
+            )
+          }
+          const findAllInCarritoAttr = (cond) =>
+            carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
           for (const seg of segmentos) {
             if (seg.tipo === 'and') {
               // Todos deben estar
               for (const cond of seg.items) {
-                const itemCarro = findInCarrito(cond)
-                if (!itemCarro) { cumple = false; break }
-                const cantReq = cond.cantidad || 1
-                if (itemCarro.cantidad < cantReq) { cumple = false; break }
-                veces = Math.min(veces, Math.floor(itemCarro.cantidad / cantReq))
-                itemsGrupo.push({ item: itemCarro, cantReq })
-                matchedNames.push(`${cantReq}x ${cond.nombre}`)
+                if (cond.tipo === 'atributo') {
+                  const attrItems = findAllInCarritoAttr(cond)
+                  const totalCant = attrItems.reduce((s, i) => s + i.cantidad, 0)
+                  const cantReq = cond.cantidad || 1
+                  if (totalCant < cantReq) { cumple = false; break }
+                  veces = Math.min(veces, Math.floor(totalCant / cantReq))
+                  for (const ai of attrItems) itemsGrupo.push({ item: ai, cantReq, condRef: cond })
+                  matchedNames.push(`${cantReq}x ${cond.nombre}`)
+                } else {
+                  const itemCarro = findInCarrito(cond)
+                  if (!itemCarro) { cumple = false; break }
+                  const cantReq = cond.cantidad || 1
+                  if (itemCarro.cantidad < cantReq) { cumple = false; break }
+                  veces = Math.min(veces, Math.floor(itemCarro.cantidad / cantReq))
+                  itemsGrupo.push({ item: itemCarro, cantReq })
+                  matchedNames.push(`${cantReq}x ${cond.nombre}`)
+                }
               }
             } else {
               // OR: sumar cantidades de TODAS las alternativas encontradas en el carrito
               let totalOrUnits = 0
               const orMatches = []
               for (const cond of seg.items) {
-                const itemCarro = findInCarrito(cond)
                 const cantReq = cond.cantidad || 1
-                if (itemCarro && itemCarro.cantidad >= cantReq) {
-                  const units = Math.floor(itemCarro.cantidad / cantReq)
-                  totalOrUnits += units
-                  orMatches.push({ item: itemCarro, cantReq, units, cond })
+                if (cond.tipo === 'atributo') {
+                  const attrItems = findAllInCarritoAttr(cond)
+                  const totalCant = attrItems.reduce((s, i) => s + i.cantidad, 0)
+                  if (totalCant >= cantReq) {
+                    totalOrUnits += Math.floor(totalCant / cantReq)
+                    for (const ai of attrItems) orMatches.push({ item: ai, cantReq, cond, condRef: cond })
+                  }
+                } else {
+                  const itemCarro = findInCarrito(cond)
+                  if (itemCarro && itemCarro.cantidad >= cantReq) {
+                    const units = Math.floor(itemCarro.cantidad / cantReq)
+                    totalOrUnits += units
+                    orMatches.push({ item: itemCarro, cantReq, units, cond })
+                  }
                 }
               }
               if (totalOrUnits === 0) { cumple = false }
               else {
                 veces = Math.min(veces, totalOrUnits)
                 for (const m of orMatches) {
-                  itemsGrupo.push({ item: m.item, cantReq: m.cantReq, isOr: true })
+                  itemsGrupo.push({ item: m.item, cantReq: m.cantReq, isOr: true, condRef: m.condRef })
                   matchedNames.push(`${m.cantReq}x ${m.cond.nombre}`)
                 }
               }
@@ -415,9 +439,10 @@ function calcularPromocionesLocales(carrito, promociones) {
         if (vecesPromo <= 0) break
 
         // Determinar qué items se descuentan
-        const findBenefInCarrito = (ab) => carrito.find(i =>
-          i.articulo.id === ab.id || (ab.codigo && String(i.articulo.codigo) === String(ab.codigo))
-        )
+        const itemMatchesBenefLocal = (cartItem, ab) => {
+          if (ab.tipo === 'atributo') return cartItem.articulo.atributos?.some(a => a.id_valor === ab.id_valor)
+          return cartItem.articulo.id === ab.id || (ab.codigo && String(cartItem.articulo.codigo) === String(ab.codigo))
+        }
         // 1) Artículos que participaron en la condición Y están en beneficios
         // AND items: siempre se descuentan. OR items: limitados por vecesPromo
         const descontados = new Set()
@@ -426,9 +451,7 @@ function calcularPromocionesLocales(carrito, promociones) {
         let descuento = 0
         let orDescontados = 0
         for (const { item, cantReq, isOr } of itemsCondicion) {
-          const enBenef = listaBenef.some(ab =>
-            ab.id === item.articulo.id || (ab.codigo && String(item.articulo.codigo) === String(ab.codigo))
-          )
+          const enBenef = listaBenef.some(ab => itemMatchesBenefLocal(item, ab))
           if (!enBenef) continue
           if (isOr) {
             // Limitar items OR por vecesPromo
@@ -463,31 +486,30 @@ function calcularPromocionesLocales(carrito, promociones) {
           }
         }
         // 2) Beneficios que NO son parte de ningún grupo condición → descuento limitado por vecesPromo
-        const allCondIds = new Set()
-        for (const grupo of grupos) {
-          for (const c of grupo) {
-            allCondIds.add(c.id)
-            if (c.codigo) allCondIds.add(c.codigo)
-          }
-        }
+        const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
+        let benefRestante = vecesPromo
         for (const ab of listaBenef) {
-          if (descontados.has(ab.id)) continue
-          // Skip si este beneficio aparece en algún grupo condición (no participó pero podría haber)
-          if (allCondIds.has(ab.id) || allCondIds.has(ab.codigo)) continue
-          const found = findBenefInCarrito(ab)
-          if (!found || descontados.has(found.articulo.id)) continue
-          const cantBenef = Math.min(vecesPromo, found.cantidad)
-          const precio = calcularPrecioConDescuentosBase(found.articulo)
-          let itemDesc = 0
-          if (reglas.tipo_descuento === 'porcentaje') {
-            itemDesc = precio * cantBenef * ((reglas.valor || 0) / 100)
-          } else {
-            itemDesc = Math.min(reglas.valor || 0, precio) * cantBenef
+          if (benefRestante <= 0) break
+          // Find matching items not already discounted and not condition items
+          const matchingItems = carrito.filter(i =>
+            itemMatchesBenefLocal(i, ab) && !descontados.has(i.articulo.id) && !condItemIds.has(i.articulo.id)
+          )
+          for (const found of matchingItems) {
+            if (benefRestante <= 0) break
+            const cantBenef = Math.min(benefRestante, found.cantidad)
+            const precio = calcularPrecioConDescuentosBase(found.articulo)
+            let itemDesc = 0
+            if (reglas.tipo_descuento === 'porcentaje') {
+              itemDesc = precio * cantBenef * ((reglas.valor || 0) / 100)
+            } else {
+              itemDesc = Math.min(reglas.valor || 0, precio) * cantBenef
+            }
+            descuento += itemDesc
+            descuentoPorItem[found.articulo.id] = (descuentoPorItem[found.articulo.id] || 0) + itemDesc
+            cantPorItem[found.articulo.id] = (cantPorItem[found.articulo.id] || 0) + cantBenef
+            descontados.add(found.articulo.id)
+            benefRestante -= cantBenef
           }
-          descuento += itemDesc
-          descuentoPorItem[found.articulo.id] = (descuentoPorItem[found.articulo.id] || 0) + itemDesc
-          cantPorItem[found.articulo.id] = (cantPorItem[found.articulo.id] || 0) + cantBenef
-          descontados.add(found.articulo.id)
         }
         if (descuento <= 0) break
         const condDetalle = grupoMatchNames.join(' + ')
@@ -552,6 +574,13 @@ function calcularPromocionesLocales(carrito, promociones) {
         if (!grupos || grupos.length === 0) return null
 
         const findDisp = (cond) => {
+          if (cond.tipo === 'atributo') {
+            // Para atributos, sumar disponibilidad de todos los items que matchean
+            const matches = carrito.filter(i => i.articulo.atributos?.some(a => a.id_valor === cond.id_valor))
+            if (matches.length === 0) return null
+            const totalDisp = matches.reduce((s, i) => s + (disponible[i.articulo.id] || 0), 0)
+            return totalDisp > 0 ? { item: matches[0], dispCant: totalDisp, items: matches } : null
+          }
           const item = carrito.find(i =>
             i.articulo.id === cond.id || (cond.codigo && String(i.articulo.codigo) === String(cond.codigo))
           )
@@ -582,7 +611,17 @@ function calcularPromocionesLocales(carrito, promociones) {
                 const cantReq = cond.cantidad || 1
                 if (!r || r.dispCant < cantReq) { cumple = false; break }
                 veces = Math.min(veces, Math.floor(r.dispCant / cantReq))
-                reservas.push({ artId: r.item.articulo.id, cant: cantReq })
+                if (r.items) {
+                  // Atributo: reservar distribuyendo entre todos los items que matchean
+                  let pendiente = cantReq
+                  for (const it of r.items) {
+                    if (pendiente <= 0) break
+                    const d = Math.min(pendiente, disponible[it.articulo.id] || 0)
+                    if (d > 0) { reservas.push({ artId: it.articulo.id, cant: d }); pendiente -= d }
+                  }
+                } else {
+                  reservas.push({ artId: r.item.articulo.id, cant: cantReq })
+                }
               }
             } else {
               // OR: buscar primera alternativa disponible
@@ -592,7 +631,16 @@ function calcularPromocionesLocales(carrito, promociones) {
                 const cantReq = cond.cantidad || 1
                 if (r && r.dispCant >= cantReq) {
                   veces = Math.min(veces, Math.floor(r.dispCant / cantReq))
-                  reservas.push({ artId: r.item.articulo.id, cant: cantReq })
+                  if (r.items) {
+                    let pendiente = cantReq
+                    for (const it of r.items) {
+                      if (pendiente <= 0) break
+                      const d = Math.min(pendiente, disponible[it.articulo.id] || 0)
+                      if (d > 0) { reservas.push({ artId: it.articulo.id, cant: d }); pendiente -= d }
+                    }
+                  } else {
+                    reservas.push({ artId: r.item.articulo.id, cant: cantReq })
+                  }
                   found = true
                   break
                 }
