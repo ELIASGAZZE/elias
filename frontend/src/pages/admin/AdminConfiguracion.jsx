@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import AdminPromociones from '../../components/pos/AdminPromociones'
 import api from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
 import SeccionClientes from '../../components/admin/SeccionClientes'
 import AdminArticulosAtributos from '../../components/admin/AdminArticulosAtributos'
 import SeccionDelivery from './SeccionDelivery'
@@ -84,6 +85,13 @@ const TITULOS_SECCION = {
 const AdminConfiguracion = () => {
   const { seccion } = useParams()
   const navigate = useNavigate()
+  const { esAdmin } = useAuth()
+
+  // Gestor solo puede acceder a promociones
+  if (!esAdmin && seccion !== 'promociones') {
+    navigate('/admin/configuracion', { replace: true })
+    return null
+  }
 
   // Acordeón (legacy, ahora siempre abierta la sección de la URL)
   const seccionAbierta = seccion || null
