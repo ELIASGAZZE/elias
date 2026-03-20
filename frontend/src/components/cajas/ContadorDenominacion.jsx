@@ -18,6 +18,7 @@ const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$', alerta
         <button
           type="button"
           onClick={() => onChange(Math.max(0, cantidad - 1))}
+          tabIndex={-1}
           className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm flex items-center justify-center transition-colors"
         >
           -
@@ -34,6 +35,7 @@ const ContadorDenominacion = ({ valor, cantidad, onChange, prefijo = '$', alerta
         <button
           type="button"
           onClick={() => onChange(cantidad + 1)}
+          tabIndex={-1}
           className="w-7 h-7 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 font-bold text-sm flex items-center justify-center transition-colors"
         >
           +

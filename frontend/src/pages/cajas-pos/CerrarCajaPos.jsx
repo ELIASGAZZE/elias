@@ -64,6 +64,9 @@ const CerrarCajaPos = () => {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
 
+  // Cupones MP (informativo)
+  const [cuponesMP, setCuponesMP] = useState({ posnet: 0, qr: 0, problema: 0 })
+
   // Retiros del turno
   const [retiros, setRetiros] = useState([])
   const [mostrarRetiro, setMostrarRetiro] = useState(false)
@@ -97,16 +100,33 @@ const CerrarCajaPos = () => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes] = await Promise.all([
+        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes, posVentasRes] = await Promise.all([
           api.get(`/api/cierres-pos/${id}`),
           api.get('/api/denominaciones'),
           api.get('/api/formas-cobro'),
           api.get(`/api/cierres-pos/${id}/retiros`).catch(() => ({ data: [] })),
           api.get(`/api/cierres-pos/${id}/gastos`).catch(() => ({ data: [] })),
+          api.get(`/api/cierres-pos/${id}/pos-ventas`).catch(() => ({ data: { medios_pago: [] } })),
         ])
 
         setRetiros(retirosRes.data || [])
         setGastos(gastosRes.data || [])
+
+        // Calcular cupones MP desde detalle de ventas
+        let posnet = 0, qr = 0, problema = 0
+        const detalleVentas = posVentasRes.data?.detalle_ventas || []
+        detalleVentas.forEach(v => {
+          (v.pagos || []).forEach(p => {
+            if (p.detalle?.mp_problema) {
+              problema++
+            } else if (p.tipo === 'QR MP') {
+              qr++
+            } else if (['Crédito', 'Débito', 'Posnet MP'].includes(p.tipo)) {
+              posnet++
+            }
+          })
+        })
+        setCuponesMP({ posnet, qr, problema })
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
@@ -392,6 +412,31 @@ const CerrarCajaPos = () => {
               placeholder="Observaciones opcionales..."
             />
           </div>
+        </div>
+
+        {/* Cupones Mercado Pago (informativo) */}
+        <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 mb-4 flex items-center gap-6">
+          <span className="text-sm font-medium text-sky-800">Cupones Mercado Pago</span>
+          <div className="flex items-center gap-1.5 text-sm text-sky-700">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            </svg>
+            <span>Posnet: <strong>{cuponesMP.posnet}</strong></span>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm text-sky-700">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
+            <span>QR: <strong>{cuponesMP.qr}</strong></span>
+          </div>
+          {cuponesMP.problema > 0 && (
+            <div className="flex items-center gap-1.5 text-sm text-amber-700">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span>Problema: <strong>{cuponesMP.problema}</strong></span>
+            </div>
+          )}
         </div>
 
         {/* Retiro de alivio + retiros existentes */}

@@ -985,15 +985,10 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
 
   return (
     <div className="h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-8">
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-violet-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-            </svg>
-          </div>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6">
+        <div className="text-center mb-4">
           <h2 className="text-xl font-bold text-gray-800">Abrir Caja</h2>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-gray-400 mt-0.5">
             {terminalConfig.sucursal_nombre} — {terminalConfig.caja_nombre}
           </p>
         </div>
@@ -1036,7 +1031,7 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {denomBilletes.map(d => (
                     <ContadorDenominacion
                       key={`ba-${d.id}`}
@@ -1071,18 +1066,27 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
 
           {errorAbrir && <p className="text-sm text-red-600">{errorAbrir}</p>}
 
-          <button
-            type="submit"
-            disabled={abriendo}
-            className="w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors"
-          >
-            {abriendo ? 'Abriendo...' : 'Abrir Caja'}
-          </button>
+          <div className="flex gap-3">
+            <a
+              href="/fichaje"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 border border-violet-300 text-violet-600 hover:bg-violet-50 font-medium py-3 px-4 rounded-lg transition-colors text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Control asistencia
+            </a>
+            <button
+              type="submit"
+              disabled={abriendo}
+              className="flex-1 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors"
+            >
+              {abriendo ? 'Abriendo...' : 'Abrir Caja'}
+            </button>
+          </div>
         </form>
-
-        <a href="/apps" className="block text-center mt-4 text-sm text-gray-400 hover:text-gray-600">
-          Volver al menu
-        </a>
       </div>
     </div>
   )
