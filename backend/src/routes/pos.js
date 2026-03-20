@@ -22,7 +22,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       let query = supabase
         .from('articulos')
         .select(campos)
-        .eq('tipo', 'automatico')
+        .in('tipo', ['automatico', 'combo'])
         .gt('precio', 0)
         .range(from, from + PAGE_SIZE - 1)
 
@@ -148,7 +148,7 @@ router.get('/rubros', verificarAuth, async (req, res) => {
       const { data, error } = await supabase
         .from('articulos')
         .select('rubro, rubro_id_centum')
-        .eq('tipo', 'automatico')
+        .in('tipo', ['automatico', 'combo'])
         .not('rubro', 'is', null)
         .range(from, from + PAGE_SIZE - 1)
 
@@ -183,7 +183,7 @@ router.get('/marcas', verificarAuth, async (req, res) => {
       const { data, error } = await supabase
         .from('articulos')
         .select('marca')
-        .eq('tipo', 'automatico')
+        .in('tipo', ['automatico', 'combo'])
         .not('marca', 'is', null)
         .range(from, from + PAGE_SIZE - 1)
       if (error) throw error
@@ -211,7 +211,7 @@ router.get('/subrubros', verificarAuth, async (req, res) => {
       const { data, error } = await supabase
         .from('articulos')
         .select('subrubro, subrubro_id_centum')
-        .eq('tipo', 'automatico')
+        .in('tipo', ['automatico', 'combo'])
         .not('subrubro', 'is', null)
         .range(from, from + PAGE_SIZE - 1)
 
