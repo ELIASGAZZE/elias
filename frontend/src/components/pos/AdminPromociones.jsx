@@ -854,6 +854,14 @@ const AdminPromociones = () => {
                       <div key={ab.tipo === 'atributo' ? `attr-${ab.id_valor}` : ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                         {ab.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
                         <span className="flex-1 text-sm text-gray-700">{ab.nombre}</span>
+                        <input type="number" min="1" value={ab.cantidad || ''} placeholder="∞"
+                          onChange={e => {
+                            const val = e.target.value ? parseInt(e.target.value) : undefined
+                            setForm(prev => ({ ...prev, articulos_beneficio: prev.articulos_beneficio.map((b, i) => i === idx ? { ...b, cantidad: val } : b) }))
+                          }}
+                          className="w-14 text-center text-sm border border-green-300 rounded px-1 py-0.5"
+                          title="Cantidad de unidades beneficiadas (vacío = sin límite)"
+                        />
                         <button type="button" onClick={() => setForm(prev => ({ ...prev, articulos_beneficio: prev.articulos_beneficio.filter((_, i) => i !== idx) }))} className="text-green-400 hover:text-green-600">&times;</button>
                       </div>
                     ))}

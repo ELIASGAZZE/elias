@@ -169,9 +169,9 @@ function calcularPromoCondicional(reglas, carrito) {
 
   // Beneficios no-condición: buscar items del carrito que matchean beneficios pero no fueron usados como condición
   const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
-  let benefRestante = vecesPromo // total de veces a descontar en beneficios puros
   for (const ab of listaBenef) {
-    if (benefRestante <= 0) break
+    const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : vecesPromo
+    let benefRestante = cantLimiteBenef
     const matchingItems = carrito.filter(i => itemMatchesBenef(i, ab) && !descontados.has(i.articulo.id) && !condItemIds.has(i.articulo.id))
     for (const found of matchingItems) {
       if (benefRestante <= 0) break
@@ -485,11 +485,11 @@ function calcularPromocionesLocales(carrito, promociones) {
             descontados.add(item.articulo.id)
           }
         }
-        // 2) Beneficios que NO son parte de ningún grupo condición → descuento limitado por vecesPromo
+        // 2) Beneficios que NO son parte de ningún grupo condición → descuento limitado por vecesPromo * cantidad beneficio
         const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
-        let benefRestante = vecesPromo
         for (const ab of listaBenef) {
-          if (benefRestante <= 0) break
+          const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : vecesPromo
+          let benefRestante = cantLimiteBenef
           // Find matching items not already discounted and not condition items
           const matchingItems = carrito.filter(i =>
             itemMatchesBenefLocal(i, ab) && !descontados.has(i.articulo.id) && !condItemIds.has(i.articulo.id)
