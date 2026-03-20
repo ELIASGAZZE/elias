@@ -413,6 +413,10 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('La contraseña debe tener al menos 6 caracteres')
       return
     }
+    if ((editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && !editUsuarioData.sucursal_id) {
+      setMensajeEditUsuario('Seleccioná una sucursal')
+      return
+    }
 
     setGuardandoUsuario(true)
     setMensajeEditUsuario('')
