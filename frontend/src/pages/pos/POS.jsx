@@ -690,7 +690,6 @@ function calcularPromocionesLocales(carrito, promociones) {
           for (const { artId, cant } of reservas) {
             itemsCondicionUsados[artId] = (itemsCondicionUsados[artId] || 0) + cant
           }
-          console.log('[DEDUP-P1] reservas:', JSON.stringify(reservas), 'itemsCondicionUsados:', JSON.stringify(itemsCondicionUsados), 'reeval:', reeval ? 'sí' : 'no', 'reeval.itemsAfectados:', reeval?.itemsAfectados)
           if (reeval) {
             condValidas.push({ ...promo, ...reeval, itemsCondicionUsados })
           } else {
@@ -723,11 +722,6 @@ function calcularPromocionesLocales(carrito, promociones) {
       }
     }
 
-    // DEBUG: log dedup state
-    console.log('[DEDUP] todasPromos:', todasPromos.map((p, i) => ({ idx: i, nombre: p.promoNombre, tipo: p.tipoPromo, desc: p.descuento, items: p.itemsAfectados, cantPorItem: p.cantPorItem, condUsados: p.itemsCondicionUsados })))
-    console.log('[DEDUP] unidadesReservadas:', unidadesReservadas)
-    console.log('[DEDUP] articulosAfectados:', [...articulosAfectados])
-
     // Para cada artículo, asignar unidades por rate DESC
     const promoDescFinal = new Map() // promoIdx -> descuento recalculado
     const promoItemsFinal = new Map() // promoIdx -> [itemIds]
@@ -749,7 +743,6 @@ function calcularPromocionesLocales(carrito, promociones) {
 
       // Ordenar por rate DESC
       claims.sort((a, b) => b.rate - a.rate)
-      console.log(`[DEDUP] artId=${artId} cant=${itemCarrito.cantidad} reservadas=${unidadesReservadas[artId]||0} disp=${unidadesDisp} claims:`, claims)
 
       // Asignar unidades greedy
       for (const { idx, rate, cantClaimed } of claims) {
@@ -762,9 +755,6 @@ function calcularPromocionesLocales(carrito, promociones) {
         unidadesDisp -= asignadas
       }
     }
-
-    console.log('[DEDUP] promoDescFinal:', Object.fromEntries(promoDescFinal))
-    console.log('[DEDUP] promoItemsFinal:', Object.fromEntries([...promoItemsFinal].map(([k, v]) => [k, [...v]])))
 
     const resultado = [...formaPago]
     todasPromos.forEach((promo, idx) => {
