@@ -51,7 +51,7 @@ app.set('trust proxy', 1)
 
 // Headers de seguridad (excluir rutas MCP — SSE necesita conexión abierta)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/mcp/')) return next()
+  if (req.path.startsWith('/mcp') || req.path === '/mcp') return next()
   helmet()(req, res, next)
 })
 
@@ -63,7 +63,7 @@ const allowedOrigins = [
 ].filter(Boolean)
 
 app.use((req, res, next) => {
-  if (req.path.startsWith('/mcp/')) {
+  if (req.path.startsWith('/mcp') || req.path === '/mcp') {
     return cors({ origin: '*' })(req, res, next)
   }
   cors({
@@ -75,8 +75,11 @@ app.use((req, res, next) => {
   })(req, res, next)
 })
 
-// Parseamos el body de los requests como JSON
-app.use(express.json())
+// Parseamos el body de los requests como JSON (excepto /mcp que lo maneja el SDK)
+app.use((req, res, next) => {
+  if (req.path === '/mcp') return next()
+  express.json()(req, res, next)
+})
 
 // ── Rutas ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
