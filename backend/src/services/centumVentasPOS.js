@@ -602,6 +602,29 @@ async function retrySyncVentasCentum() {
       const centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
       const centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
 
+      // Si el cliente no tiene id_centum, intentar resolver desde DB local
+      if (!venta.id_cliente_centum || venta.id_cliente_centum === 0) {
+        if (venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final') {
+          const { data: cliLocal } = await supabase
+            .from('clientes')
+            .select('id_centum')
+            .ilike('razon_social', venta.nombre_cliente)
+            .not('id_centum', 'is', null)
+            .gt('id_centum', 0)
+            .limit(1)
+            .single()
+          if (cliLocal?.id_centum) {
+            venta.id_cliente_centum = cliLocal.id_centum
+            await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
+            console.log(`[Centum Retry] Cliente resuelto: ${venta.nombre_cliente} → id_centum=${cliLocal.id_centum}`)
+          } else {
+            await supabase.from('ventas_pos').update({ centum_error: `Cliente "${venta.nombre_cliente}" aún sin ID Centum` }).eq('id', venta.id)
+            fallidas++
+            continue
+          }
+        }
+      }
+
       // Determinar condición IVA y división
       let condicionIva = venta.condicion_iva || 'CF'
       if (!venta.condicion_iva && venta.id_cliente_centum) {
