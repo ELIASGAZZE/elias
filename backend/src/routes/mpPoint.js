@@ -182,14 +182,17 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
 // POST /api/mp-point/devices/:id/resolve-qr — auto-detectar y asignar QR vinculado al posnet
 router.post('/devices/:id/resolve-qr', verificarAuth, async (req, res) => {
   try {
-    // 1. Obtener info del device para sacar pos_id
-    const devResp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, { headers: mpHeaders() })
-    if (!devResp.ok) {
-      const err = await devResp.json().catch(() => ({}))
-      console.error('[MP QR Resolve] Error obteniendo device:', devResp.status, err)
-      return res.status(devResp.status).json({ error: 'No se pudo obtener info del posnet' })
+    // 1. Obtener pos_id del device buscando en el listado (GET individual no existe en MP API)
+    const listResp = await fetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
+    if (!listResp.ok) {
+      console.error('[MP QR Resolve] Error listando devices:', listResp.status)
+      return res.status(listResp.status).json({ error: 'No se pudo obtener info del posnet' })
     }
-    const device = await devResp.json()
+    const listData = await listResp.json()
+    const device = (listData.devices || []).find(d => d.id === req.params.id)
+    if (!device) {
+      return res.status(404).json({ error: `Posnet ${req.params.id} no encontrado en Mercado Pago` })
+    }
     const posId = device.pos_id
     if (!posId) {
       return res.status(400).json({ error: 'Este posnet no tiene un POS (caja) vinculado en Mercado Pago. Vinculalo desde el dashboard de MP.' })
