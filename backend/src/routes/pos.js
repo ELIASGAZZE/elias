@@ -64,9 +64,9 @@ router.get('/articulos', verificarAuth, async (req, res) => {
   }
 })
 
-// POST /api/pos/sincronizar-articulos (admin)
+// POST /api/pos/sincronizar-articulos (admin/gestor)
 // Sincroniza artículos desde Centum manualmente
-router.post('/sincronizar-articulos', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/sincronizar-articulos', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual_pos')
     res.json(resultado)
@@ -212,14 +212,23 @@ router.get('/subrubros', verificarAuth, async (req, res) => {
 // Lista atributos únicos desde la columna JSONB de artículos
 router.get('/atributos-articulo', verificarAuth, async (req, res) => {
   try {
-    // Leer artículos que tengan atributos no vacíos
-    const { data, error } = await supabase
-      .from('articulos')
-      .select('atributos')
-      .not('atributos', 'eq', '[]')
-      .not('atributos', 'is', null)
-
-    if (error) throw error
+    // Leer artículos que tengan atributos no vacíos (paginar para traer todos)
+    let allData = []
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data: page, error } = await supabase
+        .from('articulos')
+        .select('atributos')
+        .not('atributos', 'eq', '[]')
+        .not('atributos', 'is', null)
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      allData = allData.concat(page || [])
+      if (!page || page.length < pageSize) break
+      from += pageSize
+    }
+    const data = allData
 
     // Extraer atributos únicos agrupados por nombre
     const attrMap = {} // { nombreAttr: { id, nombre, valores: { id_valor: valor } } }
