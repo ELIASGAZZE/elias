@@ -688,13 +688,25 @@ function calcularPromocionesLocales(carrito, promociones) {
       for (const id of (p.itemsAfectados || [])) articulosAfectados.add(id)
     }
 
+    // Reservar unidades usadas como condición por promos condicionales
+    // (solo si el artículo NO es también beneficio de esa promo, ya que el dedup per-unit lo maneja)
+    const unidadesReservadas = {} // artId → cant reservada como condición
+    for (const promo of condValidas) {
+      for (const [artId, cant] of Object.entries(promo.itemsCondicionUsados || {})) {
+        if (!(promo.itemsAfectados || []).includes(Number(artId))) {
+          unidadesReservadas[artId] = (unidadesReservadas[artId] || 0) + cant
+        }
+      }
+    }
+
     // Para cada artículo, asignar unidades por rate DESC
     const promoDescFinal = new Map() // promoIdx -> descuento recalculado
     const promoItemsFinal = new Map() // promoIdx -> [itemIds]
     for (const artId of articulosAfectados) {
       const itemCarrito = carrito.find(i => i.articulo.id === artId)
       if (!itemCarrito) continue
-      let unidadesDisp = itemCarrito.cantidad
+      let unidadesDisp = itemCarrito.cantidad - (unidadesReservadas[artId] || 0)
+      if (unidadesDisp <= 0) continue
 
       // Recopilar promos que afectan este artículo con su rate por unidad
       const claims = []
