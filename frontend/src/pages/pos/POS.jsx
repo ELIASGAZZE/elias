@@ -1413,7 +1413,8 @@ const POS = () => {
   const inputDniClienteRef = useRef(null)
 
   function handleCobrar() {
-    if (totalConGiftCards > MONTO_LIMITE_DNI && (!cliente.id_centum || cliente.id_centum === 0)) {
+    const clienteIdentificado = (cliente.id_centum && cliente.id_centum !== 0) || (cliente.razon_social && cliente.razon_social !== 'Consumidor Final')
+    if (totalConGiftCards > MONTO_LIMITE_DNI && !clienteIdentificado) {
       setBusquedaDniCliente('')
       setClientesDni([])
       setMostrarDniPopup(true)
@@ -1424,9 +1425,8 @@ const POS = () => {
   }
 
   function seleccionarClienteDni(cli) {
-    if (!cli.id_centum) return
     setCliente({
-      id_centum: cli.id_centum,
+      id_centum: cli.id_centum || 0,
       codigo: cli.codigo || '',
       razon_social: cli.razon_social,
       condicion_iva: cli.condicion_iva || 'CF',
@@ -1443,7 +1443,7 @@ const POS = () => {
 
   function onClienteDniCreado(clienteNuevo) {
     setMostrarCrearClienteDni(false)
-    if (clienteNuevo?.id_centum) {
+    if (clienteNuevo) {
       seleccionarClienteDni(clienteNuevo)
     }
   }
@@ -5657,12 +5657,7 @@ const POS = () => {
                   <button
                     key={c.id || c.id_centum}
                     onClick={() => seleccionarClienteDni(c)}
-                    disabled={!c.id_centum}
-                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                      c.id_centum
-                        ? 'border-gray-100 hover:border-green-300 hover:bg-green-50/50'
-                        : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
-                    }`}
+                    className="w-full text-left p-3 rounded-lg border transition-colors border-gray-100 hover:border-green-300 hover:bg-green-50/50"
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium text-gray-800 truncate">{c.razon_social}</span>

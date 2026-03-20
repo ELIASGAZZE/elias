@@ -4,14 +4,14 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE } = require('../services/centumVentasPOS')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at'
+    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at'
 
     // Supabase limita a 1000 por defecto — paginar para traer todos
     const PAGE_SIZE = 1000
@@ -53,6 +53,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       descuento3: parseFloat(a.descuento3) || 0,
       esPesable: a.es_pesable || false,
       codigosBarras: a.codigos_barras || [],
+      marca: a.marca || null,
       atributos: a.atributos || [],
       updatedAt: a.updated_at || null,
     }))
@@ -169,6 +170,33 @@ router.get('/rubros', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al obtener rubros:', err.message)
     res.status(500).json({ error: 'Error al obtener rubros' })
+  }
+})
+
+// GET /api/pos/marcas — marcas distintas de artículos
+router.get('/marcas', verificarAuth, async (req, res) => {
+  try {
+    const PAGE_SIZE = 1000
+    const set = new Set()
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('articulos')
+        .select('marca')
+        .eq('tipo', 'automatico')
+        .not('marca', 'is', null)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      for (const row of data) { if (row.marca) set.add(row.marca) }
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+    const marcas = [...set].sort((a, b) => a.localeCompare(b)).map(m => ({ nombre: m }))
+    res.json({ marcas })
+  } catch (err) {
+    console.error('[POS] Error al obtener marcas:', err.message)
+    res.status(500).json({ error: 'Error al obtener marcas' })
   }
 })
 
@@ -515,6 +543,30 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                 .update({ centum_error: errorMsg })
                 .eq('id', data.id)
               return
+            }
+
+            // Si el cliente no tiene id_centum, intentar resolver desde DB local
+            if (!data.id_cliente_centum || data.id_cliente_centum === 0) {
+              if (data.nombre_cliente && data.nombre_cliente !== 'Consumidor Final') {
+                const { data: cliLocal } = await supabase
+                  .from('clientes')
+                  .select('id_centum')
+                  .ilike('razon_social', data.nombre_cliente)
+                  .not('id_centum', 'is', null)
+                  .gt('id_centum', 0)
+                  .limit(1)
+                  .single()
+                if (cliLocal?.id_centum) {
+                  data.id_cliente_centum = cliLocal.id_centum
+                  await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', data.id)
+                  console.log(`[Centum POS] Cliente resuelto: ${data.nombre_cliente} → id_centum=${cliLocal.id_centum}`)
+                } else {
+                  const errorMsg = `Cliente "${data.nombre_cliente}" aún no tiene ID en Centum. Se reintentará automáticamente.`
+                  console.log(`[Centum POS] ${errorMsg}`)
+                  await supabase.from('ventas_pos').update({ centum_error: errorMsg }).eq('id', data.id)
+                  return
+                }
+              }
             }
 
             const resultado = await registrarVentaPOSEnCentum(data, {
@@ -900,6 +952,17 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al obtener detalle de venta:', err.message)
     res.status(500).json({ error: 'Error al obtener detalle de venta' })
+  }
+})
+
+// POST /api/pos/ventas/sync-caes — buscar CAE para ventas EMPRESA que aún no tienen
+router.post('/ventas/sync-caes', verificarAuth, async (req, res) => {
+  try {
+    const result = await retrySyncCAE()
+    res.json(result)
+  } catch (err) {
+    console.error('[POS] Error al sincronizar CAEs:', err.message)
+    res.status(500).json({ error: 'Error al sincronizar CAEs' })
   }
 })
 

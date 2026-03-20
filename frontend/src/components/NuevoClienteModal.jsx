@@ -174,6 +174,7 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
   }
 
   const [warningCentum, setWarningCentum] = useState(null)
+  const [clienteGuardado, setClienteGuardado] = useState(null)
 
   const guardarCliente = async () => {
     if (!form.razon_social.trim()) {
@@ -200,7 +201,8 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
       })
 
       if (data.warning_centum) {
-        // Cliente creado local pero falló Centum — mostrar warning y no cerrar
+        // Cliente creado local pero falló Centum — guardar referencia y mostrar warning
+        setClienteGuardado(data)
         setWarningCentum(data.warning_centum)
         setGuardando(false)
         return
@@ -257,10 +259,10 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
               <p className="text-amber-800 font-medium">Cliente guardado localmente</p>
               <p className="text-amber-700">{warningCentum}</p>
               <button
-                onClick={() => { onCreado?.(); onClose() }}
+                onClick={() => { onCreado?.(clienteGuardado); onClose() }}
                 className="w-full py-2 rounded-lg text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors"
               >
-                Entendido
+                Continuar con la venta
               </button>
             </div>
           )}
