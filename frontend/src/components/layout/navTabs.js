@@ -8,7 +8,6 @@ export const TABS_BASE = [
 export const TABS_ADMIN = [
   { label: 'Art. ERP', path: '/admin/articulos' },
   { label: 'Art. Manual', path: '/admin/articulos-manuales' },
-  { label: 'Art. Combos', path: '/admin/articulos-combos' },
 ]
 
 // Función que devuelve los tabs según el rol
