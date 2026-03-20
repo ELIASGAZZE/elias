@@ -2030,9 +2030,9 @@ const POS = () => {
           setBusquedaArt('')
           return true
         }
-        // Detectar duplicado: mismo código de barras escaneado dos veces seguidas
+        // Detectar duplicado: mismo código de barras escaneado dos veces seguidas (solo pesables)
         const ultimo = ultimoBarcodaBalanzaRef.current
-        if (ultimo && ultimo === codigo) {
+        if (articuloPlu.esPesable && ultimo && ultimo === codigo) {
           // Mostrar alerta de duplicado y guardar datos para agregar si confirma
           setAlertaDuplicado({ articulo: articuloPlu, pesoKg: balanza.pesoKg, barcode: codigo })
           setBusquedaArt('')
@@ -2040,9 +2040,24 @@ const POS = () => {
         }
         // Guardar como último escaneado
         ultimoBarcodaBalanzaRef.current = codigo
-        // Agregar como línea separada (no sumar al existente)
+        // Si el artículo NO es pesable, tratarlo como unitario (cantidad 1) aunque venga de balanza
+        const cantidadFinal = articuloPlu.esPesable ? balanza.pesoKg : 1
         const dPrice = modoDelivery ? deliveryPriceMap[articuloPlu.id] : undefined
-        setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: balanza.pesoKg, ...(dPrice != null ? { precioOverride: parseFloat(dPrice) } : {}) }])
+        if (!articuloPlu.esPesable) {
+          // Unitario: sumar al existente o agregar con cantidad 1
+          setCarrito(prev => {
+            const idx = prev.findIndex(i => i.articulo.id === articuloPlu.id)
+            if (idx >= 0) {
+              const nuevo = [...prev]
+              nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + 1 }
+              return nuevo
+            }
+            return [...prev, { articulo: articuloPlu, cantidad: 1, ...(dPrice != null ? { precioOverride: parseFloat(dPrice) } : {}) }]
+          })
+        } else {
+          // Pesable: agregar como línea separada con el peso
+          setCarrito(prev => [...prev, { articulo: articuloPlu, cantidad: cantidadFinal, ...(dPrice != null ? { precioOverride: parseFloat(dPrice) } : {}) }])
+        }
         setBusquedaArt('')
         return true
       }
