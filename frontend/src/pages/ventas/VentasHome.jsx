@@ -357,9 +357,9 @@ const VentasHome = () => {
                       <p className="text-sm text-gray-500 truncate">
                         {v.nombre_cliente || 'Consumidor Final'}
                       </p>
-                      {!v.centum_sync && !v.centum_comprobante && v.centum_error && (
-                        <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error}>
-                          Error: {v.centum_error}
+                      {!v.centum_sync && !v.centum_comprobante && (
+                        <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error || 'Sin error registrado — el envío a Centum no se completó'}>
+                          {v.centum_error ? `Error: ${v.centum_error}` : 'Sin sincronizar — error desconocido'}
                         </p>
                       )}
                       {mediosUsados.length > 0 && (
