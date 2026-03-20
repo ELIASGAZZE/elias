@@ -90,43 +90,6 @@ const TareasEquipo = () => {
       <Navbar titulo="Tareas" sinTabs />
       <TareasNav />
 
-      {/* Nav tabs */}
-      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2">
-        <Link
-          to="/tareas"
-          className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-        >
-          Pendientes
-        </Link>
-        <span className="text-sm px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg font-medium">
-          Equipo
-        </span>
-        {(esAdmin || esGestor) && (
-          <>
-            <Link
-              to="/tareas/panel"
-              className="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
-            >
-              Panel general
-            </Link>
-            <Link
-              to="/tareas/analytics"
-              className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-            >
-              Analisis
-            </Link>
-          </>
-        )}
-        {esAdmin && (
-          <Link
-            to="/tareas/admin"
-            className="text-sm px-3 py-1.5 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium"
-          >
-            Configurar
-          </Link>
-        )}
-      </div>
-
       <div className="w-full px-6 py-6">
         {/* Filtros */}
         <div className="flex items-center justify-between mb-6">
