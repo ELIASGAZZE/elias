@@ -57,10 +57,14 @@ const AuditoriaHome = () => {
       if (!map[id]) map[id] = nombre
     })
     data.cancelaciones.forEach(c => {
-      if (!map[c.cajero_id]) map[c.cajero_id] = c.cajero_nombre || 'Sin nombre'
+      const id = c.empleado_id || c.cajero_id
+      const nombre = c.empleado_nombre || c.cajero_nombre || 'Sin nombre'
+      if (!map[id]) map[id] = nombre
     })
     data.eliminaciones.forEach(e => {
-      if (!map[e.usuario_id]) map[e.usuario_id] = e.usuario_nombre || 'Sin nombre'
+      const id = e.empleado_id || e.usuario_id
+      const nombre = e.empleado_nombre || e.usuario_nombre || 'Sin nombre'
+      if (!map[id]) map[id] = nombre
     })
     return Object.entries(map).map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre))
   }, [data])
@@ -71,8 +75,8 @@ const AuditoriaHome = () => {
     if (cajeroFiltro === 'todos') return data
     return {
       ventas: data.ventas.filter(v => (v.empleado_id || v.cajero_id) === cajeroFiltro),
-      cancelaciones: data.cancelaciones.filter(c => c.cajero_id === cajeroFiltro),
-      eliminaciones: data.eliminaciones.filter(e => e.usuario_id === cajeroFiltro),
+      cancelaciones: data.cancelaciones.filter(c => (c.empleado_id || c.cajero_id) === cajeroFiltro),
+      eliminaciones: data.eliminaciones.filter(e => (e.empleado_id || e.usuario_id) === cajeroFiltro),
       cierres: data.cierres.filter(c => c.empleado?.id === cajeroFiltro || c.cajero_id === cajeroFiltro),
     }
   }, [data, cajeroFiltro])
@@ -125,12 +129,12 @@ const AuditoriaHome = () => {
       map[nombre].items += (v.items || []).length
     })
     data.cancelaciones.forEach(c => {
-      const nombre = c.cajero_nombre || 'Sin nombre'
+      const nombre = c.empleado_nombre || c.cajero_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, monto: 0, items: 0, cancelaciones: 0, eliminaciones: 0 }
       map[nombre].cancelaciones++
     })
     data.eliminaciones.forEach(e => {
-      const nombre = e.usuario_nombre || 'Sin nombre'
+      const nombre = e.empleado_nombre || e.usuario_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, monto: 0, items: 0, cancelaciones: 0, eliminaciones: 0 }
       map[nombre].eliminaciones++
     })
@@ -171,7 +175,7 @@ const AuditoriaHome = () => {
     return filtrado.cierres
       .filter(c => c.estado !== 'abierta')
       .map(c => {
-        const cajero = c.cajero?.nombre || 'Sin nombre'
+        const cajero = c.empleado?.nombre || c.cajero?.nombre || 'Sin nombre'
         const caja = c.caja?.nombre || 'Sin caja'
         const fecha = new Date(c.created_at).toLocaleDateString('es-AR')
         const totalEfectivo = c.total_efectivo || 0
@@ -197,7 +201,7 @@ const AuditoriaHome = () => {
     if (!data || cajeroFiltro !== 'todos') return []
     const map = {}
     data.eliminaciones.forEach(e => {
-      const nombre = e.usuario_nombre || 'Sin nombre'
+      const nombre = e.empleado_nombre || e.usuario_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, eliminaciones: 0 }
       map[nombre].eliminaciones++
     })
@@ -214,12 +218,12 @@ const AuditoriaHome = () => {
       map[nombre].ventas++
     })
     data.cancelaciones.forEach(c => {
-      const nombre = c.cajero_nombre || 'Sin nombre'
+      const nombre = c.empleado_nombre || c.cajero_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, cancelaciones: 0, eliminaciones: 0 }
       map[nombre].cancelaciones++
     })
     data.eliminaciones.forEach(e => {
-      const nombre = e.usuario_nombre || 'Sin nombre'
+      const nombre = e.empleado_nombre || e.usuario_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, cancelaciones: 0, eliminaciones: 0 }
       map[nombre].eliminaciones++
     })
@@ -595,7 +599,7 @@ const AuditoriaHome = () => {
                       {filtrado.cancelaciones.map(c => (
                         <tr key={c.id} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-700">{new Date(c.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                          <td className="px-3 py-2 text-gray-700">{c.cajero_nombre}</td>
+                          <td className="px-3 py-2 text-gray-700">{c.empleado_nombre || c.cajero_nombre}</td>
                           <td className="px-3 py-2 text-gray-700 max-w-[300px] truncate">{c.motivo}</td>
                           <td className="px-3 py-2 text-right text-gray-700">{(c.items || []).length}</td>
                           <td className="px-3 py-2 text-right text-gray-700">{formatPrecio(c.total)}</td>
@@ -623,7 +627,7 @@ const AuditoriaHome = () => {
                       {filtrado.eliminaciones.map((e, i) => (
                         <tr key={i} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-700">{new Date(e.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                          <td className="px-3 py-2 text-gray-700">{e.usuario_nombre}</td>
+                          <td className="px-3 py-2 text-gray-700">{e.empleado_nombre || e.usuario_nombre}</td>
                           <td className="px-3 py-2 text-gray-700">
                             {(e.items || []).map((item, j) => (
                               <span key={j} className="inline-block bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded mr-1 mb-1">

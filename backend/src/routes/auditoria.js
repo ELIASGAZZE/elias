@@ -106,11 +106,46 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
       })
     })
 
+    // Mapear cierre_id → empleado para lookup directo
+    const empleadoPorCierre = {}
+    cierres.forEach(c => {
+      if (c.empleado?.nombre) {
+        empleadoPorCierre[c.id] = { nombre: c.empleado.nombre, id: c.empleado.id }
+      }
+    })
+
     ventas.forEach(v => {
       const sesiones = cierresPorCaja[v.caja_id] || []
       const sesion = sesiones.find(s => v.created_at >= s.apertura && v.created_at <= s.cierre)
       v.empleado_nombre = sesion?.empleado_nombre || v.cajero?.nombre || 'Sin asignar'
       v.empleado_id = sesion?.empleado_id || v.cajero_id
+    })
+
+    // Enriquecer cancelaciones con nombre de empleado
+    cancelaciones.forEach(c => {
+      if (c.cierre_id && empleadoPorCierre[c.cierre_id]) {
+        c.empleado_nombre = empleadoPorCierre[c.cierre_id].nombre
+        c.empleado_id = empleadoPorCierre[c.cierre_id].id
+      } else if (c.caja_id) {
+        const sesiones = cierresPorCaja[c.caja_id] || []
+        const sesion = sesiones.find(s => c.created_at >= s.apertura && c.created_at <= s.cierre)
+        c.empleado_nombre = sesion?.empleado_nombre || c.cajero_nombre || 'Sin asignar'
+        c.empleado_id = sesion?.empleado_id || c.cajero_id
+      } else {
+        c.empleado_nombre = c.cajero_nombre || 'Sin asignar'
+        c.empleado_id = c.cajero_id
+      }
+    })
+
+    // Enriquecer eliminaciones con nombre de empleado
+    eliminaciones.forEach(e => {
+      if (e.cierre_id && empleadoPorCierre[e.cierre_id]) {
+        e.empleado_nombre = empleadoPorCierre[e.cierre_id].nombre
+        e.empleado_id = empleadoPorCierre[e.cierre_id].id
+      } else {
+        e.empleado_nombre = e.usuario_nombre || 'Sin asignar'
+        e.empleado_id = e.usuario_id
+      }
     })
 
     res.json({ ventas, cancelaciones, eliminaciones, cierres })
