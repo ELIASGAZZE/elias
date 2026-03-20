@@ -52,6 +52,8 @@ const VentasHome = () => {
   const cargarVentas = async () => {
     setCargando(true)
     try {
+      // Primero intentar obtener CAEs pendientes de ventas EMPRESA
+      await api.post('/api/pos/ventas/sync-caes').catch(() => {})
       const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}`)
       setVentas(data.ventas || [])
     } catch (err) {
