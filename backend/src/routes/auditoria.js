@@ -84,12 +84,34 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
       safeQuery(
         supabase
           .from('cierres_pos')
-          .select('*, caja:cajas(nombre), cajero:perfiles!cajero_id(nombre)')
+          .select('*, caja:cajas(nombre), cajero:perfiles!cajero_id(nombre), empleado:empleados!empleado_id(id, nombre)')
           .gte('created_at', desde)
           .lte('created_at', hasta)
           .order('created_at', { ascending: false })
       ),
     ])
+
+    // Enriquecer ventas con nombre de empleado via cierres_pos
+    // Mapear caja_id + rango de cierre → empleado
+    const cierresPorCaja = {}
+    cierres.forEach(c => {
+      if (!c.empleado?.nombre) return
+      const key = c.caja_id
+      if (!cierresPorCaja[key]) cierresPorCaja[key] = []
+      cierresPorCaja[key].push({
+        apertura: c.apertura_at,
+        cierre: c.cierre_at || new Date().toISOString(),
+        empleado_nombre: c.empleado.nombre,
+        empleado_id: c.empleado.id,
+      })
+    })
+
+    ventas.forEach(v => {
+      const sesiones = cierresPorCaja[v.caja_id] || []
+      const sesion = sesiones.find(s => v.created_at >= s.apertura && v.created_at <= s.cierre)
+      v.empleado_nombre = sesion?.empleado_nombre || v.cajero?.nombre || 'Sin asignar'
+      v.empleado_id = sesion?.empleado_id || v.cajero_id
+    })
 
     res.json({ ventas, cancelaciones, eliminaciones, cierres })
   } catch (err) {
