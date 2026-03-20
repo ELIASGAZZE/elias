@@ -515,16 +515,36 @@ function calcularPromocionesLocales(carrito, promociones) {
         const condDetalle = grupoMatchNames.join(' + ')
         const itemsAfectados = [...descontados]
         // Guardar items de condición usados (articuloId -> cantUsada) para dedup
-        // OR items: solo reservar los necesarios (vecesPromo), no todos los que matchearon
+        // Cuando un atributo matchea múltiples items, distribuir vecesPromo*cantReq entre ellos
         const itemsCondicionUsados = {}
+        // Agrupar items por condRef para distribuir correctamente
+        const porCondRef = new Map()
+        for (const entry of itemsCondicion) {
+          const key = entry.condRef
+          if (!porCondRef.has(key)) porCondRef.set(key, [])
+          porCondRef.get(key).push(entry)
+        }
         let orReservados = 0
-        for (const { item, cantReq, isOr } of itemsCondicion) {
+        for (const [condRef, entries] of porCondRef) {
+          const isOr = entries[0].isOr
+          const cantReq = entries[0].cantReq
           if (isOr) {
-            if (orReservados >= vecesPromo) continue
-            itemsCondicionUsados[item.articulo.id] = cantReq
-            orReservados++
+            // OR: reservar solo vecesPromo items
+            for (const { item } of entries) {
+              if (orReservados >= vecesPromo) break
+              const reservar = Math.min(cantReq, item.cantidad)
+              itemsCondicionUsados[item.articulo.id] = (itemsCondicionUsados[item.articulo.id] || 0) + reservar
+              orReservados++
+            }
           } else {
-            itemsCondicionUsados[item.articulo.id] = (itemsCondicionUsados[item.articulo.id] || 0) + cantReq
+            // AND: distribuir vecesPromo*cantReq entre items que matchearon
+            let totalNecesario = vecesPromo * cantReq
+            for (const { item } of entries) {
+              if (totalNecesario <= 0) break
+              const reservar = Math.min(item.cantidad, totalNecesario)
+              itemsCondicionUsados[item.articulo.id] = (itemsCondicionUsados[item.articulo.id] || 0) + reservar
+              totalNecesario -= reservar
+            }
           }
         }
         aplicadas.push({
@@ -667,10 +687,15 @@ function calcularPromocionesLocales(carrito, promociones) {
             return { ...i, cantidad: Math.min(i.cantidad, cantDisp) }
           }).filter(i => i.cantidad > 0)
           const reeval = calcularPromoCondicional(promo._reglas, carritoVirtual)
+          // Reconstruir itemsCondicionUsados desde reservas reales del paso 1
+          const itemsCondicionUsados = {}
+          for (const { artId, cant } of reservas) {
+            itemsCondicionUsados[artId] = (itemsCondicionUsados[artId] || 0) + cant
+          }
           if (reeval) {
-            condValidas.push({ ...promo, ...reeval })
+            condValidas.push({ ...promo, ...reeval, itemsCondicionUsados })
           } else {
-            condValidas.push(promo) // fallback: usar datos originales
+            condValidas.push({ ...promo, itemsCondicionUsados }) // fallback: usar datos originales
           }
         }
       }
