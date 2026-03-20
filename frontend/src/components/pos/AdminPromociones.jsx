@@ -62,12 +62,14 @@ const AdminPromociones = () => {
     // forma_pago
     forma_cobro_nombre: '',
     // condicional
-    grupos_condicion: [[]], // array de grupos, cada grupo es array de artículos {id, nombre, codigo, cantidad}
+    grupos_condicion: [[]], // array de grupos, cada grupo es array de items {id?, nombre, codigo?, cantidad, tipo?: 'articulo'|'atributo', id_valor?}
     grupo_activo: 0,
-    articulos_beneficio: [], // [{ id, nombre, codigo }]
+    articulos_beneficio: [], // [{ id?, nombre, codigo?, tipo?: 'articulo'|'atributo', id_valor? }]
     tipo_descuento: 'porcentaje',
     descuento_en_ambos: false,
     buscando_campo: null, // 'condicion' | 'beneficio'
+    cond_tipo_entidad: 'articulo', // 'articulo' | 'atributo' — para el buscador de condición
+    benef_tipo_entidad: 'articulo', // 'articulo' | 'atributo' — para el buscador de beneficio
     descuento_en: 'mas_barato', // 'mas_barato' | 'mas_caro' (solo NxM)
   })
 
@@ -179,7 +181,7 @@ const AdminPromociones = () => {
       llevar: '3', pagar: '2',
       precio_combo: '', articulos_combo: [],
       forma_cobro_nombre: '',
-      grupos_condicion: [[]], grupo_activo: 0, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null,
+      grupos_condicion: [[]], grupo_activo: 0, articulos_beneficio: [], tipo_descuento: 'porcentaje', descuento_en_ambos: false, buscando_campo: null, cond_tipo_entidad: 'articulo', benef_tipo_entidad: 'articulo',
       descuento_en: 'mas_barato',
     })
     setBusqueda('')
@@ -218,6 +220,8 @@ const AdminPromociones = () => {
       tipo_descuento: reglas.tipo_descuento || 'porcentaje',
       descuento_en_ambos: reglas.descuento_en_ambos || false,
       buscando_campo: null,
+      cond_tipo_entidad: 'articulo',
+      benef_tipo_entidad: 'articulo',
       descuento_en: reglas.descuento_en || 'mas_barato',
     })
     setEditandoId(promo.id)
@@ -688,6 +692,7 @@ const AdminPromociones = () => {
                                           Y
                                         </button>
                                       )}
+                                      {ac.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
                                       <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
                                       <input type="number" min="1" value={ac.cantidad}
                                         onChange={e => setForm(prev => {
@@ -718,7 +723,7 @@ const AdminPromociones = () => {
                                   if (idx === 0 || !ac.o) return null
                                   const orIdx = grupo.slice(0, idx).filter((_, i) => i > 0 && grupo[i].o).length
                                   return (
-                                    <div key={ac.id}>
+                                    <div key={ac.tipo === 'atributo' ? `attr-${ac.id_valor}` : ac.id}>
                                       {orIdx > 0 && <div className="text-center text-xs font-bold text-orange-400 py-0.5">o</div>}
                                       <div className="flex items-center gap-2 bg-white border border-orange-200 rounded-lg px-3 py-2">
                                         <button type="button" onClick={() => setForm(prev => {
@@ -729,6 +734,7 @@ const AdminPromociones = () => {
                                         })} className="px-1.5 py-0.5 rounded text-xs font-bold border bg-orange-100 border-orange-300 text-orange-600 hover:opacity-80" title="Cambiar a obligatorio (Y)">
                                           O
                                         </button>
+                                        {ac.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
                                         <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
                                         <input type="number" min="1" value={ac.cantidad}
                                           onChange={e => setForm(prev => {
@@ -757,37 +763,71 @@ const AdminPromociones = () => {
                         </div>
                         )
                       })()}
-                      {grupo.length === 0 && <div className="text-xs text-gray-400 mb-1">Grupo vacío — agregá artículos abajo</div>}
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={form.buscando_campo === 'condicion' ? busqueda : ''}
-                          onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'condicion' }))}
-                          onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'condicion' })); setBusqueda(e.target.value) }}
-                          placeholder="Buscar artículo condición..."
-                          className="campo-form text-sm"
-                        />
-                        {form.buscando_campo === 'condicion' && resultados.length > 0 && (
-                          <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                            {resultados.map(item => (
-                              <button key={item.id} type="button" onClick={() => {
-                                const grupoActual = form.grupos_condicion[gi] || []
-                                if (grupoActual.find(c => c.id === item.id)) return
-                                setForm(prev => {
-                                  const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
-                                    i === gi ? [...g, { id: item.id, nombre: item.nombre, codigo: item.codigo, cantidad: 1 }] : g
-                                  )
-                                  return { ...prev, grupos_condicion: nuevosGrupos, buscando_campo: null }
-                                })
-                                setBusqueda(''); setResultados([])
-                              }} className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b last:border-b-0">
-                                <span className="font-medium">{item.nombre}</span>
-                                <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                      {grupo.length === 0 && <div className="text-xs text-gray-400 mb-1">Grupo vacío — agregá artículos o atributos abajo</div>}
+                      {/* Toggle tipo entidad condición */}
+                      <div className="flex gap-1 mb-1">
+                        {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }].map(t => (
+                          <button key={t.v} type="button" onClick={() => { setForm(prev => ({ ...prev, cond_tipo_entidad: t.v })); setBusqueda(''); setResultados([]) }}
+                            className={`text-xs px-2 py-0.5 rounded-full transition-colors ${form.cond_tipo_entidad === t.v ? 'bg-pink-500 text-white' : 'bg-white text-gray-500 border border-gray-300'}`}>{t.l}</button>
+                        ))}
                       </div>
+                      {form.cond_tipo_entidad === 'atributo' ? (
+                        <select className="campo-form text-sm" value="" onChange={e => {
+                          const [attrId, valId] = e.target.value.split('|')
+                          const attr = atributosDisponibles.find(a => String(a.id) === attrId)
+                          if (!attr) return
+                          const val = attr.valores.find(v => String(v.id_valor) === valId)
+                          if (!val) return
+                          const grupoActual = form.grupos_condicion[gi] || []
+                          if (grupoActual.find(c => c.tipo === 'atributo' && c.id_valor === val.id_valor)) return
+                          setForm(prev => {
+                            const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                              i === gi ? [...g, { tipo: 'atributo', id_valor: val.id_valor, nombre: `${attr.nombre}: ${val.valor}`, cantidad: 1 }] : g
+                            )
+                            return { ...prev, grupos_condicion: nuevosGrupos }
+                          })
+                        }}>
+                          <option value="">Seleccionar atributo condición...</option>
+                          {atributosDisponibles.map(attr => (
+                            <optgroup key={attr.id} label={attr.nombre}>
+                              {attr.valores.map(v => (
+                                <option key={v.id_valor} value={`${attr.id}|${v.id_valor}`}>{v.valor}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={form.buscando_campo === 'condicion' ? busqueda : ''}
+                            onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'condicion' }))}
+                            onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'condicion' })); setBusqueda(e.target.value) }}
+                            placeholder="Buscar artículo condición..."
+                            className="campo-form text-sm"
+                          />
+                          {form.buscando_campo === 'condicion' && resultados.length > 0 && (
+                            <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                              {resultados.map(item => (
+                                <button key={item.id} type="button" onClick={() => {
+                                  const grupoActual = form.grupos_condicion[gi] || []
+                                  if (grupoActual.find(c => c.id === item.id && (!c.tipo || c.tipo === 'articulo'))) return
+                                  setForm(prev => {
+                                    const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                                      i === gi ? [...g, { tipo: 'articulo', id: item.id, nombre: item.nombre, codigo: item.codigo, cantidad: 1 }] : g
+                                    )
+                                    return { ...prev, grupos_condicion: nuevosGrupos, buscando_campo: null }
+                                  })
+                                  setBusqueda(''); setResultados([])
+                                }} className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b last:border-b-0">
+                                  <span className="font-medium">{item.nombre}</span>
+                                  <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })()}
@@ -811,37 +851,66 @@ const AdminPromociones = () => {
                 {form.articulos_beneficio.length > 0 && (
                   <div className="space-y-1 mt-1 mb-2">
                     {form.articulos_beneficio.map((ab, idx) => (
-                      <div key={ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <div key={ab.tipo === 'atributo' ? `attr-${ab.id_valor}` : ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        {ab.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
                         <span className="flex-1 text-sm text-gray-700">{ab.nombre}</span>
                         <button type="button" onClick={() => setForm(prev => ({ ...prev, articulos_beneficio: prev.articulos_beneficio.filter((_, i) => i !== idx) }))} className="text-green-400 hover:text-green-600">&times;</button>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="relative mt-1">
-                  <input
-                    type="text"
-                    value={form.buscando_campo === 'beneficio' ? busqueda : ''}
-                    onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'beneficio' }))}
-                    onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'beneficio' })); setBusqueda(e.target.value) }}
-                    placeholder="Buscar artículo beneficio..."
-                    className="campo-form text-sm"
-                  />
-                  {form.buscando_campo === 'beneficio' && resultados.length > 0 && (
-                    <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                      {resultados.map(item => (
-                        <button key={item.id} type="button" onClick={() => {
-                          if (form.articulos_beneficio.find(b => b.id === item.id)) return
-                          setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, { id: item.id, nombre: item.nombre, codigo: item.codigo }], buscando_campo: null }))
-                          setBusqueda(''); setResultados([])
-                        }} className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm border-b last:border-b-0">
-                          <span className="font-medium">{item.nombre}</span>
-                          <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                {/* Toggle tipo entidad beneficio */}
+                <div className="flex gap-1 mt-1 mb-1">
+                  {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }].map(t => (
+                    <button key={t.v} type="button" onClick={() => { setForm(prev => ({ ...prev, benef_tipo_entidad: t.v })); setBusqueda(''); setResultados([]) }}
+                      className={`text-xs px-2 py-0.5 rounded-full transition-colors ${form.benef_tipo_entidad === t.v ? 'bg-green-500 text-white' : 'bg-white text-gray-500 border border-gray-300'}`}>{t.l}</button>
+                  ))}
                 </div>
+                {form.benef_tipo_entidad === 'atributo' ? (
+                  <select className="campo-form text-sm" value="" onChange={e => {
+                    const [attrId, valId] = e.target.value.split('|')
+                    const attr = atributosDisponibles.find(a => String(a.id) === attrId)
+                    if (!attr) return
+                    const val = attr.valores.find(v => String(v.id_valor) === valId)
+                    if (!val) return
+                    if (form.articulos_beneficio.find(b => b.tipo === 'atributo' && b.id_valor === val.id_valor)) return
+                    setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, { tipo: 'atributo', id_valor: val.id_valor, nombre: `${attr.nombre}: ${val.valor}` }] }))
+                  }}>
+                    <option value="">Seleccionar atributo beneficio...</option>
+                    {atributosDisponibles.map(attr => (
+                      <optgroup key={attr.id} label={attr.nombre}>
+                        {attr.valores.map(v => (
+                          <option key={v.id_valor} value={`${attr.id}|${v.id_valor}`}>{v.valor}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="relative mt-1">
+                    <input
+                      type="text"
+                      value={form.buscando_campo === 'beneficio' ? busqueda : ''}
+                      onFocus={() => setForm(prev => ({ ...prev, buscando_campo: 'beneficio' }))}
+                      onChange={e => { setForm(prev => ({ ...prev, buscando_campo: 'beneficio' })); setBusqueda(e.target.value) }}
+                      placeholder="Buscar artículo beneficio..."
+                      className="campo-form text-sm"
+                    />
+                    {form.buscando_campo === 'beneficio' && resultados.length > 0 && (
+                      <div className="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                        {resultados.map(item => (
+                          <button key={item.id} type="button" onClick={() => {
+                            if (form.articulos_beneficio.find(b => b.id === item.id && (!b.tipo || b.tipo === 'articulo'))) return
+                            setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, { tipo: 'articulo', id: item.id, nombre: item.nombre, codigo: item.codigo }], buscando_campo: null }))
+                            setBusqueda(''); setResultados([])
+                          }} className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm border-b last:border-b-0">
+                            <span className="font-medium">{item.nombre}</span>
+                            <span className="text-gray-400 text-xs ml-2">{item.codigo}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Tipo y valor de descuento */}
