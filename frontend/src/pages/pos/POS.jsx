@@ -621,9 +621,10 @@ function calcularPromocionesLocales(carrito, promociones) {
               segmentos.push({ tipo: 'and', items: [cond] })
             }
           }
+          // Paso A: calcular veces (sin reservar)
           let veces = Infinity
-          const reservas = [] // {artId, cant}
           let cumple = true
+          const segCondData = [] // guardar datos para paso B
           for (const seg of segmentos) {
             if (seg.tipo === 'and') {
               for (const cond of seg.items) {
@@ -631,36 +632,16 @@ function calcularPromocionesLocales(carrito, promociones) {
                 const cantReq = cond.cantidad || 1
                 if (!r || r.dispCant < cantReq) { cumple = false; break }
                 veces = Math.min(veces, Math.floor(r.dispCant / cantReq))
-                if (r.items) {
-                  // Atributo: reservar distribuyendo entre todos los items que matchean
-                  let pendiente = cantReq
-                  for (const it of r.items) {
-                    if (pendiente <= 0) break
-                    const d = Math.min(pendiente, disponible[it.articulo.id] || 0)
-                    if (d > 0) { reservas.push({ artId: it.articulo.id, cant: d }); pendiente -= d }
-                  }
-                } else {
-                  reservas.push({ artId: r.item.articulo.id, cant: cantReq })
-                }
+                segCondData.push({ tipo: 'and', cond, r, cantReq })
               }
             } else {
-              // OR: buscar primera alternativa disponible
               let found = false
               for (const cond of seg.items) {
                 const r = findDisp(cond)
                 const cantReq = cond.cantidad || 1
                 if (r && r.dispCant >= cantReq) {
                   veces = Math.min(veces, Math.floor(r.dispCant / cantReq))
-                  if (r.items) {
-                    let pendiente = cantReq
-                    for (const it of r.items) {
-                      if (pendiente <= 0) break
-                      const d = Math.min(pendiente, disponible[it.articulo.id] || 0)
-                      if (d > 0) { reservas.push({ artId: it.articulo.id, cant: d }); pendiente -= d }
-                    }
-                  } else {
-                    reservas.push({ artId: r.item.articulo.id, cant: cantReq })
-                  }
+                  segCondData.push({ tipo: 'or', cond, r, cantReq })
                   found = true
                   break
                 }
@@ -670,29 +651,20 @@ function calcularPromocionesLocales(carrito, promociones) {
             if (!cumple) break
           }
           if (cumple && veces > 0) {
-            // Escalar reservas por veces (reservas contiene 1x cantReq, necesitamos veces*cantReq)
-            if (veces > 1) {
-              const escaladas = []
-              // Agrupar por artId y escalar, respetando disponibilidad real
-              const porArt = {}
-              for (const { artId, cant } of reservas) {
-                porArt[artId] = (porArt[artId] || 0) + cant
-              }
-              let sobrante = 0
-              for (const [artId, cant1x] of Object.entries(porArt)) {
-                const cantReal = Math.min(cant1x * veces, disponible[artId] || 0)
-                escaladas.push({ artId: Number(artId), cant: cantReal })
-                sobrante += (cant1x * veces) - cantReal
-              }
-              // Si algún artículo no tuvo suficiente, distribuir sobrante entre los demás
-              if (sobrante > 0) {
-                for (const r of escaladas) {
-                  if (sobrante <= 0) break
-                  const extra = Math.min(sobrante, (disponible[r.artId] || 0) - r.cant)
-                  if (extra > 0) { r.cant += extra; sobrante -= extra }
+            // Paso B: construir reservas con veces*cantReq, distribuyendo entre todos los items
+            const reservas = []
+            for (const { r, cantReq } of segCondData) {
+              const totalReservar = veces * cantReq
+              if (r.items) {
+                let pendiente = totalReservar
+                for (const it of r.items) {
+                  if (pendiente <= 0) break
+                  const d = Math.min(pendiente, disponible[it.articulo.id] || 0)
+                  if (d > 0) { reservas.push({ artId: it.articulo.id, cant: d }); pendiente -= d }
                 }
+              } else {
+                reservas.push({ artId: r.item.articulo.id, cant: totalReservar })
               }
-              return escaladas
             }
             return reservas
           }
