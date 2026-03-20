@@ -2,6 +2,7 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
+import { useAuth } from '../../context/AuthContext'
 
 const SECCIONES = [
   {
@@ -140,13 +141,16 @@ const SECCIONES = [
 ]
 
 const ConfiguracionHub = () => {
+  const { esAdmin } = useAuth()
+  const seccionesVisibles = esAdmin ? SECCIONES : SECCIONES.filter(s => s.id === 'promociones')
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar titulo="Configuración" sinTabs />
 
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {SECCIONES.map(sec => (
+          {seccionesVisibles.map(sec => (
             <Link
               key={sec.id}
               to={`/admin/configuracion/${sec.id}`}
