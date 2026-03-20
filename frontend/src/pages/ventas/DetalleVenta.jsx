@@ -102,6 +102,12 @@ const DetalleVenta = () => {
   const pagos = venta.pagos || []
   const descFormaPago = venta.descuento_forma_pago
 
+  // Calcular redondeo de efectivo (centenas)
+  const totalEsperado = Math.round(
+    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0)) * 100
+  ) / 100
+  const redondeoEfectivo = Math.round((parseFloat(venta.total) - totalEsperado) * 100) / 100
+
   const esNC = venta.tipo === 'nota_credito'
   const relacionadas = venta.ventas_relacionadas || []
   const ncsHijas = relacionadas.filter(v => v.tipo === 'nota_credito')
@@ -490,6 +496,12 @@ const DetalleVenta = () => {
               <div className="flex justify-between">
                 <span className="text-gray-500">Descuentos</span>
                 <span className="text-green-600">-{formatPrecio(venta.descuento_total)}</span>
+              </div>
+            )}
+            {redondeoEfectivo !== 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Redondeo efectivo</span>
+                <span className={redondeoEfectivo < 0 ? 'text-green-600' : 'text-red-500'}>{redondeoEfectivo > 0 ? '+' : ''}{formatPrecio(redondeoEfectivo)}</span>
               </div>
             )}
             <div className="flex justify-between font-semibold text-base border-t border-gray-200 pt-2">
