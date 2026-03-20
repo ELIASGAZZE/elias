@@ -52,6 +52,8 @@ const VentasHome = () => {
   const cargarVentas = async () => {
     setCargando(true)
     try {
+      // Primero intentar obtener CAEs pendientes de ventas EMPRESA
+      await api.post('/api/pos/ventas/sync-caes').catch(() => {})
       const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}`)
       setVentas(data.ventas || [])
     } catch (err) {
@@ -355,6 +357,11 @@ const VentasHome = () => {
                       <p className="text-sm text-gray-500 truncate">
                         {v.nombre_cliente || 'Consumidor Final'}
                       </p>
+                      {!v.centum_sync && !v.centum_comprobante && v.centum_error && (
+                        <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error}>
+                          Error: {v.centum_error}
+                        </p>
+                      )}
                       {mediosUsados.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
                           {mediosUsados.map(m => (
