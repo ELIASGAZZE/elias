@@ -72,6 +72,7 @@ const DetalleCierrePos = () => {
   const [denominaciones, setDenominaciones] = useState([])
   const [retiros, setRetiros] = useState([])
   const [gastos, setGastos] = useState([])
+  const [cambiosPrecio, setCambiosPrecio] = useState([])
   const [controlandoGasto, setControlandoGasto] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -120,6 +121,15 @@ const DetalleCierrePos = () => {
             api.get(`/api/cierres-pos/${id}/pos-ventas`)
               .then(res => setPosVentas(res.data))
               .catch(() => setPosNoEncontrado(true))
+          )
+        }
+
+        // Cambios de precio (solo admin)
+        if (esAdmin) {
+          promises.push(
+            api.get(`/api/cierres-pos/${id}/cambios-precio`)
+              .then(res => setCambiosPrecio(res.data || []))
+              .catch(() => {})
           )
         }
 
@@ -805,6 +815,62 @@ const DetalleCierrePos = () => {
                 Hay {gastos.filter(g => !g.controlado).length} gasto(s) sin controlar
               </div>
             )}
+          </div>
+        )}
+
+        {/* Cambios de precio durante el turno (solo admin) */}
+        {esAdmin && cambiosPrecio.length > 0 && (
+          <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-violet-800 flex items-center gap-2">
+              <svg className="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Cambios de precio ({cambiosPrecio.length})
+            </h3>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="bg-white border border-violet-200 rounded-lg p-2">
+                <span className="text-xs text-gray-500 block">Total cambios</span>
+                <span className="font-bold text-violet-700">{cambiosPrecio.length}</span>
+              </div>
+              <div className="bg-white border border-violet-200 rounded-lg p-2">
+                <span className="text-xs text-gray-500 block">Importe diferencia</span>
+                <span className={`font-bold ${cambiosPrecio.reduce((s, c) => s + parseFloat(c.diferencia || 0) * parseFloat(c.cantidad || 1), 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {formatMonto(cambiosPrecio.reduce((s, c) => s + parseFloat(c.diferencia || 0) * parseFloat(c.cantidad || 1), 0))}
+                </span>
+              </div>
+              <div className="bg-white border border-violet-200 rounded-lg p-2">
+                <span className="text-xs text-gray-500 block">Artículos afectados</span>
+                <span className="font-bold text-violet-700">{new Set(cambiosPrecio.map(c => c.articulo_id)).size}</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {cambiosPrecio.map((cp, idx) => (
+                <div key={idx} className="border border-violet-100 rounded-lg p-3 bg-white/60">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium text-gray-800 block truncate">
+                        {cp.articulo_nombre} {cp.articulo_codigo ? `(${cp.articulo_codigo})` : ''}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {formatMonto(cp.precio_original)} → {formatMonto(cp.precio_nuevo)}
+                        {parseFloat(cp.cantidad) !== 1 && ` × ${cp.cantidad}`}
+                      </span>
+                    </div>
+                    <div className="text-right flex-shrink-0 ml-2">
+                      <span className={`text-sm font-bold ${parseFloat(cp.diferencia) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {parseFloat(cp.diferencia) > 0 ? '+' : ''}{formatMonto(parseFloat(cp.diferencia) * parseFloat(cp.cantidad || 1))}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">{cp.motivo}</span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(cp.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

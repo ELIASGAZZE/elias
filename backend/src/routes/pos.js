@@ -442,6 +442,45 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       if (error) throw error
       data = ventaData
 
+      // Registrar cambios de precio (async, no bloquea)
+      if (data) {
+        const cambiosItems = items.filter(i => i.cambio_precio)
+        if (cambiosItems.length > 0) {
+          // Buscar cierre activo para la caja
+          let cierreId = null
+          if (caja_id) {
+            const { data: cierreData } = await supabase
+              .from('cierres_pos')
+              .select('id')
+              .eq('caja_id', caja_id)
+              .eq('estado', 'abierta')
+              .maybeSingle()
+            cierreId = cierreData?.id || null
+          }
+          const registros = cambiosItems.map(i => ({
+            venta_pos_id: data.id,
+            cierre_id: cierreId,
+            cajero_id: req.usuario.id,
+            cajero_nombre: req.perfil?.nombre || 'Desconocido',
+            caja_id: caja_id || null,
+            sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
+            articulo_id: i.id_articulo,
+            articulo_codigo: i.codigo || null,
+            articulo_nombre: i.nombre || null,
+            precio_original: i.cambio_precio.precio_original,
+            precio_nuevo: i.cambio_precio.precio_nuevo,
+            diferencia: i.cambio_precio.precio_nuevo - i.cambio_precio.precio_original,
+            cantidad: i.cantidad || 1,
+            motivo: i.cambio_precio.motivo,
+          }))
+          supabase.from('pos_cambios_precio_log').insert(registros)
+            .then(({ error: logErr }) => {
+              if (logErr) console.warn('[POS] No se pudo registrar cambios de precio:', logErr.message)
+              else console.log(`[POS] ${registros.length} cambio(s) de precio registrados para venta ${data.id}`)
+            })
+        }
+      }
+
       // Registrar venta en Centum ERP (async, no bloquea la respuesta)
       if (data) {
         (async () => {
