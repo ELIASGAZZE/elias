@@ -14,6 +14,7 @@
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js')
 const { SSEServerTransport } = require('@modelcontextprotocol/sdk/server/sse.js')
+const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js')
 const { z } = require('zod')
 const express = require('express')
 const tools = require('./mcp-tools-config')
@@ -287,7 +288,59 @@ function mountMcp(app) {
     })
   })
 
-  // ── SSE endpoint — Cowork connects here ──────────────────────────────
+  // ── Streamable HTTP endpoint (Cowork) ──────────────────────────────
+  // POST /mcp — JSON-RPC requests (initialize, tool calls, etc)
+  app.post('/mcp', async (req, res) => {
+    try {
+      const server = createMcpServer()
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless
+      })
+      res.on('close', () => {
+        transport.close()
+        server.close()
+      })
+      await server.connect(transport)
+      await transport.handleRequest(req, res)
+    } catch (err) {
+      console.error('[MCP] Streamable HTTP error:', err.message)
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message })
+      }
+    }
+  })
+
+  // GET /mcp — SSE stream for server notifications (Streamable HTTP spec)
+  app.get('/mcp', async (req, res) => {
+    // Si pide SSE (Accept: text/event-stream), abrimos stream
+    const accept = req.headers.accept || ''
+    if (accept.includes('text/event-stream')) {
+      const server = createMcpServer()
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      })
+      res.on('close', () => {
+        transport.close()
+        server.close()
+      })
+      await server.connect(transport)
+      await transport.handleRequest(req, res)
+    } else {
+      // Health check si no es SSE
+      res.json({
+        status: 'ok',
+        tools: tools.length,
+        activeSessions: Object.keys(transports).length,
+      })
+    }
+  })
+
+  // DELETE /mcp — close session
+  app.delete('/mcp', async (req, res) => {
+    res.status(200).end()
+  })
+
+  // ── Legacy SSE endpoint (Claude Code CLI via HTTP) ────────────────────
   app.get('/mcp/sse', async (req, res) => {
     const server = createMcpServer()
     const transport = new SSEServerTransport('/mcp/messages', res)
@@ -300,7 +353,6 @@ function mountMcp(app) {
     await server.connect(transport)
   })
 
-  // ── Messages endpoint ────────────────────────────────────────────────
   app.post('/mcp/messages', async (req, res) => {
     const sessionId = req.query.sessionId
     const session = transports[sessionId]
@@ -320,7 +372,7 @@ function mountMcp(app) {
     })
   })
 
-  console.log(`[MCP] Montado en /mcp/sse — ${tools.length} tools (OAuth habilitado)`)
+  console.log(`[MCP] Montado en /mcp — ${tools.length} tools (OAuth + Streamable HTTP)`)
 }
 
 // ── Standalone mode (stdio for Claude Code CLI) ─────────────────────────────
