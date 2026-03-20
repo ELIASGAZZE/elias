@@ -47,18 +47,22 @@ const AuditoriaHome = () => {
       .finally(() => setCargando(false))
   }, [desde, hasta])
 
-  // Lista de cajeros únicos
+  // Lista de empleados únicos
   const cajeros = useMemo(() => {
     if (!data) return []
     const map = {}
     data.ventas.forEach(v => {
-      const nombre = v.cajero?.nombre || 'Sin nombre'
-      if (!map[v.cajero_id]) map[v.cajero_id] = nombre
+      const id = v.empleado_id || v.cajero_id
+      const nombre = v.empleado_nombre || v.empleado_nombre || v.cajero?.nombre || 'Sin nombre'
+      if (!map[id]) map[id] = nombre
     })
     data.cancelaciones.forEach(c => {
       if (!map[c.cajero_id]) map[c.cajero_id] = c.cajero_nombre || 'Sin nombre'
     })
-    return Object.entries(map).map(([id, nombre]) => ({ id, nombre }))
+    data.eliminaciones.forEach(e => {
+      if (!map[e.usuario_id]) map[e.usuario_id] = e.usuario_nombre || 'Sin nombre'
+    })
+    return Object.entries(map).map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre))
   }, [data])
 
   // Filtrar datos por cajero
@@ -66,10 +70,10 @@ const AuditoriaHome = () => {
     if (!data) return null
     if (cajeroFiltro === 'todos') return data
     return {
-      ventas: data.ventas.filter(v => v.cajero_id === cajeroFiltro),
+      ventas: data.ventas.filter(v => (v.empleado_id || v.cajero_id) === cajeroFiltro),
       cancelaciones: data.cancelaciones.filter(c => c.cajero_id === cajeroFiltro),
       eliminaciones: data.eliminaciones.filter(e => e.usuario_id === cajeroFiltro),
-      cierres: data.cierres.filter(c => c.cajero_id === cajeroFiltro),
+      cierres: data.cierres.filter(c => c.empleado?.id === cajeroFiltro || c.cajero_id === cajeroFiltro),
     }
   }, [data, cajeroFiltro])
 
@@ -81,13 +85,13 @@ const AuditoriaHome = () => {
     // Total items eliminados
     const totalItemsEliminados = eliminaciones.reduce((sum, e) => {
       const items = e.items || []
-      return sum + items.reduce((s, i) => s + (i.cantidad || 1), 0)
+      return sum + items.length
     }, 0)
 
     // Total items vendidos
     const totalItemsVendidos = ventas.reduce((sum, v) => {
       const items = v.items || []
-      return sum + items.reduce((s, i) => s + (i.cantidad || 1), 0)
+      return sum + items.length
     }, 0)
 
     const totalVentas = ventas.length
@@ -114,11 +118,11 @@ const AuditoriaHome = () => {
     if (!data || cajeroFiltro !== 'todos') return []
     const map = {}
     data.ventas.forEach(v => {
-      const nombre = v.cajero?.nombre || 'Sin nombre'
+      const nombre = v.empleado_nombre || v.cajero?.nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, monto: 0, items: 0, cancelaciones: 0, eliminaciones: 0 }
       map[nombre].ventas++
       map[nombre].monto += v.total || 0
-      map[nombre].items += (v.items || []).reduce((s, i) => s + (i.cantidad || 1), 0)
+      map[nombre].items += (v.items || []).length
     })
     data.cancelaciones.forEach(c => {
       const nombre = c.cajero_nombre || 'Sin nombre'
@@ -128,23 +132,12 @@ const AuditoriaHome = () => {
     data.eliminaciones.forEach(e => {
       const nombre = e.usuario_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, ventas: 0, monto: 0, items: 0, cancelaciones: 0, eliminaciones: 0 }
-      map[nombre].eliminaciones += (e.items || []).reduce((s, i) => s + (i.cantidad || 1), 0)
+      map[nombre].eliminaciones++
     })
     return Object.values(map).sort((a, b) => b.ventas - a.ventas)
   }, [data, cajeroFiltro])
 
-  // 2. Motivos de cancelación
-  const motivosCancelacion = useMemo(() => {
-    if (!filtrado) return []
-    const map = {}
-    filtrado.cancelaciones.forEach(c => {
-      const m = c.motivo || 'Sin motivo'
-      map[m] = (map[m] || 0) + 1
-    })
-    return Object.entries(map).map(([nombre, cantidad]) => ({ nombre, cantidad })).sort((a, b) => b.cantidad - a.cantidad)
-  }, [filtrado])
-
-  // 3. Ventas por hora del día
+  // 2. Ventas por hora del día
   const ventasPorHora = useMemo(() => {
     if (!filtrado) return []
     const horas = Array.from({ length: 24 }, (_, i) => ({ hora: `${i.toString().padStart(2, '0')}:00`, ventas: 0, monto: 0 }))
@@ -156,27 +149,12 @@ const AuditoriaHome = () => {
     return horas.filter(h => h.ventas > 0)
   }, [filtrado])
 
-  // 4. Medios de pago
-  const mediosPago = useMemo(() => {
-    if (!filtrado) return []
-    const map = {}
-    filtrado.ventas.forEach(v => {
-      (v.pagos || []).forEach(p => {
-        const tipo = p.tipo || 'otro'
-        if (!map[tipo]) map[tipo] = { nombre: tipo, monto: 0, cantidad: 0 }
-        map[tipo].monto += p.monto || 0
-        map[tipo].cantidad++
-      })
-    })
-    return Object.values(map).sort((a, b) => b.monto - a.monto)
-  }, [filtrado])
-
-  // 5. Descuentos por cajero
+  // 4. Descuentos por cajero
   const descuentosPorCajero = useMemo(() => {
     if (!data || cajeroFiltro !== 'todos') return []
     const map = {}
     data.ventas.forEach(v => {
-      const nombre = v.cajero?.nombre || 'Sin nombre'
+      const nombre = v.empleado_nombre || v.cajero?.nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, descuentoTotal: 0, ventas: 0 }
       map[nombre].descuentoTotal += v.descuento_total || 0
       map[nombre].ventas++
@@ -221,10 +199,92 @@ const AuditoriaHome = () => {
     data.eliminaciones.forEach(e => {
       const nombre = e.usuario_nombre || 'Sin nombre'
       if (!map[nombre]) map[nombre] = { nombre, eliminaciones: 0 }
-      map[nombre].eliminaciones += (e.items || []).reduce((s, i) => s + (i.cantidad || 1), 0)
+      map[nombre].eliminaciones++
     })
     return Object.values(map).sort((a, b) => b.eliminaciones - a.eliminaciones)
   }, [data, cajeroFiltro])
+
+  // Tasas por cajero (cancelación y eliminación como %)
+  const tasasPorCajero = useMemo(() => {
+    if (!data || cajeroFiltro !== 'todos') return []
+    const map = {}
+    data.ventas.forEach(v => {
+      const nombre = v.empleado_nombre || v.cajero?.nombre || 'Sin nombre'
+      if (!map[nombre]) map[nombre] = { nombre, ventas: 0, cancelaciones: 0, eliminaciones: 0 }
+      map[nombre].ventas++
+    })
+    data.cancelaciones.forEach(c => {
+      const nombre = c.cajero_nombre || 'Sin nombre'
+      if (!map[nombre]) map[nombre] = { nombre, ventas: 0, cancelaciones: 0, eliminaciones: 0 }
+      map[nombre].cancelaciones++
+    })
+    data.eliminaciones.forEach(e => {
+      const nombre = e.usuario_nombre || 'Sin nombre'
+      if (!map[nombre]) map[nombre] = { nombre, ventas: 0, cancelaciones: 0, eliminaciones: 0 }
+      map[nombre].eliminaciones++
+    })
+    return Object.values(map)
+      .filter(c => c.ventas + c.cancelaciones > 0)
+      .map(c => ({
+        nombre: c.nombre,
+        tasaCancelacion: parseFloat(((c.cancelaciones / (c.ventas + c.cancelaciones)) * 100).toFixed(1)),
+        tasaEliminacion: parseFloat(((c.eliminaciones / c.ventas) * 100).toFixed(1)),
+        ventas: c.ventas,
+        cancelaciones: c.cancelaciones,
+        eliminaciones: c.eliminaciones,
+      }))
+      .sort((a, b) => b.tasaCancelacion - a.tasaCancelacion)
+  }, [data, cajeroFiltro])
+
+  // Ranking artículos eliminados
+  const rankingArticulosEliminados = useMemo(() => {
+    if (!filtrado) return []
+    const map = {}
+    filtrado.eliminaciones.forEach(e => {
+      (e.items || []).forEach(i => {
+        const nombre = i.nombre || i.descripcion || 'Sin nombre'
+        if (!map[nombre]) map[nombre] = { nombre, cantidad: 0 }
+        map[nombre].cantidad++
+      })
+    })
+    return Object.values(map).sort((a, b) => b.cantidad - a.cantidad).slice(0, 15)
+  }, [filtrado])
+
+  // Ranking artículos de tickets anulados
+  const rankingArticulosAnulados = useMemo(() => {
+    if (!filtrado) return []
+    const map = {}
+    filtrado.cancelaciones.forEach(c => {
+      (c.items || []).forEach(i => {
+        const nombre = i.nombre || i.descripcion || 'Sin nombre'
+        if (!map[nombre]) map[nombre] = { nombre, cantidad: 0 }
+        map[nombre].cantidad++
+      })
+    })
+    return Object.values(map).sort((a, b) => b.cantidad - a.cantidad).slice(0, 15)
+  }, [filtrado])
+
+  // Actividad por hora — anulaciones
+  const anulacionesPorHora = useMemo(() => {
+    if (!filtrado) return []
+    const horas = Array.from({ length: 24 }, (_, i) => ({ hora: `${i.toString().padStart(2, '0')}:00`, cantidad: 0 }))
+    filtrado.cancelaciones.forEach(c => {
+      const h = new Date(c.created_at).getHours()
+      horas[h].cantidad++
+    })
+    return horas.filter(h => h.cantidad > 0)
+  }, [filtrado])
+
+  // Actividad por hora — eliminaciones
+  const eliminacionesPorHora = useMemo(() => {
+    if (!filtrado) return []
+    const horas = Array.from({ length: 24 }, (_, i) => ({ hora: `${i.toString().padStart(2, '0')}:00`, cantidad: 0 }))
+    filtrado.eliminaciones.forEach(e => {
+      const h = new Date(e.fecha).getHours()
+      horas[h].cantidad++
+    })
+    return horas.filter(h => h.cantidad > 0)
+  }, [filtrado])
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -257,10 +317,10 @@ const AuditoriaHome = () => {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Cajero</label>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Empleado</label>
             <select value={cajeroFiltro} onChange={e => setCajeroFiltro(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[180px]">
-              <option value="todos">Todos los cajeros</option>
+              <option value="todos">Todos los empleados</option>
               {cajeros.map(c => (
                 <option key={c.id} value={c.id}>{c.nombre}</option>
               ))}
@@ -309,21 +369,6 @@ const AuditoriaHome = () => {
                 </Card>
               )}
 
-              {/* Motivos de cancelación */}
-              {motivosCancelacion.length > 0 && (
-                <Card titulo="Motivos de Cancelación">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie data={motivosCancelacion} dataKey="cantidad" nameKey="nombre" cx="50%" cy="50%" outerRadius={100} label={({ nombre, percent }) => `${nombre.substring(0, 20)}${nombre.length > 20 ? '...' : ''} (${(percent * 100).toFixed(0)}%)`}>
-                        {motivosCancelacion.map((_, i) => (
-                          <Cell key={i} fill={COLORES[i % COLORES.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </Card>
-              )}
 
               {/* Eliminaciones por cajero */}
               {cajeroFiltro === 'todos' && eliminacionesPorCajero.length > 0 && (
@@ -340,21 +385,6 @@ const AuditoriaHome = () => {
                 </Card>
               )}
 
-              {/* Medios de pago */}
-              {mediosPago.length > 0 && (
-                <Card titulo="Medios de Pago">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie data={mediosPago} dataKey="monto" nameKey="nombre" cx="50%" cy="50%" outerRadius={100} label={({ nombre, percent }) => `${nombre} (${(percent * 100).toFixed(0)}%)`}>
-                        {mediosPago.map((_, i) => (
-                          <Cell key={i} fill={COLORES[i % COLORES.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(v) => formatPrecio(v)} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </Card>
-              )}
 
               {/* Ventas por hora */}
               {ventasPorHora.length > 0 && (
@@ -367,6 +397,36 @@ const AuditoriaHome = () => {
                       <Tooltip />
                       <Legend />
                       <Bar dataKey="ventas" fill="#8B5CF6" name="Cantidad de ventas" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              )}
+
+              {/* Anulaciones por hora */}
+              {anulacionesPorHora.length > 0 && (
+                <Card titulo="Anulaciones por Hora del Día">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={anulacionesPorHora}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="hora" tick={{ fontSize: 11 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="cantidad" fill="#EF4444" name="Anulaciones" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              )}
+
+              {/* Eliminaciones por hora */}
+              {eliminacionesPorHora.length > 0 && (
+                <Card titulo="Eliminaciones por Hora del Día">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={eliminacionesPorHora}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="hora" tick={{ fontSize: 11 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="cantidad" fill="#F97316" name="Eliminaciones" />
                     </BarChart>
                   </ResponsiveContainer>
                 </Card>
@@ -404,6 +464,79 @@ const AuditoriaHome = () => {
                       <Line yAxisId="right" type="monotone" dataKey="monto" stroke="#10B981" name="Monto" />
                     </LineChart>
                   </ResponsiveContainer>
+                </Card>
+              )}
+
+              {/* Tasas por cajero (%) */}
+              {cajeroFiltro === 'todos' && tasasPorCajero.length > 0 && (
+                <Card titulo="Tasa de Cancelación y Eliminación por Cajero (%)">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={tasasPorCajero}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="nombre" tick={{ fontSize: 11 }} />
+                      <YAxis unit="%" />
+                      <Tooltip formatter={(v, name, props) => {
+                        const d = props.payload
+                        if (name === 'Cancelación %') return [`${v}% (${d.cancelaciones} de ${d.ventas + d.cancelaciones})`]
+                        return [`${v}% (${d.eliminaciones} de ${d.ventas} tickets)`]
+                      }} />
+                      <Legend />
+                      <Bar dataKey="tasaCancelacion" fill="#EF4444" name="Cancelación %" />
+                      <Bar dataKey="tasaEliminacion" fill="#F97316" name="Eliminación %" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              )}
+
+              {/* Ranking artículos eliminados */}
+              {rankingArticulosEliminados.length > 0 && (
+                <Card titulo="Top Artículos Eliminados">
+                  <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2 text-gray-500 font-medium">#</th>
+                          <th className="text-left px-3 py-2 text-gray-500 font-medium">Artículo</th>
+                          <th className="text-right px-3 py-2 text-gray-500 font-medium">Veces eliminado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rankingArticulosEliminados.map((a, i) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                            <td className="px-3 py-2 text-gray-700">{a.nombre}</td>
+                            <td className="px-3 py-2 text-right font-medium text-orange-600">{a.cantidad}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
+
+              {/* Ranking artículos de tickets anulados */}
+              {rankingArticulosAnulados.length > 0 && (
+                <Card titulo="Top Artículos en Tickets Anulados">
+                  <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2 text-gray-500 font-medium">#</th>
+                          <th className="text-left px-3 py-2 text-gray-500 font-medium">Artículo</th>
+                          <th className="text-right px-3 py-2 text-gray-500 font-medium">Veces anulado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rankingArticulosAnulados.map((a, i) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                            <td className="px-3 py-2 text-gray-700">{a.nombre}</td>
+                            <td className="px-3 py-2 text-right font-medium text-red-600">{a.cantidad}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </Card>
               )}
 
