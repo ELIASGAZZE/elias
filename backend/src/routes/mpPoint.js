@@ -179,28 +179,56 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
   }
 })
 
-// GET /api/mp-point/qr-cajas — listar cajas QR de MP (para config terminal)
-router.get('/qr-cajas', verificarAuth, async (req, res) => {
+// POST /api/mp-point/devices/:id/resolve-qr — auto-detectar y asignar QR vinculado al posnet
+router.post('/devices/:id/resolve-qr', verificarAuth, async (req, res) => {
   try {
-    const resp = await fetch(`https://api.mercadopago.com/pos?limit=50`, {
+    // 1. Obtener info del device para sacar pos_id
+    const devResp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, { headers: mpHeaders() })
+    if (!devResp.ok) {
+      const err = await devResp.json().catch(() => ({}))
+      console.error('[MP QR Resolve] Error obteniendo device:', devResp.status, err)
+      return res.status(devResp.status).json({ error: 'No se pudo obtener info del posnet' })
+    }
+    const device = await devResp.json()
+    const posId = device.pos_id
+    if (!posId) {
+      return res.status(400).json({ error: 'Este posnet no tiene un POS (caja) vinculado en Mercado Pago. Vinculalo desde el dashboard de MP.' })
+    }
+
+    // 2. Consultar el POS para ver si ya tiene external_id
+    const posResp = await fetch(`https://api.mercadopago.com/pos/${posId}`, {
       headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
     })
-    const data = await resp.json()
-    if (!resp.ok) return res.status(resp.status).json(data)
-    // Filtrar solo cajas que tienen external_id (son cajas QR configuradas)
-    const cajas = (data.results || [])
-      .filter(p => p.external_id)
-      .map(p => ({
-        id: p.id,
-        name: p.name,
-        external_id: p.external_id,
-        store_id: p.store_id,
-        qr_image: p.qr?.image || null,
-      }))
-    res.json(cajas)
+    if (!posResp.ok) {
+      console.error('[MP QR Resolve] Error obteniendo POS:', posResp.status)
+      return res.status(posResp.status).json({ error: 'No se pudo obtener info de la caja QR vinculada' })
+    }
+    const pos = await posResp.json()
+
+    // 3. Si ya tiene external_id, retornar
+    if (pos.external_id) {
+      console.log(`[MP QR Resolve] POS ${posId} ya tiene external_id: ${pos.external_id}`)
+      return res.json({ external_id: pos.external_id, auto_assigned: false })
+    }
+
+    // 4. Generar y asignar external_id
+    const externalId = `POS${posId}`
+    const putResp = await fetch(`https://api.mercadopago.com/pos/${posId}`, {
+      method: 'PUT',
+      headers: mpHeaders(),
+      body: JSON.stringify({ external_id: externalId }),
+    })
+    if (!putResp.ok) {
+      const err = await putResp.json().catch(() => ({}))
+      console.error('[MP QR Resolve] Error asignando external_id:', putResp.status, err)
+      return res.status(putResp.status).json({ error: 'No se pudo asignar el external_id a la caja QR' })
+    }
+
+    console.log(`[MP QR Resolve] POS ${posId} — external_id asignado: ${externalId}`)
+    res.json({ external_id: externalId, auto_assigned: true })
   } catch (err) {
-    console.error('[MP Point] Error listando cajas QR:', err.message)
-    res.status(500).json({ error: 'Error al listar cajas QR' })
+    console.error('[MP QR Resolve] Error:', err.message)
+    res.status(500).json({ error: 'Error al resolver caja QR del posnet' })
   }
 })
 

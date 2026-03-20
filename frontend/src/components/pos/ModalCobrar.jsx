@@ -277,7 +277,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       const qrPosId = terminalConfig.mp_qr_pos_id
       if (esN950 && paymentType === 'qr') {
         if (!qrPosId) {
-          setMpError('No hay caja QR configurada para este posnet. Configurala en ajustes del terminal.')
+          setMpError('No hay caja QR vinculada al posnet. Reconfigurá el terminal o vinculá un QR desde el dashboard de MP.')
           setMpEstado('error')
           return
         }

@@ -707,9 +707,6 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [cajaId, setCajaId] = useState(configActual?.caja_id || '')
   const [mpDevices, setMpDevices] = useState([])
   const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
-  const [mpQrPosId, setMpQrPosId] = useState(configActual?.mp_qr_pos_id || '')
-  const [mpQrCajas, setMpQrCajas] = useState([])
-  const [cargandoQrCajas, setCargandoQrCajas] = useState(true)
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -724,14 +721,6 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
         setMpDevices(Array.isArray(devs) ? devs : [])
       })
       .catch((err) => console.warn('MP Point devices no disponible:', err.message))
-    // Cargar cajas QR de MP
-    api.get('/api/mp-point/qr-cajas')
-      .then(({ data }) => {
-        console.log('[Config] QR cajas recibidas:', data)
-        setMpQrCajas(Array.isArray(data) ? data : [])
-      })
-      .catch((err) => console.warn('MP QR cajas no disponible:', err.message))
-      .finally(() => setCargandoQrCajas(false))
   }, [])
 
   useEffect(() => {
@@ -746,10 +735,13 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
 
   const [cambiandoModo, setCambiandoModo] = useState(false)
   const [errorModo, setErrorModo] = useState('')
+  const [qrError, setQrError] = useState('')
+  const [resolviendoQr, setResolviendoQr] = useState(false)
 
   const confirmar = async () => {
     if (!sucursalId || !cajaId) return
     setErrorModo('')
+    setQrError('')
 
     // Si seleccionó un posnet, cambiar a modo PDV automáticamente
     if (mpDeviceId) {
@@ -770,13 +762,31 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       }
     }
 
+    // Si es N950, auto-resolver QR vinculado
+    let mpQrPosId = null
+    if (mpDeviceId && mpDeviceId.includes('N950')) {
+      setResolviendoQr(true)
+      try {
+        const { data } = await api.post(`/api/mp-point/devices/${mpDeviceId}/resolve-qr`)
+        mpQrPosId = data.external_id
+        console.log(`[MP QR] Resuelto: ${mpQrPosId} (auto_assigned: ${data.auto_assigned})`)
+      } catch (err) {
+        const msg = err.response?.data?.error || err.message
+        console.error('Error resolviendo QR:', msg)
+        setQrError(msg)
+        setResolviendoQr(false)
+        return
+      }
+      setResolviendoQr(false)
+    }
+
     onConfigurar({
       sucursal_id: sucursalId,
       sucursal_nombre: sucursalSeleccionada?.nombre || '',
       caja_id: cajaId,
       caja_nombre: cajaSeleccionada?.nombre || '',
       mp_device_id: mpDeviceId || null,
-      mp_qr_pos_id: mpQrPosId || null,
+      mp_qr_pos_id: mpQrPosId,
     })
   }
 
@@ -861,34 +871,18 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
 
           {mpDeviceId && mpDeviceId.includes('N950') && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Caja QR Mercado Pago</label>
-              {cargandoQrCajas ? (
-                <p className="text-sm text-gray-400 py-2">Cargando cajas QR...</p>
-              ) : (
-                <select
-                  value={mpQrPosId}
-                  onChange={e => setMpQrPosId(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-                >
-                  <option value="">Sin caja QR</option>
-                  {mpQrCajas.map(c => (
-                    <option key={c.external_id} value={c.external_id}>
-                      {c.name} ({c.external_id})
-                    </option>
-                  ))}
-                </select>
-              )}
-              <p className="text-xs text-gray-400 mt-1">El N950 no muestra QR en pantalla. Seleccioná la caja QR impresa para cobros QR.</p>
+              <p className="text-xs text-sky-600 bg-sky-50 rounded-lg px-3 py-2">La caja QR vinculada al posnet se detectará automáticamente al guardar.</p>
+              {qrError && <p className="text-xs text-red-500 mt-1 font-medium">{qrError}</p>}
             </div>
           )}
         </div>
 
         <button
           onClick={confirmar}
-          disabled={!sucursalId || !cajaId || cambiandoModo}
+          disabled={!sucursalId || !cajaId || cambiandoModo || resolviendoQr}
           className="w-full mt-6 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors"
         >
-          {cambiandoModo ? 'Configurando posnet...' : 'Guardar configuracion'}
+          {cambiandoModo ? 'Configurando posnet...' : resolviendoQr ? 'Detectando caja QR...' : 'Guardar configuracion'}
         </button>
 
         {configActual && (
