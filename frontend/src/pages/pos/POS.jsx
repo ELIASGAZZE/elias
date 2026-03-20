@@ -133,13 +133,27 @@ function calcularPromoCondicional(reglas, carrito) {
   const descuentoPorItem = {}
   const cantPorItem = {}
   let descuento = 0, orDescontados = 0
-  for (const { item, cantReq, isOr } of itemsCondicion) {
-    const enBenef = listaBenef.some(ab => itemMatchesBenef(item, ab))
-    if (!enBenef) continue
-    if (isOr) {
-      const orDisp = vecesPromo - orDescontados
-      if (orDisp <= 0) continue
-      const cantDesc = Math.min(orDisp * cantReq, item.cantidad)
+
+  // Agrupar items de condición por condRef para limitar descuento total por condición
+  // (cuando un atributo matchea múltiples items, no descontar más que vecesPromo * cantReq en total)
+  const condGroups = new Map() // condRef key → { items, cantReq, isOr }
+  for (const entry of itemsCondicion) {
+    const key = entry.condRef?.tipo === 'atributo' ? `attr:${entry.condRef.id_valor}` : `art:${entry.item.articulo.id}`
+    if (!condGroups.has(key)) condGroups.set(key, { items: [], cantReq: entry.cantReq, isOr: entry.isOr })
+    condGroups.get(key).items.push(entry.item)
+  }
+
+  for (const [, group] of condGroups) {
+    const benefItems = group.items.filter(item => listaBenef.some(ab => itemMatchesBenef(item, ab)))
+    if (benefItems.length === 0) continue
+    const maxDesc = group.isOr
+      ? (vecesPromo - orDescontados) * group.cantReq
+      : vecesPromo * group.cantReq
+    if (maxDesc <= 0) continue
+    let restante = maxDesc
+    for (const item of benefItems) {
+      if (restante <= 0) break
+      const cantDesc = Math.min(restante, item.cantidad)
       const precio = calcularPrecioConDescuentosBase(item.articulo)
       const d = reglas.tipo_descuento === 'porcentaje'
         ? precio * cantDesc * ((reglas.valor || 0) / 100)
@@ -147,28 +161,21 @@ function calcularPromoCondicional(reglas, carrito) {
       descuento += d
       descuentoPorItem[item.articulo.id] = (descuentoPorItem[item.articulo.id] || 0) + d
       cantPorItem[item.articulo.id] = (cantPorItem[item.articulo.id] || 0) + cantDesc
-      orDescontados += Math.ceil(cantDesc / cantReq)
       descontados.add(item.articulo.id)
-    } else {
-      const cantDesc = Math.min(vecesPromo * cantReq, item.cantidad)
-      const precio = calcularPrecioConDescuentosBase(item.articulo)
-      const d = reglas.tipo_descuento === 'porcentaje'
-        ? precio * cantDesc * ((reglas.valor || 0) / 100)
-        : Math.min(reglas.valor || 0, precio) * cantDesc
-      descuento += d
-      descuentoPorItem[item.articulo.id] = (descuentoPorItem[item.articulo.id] || 0) + d
-      cantPorItem[item.articulo.id] = (cantPorItem[item.articulo.id] || 0) + cantDesc
-      descontados.add(item.articulo.id)
+      restante -= cantDesc
     }
+    if (group.isOr) orDescontados += Math.ceil((maxDesc - restante) / group.cantReq)
   }
 
   // Beneficios no-condición: buscar items del carrito que matchean beneficios pero no fueron usados como condición
   const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
+  let benefRestante = vecesPromo // total de veces a descontar en beneficios puros
   for (const ab of listaBenef) {
-    // Encontrar todos los items del carrito que matchean este beneficio
+    if (benefRestante <= 0) break
     const matchingItems = carrito.filter(i => itemMatchesBenef(i, ab) && !descontados.has(i.articulo.id) && !condItemIds.has(i.articulo.id))
     for (const found of matchingItems) {
-      const cantBenef = Math.min(vecesPromo, found.cantidad)
+      if (benefRestante <= 0) break
+      const cantBenef = Math.min(benefRestante, found.cantidad)
       const precio = calcularPrecioConDescuentosBase(found.articulo)
       const d = reglas.tipo_descuento === 'porcentaje'
         ? precio * cantBenef * ((reglas.valor || 0) / 100)
@@ -177,6 +184,7 @@ function calcularPromoCondicional(reglas, carrito) {
       descuentoPorItem[found.articulo.id] = (descuentoPorItem[found.articulo.id] || 0) + d
       cantPorItem[found.articulo.id] = (cantPorItem[found.articulo.id] || 0) + cantBenef
       descontados.add(found.articulo.id)
+      benefRestante -= cantBenef
     }
   }
   if (descuento <= 0) return null
