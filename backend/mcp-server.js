@@ -15,6 +15,7 @@
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js')
 const { SSEServerTransport } = require('@modelcontextprotocol/sdk/server/sse.js')
 const { z } = require('zod')
+const express = require('express')
 const tools = require('./mcp-tools-config')
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -188,9 +189,105 @@ function createMcpServer() {
 // ── Mount on Express app (for integration in index.js) ──────────────────────
 
 function mountMcp(app) {
+  const crypto = require('crypto')
   const transports = {}
 
-  // SSE endpoint — Cowork connects here
+  // Tokens válidos (en memoria — se pierden al reiniciar, Cowork reconecta)
+  const validTokens = new Set()
+  // Códigos de autorización pendientes (code → redirect_uri)
+  const authCodes = new Map()
+
+  // ── OAuth 2.0 Discovery ──────────────────────────────────────────────
+  // Cowork busca esto para saber dónde autenticarse
+  app.get('/mcp/.well-known/oauth-authorization-server', (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    res.json({
+      issuer: baseUrl,
+      authorization_endpoint: `${baseUrl}/mcp/authorize`,
+      token_endpoint: `${baseUrl}/mcp/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      code_challenge_methods_supported: ['S256'],
+    })
+  })
+
+  // También servir en la ruta estándar (algunos clientes buscan acá)
+  app.get('/.well-known/oauth-authorization-server', (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    res.json({
+      issuer: baseUrl,
+      authorization_endpoint: `${baseUrl}/mcp/authorize`,
+      token_endpoint: `${baseUrl}/mcp/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      code_challenge_methods_supported: ['S256'],
+    })
+  })
+
+  // ── OAuth Authorization endpoint ─────────────────────────────────────
+  // Auto-aprueba y redirige con un code
+  app.get('/mcp/authorize', (req, res) => {
+    const { redirect_uri, state } = req.query
+    if (!redirect_uri) {
+      return res.status(400).send('Missing redirect_uri')
+    }
+
+    const code = crypto.randomUUID()
+    authCodes.set(code, { redirect_uri, created: Date.now() })
+
+    // Limpiar codes viejos (> 5 min)
+    for (const [c, data] of authCodes) {
+      if (Date.now() - data.created > 5 * 60 * 1000) authCodes.delete(c)
+    }
+
+    const url = new URL(redirect_uri)
+    url.searchParams.set('code', code)
+    if (state) url.searchParams.set('state', state)
+    res.redirect(url.toString())
+  })
+
+  // ── OAuth Token endpoint ─────────────────────────────────────────────
+  // Intercambia code por access_token
+  app.post('/mcp/token', express.urlencoded({ extended: false }), (req, res) => {
+    const { grant_type, code, refresh_token } = req.body
+
+    if (grant_type === 'authorization_code') {
+      if (!code || !authCodes.has(code)) {
+        return res.status(400).json({ error: 'invalid_grant' })
+      }
+      authCodes.delete(code)
+    }
+
+    // Generar token
+    const token = crypto.randomUUID()
+    validTokens.add(token)
+
+    res.json({
+      access_token: token,
+      token_type: 'Bearer',
+      expires_in: 86400,
+      refresh_token: crypto.randomUUID(),
+    })
+  })
+
+  // ── OAuth Protected Resource metadata ────────────────────────────────
+  app.get('/mcp/.well-known/oauth-protected-resource', (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    res.json({
+      resource: baseUrl,
+      authorization_servers: [baseUrl],
+    })
+  })
+
+  app.get('/.well-known/oauth-protected-resource', (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    res.json({
+      resource: baseUrl,
+      authorization_servers: [baseUrl],
+    })
+  })
+
+  // ── SSE endpoint — Cowork connects here ──────────────────────────────
   app.get('/mcp/sse', async (req, res) => {
     const server = createMcpServer()
     const transport = new SSEServerTransport('/mcp/messages', res)
@@ -203,7 +300,7 @@ function mountMcp(app) {
     await server.connect(transport)
   })
 
-  // Messages endpoint — Cowork sends tool calls here
+  // ── Messages endpoint ────────────────────────────────────────────────
   app.post('/mcp/messages', async (req, res) => {
     const sessionId = req.query.sessionId
     const session = transports[sessionId]
@@ -213,16 +310,17 @@ function mountMcp(app) {
     await session.transport.handlePostMessage(req, res)
   })
 
-  // MCP health
+  // ── MCP health ───────────────────────────────────────────────────────
   app.get('/mcp/health', (req, res) => {
     res.json({
       status: 'ok',
       tools: tools.length,
       activeSessions: Object.keys(transports).length,
+      activeTokens: validTokens.size,
     })
   })
 
-  console.log(`[MCP] Montado en /mcp/sse — ${tools.length} tools registrados`)
+  console.log(`[MCP] Montado en /mcp/sse — ${tools.length} tools (OAuth habilitado)`)
 }
 
 // ── Standalone mode (stdio for Claude Code CLI) ─────────────────────────────
