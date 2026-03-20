@@ -707,6 +707,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [cajaId, setCajaId] = useState(configActual?.caja_id || '')
   const [mpDevices, setMpDevices] = useState([])
   const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
+  const [mpQrPosId, setMpQrPosId] = useState(configActual?.mp_qr_pos_id || '')
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -765,6 +766,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       caja_id: cajaId,
       caja_nombre: cajaSeleccionada?.nombre || '',
       mp_device_id: mpDeviceId || null,
+      mp_qr_pos_id: mpQrPosId || null,
     })
   }
 
@@ -846,6 +848,20 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
             <p className="text-xs text-gray-400 mt-1">Al guardar, el posnet se configurará automáticamente en modo PDV</p>
             {errorModo && <p className="text-xs text-red-500 mt-1 font-medium">{errorModo}</p>}
           </div>
+
+          {mpDeviceId && mpDeviceId.includes('N950') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Caja QR Mercado Pago</label>
+              <input
+                type="text"
+                value={mpQrPosId}
+                onChange={e => setMpQrPosId(e.target.value)}
+                placeholder="External ID de la caja QR (ej: QRAU01)"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-400 mt-1">El N950 no muestra QR en pantalla. Configurá la caja QR impresa para cobros QR.</p>
+            </div>
+          )}
         </div>
 
         <button

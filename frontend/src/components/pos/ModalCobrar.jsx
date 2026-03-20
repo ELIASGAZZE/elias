@@ -272,6 +272,18 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       }
       setMpDeviceId(deviceId)
 
+      // N950 + QR → usar QR instore (QR físico en mostrador)
+      const esN950 = deviceId.includes('N950')
+      const qrPosId = terminalConfig.mp_qr_pos_id
+      if (esN950 && paymentType === 'qr') {
+        if (!qrPosId) {
+          setMpError('No hay caja QR configurada para este posnet. Configurala en ajustes del terminal.')
+          setMpEstado('error')
+          return
+        }
+        return iniciarPagoQRInstore(montoACobrar, qrPosId)
+      }
+
       const orderBody = {
         device_id: deviceId,
         amount: montoACobrar,
@@ -333,6 +345,87 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     } catch (err) {
       console.error('[MP Point] Error creando orden:', err)
       setMpError(err.response?.data?.error || err.response?.data?.errors?.[0]?.message || 'Error al enviar al posnet')
+      setMpEstado('error')
+    }
+  }
+
+  // QR Instore — para posnet N950 (QR físico en mostrador)
+  async function iniciarPagoQRInstore(montoACobrar, qrPosId) {
+    try {
+      const extRef = `pos-qr-${Date.now()}`
+      const { data } = await api.put('/api/mp-point/qr-order', {
+        qr_pos_id: qrPosId,
+        amount: montoACobrar,
+        external_reference: extRef,
+        description: 'Venta POS',
+      })
+
+      if (!data.ok) {
+        setMpError(data.error || 'Error al crear orden QR')
+        setMpEstado('error')
+        return
+      }
+
+      setMpIntentId(extRef) // usamos external_reference como ID
+      setMpMontoIntent(montoACobrar)
+      setMpEstado('esperando')
+
+      // Safety timeout: 3 minutos
+      mpTimeoutRef.current = setTimeout(() => {
+        if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+        mpTimeoutRef.current = null
+        // Cancelar orden QR
+        api.delete(`/api/mp-point/qr-order/${qrPosId}`).catch(() => {})
+        setMpEstado('error')
+        setMpError('Tiempo agotado esperando pago QR. Verificá el estado antes de reintentar.')
+      }, 180000)
+
+      // Polling cada 3s buscando el pago (QR instore no tiene SSE por ahora)
+      mpPollingRef.current = setInterval(async () => {
+        if (mpPollingBusyRef.current || mpResolvedRef.current) return
+        mpPollingBusyRef.current = true
+        try {
+          const { data: result } = await api.get(`/api/mp-point/qr-order/${extRef}/status`)
+          if (result.status === 'approved') {
+            mpResolvedRef.current = true
+            const payId = result.payment_id
+            if (payId) {
+              setMpPaymentId(payId)
+              try {
+                const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
+                const tipoPago = pd.payment_type_id === 'account_money' ? 'QR MP'
+                  : pd.payment_type_id === 'credit_card' ? 'Crédito'
+                  : pd.payment_type_id === 'debit_card' ? 'Débito' : 'QR MP'
+                setPagos(prev => [...prev, {
+                  tipo: tipoPago,
+                  monto: montoACobrar,
+                  detalle: {
+                    mp_payment_id: payId,
+                    mp_merchant_order_id: result.merchant_order_id,
+                    payment_type: pd.payment_type_id,
+                  }
+                }])
+              } catch {
+                setPagos(prev => [...prev, {
+                  tipo: 'QR MP',
+                  monto: montoACobrar,
+                  detalle: { mp_payment_id: payId, mp_merchant_order_id: result.merchant_order_id }
+                }])
+              }
+            } else {
+              setPagos(prev => [...prev, { tipo: 'QR MP', monto: montoACobrar, detalle: {} }])
+            }
+            setMpEstado('aprobado')
+          }
+        } catch (err) {
+          console.error('[MP QR] Error polling:', err.message)
+        } finally {
+          mpPollingBusyRef.current = false
+        }
+      }, 3000)
+    } catch (err) {
+      console.error('[MP QR] Error creando orden:', err)
+      setMpError(err.response?.data?.error || 'Error al crear orden QR')
       setMpEstado('error')
     }
   }
