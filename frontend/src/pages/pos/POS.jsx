@@ -690,6 +690,7 @@ function calcularPromocionesLocales(carrito, promociones) {
           for (const { artId, cant } of reservas) {
             itemsCondicionUsados[artId] = (itemsCondicionUsados[artId] || 0) + cant
           }
+          console.log('[DEDUP-P1] reservas:', JSON.stringify(reservas), 'itemsCondicionUsados:', JSON.stringify(itemsCondicionUsados), 'reeval:', reeval ? 'sí' : 'no', 'reeval.itemsAfectados:', reeval?.itemsAfectados)
           if (reeval) {
             condValidas.push({ ...promo, ...reeval, itemsCondicionUsados })
           } else {
