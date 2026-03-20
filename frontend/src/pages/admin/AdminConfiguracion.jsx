@@ -413,7 +413,7 @@ const AdminConfiguracion = () => {
       setMensajeEditUsuario('La contraseña debe tener al menos 6 caracteres')
       return
     }
-    if ((editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && !editUsuarioData.sucursal_id) {
+    if (editUsuarioData.rol === 'operario' && !editUsuarioData.sucursal_id) {
       setMensajeEditUsuario('Seleccioná una sucursal')
       return
     }
@@ -1423,7 +1423,7 @@ const AdminConfiguracion = () => {
                 </select>
               </div>
 
-              {(editUsuarioData.rol === 'operario' || editUsuarioData.rol === 'gestor') && (
+              {editUsuarioData.rol === 'operario' && (
                 <div>
                   <label className="text-xs font-medium text-gray-500 mb-1 block">Sucursal</label>
                   <select

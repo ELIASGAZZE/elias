@@ -282,7 +282,7 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     const updateData = {
       nombre: nombre.trim(),
       rol,
-      sucursal_id: (rol === 'operario' || rol === 'gestor') ? (sucursal_id || null) : null,
+      sucursal_id: rol === 'operario' ? (sucursal_id || null) : null,
       username: usernameLimpio,
     }
 
