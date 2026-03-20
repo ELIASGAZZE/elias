@@ -79,10 +79,11 @@ const AdminPromociones = () => {
   const [buscando, setBuscando] = useState(false)
   const [tipoEntidad, setTipoEntidad] = useState('articulo')
 
-  // Rubros, subrubros y atributos de Centum
+  // Rubros, subrubros, atributos y marcas de Centum
   const [rubros, setRubros] = useState([])
   const [subrubros, setSubrubros] = useState([])
   const [atributosDisponibles, setAtributosDisponibles] = useState([])
+  const [marcasDisponibles, setMarcasDisponibles] = useState([])
 
   const cargar = async () => {
     try {
@@ -103,14 +104,16 @@ const AdminPromociones = () => {
 
   async function cargarRubrosSubrubros() {
     try {
-      const [resR, resS, resA] = await Promise.all([
+      const [resR, resS, resA, resM] = await Promise.all([
         api.get('/api/pos/rubros'),
         api.get('/api/pos/subrubros'),
         api.get('/api/pos/atributos-articulo'),
+        api.get('/api/pos/marcas'),
       ])
       setRubros(resR.data.rubros || [])
       setSubrubros(resS.data.subrubros || [])
       setAtributosDisponibles(resA.data.atributos || [])
+      setMarcasDisponibles(resM.data.marcas || [])
     } catch (err) {
       console.error('Error cargando rubros/subrubros/atributos:', err)
     }
@@ -693,6 +696,7 @@ const AdminPromociones = () => {
                                         </button>
                                       )}
                                       {ac.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
+                                      {ac.tipo === 'marca' && <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-600 font-medium">MRC</span>}
                                       <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
                                       <input type="number" min="1" value={ac.cantidad}
                                         onChange={e => setForm(prev => {
@@ -735,6 +739,7 @@ const AdminPromociones = () => {
                                           O
                                         </button>
                                         {ac.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
+                                        {ac.tipo === 'marca' && <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-600 font-medium">MRC</span>}
                                         <span className="flex-1 text-sm text-gray-700 truncate">{ac.nombre}</span>
                                         <input type="number" min="1" value={ac.cantidad}
                                           onChange={e => setForm(prev => {
@@ -766,12 +771,30 @@ const AdminPromociones = () => {
                       {grupo.length === 0 && <div className="text-xs text-gray-400 mb-1">Grupo vacío — agregá artículos o atributos abajo</div>}
                       {/* Toggle tipo entidad condición */}
                       <div className="flex gap-1 mb-1">
-                        {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }].map(t => (
+                        {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }, { v: 'marca', l: 'Marca' }].map(t => (
                           <button key={t.v} type="button" onClick={() => { setForm(prev => ({ ...prev, cond_tipo_entidad: t.v })); setBusqueda(''); setResultados([]) }}
                             className={`text-xs px-2 py-0.5 rounded-full transition-colors ${form.cond_tipo_entidad === t.v ? 'bg-pink-500 text-white' : 'bg-white text-gray-500 border border-gray-300'}`}>{t.l}</button>
                         ))}
                       </div>
-                      {form.cond_tipo_entidad === 'atributo' ? (
+                      {form.cond_tipo_entidad === 'marca' ? (
+                        <select className="campo-form text-sm" value="" onChange={e => {
+                          const marcaNombre = e.target.value
+                          if (!marcaNombre) return
+                          const grupoActual = form.grupos_condicion[gi] || []
+                          if (grupoActual.find(c => c.tipo === 'marca' && c.nombre === marcaNombre)) return
+                          setForm(prev => {
+                            const nuevosGrupos = prev.grupos_condicion.map((g, i) =>
+                              i === gi ? [...g, { tipo: 'marca', nombre: marcaNombre, cantidad: 1 }] : g
+                            )
+                            return { ...prev, grupos_condicion: nuevosGrupos }
+                          })
+                        }}>
+                          <option value="">Seleccionar marca condición...</option>
+                          {marcasDisponibles.map(m => (
+                            <option key={m.nombre} value={m.nombre}>{m.nombre}</option>
+                          ))}
+                        </select>
+                      ) : form.cond_tipo_entidad === 'atributo' ? (
                         <select className="campo-form text-sm" value="" onChange={e => {
                           const [attrId, valId] = e.target.value.split('|')
                           const attr = atributosDisponibles.find(a => String(a.id) === attrId)
@@ -851,8 +874,9 @@ const AdminPromociones = () => {
                 {form.articulos_beneficio.length > 0 && (
                   <div className="space-y-1 mt-1 mb-2">
                     {form.articulos_beneficio.map((ab, idx) => (
-                      <div key={ab.tipo === 'atributo' ? `attr-${ab.id_valor}` : ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <div key={ab.tipo === 'atributo' ? `attr-${ab.id_valor}` : ab.tipo === 'marca' ? `mrc-${ab.nombre}` : ab.id} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                         {ab.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
+                        {ab.tipo === 'marca' && <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-600 font-medium">MRC</span>}
                         <span className="flex-1 text-sm text-gray-700">{ab.nombre}</span>
                         <input type="number" min="1" value={ab.cantidad || ''} placeholder="∞"
                           onChange={e => {
@@ -869,12 +893,24 @@ const AdminPromociones = () => {
                 )}
                 {/* Toggle tipo entidad beneficio */}
                 <div className="flex gap-1 mt-1 mb-1">
-                  {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }].map(t => (
+                  {[{ v: 'articulo', l: 'Artículo' }, { v: 'atributo', l: 'Atributo' }, { v: 'marca', l: 'Marca' }].map(t => (
                     <button key={t.v} type="button" onClick={() => { setForm(prev => ({ ...prev, benef_tipo_entidad: t.v })); setBusqueda(''); setResultados([]) }}
                       className={`text-xs px-2 py-0.5 rounded-full transition-colors ${form.benef_tipo_entidad === t.v ? 'bg-green-500 text-white' : 'bg-white text-gray-500 border border-gray-300'}`}>{t.l}</button>
                   ))}
                 </div>
-                {form.benef_tipo_entidad === 'atributo' ? (
+                {form.benef_tipo_entidad === 'marca' ? (
+                  <select className="campo-form text-sm" value="" onChange={e => {
+                    const marcaNombre = e.target.value
+                    if (!marcaNombre) return
+                    if (form.articulos_beneficio.find(b => b.tipo === 'marca' && b.nombre === marcaNombre)) return
+                    setForm(prev => ({ ...prev, articulos_beneficio: [...prev.articulos_beneficio, { tipo: 'marca', nombre: marcaNombre }] }))
+                  }}>
+                    <option value="">Seleccionar marca beneficio...</option>
+                    {marcasDisponibles.map(m => (
+                      <option key={m.nombre} value={m.nombre}>{m.nombre}</option>
+                    ))}
+                  </select>
+                ) : form.benef_tipo_entidad === 'atributo' ? (
                   <select className="campo-form text-sm" value="" onChange={e => {
                     const [attrId, valId] = e.target.value.split('|')
                     const attr = atributosDisponibles.find(a => String(a.id) === attrId)
