@@ -406,4 +406,99 @@ router.post('/order/:id/refund', verificarAuth, async (req, res) => {
   }
 })
 
+// ── QR Instore (para posnet N950 que no muestra QR en pantalla) ───────────────
+const MP_USER_ID = '455606488'
+
+// PUT /api/mp-point/qr-order — crear orden en caja QR (instore API)
+router.put('/qr-order', verificarAuth, async (req, res) => {
+  try {
+    const { qr_pos_id, amount, external_reference, description } = req.body
+    if (!qr_pos_id || !amount) return res.status(400).json({ error: 'qr_pos_id y amount requeridos' })
+
+    const extRef = external_reference || `pos-qr-${Date.now()}`
+    const resp = await fetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${qr_pos_id}/orders`, {
+      method: 'PUT',
+      headers: mpHeaders(),
+      body: JSON.stringify({
+        external_reference: extRef,
+        title: description || 'Venta POS',
+        description: description || 'Venta POS',
+        total_amount: parseFloat(amount),
+        items: [{
+          title: description || 'Venta POS',
+          unit_price: parseFloat(amount),
+          quantity: 1,
+          unit_measure: 'unit',
+          total_amount: parseFloat(amount),
+        }],
+      }),
+    })
+
+    if (resp.status === 204) {
+      console.log(`[MP QR] Orden creada en caja ${qr_pos_id} — $${amount} — ref: ${extRef}`)
+      return res.json({ ok: true, external_reference: extRef })
+    }
+
+    const data = await resp.json().catch(() => ({}))
+    console.error('[MP QR] Error creando orden:', resp.status, data)
+    res.status(resp.status).json({ error: data.message || 'Error al crear orden QR' })
+  } catch (err) {
+    console.error('[MP QR] Error creando orden:', err.message)
+    res.status(500).json({ error: 'Error al crear orden QR' })
+  }
+})
+
+// GET /api/mp-point/qr-order/:ref/status — consultar estado de orden QR por external_reference
+router.get('/qr-order/:ref/status', verificarAuth, async (req, res) => {
+  try {
+    // Buscar merchant_order por external_reference
+    const resp = await fetch(`https://api.mercadopago.com/merchant_orders/search?external_reference=${req.params.ref}`, {
+      headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
+    })
+    const data = await resp.json()
+    const orders = data.elements || []
+    if (orders.length === 0) {
+      return res.json({ status: 'pending' })
+    }
+
+    const order = orders[0]
+    // Buscar pagos aprobados
+    const pagoAprobado = (order.payments || []).find(p => p.status === 'approved')
+    if (pagoAprobado) {
+      return res.json({
+        status: 'approved',
+        payment_id: pagoAprobado.id,
+        merchant_order_id: order.id,
+      })
+    }
+
+    // Si tiene pagos pero ninguno aprobado
+    if (order.payments?.length > 0) {
+      const ultimo = order.payments[order.payments.length - 1]
+      return res.json({ status: ultimo.status || 'pending', merchant_order_id: order.id })
+    }
+
+    return res.json({ status: order.status === 'closed' ? 'closed' : 'pending', merchant_order_id: order.id })
+  } catch (err) {
+    console.error('[MP QR] Error consultando estado:', err.message)
+    res.status(500).json({ error: 'Error al consultar estado QR' })
+  }
+})
+
+// DELETE /api/mp-point/qr-order/:posId — cancelar/eliminar orden de la caja QR
+router.delete('/qr-order/:posId', verificarAuth, async (req, res) => {
+  try {
+    const resp = await fetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${req.params.posId}/orders`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
+    })
+    if (resp.status === 204 || resp.status === 200) return res.json({ ok: true })
+    const data = await resp.json().catch(() => ({}))
+    res.status(resp.status).json(data)
+  } catch (err) {
+    console.error('[MP QR] Error cancelando orden:', err.message)
+    res.status(500).json({ error: 'Error al cancelar orden QR' })
+  }
+})
+
 module.exports = router
