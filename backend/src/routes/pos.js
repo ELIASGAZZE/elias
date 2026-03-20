@@ -2,7 +2,7 @@
 const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
-const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
@@ -275,8 +275,8 @@ router.get('/promociones', verificarAuth, async (req, res) => {
   }
 })
 
-// POST /api/pos/promociones (admin)
-router.post('/promociones', verificarAuth, soloAdmin, async (req, res) => {
+// POST /api/pos/promociones (admin/gestor)
+router.post('/promociones', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { nombre, tipo, fecha_desde, fecha_hasta, reglas } = req.body
 
@@ -309,8 +309,8 @@ router.post('/promociones', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// PUT /api/pos/promociones/:id (admin)
-router.put('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
+// PUT /api/pos/promociones/:id (admin/gestor)
+router.put('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { nombre, tipo, activa, fecha_desde, fecha_hasta, reglas } = req.body
     const updates = { updated_at: new Date().toISOString() }
@@ -343,8 +343,8 @@ router.put('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// DELETE /api/pos/promociones/:id (admin) — soft delete
-router.delete('/promociones/:id', verificarAuth, soloAdmin, async (req, res) => {
+// DELETE /api/pos/promociones/:id (admin/gestor) — soft delete
+router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('promociones_pos')
@@ -671,8 +671,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 })
 
 // GET /api/pos/ventas/reportes/promociones?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-// Datos crudos de ventas para reporte de promociones (solo admin)
-router.get('/ventas/reportes/promociones', verificarAuth, soloAdmin, async (req, res) => {
+// Datos crudos de ventas para reporte de promociones (admin/gestor)
+router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const desde = req.query.desde || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
     const hasta = req.query.hasta || new Date().toISOString().split('T')[0]
