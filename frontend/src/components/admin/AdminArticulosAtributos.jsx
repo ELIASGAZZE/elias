@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import api from '../../services/api'
+import TabCombos from './TabCombos'
 
 const TABS = [
   { id: 'articulos', label: 'Artículos' },
   { id: 'atributos', label: 'Atributos' },
+  { id: 'combos', label: 'Combos' },
 ]
 
 const formatPrecio = (n) => {
@@ -241,6 +243,9 @@ const AdminArticulosAtributos = () => {
           </div>
         </div>
       )}
+
+      {/* ===== TAB COMBOS ===== */}
+      {tab === 'combos' && <TabCombos />}
 
       {/* ===== TAB ATRIBUTOS ===== */}
       {tab === 'atributos' && (
