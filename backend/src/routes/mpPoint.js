@@ -1,5 +1,6 @@
 // Rutas para integración Mercado Pago Point (posnet) — Orders API v1
 const express = require('express')
+const crypto = require('crypto')
 const router = express.Router()
 const { verificarAuth } = require('../middleware/auth')
 
@@ -15,6 +16,132 @@ function mpHeaders(idempotencyKey) {
   if (idempotencyKey) h['X-Idempotency-Key'] = idempotencyKey
   return h
 }
+
+// ── SSE (Server-Sent Events) para notificaciones en tiempo real ──────────────
+const sseClients = new Map() // orderId -> Set<res>
+
+function emitSSE(orderId, event, data) {
+  const clients = sseClients.get(orderId)
+  if (!clients || clients.size === 0) return
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+  for (const client of clients) {
+    try { client.write(payload) } catch {}
+  }
+}
+
+// GET /api/mp-point/order/:id/events — SSE stream para recibir updates de una orden
+// Auth via query param ?token=JWT (EventSource no soporta headers custom)
+router.get('/order/:id/events', async (req, res) => {
+  const token = req.query.token
+  if (!token) return res.status(401).json({ error: 'Token requerido' })
+
+  // Autenticar manualmente usando el token del query param
+  req.headers.authorization = `Bearer ${token}`
+  try {
+    await new Promise((resolve, reject) => {
+      verificarAuth(req, res, (err) => {
+        if (err) return reject(err)
+        resolve()
+      })
+    })
+  } catch {
+    // verificarAuth ya envió la respuesta de error
+    if (res.headersSent) return
+    return res.status(401).json({ error: 'Token inválido' })
+  }
+  // Si verificarAuth respondió con error (401/503), headers ya fueron enviados
+  if (res.headersSent) return
+
+  const orderId = req.params.id
+
+  // Configurar SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // Nginx/proxy: no buffering
+  })
+  res.flushHeaders()
+
+  // Evento inicial
+  res.write(`event: connected\ndata: ${JSON.stringify({ orderId })}\n\n`)
+
+  // Registrar cliente
+  if (!sseClients.has(orderId)) sseClients.set(orderId, new Set())
+  sseClients.get(orderId).add(res)
+
+  // Keepalive cada 30s para evitar timeout de proxies
+  const keepalive = setInterval(() => {
+    try { res.write(': keepalive\n\n') } catch {}
+  }, 30000)
+
+  // Cleanup al desconectar
+  req.on('close', () => {
+    clearInterval(keepalive)
+    const clients = sseClients.get(orderId)
+    if (clients) {
+      clients.delete(res)
+      if (clients.size === 0) sseClients.delete(orderId)
+    }
+  })
+})
+
+// POST /api/mp-point/webhook — recibe notificaciones de Mercado Pago (sin auth)
+const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET
+
+router.post('/webhook', async (req, res) => {
+  // Verificar firma HMAC si tenemos la clave secreta
+  if (MP_WEBHOOK_SECRET) {
+    const xSignature = req.headers['x-signature'] || ''
+    const xRequestId = req.headers['x-request-id'] || ''
+    // Extraer ts y v1 del header: "ts=xxx,v1=xxx"
+    const parts = Object.fromEntries(xSignature.split(',').map(p => { const [k, v] = p.split('='); return [k?.trim(), v?.trim()] }))
+    const ts = parts.ts
+    const v1 = parts.v1
+    if (ts && v1) {
+      const dataId = req.query['data.id'] || req.body?.data?.id || ''
+      const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`
+      const hmac = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex')
+      if (hmac !== v1) {
+        console.warn('[MP Webhook] Firma inválida — rechazado')
+        return res.sendStatus(403)
+      }
+    }
+  }
+
+  // Responder 200 inmediatamente (MP reintenta si no responde en 5s)
+  res.sendStatus(200)
+
+  try {
+    const { type, action, data } = req.body || {}
+    if (!data?.id) return
+
+    console.log(`[MP Webhook] ${type} ${action} — order ${data.id}`)
+
+    const orderId = data.id
+    const clients = sseClients.get(orderId)
+    if (!clients || clients.size === 0) {
+      console.log(`[MP Webhook] No hay clientes SSE para orden ${orderId}, skip`)
+      return
+    }
+
+    // Re-fetch la orden desde MP para validar datos (no confiar ciegamente en el webhook)
+    const resp = await fetch(`${MP_BASE_ORDERS}/${orderId}`, { headers: mpHeaders() })
+    if (!resp.ok) {
+      console.error(`[MP Webhook] Error re-fetching orden ${orderId}: ${resp.status}`)
+      return
+    }
+    const order = await resp.json()
+
+    emitSSE(orderId, 'order_update', {
+      status: order.status,
+      transactions: order.transactions,
+    })
+    console.log(`[MP Webhook] SSE emitido para orden ${orderId} — status: ${order.status}`)
+  } catch (err) {
+    console.error('[MP Webhook] Error procesando:', err.message)
+  }
+})
 
 // PATCH /api/mp-point/devices/:id — cambiar modo operativo del dispositivo
 router.patch('/devices/:id', verificarAuth, async (req, res) => {
@@ -104,7 +231,7 @@ async function cancelarOrdenesPendientes(deviceId) {
     } catch {}
 
     // Dar tiempo a MP para procesar las cancelaciones
-    await new Promise(r => setTimeout(r, 1500))
+    await new Promise(r => setTimeout(r, 500))
   } catch (err) {
     console.error('[MP Point] Error limpiando órdenes pendientes:', err.message)
   }

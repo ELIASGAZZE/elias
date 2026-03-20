@@ -37,6 +37,8 @@ const turnosRoutes = require('./routes/turnos')
 const licenciasRoutes = require('./routes/licencias')
 const feriadosRoutes = require('./routes/feriados')
 const gruposDescuentoRoutes = require('./routes/gruposDescuento')
+const comprasRoutes = require('./routes/compras')
+const { mountMcp } = require('../mcp-server')
 const { iniciarCronJobs } = require('./jobs/cron')
 
 const app = express()
@@ -47,23 +49,31 @@ app.set('trust proxy', 1)
 
 // ── Middlewares globales ──────────────────────────────────────────────────────
 
-// Headers de seguridad
-app.use(helmet())
+// Headers de seguridad (excluir rutas MCP — SSE necesita conexión abierta)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/mcp/')) return next()
+  helmet()(req, res, next)
+})
 
-// Permitimos requests desde el frontend
+// CORS abierto para rutas MCP (Cowork), restringido para el resto
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL_2,
   ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173'] : []),
 ].filter(Boolean)
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
-    cb(null, false)
-  },
-  credentials: true,
-}))
+app.use((req, res, next) => {
+  if (req.path.startsWith('/mcp/')) {
+    return cors({ origin: '*' })(req, res, next)
+  }
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
+      cb(null, false)
+    },
+    credentials: true,
+  })(req, res, next)
+})
 
 // Parseamos el body de los requests como JSON
 app.use(express.json())
@@ -102,6 +112,10 @@ app.use('/api/turnos', turnosRoutes)
 app.use('/api/licencias', licenciasRoutes)
 app.use('/api/feriados', feriadosRoutes)
 app.use('/api/grupos-descuento', gruposDescuentoRoutes)
+app.use('/api/compras', comprasRoutes)
+
+// ── MCP Server (Cowork) ──────────────────────────────────────────────────────
+mountMcp(app)
 
 // Ruta de salud para verificar que el servidor está funcionando
 app.get('/health', (req, res) => {
