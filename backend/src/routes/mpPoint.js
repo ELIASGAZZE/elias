@@ -179,6 +179,31 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
   }
 })
 
+// GET /api/mp-point/qr-cajas — listar cajas QR de MP (para config terminal)
+router.get('/qr-cajas', verificarAuth, async (req, res) => {
+  try {
+    const resp = await fetch(`https://api.mercadopago.com/pos?limit=50`, {
+      headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
+    })
+    const data = await resp.json()
+    if (!resp.ok) return res.status(resp.status).json(data)
+    // Filtrar solo cajas que tienen external_id (son cajas QR configuradas)
+    const cajas = (data.results || [])
+      .filter(p => p.external_id)
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        external_id: p.external_id,
+        store_id: p.store_id,
+        qr_image: p.qr?.image || null,
+      }))
+    res.json(cajas)
+  } catch (err) {
+    console.error('[MP Point] Error listando cajas QR:', err.message)
+    res.status(500).json({ error: 'Error al listar cajas QR' })
+  }
+})
+
 // GET /api/mp-point/devices — listar dispositivos
 router.get('/devices', verificarAuth, async (req, res) => {
   try {

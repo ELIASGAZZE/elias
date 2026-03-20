@@ -708,6 +708,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
   const [mpDevices, setMpDevices] = useState([])
   const [mpDeviceId, setMpDeviceId] = useState(configActual?.mp_device_id || '')
   const [mpQrPosId, setMpQrPosId] = useState(configActual?.mp_qr_pos_id || '')
+  const [mpQrCajas, setMpQrCajas] = useState([])
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -722,6 +723,10 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
         setMpDevices(Array.isArray(devs) ? devs : [])
       })
       .catch((err) => console.warn('MP Point devices no disponible:', err.message))
+    // Cargar cajas QR de MP
+    api.get('/api/mp-point/qr-cajas')
+      .then(({ data }) => setMpQrCajas(Array.isArray(data) ? data : []))
+      .catch((err) => console.warn('MP QR cajas no disponible:', err.message))
   }, [])
 
   useEffect(() => {
@@ -852,14 +857,29 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
           {mpDeviceId && mpDeviceId.includes('N950') && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Caja QR Mercado Pago</label>
-              <input
-                type="text"
-                value={mpQrPosId}
-                onChange={e => setMpQrPosId(e.target.value)}
-                placeholder="External ID de la caja QR (ej: QRAU01)"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-400 mt-1">El N950 no muestra QR en pantalla. Configurá la caja QR impresa para cobros QR.</p>
+              {mpQrCajas.length > 0 ? (
+                <select
+                  value={mpQrPosId}
+                  onChange={e => setMpQrPosId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                >
+                  <option value="">Sin caja QR</option>
+                  {mpQrCajas.map(c => (
+                    <option key={c.external_id} value={c.external_id}>
+                      {c.name} ({c.external_id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={mpQrPosId}
+                  onChange={e => setMpQrPosId(e.target.value)}
+                  placeholder="External ID de la caja QR (ej: QRAU01)"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                />
+              )}
+              <p className="text-xs text-gray-400 mt-1">El N950 no muestra QR en pantalla. Seleccioná la caja QR impresa para cobros QR.</p>
             </div>
           )}
         </div>
