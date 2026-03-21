@@ -572,7 +572,6 @@ router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
         IdCliente: parseInt(clientId),
         FechaDocumento: hoy,
         Habilitado: true,
-        EsCombo: true,
       }),
     })
 
@@ -591,8 +590,13 @@ router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
       .eq('tipo', 'combo')
     const importadosSet = new Set((locales || []).map(a => a.id_centum))
 
+    // Filtrar combos por nombre (Centum no envía EsCombo correctamente)
     const combos = items
-      .filter(art => art.Habilitado !== false && art.EsCombo === true)
+      .filter(art => {
+        if (art.Habilitado === false) return false
+        const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
+        return nombre.startsWith('COMBO')
+      })
       .map(art => ({
         id_centum: art.IdArticulo,
         codigo: String(art.Codigo || '').trim(),
@@ -638,7 +642,6 @@ router.post('/combos-importar', verificarAuth, soloGestorOAdmin, async (req, res
         IdCliente: parseInt(clientId),
         FechaDocumento: hoy,
         Habilitado: true,
-        EsCombo: true,
       }),
     })
 
@@ -650,7 +653,11 @@ router.post('/combos-importar', verificarAuth, soloGestorOAdmin, async (req, res
     const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
 
     const idsSet = new Set(ids_centum)
-    const seleccionados = items.filter(art => idsSet.has(art.IdArticulo) && art.EsCombo === true)
+    const seleccionados = items.filter(art => {
+      if (!idsSet.has(art.IdArticulo)) return false
+      const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
+      return nombre.startsWith('COMBO')
+    })
 
     if (seleccionados.length === 0) {
       return res.status(404).json({ error: 'No se encontraron los combos seleccionados en Centum' })

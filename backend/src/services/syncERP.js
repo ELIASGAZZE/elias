@@ -90,7 +90,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     if (art.Habilitado === false) return false
     if (art.EsCombo === true) return false
     const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
-    if (nombre.startsWith('COMBO ') || nombre.startsWith('COMBO\t')) return false
+    if (nombre.startsWith('COMBO')) return false
     return true
   })
 
@@ -333,6 +333,24 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     console.error('[Sync] Error al sincronizar atributos:', err.message)
   }
 
+  // Reclasificar artículos "automatico" que son combos (nombre empieza con COMBO)
+  let reclasificados = 0
+  try {
+    const { data: combosAuto } = await supabase
+      .from('articulos')
+      .select('id, nombre')
+      .eq('tipo', 'automatico')
+      .ilike('nombre', 'COMBO%')
+    if (combosAuto && combosAuto.length > 0) {
+      const ids = combosAuto.map(a => a.id)
+      await supabase.from('articulos').update({ tipo: 'combo' }).in('id', ids)
+      reclasificados = ids.length
+      console.log(`[Sync] ${reclasificados} artículos reclasificados de automatico a combo:`, combosAuto.map(a => a.nombre))
+    }
+  } catch (err) {
+    console.error('[Sync] Error al reclasificar combos:', err.message)
+  }
+
   const duracion = Date.now() - inicioFetch
   registrarLlamada({
     servicio: 'centum_articulos', endpoint, metodo: 'POST',
@@ -341,7 +359,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
   })
 
   return {
-    mensaje: `Sync ERP: ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios (${barcodesSincronizados} con códigos de barra)`,
+    mensaje: `Sync ERP: ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios (${barcodesSincronizados} con códigos de barra)${reclasificados > 0 ? `, ${reclasificados} combos reclasificados` : ''}`,
     cantidad: totalInsertados,
     nuevos: nuevos.length,
     actualizados: actualizados.length,
