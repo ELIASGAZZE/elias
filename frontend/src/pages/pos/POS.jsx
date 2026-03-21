@@ -3511,8 +3511,8 @@ const POS = () => {
           <div className="px-4 py-3 border-b bg-gray-50">
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-0.5 rounded truncate max-w-[140px]" title={cliente.razon_social}>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-0.5 rounded truncate max-w-[160px]" title={cliente.razon_social}>
                     {cliente.razon_social}
                   </span>
                   {cliente.id_centum > 0 && cliente.codigo && (
@@ -3559,14 +3559,7 @@ const POS = () => {
                     : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
                     : 'bg-gray-200 text-gray-600'
                   }`}>
-                    {cliente.condicion_iva === 'RI' ? 'RI' : cliente.condicion_iva === 'MT' ? 'MT' : 'CF'}
-                  </span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
-                    cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-gray-200 text-gray-600'
-                  }`}>
-                    Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
+                    {cliente.condicion_iva === 'RI' ? 'RI' : cliente.condicion_iva === 'MT' ? 'MT' : 'CF'} | Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
                   </span>
                   {cliente.grupo_descuento_nombre && (
                     <span className="bg-violet-100 text-violet-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
