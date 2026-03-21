@@ -13,6 +13,14 @@ router.get('/articulos', verificarAuth, async (req, res) => {
   try {
     const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at'
 
+    // Obtener IDs de combos habilitados (al menos en una sucursal)
+    const { data: combosHab } = await supabase
+      .from('articulos_por_sucursal')
+      .select('articulo_id, articulos!inner(tipo)')
+      .eq('habilitado', true)
+      .eq('articulos.tipo', 'combo')
+    const comboIdsHabilitados = new Set((combosHab || []).map(c => c.articulo_id))
+
     // Supabase limita a 1000 por defecto — paginar para traer todos
     const PAGE_SIZE = 1000
     let allData = []
@@ -34,7 +42,9 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       const { data, error } = await query
       if (error) throw error
       if (!data || data.length === 0) break
-      allData = allData.concat(data)
+      // Filtrar combos no habilitados
+      const filtered = data.filter(a => a.tipo !== 'combo' || comboIdsHabilitados.has(a.id))
+      allData = allData.concat(filtered)
       if (req.query.buscar) break // con búsqueda, no paginar (ya tiene limit)
       if (data.length < PAGE_SIZE) break
       from += PAGE_SIZE
