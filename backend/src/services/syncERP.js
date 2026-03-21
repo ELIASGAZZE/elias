@@ -57,7 +57,6 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
         IdCliente: parseInt(clientId),
         FechaDocumento: hoy,
         Habilitado: true,
-        EsCombo: false,
       }),
     })
   } catch (fetchErr) {
@@ -86,15 +85,21 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
 
   // Los artículos están en Articulos.Items[]
   const items = erpData?.Articulos?.Items || erpData?.Items || (Array.isArray(erpData) ? erpData : [])
-  const articulosERP = items.filter(art => {
-    if (art.Habilitado === false) return false
-    if (art.EsCombo === true) return false
-    const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
-    if (nombre.startsWith('COMBO ') || nombre.startsWith('COMBO\t')) return false
-    return true
-  })
 
-  if (articulosERP.length === 0) {
+  // Separar combos de artículos regulares
+  const combosERP = []
+  const articulosERP = []
+  for (const art of items) {
+    if (art.Habilitado === false) continue
+    const nombre = (art.NombreFantasia || art.Nombre || '').toUpperCase()
+    if (art.EsCombo === true || nombre.startsWith('COMBO')) {
+      combosERP.push(art)
+    } else {
+      articulosERP.push(art)
+    }
+  }
+
+  if (articulosERP.length === 0 && combosERP.length === 0) {
     return { mensaje: 'No se encontraron artículos habilitados en el ERP', cantidad: 0 }
   }
 
@@ -333,6 +338,54 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     console.error('[Sync] Error al sincronizar atributos:', err.message)
   }
 
+  // Sincronizar combos al catálogo local
+  let combosSincronizados = 0
+  try {
+    if (combosERP.length > 0) {
+      const combosMapeados = combosERP.map(art => ({
+        codigo: art.Codigo != null ? String(art.Codigo).trim() : '',
+        nombre: art.NombreFantasia || art.Nombre || 'Sin nombre',
+        rubro: art.Rubro?.Nombre || null,
+        marca: art.MarcaArticulo?.Nombre || null,
+        tipo: 'combo',
+        es_pesable: false,
+        id_centum: art.IdArticulo || null,
+        precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : null,
+        subrubro: art.SubRubro?.Nombre || null,
+        rubro_id_centum: art.Rubro?.IdRubro || null,
+        subrubro_id_centum: art.SubRubro?.IdSubRubro || null,
+        descuento1: art.PorcentajeDescuento1 || 0,
+        descuento2: art.PorcentajeDescuento2 || 0,
+        descuento3: art.PorcentajeDescuento3 || 0,
+        iva_tasa: art.CategoriaImpuestoIVA?.Tasa != null ? art.CategoriaImpuestoIVA.Tasa : 21,
+        updated_at: ahora,
+      }))
+
+      for (let i = 0; i < combosMapeados.length; i += BATCH_SIZE) {
+        const lote = combosMapeados.slice(i, i + BATCH_SIZE)
+        const { data, error } = await supabase
+          .from('articulos')
+          .upsert(lote, { onConflict: 'codigo' })
+          .select('id')
+        if (error) throw error
+        // Agregar a todosLosArticulos para crear relaciones con sucursales
+        if (!skipSucursales && data) todosLosArticulos = todosLosArticulos.concat(data)
+        combosSincronizados += lote.length
+      }
+
+      // Reclasificar artículos que eran "automatico" pero son combos
+      await supabase
+        .from('articulos')
+        .update({ tipo: 'combo' })
+        .eq('tipo', 'automatico')
+        .ilike('nombre', 'COMBO%')
+
+      console.log(`[Sync] ${combosSincronizados} combos sincronizados al catálogo local`)
+    }
+  } catch (err) {
+    console.error('[Sync] Error al sincronizar combos:', err.message)
+  }
+
   const duracion = Date.now() - inicioFetch
   registrarLlamada({
     servicio: 'centum_articulos', endpoint, metodo: 'POST',
@@ -341,11 +394,12 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
   })
 
   return {
-    mensaje: `Sync ERP: ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios (${barcodesSincronizados} con códigos de barra)`,
+    mensaje: `Sync ERP: ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios (${barcodesSincronizados} con códigos de barra, ${combosSincronizados} combos)`,
     cantidad: totalInsertados,
     nuevos: nuevos.length,
     actualizados: actualizados.length,
     sin_cambios: sinCambios,
+    combos: combosSincronizados,
   }
 }
 

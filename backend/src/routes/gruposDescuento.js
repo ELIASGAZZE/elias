@@ -115,6 +115,80 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/grupos-descuento/:id/clientes — listar clientes del grupo
+router.get('/:id/clientes', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('clientes')
+      .select('id, razon_social, cuit, condicion_iva, activo')
+      .eq('grupo_descuento_id', req.params.id)
+      .eq('activo', true)
+      .order('razon_social')
+    if (error) throw error
+    res.json({ clientes: data || [] })
+  } catch (err) {
+    console.error('Error al obtener clientes del grupo:', err)
+    res.status(500).json({ error: 'Error al obtener clientes' })
+  }
+})
+
+// POST /api/grupos-descuento/:id/clientes — agregar cliente al grupo
+router.post('/:id/clientes', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { cliente_id } = req.body
+    if (!cliente_id) return res.status(400).json({ error: 'Se requiere cliente_id' })
+
+    const { data, error } = await supabase
+      .from('clientes')
+      .update({ grupo_descuento_id: req.params.id })
+      .eq('id', cliente_id)
+      .select('id, razon_social, cuit')
+      .single()
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al agregar cliente al grupo:', err)
+    res.status(500).json({ error: 'Error al agregar cliente' })
+  }
+})
+
+// DELETE /api/grupos-descuento/:id/clientes/:clienteId — quitar cliente del grupo
+router.delete('/:id/clientes/:clienteId', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('clientes')
+      .update({ grupo_descuento_id: null })
+      .eq('id', req.params.clienteId)
+      .eq('grupo_descuento_id', req.params.id)
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Error al quitar cliente del grupo:', err)
+    res.status(500).json({ error: 'Error al quitar cliente' })
+  }
+})
+
+// GET /api/grupos-descuento/buscar-clientes — buscar clientes para agregar (sin grupo o de otro grupo)
+router.get('/buscar-clientes/search', verificarAuth, async (req, res) => {
+  try {
+    const q = req.query.q?.trim()
+    if (!q || q.length < 2) return res.json({ clientes: [] })
+
+    const { data, error } = await supabase
+      .from('clientes')
+      .select('id, razon_social, cuit, condicion_iva, grupo_descuento_id')
+      .eq('activo', true)
+      .or(`razon_social.ilike.%${q}%,cuit.ilike.%${q}%`)
+      .order('razon_social')
+      .limit(15)
+    if (error) throw error
+    res.json({ clientes: data || [] })
+  } catch (err) {
+    console.error('Error al buscar clientes:', err)
+    res.status(500).json({ error: 'Error al buscar clientes' })
+  }
+})
+
 // DELETE /api/grupos-descuento/:id — eliminar grupo (solo si no tiene clientes)
 router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
