@@ -6,6 +6,7 @@ import ModalVentaEmpleado from '../../components/pos/ModalVentaEmpleado'
 import PedidosPOS from './PedidosPOS'
 import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
+import ConsultaPOS from '../../components/pos/ConsultaPOS'
 import NuevoClienteModal from '../../components/NuevoClienteModal'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import TecladoVirtual from '../../components/pos/TecladoVirtual'
@@ -2251,43 +2252,47 @@ const POS = () => {
 
       const tieneItems = carrito.length > 0 || giftCardsEnVenta.length > 0
 
-      // F1 = Cambiar cliente
+      // F1 = Tab Venta
       if (e.key === 'F1') {
+        e.preventDefault()
+        setVistaActiva('venta')
+      }
+      // F2 = Tab Pedidos
+      if (e.key === 'F2') {
+        e.preventDefault()
+        setVistaActiva('pedidos')
+      }
+      // F3 = Tab Saldos
+      if (e.key === 'F3') {
+        e.preventDefault()
+        setVistaActiva('saldos')
+      }
+      // F4 = Tab Gift Cards
+      if (e.key === 'F4') {
+        e.preventDefault()
+        setVistaActiva('giftcards')
+      }
+      // F5 = Tab Consulta
+      if (e.key === 'F5') {
+        e.preventDefault()
+        setVistaActiva('consulta')
+      }
+      // F6 = Cambiar cliente
+      if (e.key === 'F6') {
         e.preventDefault()
         setVistaActiva('venta')
         setTimeout(() => inputClienteRef.current?.focus(), 50)
       }
-      // F2 = Foco buscador artículos
-      if (e.key === 'F2') {
+      // F7 = Foco buscador artículos
+      if (e.key === 'F7') {
         e.preventDefault()
         setVistaActiva('venta')
         setTimeout(() => { inputBusquedaRef.current?.focus(); inputBusquedaRef.current?.select() }, 50)
       }
-      // F3 = Tab Pedidos
-      if (e.key === 'F3') {
-        e.preventDefault()
-        setVistaActiva('pedidos')
-      }
-      // F4 = Tab Saldos
-      if (e.key === 'F4') {
-        e.preventDefault()
-        setVistaActiva('saldos')
-      }
-      // F5 = Sincronizar precios
-      if (e.key === 'F5') {
+      // F12 = Sincronizar precios
+      if (e.key === 'F12') {
         e.preventDefault()
         sincronizarPrecios()
-      }
-      // F6 = Tab Gift Cards
-      if (e.key === 'F6') {
-        e.preventDefault()
-        setVistaActiva('giftcards')
-      }
-      // F7 = Alternar ticket 1/2
-      if (e.key === 'F7') {
-        e.preventDefault()
-        setTicketActivo(prev => prev === 0 ? 1 : 0)
-        setBusquedaArt(''); setBusquedaCliente('')
       }
       // F8 = Problema
       if (e.key === 'F8') {
@@ -3141,7 +3146,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Venta
+              Venta <span className="text-[9px] opacity-60 ml-1">F1</span>
             </button>
 
             {/* Tab Pedidos */}
@@ -3153,7 +3158,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Pedidos <span className="text-[9px] opacity-60 ml-1">F3</span>
+              Pedidos <span className="text-[9px] opacity-60 ml-1">F2</span>
             </button>
 
             {/* Tab Saldos */}
@@ -3165,7 +3170,7 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Saldos <span className="text-[9px] opacity-60 ml-1">F4</span>
+              Saldos <span className="text-[9px] opacity-60 ml-1">F3</span>
             </button>
 
             {/* Tab Gift Cards */}
@@ -3177,7 +3182,19 @@ const POS = () => {
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Gift Cards <span className="text-[9px] opacity-60 ml-1">F6</span>
+              Gift Cards <span className="text-[9px] opacity-60 ml-1">F4</span>
+            </button>
+
+            {/* Tab Consulta */}
+            <button
+              onClick={() => setVistaActiva('consulta')}
+              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+                vistaActiva === 'consulta'
+                  ? 'bg-violet-700 text-white'
+                  : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
+              }`}
+            >
+              Consulta <span className="text-[9px] opacity-60 ml-1">F5</span>
             </button>
           </div>
 
@@ -3271,7 +3288,7 @@ const POS = () => {
               onClick={sincronizarPrecios}
               disabled={sincronizandoERP}
               className="text-violet-400 hover:text-white p-1 rounded transition-colors disabled:opacity-50"
-              title="Sincronizar precios desde Centum (F5)"
+              title="Sincronizar precios desde Centum (F12)"
             >
               <svg className={`w-3.5 h-3.5 ${sincronizandoERP ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.016 4.66v4.993" />
@@ -3311,6 +3328,13 @@ const POS = () => {
       {vistaActiva === 'giftcards' && (
         <div className="flex-1 overflow-hidden">
           <GiftCardsPOS embebido />
+        </div>
+      )}
+
+      {/* === TAB CONSULTA === */}
+      {vistaActiva === 'consulta' && (
+        <div className="flex-1 overflow-hidden">
+          <ConsultaPOS articulos={articulos} promociones={promociones} />
         </div>
       )}
 
@@ -3491,7 +3515,7 @@ const POS = () => {
                         : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                   }`}
                 >
-                  Ticket {idx + 1} <span className="text-[9px] opacity-50">F7</span>
+                  Ticket {idx + 1}
                   {items > 0 && (
                     <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       activo ? 'bg-violet-100 text-violet-700' : 'bg-amber-200 text-amber-800'
@@ -3593,7 +3617,7 @@ const POS = () => {
                   <input
                     ref={inputClienteRef}
                     type="text"
-                    placeholder="DNI / CUIT del cliente… (F1)"
+                    placeholder="DNI / CUIT del cliente… (F6)"
                     value={busquedaCliente}
                     onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, ''); setBusquedaCliente(v); setClienteIdx(-1) }}
                     onKeyDown={e => {
@@ -4029,7 +4053,7 @@ const POS = () => {
             <input
               ref={inputBusquedaRef}
               type="text"
-              placeholder="Buscar por nombre, código o escanear... (F2)"
+              placeholder="Buscar por nombre, código o escanear... (F7)"
               value={busquedaArt}
               onChange={handleBusquedaChange}
               onKeyDown={handleBusquedaKeyDown}

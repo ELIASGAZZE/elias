@@ -53,6 +53,14 @@ import TareasEquipo from './pages/tareas/TareasEquipo'
 // Páginas de la app Auditoría
 import AuditoriaHome from './pages/auditoria/AuditoriaHome'
 
+// Páginas de la app Traspasos
+import TraspasosHome from './pages/traspasos/TraspasosHome'
+import OrdenesTraspasos from './pages/traspasos/OrdenesTraspasos'
+import NuevaOrdenTraspaso from './pages/traspasos/NuevaOrden'
+import OrdenDetalleTraspaso from './pages/traspasos/OrdenDetalle'
+import Preparacion from './pages/traspasos/Preparacion'
+import Recepcion from './pages/traspasos/Recepcion'
+
 // Páginas de la app Compras
 import ComprasHome from './pages/compras/ComprasHome'
 import Proveedores from './pages/compras/Proveedores'
@@ -251,6 +259,14 @@ const App = () => {
               <AuditoriaHome />
             </RutaProtegida>
           } />
+
+          {/* App: Traspasos */}
+          <Route path="/traspasos" element={<RutaProtegida rolesPermitidos={['admin', 'gestor']}><TraspasosHome /></RutaProtegida>} />
+          <Route path="/traspasos/ordenes" element={<RutaProtegida rolesPermitidos={['admin', 'gestor']}><OrdenesTraspasos /></RutaProtegida>} />
+          <Route path="/traspasos/nueva" element={<RutaProtegida rolesPermitidos={['admin', 'gestor']}><NuevaOrdenTraspaso /></RutaProtegida>} />
+          <Route path="/traspasos/ordenes/:id" element={<RutaProtegida rolesPermitidos={['admin', 'gestor']}><OrdenDetalleTraspaso /></RutaProtegida>} />
+          <Route path="/traspasos/ordenes/:id/preparar" element={<RutaProtegida rolesPermitidos={['admin', 'gestor']}><Preparacion /></RutaProtegida>} />
+          <Route path="/traspasos/recibir/:id" element={<RutaProtegida><Recepcion /></RutaProtegida>} />
 
           {/* App: Compras */}
           <Route path="/compras" element={<RutaProtegida soloAdmin><ComprasHome /></RutaProtegida>} />
