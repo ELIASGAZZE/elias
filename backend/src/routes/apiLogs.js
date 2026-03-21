@@ -27,11 +27,14 @@ router.get('/', verificarAuth, soloAdmin, async (req, res) => {
 // Admin: estado de salud de todos los servicios registrados
 router.get('/health', verificarAuth, soloAdmin, async (req, res) => {
   try {
+    // Buscar últimos logs de cada servicio registrado en paralelo
+    const servicioNames = SERVICE_REGISTRY.map(s => s.servicioLog)
     const { data: logs, error } = await supabase
       .from('api_logs')
       .select('servicio, estado, created_at, items_procesados, error_mensaje')
+      .in('servicio', servicioNames)
       .order('created_at', { ascending: false })
-      .limit(500)
+      .limit(200)
 
     if (error) throw error
 
