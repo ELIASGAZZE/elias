@@ -580,4 +580,166 @@ async function _sincronizarStockInternal(fullSync, origen) {
   }
 }
 
-module.exports = { sincronizarERP, sincronizarStock, generateAccessToken }
+/**
+ * Sincroniza stock de todas las sucursales marcadas con mostrar_en_consulta = true.
+ * Guarda en tabla stock_sucursales para consulta rápida desde el POS.
+ */
+async function sincronizarStockMultiSucursal(origen = 'cron') {
+  const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+  const apiKey = process.env.CENTUM_API_KEY
+  const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+  if (!apiKey) throw new Error('Falta CENTUM_API_KEY')
+
+  // Leer sucursales con mostrar_en_consulta = true
+  const { data: sucursales, error: errSuc } = await supabase
+    .from('sucursales')
+    .select('id, nombre, centum_sucursal_id')
+    .eq('mostrar_en_consulta', true)
+
+  if (errSuc) throw errSuc
+  if (!sucursales || sucursales.length === 0) {
+    return { mensaje: 'No hay sucursales con mostrar_en_consulta', sucursales: 0, total: 0 }
+  }
+
+  const inicioTotal = Date.now()
+  let totalUpserted = 0
+
+  for (const suc of sucursales) {
+    if (!suc.centum_sucursal_id) continue
+    const PAGE_SIZE = 500
+    let pagina = 1
+    const rows = []
+
+    while (true) {
+      const accessToken = generateAccessToken(apiKey)
+      const url = `${baseUrl}/ArticulosExistencias?idsSucursalesFisicas=${suc.centum_sucursal_id}&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'CentumSuiteConsumidorApiPublicaId': consumerId,
+            'CentumSuiteAccessToken': accessToken,
+          },
+        })
+
+        if (!response.ok) break
+
+        const data = await response.json()
+        const items = data.Items || []
+        if (items.length === 0) break
+
+        for (const item of items) {
+          if (item.IdArticulo) {
+            rows.push({
+              id_centum: item.IdArticulo,
+              centum_sucursal_id: suc.centum_sucursal_id,
+              existencias: Math.floor(item.ExistenciasSucursales || 0),
+              updated_at: new Date().toISOString(),
+            })
+          }
+        }
+
+        if (items.length < PAGE_SIZE) break
+        pagina++
+        if (pagina > 500) break
+      } catch (err) {
+        console.error(`[StockMulti] Error sucursal ${suc.nombre} página ${pagina}:`, err.message)
+        break
+      }
+    }
+
+    // Upsert en lotes
+    const BATCH = 500
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const lote = rows.slice(i, i + BATCH)
+      const { error } = await supabase
+        .from('stock_sucursales')
+        .upsert(lote, { onConflict: 'id_centum,centum_sucursal_id' })
+      if (error) console.error(`[StockMulti] Error upsert ${suc.nombre}:`, error.message)
+      else totalUpserted += lote.length
+    }
+
+    console.log(`[StockMulti] ${suc.nombre}: ${rows.length} items`)
+  }
+
+  const duracion = Date.now() - inicioTotal
+  registrarLlamada({
+    servicio: 'centum_stock_multi', endpoint: 'sincronizarStockMultiSucursal', metodo: 'GET',
+    estado: 'ok', status_code: 200, duracion_ms: duracion,
+    items_procesados: totalUpserted, origen,
+  })
+
+  return { mensaje: `Stock multi-sucursal: ${totalUpserted} filas actualizadas`, sucursales: sucursales.length, total: totalUpserted }
+}
+
+/**
+ * Marca en articulos.tiene_imagen = true los artículos que poseen imagen en Centum.
+ */
+async function sincronizarImagenesPresencia(origen = 'cron') {
+  const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+  const apiKey = process.env.CENTUM_API_KEY
+  const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+  if (!apiKey) throw new Error('Falta CENTUM_API_KEY')
+
+  const accessToken = generateAccessToken(apiKey)
+  const hoy = new Date().toISOString().split('T')[0]
+  const url = `${baseUrl}/Articulos/PoseenImagenModificada?fechaArchivoImagenDesde=2020-01-01&fechaArchivoImagenHasta=${hoy}`
+
+  const inicio = Date.now()
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'CentumSuiteConsumidorApiPublicaId': consumerId,
+      'CentumSuiteAccessToken': accessToken,
+    },
+  })
+
+  if (!response.ok) {
+    const texto = await response.text()
+    throw new Error(`Error consultando imágenes: HTTP ${response.status} - ${texto.slice(0, 200)}`)
+  }
+
+  const data = await response.json()
+  const items = data.Items || data || []
+  const idsConImagen = []
+
+  for (const item of items) {
+    if (item.IdArticulo) idsConImagen.push(item.IdArticulo)
+  }
+
+  if (idsConImagen.length === 0) {
+    return { mensaje: 'No se encontraron artículos con imagen', total: 0 }
+  }
+
+  // Reset todos a false primero
+  await supabase.from('articulos').update({ tiene_imagen: false }).eq('tipo', 'automatico')
+
+  // Marcar los que sí tienen
+  const BATCH = 500
+  let marcados = 0
+  for (let i = 0; i < idsConImagen.length; i += BATCH) {
+    const lote = idsConImagen.slice(i, i + BATCH)
+    const { error } = await supabase
+      .from('articulos')
+      .update({ tiene_imagen: true })
+      .in('id_centum', lote)
+    if (!error) marcados += lote.length
+  }
+
+  const duracion = Date.now() - inicio
+  registrarLlamada({
+    servicio: 'centum_imagenes', endpoint: 'sincronizarImagenesPresencia', metodo: 'GET',
+    estado: 'ok', status_code: 200, duracion_ms: duracion,
+    items_procesados: marcados, origen,
+  })
+
+  console.log(`[SyncImágenes] ${marcados} artículos marcados con imagen`)
+  return { mensaje: `${marcados} artículos marcados con imagen`, total: marcados }
+}
+
+module.exports = { sincronizarERP, sincronizarStock, generateAccessToken, sincronizarStockMultiSucursal, sincronizarImagenesPresencia }

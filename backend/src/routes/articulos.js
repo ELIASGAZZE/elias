@@ -625,4 +625,71 @@ router.post('/combos-toggle', verificarAuth, soloGestorOAdmin, async (req, res) 
 })
 
 
+// GET /api/articulos/:idCentum/imagen
+// Proxy de imagen desde Centum con cache en memoria (24h TTL)
+const imagenCache = new Map() // { idCentum: { buffer, contentType, timestamp } }
+const IMAGEN_TTL = 24 * 60 * 60 * 1000 // 24h
+
+router.get('/:idCentum/imagen', async (req, res) => {
+  try {
+    // Permitir carga cross-origin desde <img> tags
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin')
+
+    const idCentum = parseInt(req.params.idCentum)
+    if (!idCentum) return res.status(400).json({ error: 'ID inválido' })
+
+    // Check cache
+    const cached = imagenCache.get(idCentum)
+    if (cached && (Date.now() - cached.timestamp < IMAGEN_TTL)) {
+      res.set('Content-Type', cached.contentType)
+      res.set('Cache-Control', 'public, max-age=86400')
+      return res.send(cached.buffer)
+    }
+
+    const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
+    const apiKey = process.env.CENTUM_API_KEY
+    const consumerId = process.env.CENTUM_CONSUMER_ID || '2'
+
+    if (!apiKey) return res.status(500).json({ error: 'Falta CENTUM_API_KEY' })
+
+    const accessToken = generateAccessToken(apiKey)
+    const url = `${baseUrl}/ArticulosImagenes/${idCentum}`
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'CentumSuiteConsumidorApiPublicaId': consumerId,
+        'CentumSuiteAccessToken': accessToken,
+      },
+    })
+
+    if (!response.ok) {
+      // Placeholder SVG transparente
+      res.set('Content-Type', 'image/svg+xml')
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="#f3f4f6"/><text x="100" y="105" text-anchor="middle" fill="#9ca3af" font-family="sans-serif" font-size="14">Sin imagen</text></svg>')
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type') || 'image/jpeg'
+
+    // Cache
+    imagenCache.set(idCentum, { buffer, contentType, timestamp: Date.now() })
+
+    // Limitar cache a 500 entradas
+    if (imagenCache.size > 500) {
+      const oldest = [...imagenCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0]
+      if (oldest) imagenCache.delete(oldest[0])
+    }
+
+    res.set('Content-Type', contentType)
+    res.set('Cache-Control', 'public, max-age=86400')
+    res.send(buffer)
+  } catch (err) {
+    console.error('Error proxy imagen:', err.message)
+    res.set('Content-Type', 'image/svg+xml')
+    res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="#f3f4f6"/><text x="100" y="105" text-anchor="middle" fill="#9ca3af" font-family="sans-serif" font-size="14">Sin imagen</text></svg>')
+  }
+})
+
 module.exports = router

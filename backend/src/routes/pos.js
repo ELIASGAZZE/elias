@@ -11,7 +11,7 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at'
+    const campos = 'id, id_centum, codigo, nombre, tipo, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at, tiene_imagen'
 
     // Obtener IDs de combos habilitados (al menos en una sucursal)
     const { data: combosHab } = await supabase
@@ -66,6 +66,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       marca: a.marca || null,
       atributos: a.atributos || [],
       updatedAt: a.updated_at || null,
+      tieneImagen: a.tiene_imagen || false,
     }))
 
     res.json({ articulos, total: articulos.length })
@@ -3379,6 +3380,42 @@ router.post('/favoritos', verificarAuth, soloAdmin, async (req, res) => {
     res.json({ articulo_ids: data.articulo_ids })
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/pos/consulta-data
+// Devuelve sucursales con mostrar_en_consulta + stock multi-sucursal para pestaña Consulta
+router.get('/consulta-data', verificarAuth, async (req, res) => {
+  try {
+    // Sucursales visibles en consulta
+    const { data: sucursales, error: errSuc } = await supabase
+      .from('sucursales')
+      .select('id, nombre, centum_sucursal_id')
+      .eq('mostrar_en_consulta', true)
+      .order('nombre')
+
+    if (errSuc) throw errSuc
+
+    // Todo el stock cacheado
+    const BATCH = 1000
+    let allStock = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('stock_sucursales')
+        .select('id_centum, centum_sucursal_id, existencias')
+        .range(from, from + BATCH - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      allStock = allStock.concat(data)
+      if (data.length < BATCH) break
+      from += BATCH
+    }
+
+    res.json({ sucursales: sucursales || [], stock: allStock })
+  } catch (err) {
+    console.error('Error consulta-data:', err)
+    res.status(500).json({ error: 'Error al obtener datos de consulta' })
   }
 })
 
