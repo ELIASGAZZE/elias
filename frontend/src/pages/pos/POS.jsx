@@ -3511,20 +3511,13 @@ const POS = () => {
           <div className="px-4 py-3 border-b bg-gray-50">
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-1 rounded truncate">
+                <div className="flex items-center gap-1.5">
+                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-0.5 rounded truncate max-w-[140px]" title={cliente.razon_social}>
                     {cliente.razon_social}
                   </span>
                   {cliente.id_centum > 0 && cliente.codigo && (
-                    <span className="text-gray-600 text-xs font-mono">{cliente.codigo}</span>
+                    <span className="text-gray-500 text-[10px] font-mono">{cliente.codigo}</span>
                   )}
-                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
-                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
-                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
-                    : 'bg-gray-200 text-gray-600'
-                  }`}>
-                    {cliente.condicion_iva === 'RI' ? 'Resp. Inscripto' : cliente.condicion_iva === 'MT' ? 'Monotributo' : 'Cons. Final'}
-                  </span>
                   {cliente.id_centum > 0 && (
                     <button
                       onClick={async () => {
@@ -3561,6 +3554,13 @@ const POS = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
+                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {cliente.condicion_iva === 'RI' ? 'RI' : cliente.condicion_iva === 'MT' ? 'MT' : 'CF'}
+                  </span>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
                     cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT'
                       ? 'bg-blue-100 text-blue-700'
@@ -4632,7 +4632,7 @@ const POS = () => {
                                 if (totalmenteDevuelto) return
                                 setProblemaItemsSel(prev => {
                                   const copy = { ...prev }
-                                  if (selected) { delete copy[idx] } else { copy[idx] = 1 }
+                                  if (selected) { delete copy[idx] } else { copy[idx] = cantMax < 1 ? cantMax : 1 }
                                   return copy
                                 })
                               }}
@@ -4661,7 +4661,7 @@ const POS = () => {
                           </div>
                           {selected && cantMax > 1 && (
                             <div className="flex items-center gap-2 mt-2 ml-8">
-                              <span className="text-xs text-red-600 font-medium">Cant. a devolver:</span>
+                              <span className="text-xs text-red-600 font-medium">Cantidad:</span>
                               <button
                                 onClick={() => setProblemaItemsSel(prev => {
                                   const v = (prev[idx] || 1) - 1
