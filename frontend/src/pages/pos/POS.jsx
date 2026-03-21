@@ -6,6 +6,7 @@ import ModalVentaEmpleado from '../../components/pos/ModalVentaEmpleado'
 import PedidosPOS from './PedidosPOS'
 import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
+import ConsultaPOS from '../../components/pos/ConsultaPOS'
 import NuevoClienteModal from '../../components/NuevoClienteModal'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import TecladoVirtual from '../../components/pos/TecladoVirtual'
@@ -2283,11 +2284,10 @@ const POS = () => {
         e.preventDefault()
         setVistaActiva('giftcards')
       }
-      // F7 = Alternar ticket 1/2
+      // F7 = Tab Consulta
       if (e.key === 'F7') {
         e.preventDefault()
-        setTicketActivo(prev => prev === 0 ? 1 : 0)
-        setBusquedaArt(''); setBusquedaCliente('')
+        setVistaActiva('consulta')
       }
       // F8 = Problema
       if (e.key === 'F8') {
@@ -3179,6 +3179,18 @@ const POS = () => {
             >
               Gift Cards <span className="text-[9px] opacity-60 ml-1">F6</span>
             </button>
+
+            {/* Tab Consulta */}
+            <button
+              onClick={() => setVistaActiva('consulta')}
+              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+                vistaActiva === 'consulta'
+                  ? 'bg-violet-700 text-white'
+                  : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
+              }`}
+            >
+              Consulta <span className="text-[9px] opacity-60 ml-1">F7</span>
+            </button>
           </div>
 
           {/* Derecha: info terminal + config */}
@@ -3311,6 +3323,13 @@ const POS = () => {
       {vistaActiva === 'giftcards' && (
         <div className="flex-1 overflow-hidden">
           <GiftCardsPOS embebido />
+        </div>
+      )}
+
+      {/* === TAB CONSULTA === */}
+      {vistaActiva === 'consulta' && (
+        <div className="flex-1 overflow-hidden">
+          <ConsultaPOS articulos={articulos} promociones={promociones} />
         </div>
       )}
 
@@ -3491,7 +3510,7 @@ const POS = () => {
                         : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                   }`}
                 >
-                  Ticket {idx + 1} <span className="text-[9px] opacity-50">F7</span>
+                  Ticket {idx + 1}
                   {items > 0 && (
                     <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       activo ? 'bg-violet-100 text-violet-700' : 'bg-amber-200 text-amber-800'

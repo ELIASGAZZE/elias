@@ -50,7 +50,7 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, centum_sucursal_id, centum_operador_empresa, centum_operador_prueba } = req.body
+    const { nombre, centum_sucursal_id, centum_operador_empresa, centum_operador_prueba, mostrar_en_consulta } = req.body
 
     const updateData = {}
     if (nombre !== undefined) {
@@ -67,6 +67,9 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
     }
     if (centum_operador_prueba !== undefined) {
       updateData.centum_operador_prueba = centum_operador_prueba?.trim() || null
+    }
+    if (typeof mostrar_en_consulta === 'boolean') {
+      updateData.mostrar_en_consulta = mostrar_en_consulta
     }
 
     if (Object.keys(updateData).length === 0) {

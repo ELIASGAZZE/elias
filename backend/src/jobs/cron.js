@@ -1,7 +1,7 @@
 // Tareas programadas (cron jobs)
 const cron = require('node-cron')
 const https = require('https')
-const { sincronizarERP, sincronizarStock } = require('../services/syncERP')
+const { sincronizarERP, sincronizarStock, sincronizarStockMultiSucursal, sincronizarImagenesPresencia } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
 const { retrySyncVentasCentum, retrySyncCAE } = require('../services/centumVentasPOS')
 const { analizarBatch } = require('../services/patronesIA')
@@ -131,6 +131,26 @@ function iniciarCronJobs() {
     }
   })
 
+  // Stock multi-sucursal para consulta POS: cada 30 minutos
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const resultado = await sincronizarStockMultiSucursal('cron')
+      console.log(`[StockMulti] ${resultado.mensaje}`)
+    } catch (err) {
+      console.error('[StockMulti] Error:', err.message)
+    }
+  })
+
+  // Presencia de imágenes: una vez al día a las 06:10 UTC
+  cron.schedule('10 6 * * *', async () => {
+    try {
+      const resultado = await sincronizarImagenesPresencia('cron')
+      console.log(`[SyncImágenes] ${resultado.mensaje}`)
+    } catch (err) {
+      console.error('[SyncImágenes] Error:', err.message)
+    }
+  })
+
   console.log('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
   console.log('[CRON] Sincronización stock depósito programada: cada hora en punto')
   console.log('[CRON] Keep-alive programado: cada 14 minutos')
@@ -139,6 +159,8 @@ function iniciarCronJobs() {
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
   console.log('[CRON] Retry ventas pendientes Centum: cada 5 minutos (offset 3)')
   console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
+  console.log('[CRON] Stock multi-sucursal: cada 30 minutos')
+  console.log('[CRON] Presencia imágenes: 06:10 UTC diariamente')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 
