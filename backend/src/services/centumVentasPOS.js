@@ -432,10 +432,13 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
     }
   }
 
+  // Centum valida Nombre con límite de caracteres (NombreApellidoInvalidoException)
+  const nombreConcepto = (descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA').slice(0, 100)
+
   body.VentaConceptos = [{
     IdConcepto: 25, // DIFERENCIA EN PRECIO DE GONDOLA
     Codigo: '23',
-    Nombre: descripcion || 'DIFERENCIA EN PRECIO DE GONDOLA',
+    Nombre: nombreConcepto,
     Cantidad: 1,
     Precio: importeConcepto,
     CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
