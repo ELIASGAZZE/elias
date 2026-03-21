@@ -2397,7 +2397,7 @@ const POS = () => {
     const descEmpleado = Object.values(rubroMap)
     const totalDescEmpleado = descEmpleado.reduce((s, d) => s + d.descuento, 0)
 
-    const aplicadas = modoDelivery ? [] : calcularPromocionesLocales(carrito, promociones)
+    const aplicadas = (modoDelivery || cliente.grupo_descuento_porcentaje > 0) ? [] : calcularPromocionesLocales(carrito, promociones)
     const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
     return {
@@ -2409,7 +2409,7 @@ const POS = () => {
       total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
-  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, modoDelivery])
+  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, modoDelivery, cliente.grupo_descuento_porcentaje])
 
   function ejecutarCancelacion() {
     api.post('/api/auditoria/cancelacion', {
