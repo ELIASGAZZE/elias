@@ -7,6 +7,7 @@ const TabCombos = () => {
   const [combos, setCombos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [busqueda, setBusqueda] = useState('')
+  const [filtro, setFiltro] = useState('todos') // todos | habilitados | deshabilitados
   const [toggling, setToggling] = useState(null) // id del combo que se está toggling
 
   useEffect(() => { cargarCombos() }, [])
@@ -41,13 +42,18 @@ const TabCombos = () => {
   }
 
   const combosFiltrados = useMemo(() => {
-    if (!busqueda.trim()) return combos
-    const q = busqueda.toLowerCase()
-    return combos.filter(c =>
-      (c.nombre || '').toLowerCase().includes(q) ||
-      (c.codigo || '').toLowerCase().includes(q)
-    )
-  }, [combos, busqueda])
+    let items = combos
+    if (filtro === 'habilitados') items = items.filter(c => c.habilitado)
+    else if (filtro === 'deshabilitados') items = items.filter(c => !c.habilitado)
+    if (busqueda.trim()) {
+      const q = busqueda.toLowerCase()
+      items = items.filter(c =>
+        (c.nombre || '').toLowerCase().includes(q) ||
+        (c.codigo || '').toLowerCase().includes(q)
+      )
+    }
+    return items
+  }, [combos, busqueda, filtro])
 
   const habilitados = combos.filter(c => c.habilitado).length
 
@@ -65,6 +71,23 @@ const TabCombos = () => {
         <span className="text-sm text-gray-500">
           {habilitados} habilitado{habilitados !== 1 ? 's' : ''} de {combos.length} combos
         </span>
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+          {[
+            { id: 'todos', label: 'Todos' },
+            { id: 'habilitados', label: 'Habilitados' },
+            { id: 'deshabilitados', label: 'Deshabilitados' },
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setFiltro(f.id)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                filtro === f.id ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="border border-gray-200 rounded-xl overflow-hidden">

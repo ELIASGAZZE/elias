@@ -150,7 +150,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
   while (true) {
     const { data, error } = await supabase
       .from('articulos')
-      .select('id, codigo, precio, descuento1, descuento2, descuento3, iva_tasa, nombre')
+      .select('id, codigo, precio, descuento1, descuento2, descuento3, iva_tasa, nombre, es_pesable')
       .eq('tipo', 'automatico')
       .range(from, from + BATCH_SIZE - 1)
     if (error) throw error
@@ -178,8 +178,9 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
       const cambioDesc3 = Math.abs((parseFloat(actual.descuento3) || 0) - (art.descuento3 || 0)) > 0.001
       const cambioIva = Math.abs((parseFloat(actual.iva_tasa) || 21) - (art.iva_tasa || 21)) > 0.001
       const cambioNombre = actual.nombre !== art.nombre
+      const cambioPesable = (actual.es_pesable || false) !== (art.es_pesable || false)
 
-      if (cambioPrecio || cambioDesc1 || cambioDesc2 || cambioDesc3 || cambioIva || cambioNombre) {
+      if (cambioPrecio || cambioDesc1 || cambioDesc2 || cambioDesc3 || cambioIva || cambioNombre || cambioPesable) {
         actualizados.push(art)
       } else {
         sinCambios++
@@ -348,7 +349,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
         rubro: art.Rubro?.Nombre || null,
         marca: art.MarcaArticulo?.Nombre || null,
         tipo: 'combo',
-        es_pesable: false,
+        es_pesable: art.EsPesable === true,
         id_centum: art.IdArticulo || null,
         precio: art.Precio != null ? Math.round(art.Precio * 100) / 100 : null,
         subrubro: art.SubRubro?.Nombre || null,

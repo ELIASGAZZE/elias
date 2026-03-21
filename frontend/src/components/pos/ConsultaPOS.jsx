@@ -247,6 +247,8 @@ export default function ConsultaPOS({ articulos, promociones }) {
   useEffect(() => {
     cargarDatos()
     setTimeout(() => inputRef.current?.focus(), 100)
+    const interval = setInterval(() => cargarDatos(true), 5 * 60 * 1000)
+    return () => clearInterval(interval)
   }, [])
 
   const resultados = useMemo(() => {
@@ -391,7 +393,7 @@ export default function ConsultaPOS({ articulos, promociones }) {
                           <td colSpan={7} className="bg-violet-50/50 px-6 py-4">
                             <div className="flex gap-6 max-w-5xl mx-auto">
                               {/* Imagen grande */}
-                              <div className="w-36 h-36 rounded-xl overflow-hidden bg-white border border-gray-200 flex-shrink-0">
+                              <div className="w-52 h-52 rounded-xl overflow-hidden bg-white border border-gray-200 flex-shrink-0">
                                 <img
                                   src={`${API_BASE}/api/articulos/${art.id}/imagen`}
                                   alt={art.nombre}
