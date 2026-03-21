@@ -90,7 +90,7 @@ router.get('/actualizaciones', verificarAuth, async (req, res) => {
     while (true) {
       const { data, error } = await supabase
         .from('articulos')
-        .select('codigo, nombre, precio, rubro, marca, descuento1, descuento2, descuento3, updated_at')
+        .select('codigo, nombre, tipo, precio, rubro, marca, descuento1, descuento2, descuento3, updated_at, articulos_por_sucursal(habilitado)')
         .gte('updated_at', desde)
         .lte('updated_at', hasta)
         .order('rubro', { ascending: true })
@@ -104,7 +104,14 @@ router.get('/actualizaciones', verificarAuth, async (req, res) => {
       from += BATCH
     }
 
-    res.json({ fecha, cantidad: todos.length, articulos: todos })
+    // Excluir combos que no están habilitados en ninguna sucursal
+    const filtrados = todos.filter(art => {
+      if (art.tipo !== 'combo') return true
+      const sucursales = art.articulos_por_sucursal || []
+      return sucursales.some(s => s.habilitado)
+    }).map(({ tipo, articulos_por_sucursal, ...rest }) => rest)
+
+    res.json({ fecha, cantidad: filtrados.length, articulos: filtrados })
   } catch (err) {
     console.error('Error obteniendo actualizaciones:', err)
     res.status(500).json({ error: err.message })
