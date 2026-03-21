@@ -3511,12 +3511,40 @@ const POS = () => {
           <div className="px-4 py-3 border-b bg-gray-50">
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-0.5 rounded truncate max-w-[160px]" title={cliente.razon_social}>
+                {/* Fila 1: nombre, código, condición IVA, tipo factura */}
+                <div className="flex items-center gap-2">
+                  <span className="bg-violet-100 text-violet-700 text-xs font-semibold px-2 py-0.5 rounded truncate">
                     {cliente.razon_social}
                   </span>
                   {cliente.id_centum > 0 && cliente.codigo && (
-                    <span className="text-gray-500 text-[10px] font-mono">{cliente.codigo}</span>
+                    <span className="text-gray-500 text-[10px] font-mono flex-shrink-0">{cliente.codigo}</span>
+                  )}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
+                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {cliente.condicion_iva === 'RI' ? 'Resp. Inscripto' : cliente.condicion_iva === 'MT' ? 'Monotributo' : 'Cons. Final'}
+                  </span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
+                  </span>
+                </div>
+                {/* Fila 2: grupo descuento, saldo, botones */}
+                <div className="flex items-center gap-2 mt-1">
+                  {cliente.grupo_descuento_nombre && (
+                    <span className="bg-violet-100 text-violet-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                      {cliente.grupo_descuento_nombre} -{cliente.grupo_descuento_porcentaje}%
+                    </span>
+                  )}
+                  {saldoCliente > 0 && (
+                    <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                      Saldo: {formatPrecio(saldoCliente)}
+                    </span>
                   )}
                   {cliente.id_centum > 0 && (
                     <button
@@ -3537,7 +3565,7 @@ const POS = () => {
                           console.error('Error refrescando cliente:', err)
                         }
                       }}
-                      className="text-gray-500 hover:text-violet-600 flex-shrink-0"
+                      className="text-gray-400 hover:text-violet-600"
                       title="Actualizar datos del cliente"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -3547,30 +3575,13 @@ const POS = () => {
                   )}
                   <button
                     onClick={() => setCliente({ ...CLIENTE_DEFAULT })}
-                    className="text-gray-500 hover:text-red-500 flex-shrink-0"
+                    className="text-gray-400 hover:text-red-500"
                     title="Volver a Consumidor Final"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${
-                    cliente.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700'
-                    : cliente.condicion_iva === 'MT' ? 'bg-amber-100 text-amber-700'
-                    : 'bg-gray-200 text-gray-600'
-                  }`}>
-                    {cliente.condicion_iva === 'RI' ? 'RI' : cliente.condicion_iva === 'MT' ? 'MT' : 'CF'} | Fact {cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT' ? 'A' : 'B'}
-                  </span>
-                  {cliente.grupo_descuento_nombre && (
-                    <span className="bg-violet-100 text-violet-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
-                      {cliente.grupo_descuento_nombre} -{cliente.grupo_descuento_porcentaje}%
-                    </span>
-                  )}
-                  {saldoCliente > 0 && (
-                    <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
-                      Saldo: {formatPrecio(saldoCliente)}
-                    </span>
-                  )}
                 </div>
                 {(cliente.condicion_iva === 'RI' || cliente.condicion_iva === 'MT') && !cliente.email && (
                   <div className="mt-1.5 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-1 flex items-center gap-1.5">
