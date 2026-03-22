@@ -6,6 +6,47 @@ const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/au
 const { ajusteStockNegativo, ajusteStockPositivo } = require('../services/centumAjusteStock')
 
 // ═══════════════════════════════════════════════════════════════
+// Stock por sucursal (para mostrar en picker de artículos)
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/stock/:sucursalId', verificarAuth, async (req, res) => {
+  try {
+    // Obtener centum_sucursal_id de la sucursal
+    const { data: suc } = await supabase
+      .from('sucursales')
+      .select('centum_sucursal_id')
+      .eq('id', req.params.sucursalId)
+      .single()
+
+    if (!suc?.centum_sucursal_id) return res.json({})
+
+    // Traer stock en lotes
+    const BATCH = 1000
+    let allStock = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('stock_sucursales')
+        .select('id_centum, existencias')
+        .eq('centum_sucursal_id', suc.centum_sucursal_id)
+        .range(from, from + BATCH - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      allStock = allStock.concat(data)
+      if (data.length < BATCH) break
+      from += BATCH
+    }
+
+    // Devolver como mapa { id_centum: existencias }
+    const mapa = {}
+    for (const s of allStock) mapa[s.id_centum] = s.existencias
+    res.json(mapa)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
 // Config
 // ═══════════════════════════════════════════════════════════════
 
@@ -248,6 +289,55 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
 // Transiciones de estado
 // ═══════════════════════════════════════════════════════════════
 
+// GET /api/traspasos/asignar-preparacion
+// Busca la orden borrador más antigua, la pasa a en_preparacion y la devuelve
+router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
+  try {
+    // Buscar la orden borrador más antigua
+    const { data: orden, error: errBuscar } = await supabase
+      .from('ordenes_traspaso')
+      .select('id')
+      .eq('estado', 'borrador')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single()
+
+    if (errBuscar || !orden) {
+      // Si no hay borradores, buscar si hay alguna en_preparacion sin terminar
+      const { data: enPrep } = await supabase
+        .from('ordenes_traspaso')
+        .select('id')
+        .eq('estado', 'en_preparacion')
+        .order('updated_at', { ascending: true })
+        .limit(1)
+        .single()
+
+      if (!enPrep) {
+        return res.status(404).json({ error: 'No hay órdenes pendientes de preparación' })
+      }
+      return res.json({ orden: enPrep, ya_en_preparacion: true })
+    }
+
+    // Pasar a en_preparacion
+    const { data, error } = await supabase
+      .from('ordenes_traspaso')
+      .update({
+        estado: 'en_preparacion',
+        preparado_por: req.usuario?.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', orden.id)
+      .eq('estado', 'borrador')
+      .select('id')
+      .single()
+
+    if (error) throw error
+    res.json({ orden: data, ya_en_preparacion: false })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -275,7 +365,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
     // Validar que todos los canastos estén cerrados
     const { data: canastos } = await supabase
       .from('traspaso_canastos')
-      .select('estado')
+      .select('estado, items')
       .eq('orden_traspaso_id', req.params.id)
 
     if (!canastos || canastos.length === 0) {
@@ -301,6 +391,70 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
 
     if (error) throw error
     if (!data) return res.status(400).json({ error: 'La orden debe estar en preparación' })
+
+    // Auto-calcular pesos de pesables a partir de escaneos reales
+    try {
+      // Agregar todos los pesos escaneados por artículo
+      const pesosPorArticulo = {}
+      for (const c of canastos) {
+        for (const item of (c.items || [])) {
+          if (item.es_pesable && Array.isArray(item.pesos_escaneados) && item.pesos_escaneados.length > 0) {
+            if (!pesosPorArticulo[item.articulo_id]) pesosPorArticulo[item.articulo_id] = []
+            pesosPorArticulo[item.articulo_id].push(...item.pesos_escaneados)
+          }
+        }
+      }
+
+      // Actualizar cada artículo pesable con nuevos datos
+      for (const [articuloId, pesos] of Object.entries(pesosPorArticulo)) {
+        if (pesos.length === 0) continue
+
+        const nuevoMin = Math.min(...pesos)
+        const nuevoMax = Math.max(...pesos)
+        const nuevoPromedio = pesos.reduce((s, p) => s + p, 0) / pesos.length
+
+        // Buscar artículo por id_centum (articulo_id en traspasos = id_centum)
+        const { data: art } = await supabase
+          .from('articulos')
+          .select('id, peso_promedio_pieza, peso_minimo, peso_maximo, peso_muestras')
+          .eq('id_centum', articuloId)
+          .single()
+
+        if (!art) continue
+
+        const muestrasAnteriores = art.peso_muestras || 0
+        const muestrasNuevas = pesos.length
+        const totalMuestras = muestrasAnteriores + muestrasNuevas
+
+        // Promedio acumulativo ponderado
+        const promedioAnterior = art.peso_promedio_pieza ? parseFloat(art.peso_promedio_pieza) : nuevoPromedio
+        const promedioActualizado = muestrasAnteriores > 0
+          ? (promedioAnterior * muestrasAnteriores + nuevoPromedio * muestrasNuevas) / totalMuestras
+          : nuevoPromedio
+
+        // Min/Max: expandir rango con datos reales
+        const minActualizado = art.peso_minimo
+          ? Math.min(parseFloat(art.peso_minimo), nuevoMin)
+          : nuevoMin
+        const maxActualizado = art.peso_maximo
+          ? Math.max(parseFloat(art.peso_maximo), nuevoMax)
+          : nuevoMax
+
+        await supabase
+          .from('articulos')
+          .update({
+            peso_promedio_pieza: Math.round(promedioActualizado * 1000) / 1000,
+            peso_minimo: Math.round(minActualizado * 1000) / 1000,
+            peso_maximo: Math.round(maxActualizado * 1000) / 1000,
+            peso_muestras: totalMuestras,
+          })
+          .eq('id', art.id)
+      }
+    } catch (pesoErr) {
+      console.error('Error actualizando pesos automáticos:', pesoErr)
+      // No falla la operación principal
+    }
+
     res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -458,11 +612,15 @@ router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) =>
       .eq('id', req.params.id)
       .single()
 
-    if (!canasto || canasto.estado !== 'en_preparacion') {
-      return res.status(400).json({ error: 'Solo se pueden editar canastos en preparación' })
-    }
-
     const { items, peso_origen, precinto } = req.body
+
+    if (!canasto) {
+      return res.status(404).json({ error: 'Canasto no encontrado' })
+    }
+    // Canastos cerrados permiten actualizar peso_origen e items (para mover artículos)
+    if (canasto.estado !== 'en_preparacion' && precinto !== undefined) {
+      return res.status(400).json({ error: 'No se puede cambiar el precinto de un canasto cerrado' })
+    }
     const updates = { updated_at: new Date().toISOString() }
     if (items !== undefined) updates.items = items
     if (peso_origen !== undefined) updates.peso_origen = peso_origen
@@ -494,12 +652,14 @@ router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, async (req, 
       return res.status(400).json({ error: 'Solo se pueden cerrar canastos en preparación' })
     }
 
-    if (!canasto.peso_origen) {
-      return res.status(400).json({ error: 'Debe registrar el peso antes de cerrar el canasto' })
-    }
-
     if (!canasto.items || canasto.items.length === 0) {
-      return res.status(400).json({ error: 'El canasto debe tener al menos un artículo' })
+      // Canasto vacío → eliminarlo
+      const { error: delError } = await supabase
+        .from('traspaso_canastos')
+        .delete()
+        .eq('id', req.params.id)
+      if (delError) throw delError
+      return res.json({ eliminado: true, id: req.params.id })
     }
 
     const { data, error } = await supabase
