@@ -127,10 +127,10 @@ const AdminArticulos = () => {
   }
 
   // Callback cuando el modal guarda — update local inmediato
-  const handleModalUpdate = (articuloId, nuevasRelaciones) => {
+  const handleModalUpdate = (articuloId, nuevasRelaciones, articuloActualizado) => {
     setArticulos(prev => prev.map(a => {
       if (a.id !== articuloId) return a
-      return { ...a, articulos_por_sucursal: nuevasRelaciones }
+      return { ...a, ...articuloActualizado, articulos_por_sucursal: nuevasRelaciones }
     }))
   }
 

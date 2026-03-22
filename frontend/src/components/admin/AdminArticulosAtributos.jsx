@@ -6,6 +6,7 @@ const TABS = [
   { id: 'articulos', label: 'Artículos' },
   { id: 'atributos', label: 'Atributos' },
   { id: 'combos', label: 'Combos' },
+  { id: 'pesos', label: 'Pesos' },
 ]
 
 const formatPrecio = (n) => {
@@ -247,6 +248,13 @@ const AdminArticulosAtributos = () => {
       {/* ===== TAB COMBOS ===== */}
       {tab === 'combos' && <TabCombos />}
 
+      {/* ===== TAB PESOS ===== */}
+      {tab === 'pesos' && (
+        <TabPesos articulos={articulos} onUpdate={(id, campos) => {
+          setArticulos(prev => prev.map(a => a.id === id ? { ...a, ...campos } : a))
+        }} />
+      )}
+
       {/* ===== TAB ATRIBUTOS ===== */}
       {tab === 'atributos' && (
         <div>
@@ -360,6 +368,163 @@ const AtributoCard = ({ attr, articulosPorValor, busqueda }) => {
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// Tab Pesos — solo pesables, edición inline
+const TabPesos = ({ articulos, onUpdate }) => {
+  const [busqueda, setBusqueda] = useState('')
+  const [guardando, setGuardando] = useState(null) // id del artículo guardando
+  const [editados, setEditados] = useState({}) // { artId: { pesoPromedioPieza, pesoMinimo, pesoMaximo } }
+
+  const pesables = useMemo(() => {
+    let items = articulos.filter(a => a.esPesable)
+    if (busqueda.trim()) {
+      const q = busqueda.toLowerCase()
+      items = items.filter(a => a.nombre.toLowerCase().includes(q) || a.codigo.includes(q))
+    }
+    return items
+  }, [articulos, busqueda])
+
+  const getVal = (art, campo) => {
+    if (editados[art.id] && editados[art.id][campo] !== undefined) return editados[art.id][campo]
+    return art[campo] ?? ''
+  }
+
+  const setVal = (artId, campo, valor) => {
+    setEditados(prev => ({
+      ...prev,
+      [artId]: { ...prev[artId], [campo]: valor }
+    }))
+  }
+
+  const hayCambios = (art) => {
+    const e = editados[art.id]
+    if (!e) return false
+    const toNum = v => v === '' || v === null || v === undefined ? null : parseFloat(v)
+    return (e.pesoPromedioPieza !== undefined && toNum(e.pesoPromedioPieza) !== (art.pesoPromedioPieza ?? null)) ||
+           (e.pesoMinimo !== undefined && toNum(e.pesoMinimo) !== (art.pesoMinimo ?? null)) ||
+           (e.pesoMaximo !== undefined && toNum(e.pesoMaximo) !== (art.pesoMaximo ?? null))
+  }
+
+  const guardar = async (art) => {
+    const e = editados[art.id]
+    if (!e) return
+    const toNum = v => v === '' || v === null || v === undefined ? null : parseFloat(v)
+    const payload = {
+      peso_promedio_pieza: toNum(e.pesoPromedioPieza !== undefined ? e.pesoPromedioPieza : art.pesoPromedioPieza),
+      peso_minimo: toNum(e.pesoMinimo !== undefined ? e.pesoMinimo : art.pesoMinimo),
+      peso_maximo: toNum(e.pesoMaximo !== undefined ? e.pesoMaximo : art.pesoMaximo),
+    }
+
+    if (payload.peso_minimo != null && payload.peso_maximo != null && payload.peso_minimo >= payload.peso_maximo) {
+      alert('El peso mínimo debe ser menor que el máximo')
+      return
+    }
+
+    setGuardando(art.id)
+    try {
+      await api.put(`/api/articulos/${art.dbId || art.id}`, payload)
+      onUpdate(art.id, {
+        pesoPromedioPieza: payload.peso_promedio_pieza,
+        pesoMinimo: payload.peso_minimo,
+        pesoMaximo: payload.peso_maximo,
+      })
+      setEditados(prev => { const n = { ...prev }; delete n[art.id]; return n })
+    } catch (err) {
+      alert('Error al guardar: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardando(null)
+    }
+  }
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={busqueda}
+        onChange={e => setBusqueda(e.target.value)}
+        placeholder="Buscar pesable por nombre o código..."
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 mb-3"
+      />
+
+      <div className="text-xs text-gray-400 mb-2">
+        {pesables.length} artículos pesables
+      </div>
+
+      <div className="border rounded-lg overflow-hidden max-h-[60vh] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Código</th>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Nombre</th>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Rubro</th>
+              <th className="text-center px-3 py-2 font-medium text-gray-600">Peso prom. (kg)</th>
+              <th className="text-center px-3 py-2 font-medium text-gray-600">Peso mín. (kg)</th>
+              <th className="text-center px-3 py-2 font-medium text-gray-600">Peso máx. (kg)</th>
+              <th className="text-center px-3 py-2 font-medium text-gray-600 w-20"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {pesables.slice(0, 200).map(art => (
+              <tr key={art.id} className="hover:bg-gray-50">
+                <td className="px-3 py-2 text-gray-500 font-mono text-xs">{art.codigo}</td>
+                <td className="px-3 py-2 text-gray-800">{art.nombre}</td>
+                <td className="px-3 py-2 text-gray-500 text-xs">{art.rubro?.nombre || '—'}</td>
+                <td className="px-2 py-1">
+                  <input
+                    type="number" step="0.001" min="0"
+                    value={getVal(art, 'pesoPromedioPieza')}
+                    onChange={e => setVal(art.id, 'pesoPromedioPieza', e.target.value)}
+                    className="w-full text-center text-sm border border-gray-200 rounded px-1 py-1 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    placeholder="—"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <input
+                    type="number" step="0.001" min="0"
+                    value={getVal(art, 'pesoMinimo')}
+                    onChange={e => setVal(art.id, 'pesoMinimo', e.target.value)}
+                    className="w-full text-center text-sm border border-gray-200 rounded px-1 py-1 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    placeholder="—"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <input
+                    type="number" step="0.001" min="0"
+                    value={getVal(art, 'pesoMaximo')}
+                    onChange={e => setVal(art.id, 'pesoMaximo', e.target.value)}
+                    className="w-full text-center text-sm border border-gray-200 rounded px-1 py-1 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    placeholder="—"
+                  />
+                </td>
+                <td className="px-2 py-1 text-center">
+                  {hayCambios(art) && (
+                    <button
+                      onClick={() => guardar(art)}
+                      disabled={guardando === art.id}
+                      className="text-xs font-medium bg-violet-600 text-white px-3 py-1 rounded-md hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {guardando === art.id ? '...' : 'Guardar'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {pesables.length > 200 && (
+          <div className="text-center text-xs text-gray-400 py-2 bg-gray-50">
+            Mostrando 200 de {pesables.length} — usá la búsqueda para acotar
+          </div>
+        )}
+        {pesables.length === 0 && (
+          <div className="text-center text-sm text-gray-400 py-8">
+            No se encontraron artículos pesables
+          </div>
+        )}
       </div>
     </div>
   )

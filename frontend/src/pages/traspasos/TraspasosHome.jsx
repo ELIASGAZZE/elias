@@ -4,9 +4,31 @@ import { Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
+const ESTADO_BADGE = {
+  borrador: 'bg-gray-100 text-gray-600',
+  en_preparacion: 'bg-amber-100 text-amber-600',
+  preparado: 'bg-blue-100 text-blue-600',
+  despachado: 'bg-purple-100 text-purple-600',
+  recibido: 'bg-green-100 text-green-600',
+  con_diferencia: 'bg-red-100 text-red-600',
+  cancelado: 'bg-red-50 text-red-400',
+}
+
+const ESTADO_LABEL = {
+  borrador: 'Borrador',
+  en_preparacion: 'En preparación',
+  preparado: 'Preparado',
+  despachado: 'Despachado',
+  recibido: 'Recibido',
+  con_diferencia: 'Con diferencia',
+  cancelado: 'Cancelado',
+}
+
 const TraspasosHome = () => {
   const [dashboard, setDashboard] = useState(null)
   const [cargando, setCargando] = useState(true)
+  const [ordenes, setOrdenes] = useState([])
+  const [filtroEstado, setFiltroEstado] = useState('')
 
   useEffect(() => {
     api.get('/api/traspasos/dashboard')
@@ -14,6 +36,13 @@ const TraspasosHome = () => {
       .catch(err => console.error('Error cargando dashboard:', err))
       .finally(() => setCargando(false))
   }, [])
+
+  useEffect(() => {
+    const params = filtroEstado ? `?estado=${filtroEstado}` : ''
+    api.get(`/api/traspasos/ordenes${params}`)
+      .then(r => setOrdenes(r.data))
+      .catch(err => console.error('Error cargando ordenes:', err))
+  }, [filtroEstado])
 
   if (cargando) return (
     <div className="min-h-screen bg-gray-50">
@@ -80,6 +109,50 @@ const TraspasosHome = () => {
               <div className="text-xs text-gray-400">Listado de órdenes de traspaso</div>
             </div>
           </Link>
+        </div>
+
+        {/* Lista de órdenes */}
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <h2 className="font-semibold text-gray-700 text-sm">Órdenes de Traspaso</h2>
+            <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+              <option value="">Todos</option>
+              {Object.entries(ESTADO_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+
+          {ordenes.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">No hay órdenes</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {ordenes.map(o => (
+                <Link key={o.id} to={`/traspasos/ordenes/${o.id}`}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm text-gray-800">{o.numero}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${ESTADO_BADGE[o.estado]}`}>
+                        {ESTADO_LABEL[o.estado]}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {o.sucursal_origen_nombre} → {o.sucursal_destino_nombre}
+                      <span className="mx-1.5">·</span>
+                      {new Date(o.created_at).toLocaleDateString('es-AR')}
+                      {o.items && <span className="ml-1.5">· {Array.isArray(o.items) ? o.items.length : 0} art.</span>}
+                    </div>
+                  </div>
+                  <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

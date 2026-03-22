@@ -8,6 +8,11 @@ const ArticuloModal = ({ articulo, sucursales, rubros = [], onClose, onUpdate })
   const [nombre, setNombre] = useState(articulo.nombre || '')
   const [rubro, setRubro] = useState(articulo.rubro || '')
 
+  // Campos de peso (solo para pesables)
+  const [pesoPromedio, setPesoPromedio] = useState(articulo.peso_promedio_pieza ?? '')
+  const [pesoMinimo, setPesoMinimo] = useState(articulo.peso_minimo ?? '')
+  const [pesoMaximo, setPesoMaximo] = useState(articulo.peso_maximo ?? '')
+
   // Estado original para detectar qué cambió
   const buildEstado = () => {
     const mapa = {}
@@ -52,13 +57,31 @@ const ArticuloModal = ({ articulo, sucursales, rubros = [], onClose, onUpdate })
 
     setGuardando(true)
     try {
-      // 1. Guardar cambios de nombre/rubro si es manual y cambió algo
+      // 1. Guardar cambios de nombre/rubro y/o peso
       let articuloActualizado = null
+      const camposUpdate = {}
+
       if (esManual && (nombre.trim() !== articulo.nombre || rubro.trim() !== (articulo.rubro || ''))) {
-        const { data } = await api.put(`/api/articulos/${articulo.id}`, {
-          nombre: nombre.trim(),
-          rubro: rubro.trim(),
-        })
+        camposUpdate.nombre = nombre.trim()
+        camposUpdate.rubro = rubro.trim()
+      }
+
+      if (articulo.es_pesable) {
+        const toNum = (v) => v === '' || v === null || v === undefined ? null : parseFloat(v)
+        const pp = toNum(pesoPromedio)
+        const pm = toNum(pesoMinimo)
+        const px = toNum(pesoMaximo)
+        if (pp !== (articulo.peso_promedio_pieza ?? null) ||
+            pm !== (articulo.peso_minimo ?? null) ||
+            px !== (articulo.peso_maximo ?? null)) {
+          camposUpdate.peso_promedio_pieza = pp
+          camposUpdate.peso_minimo = pm
+          camposUpdate.peso_maximo = px
+        }
+      }
+
+      if (Object.keys(camposUpdate).length > 0) {
+        const { data } = await api.put(`/api/articulos/${articulo.id}`, camposUpdate)
         articuloActualizado = data
       }
 
@@ -143,6 +166,51 @@ const ArticuloModal = ({ articulo, sucursales, rubros = [], onClose, onUpdate })
             </div>
           )}
         </div>
+
+        {/* Configuración pesable */}
+        {articulo.es_pesable && (
+          <div className="px-4 pt-3 pb-1 border-b border-gray-100 space-y-2">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Configuración pesable</h3>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-xs text-gray-500">Peso prom. (kg)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={pesoPromedio}
+                  onChange={e => setPesoPromedio(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="ej: 5"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Peso mín. (kg)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={pesoMinimo}
+                  onChange={e => setPesoMinimo(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="ej: 4"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Peso máx. (kg)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={pesoMaximo}
+                  onChange={e => setPesoMaximo(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="ej: 6"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Lista de sucursales */}
         <div className="p-4 space-y-3 overflow-y-auto flex-1">
