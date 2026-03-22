@@ -304,16 +304,15 @@ router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, async
 })
 
 // PUT /api/articulos/:id
-// Admin: edita nombre y/o rubro de un artículo manual
+// Admin: edita nombre/rubro (solo manuales) y campos de peso (cualquier pesable)
 router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, rubro } = req.body
+    const { nombre, rubro, peso_promedio_pieza, peso_minimo, peso_maximo } = req.body
 
-    // Verificar que el artículo existe y es manual
     const { data: existente, error: errBuscar } = await supabase
       .from('articulos')
-      .select('id, tipo')
+      .select('id, tipo, es_pesable')
       .eq('id', id)
       .single()
 
@@ -321,13 +320,45 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Artículo no encontrado' })
     }
 
-    if (existente.tipo !== 'manual') {
-      return res.status(400).json({ error: 'Solo se pueden editar artículos manuales' })
+    const updates = {}
+
+    // nombre/rubro solo para manuales
+    if (nombre !== undefined || rubro !== undefined) {
+      if (existente.tipo !== 'manual') {
+        return res.status(400).json({ error: 'Solo se pueden editar nombre/rubro de artículos manuales' })
+      }
+      if (nombre !== undefined) updates.nombre = nombre.trim()
+      if (rubro !== undefined) updates.rubro = rubro.trim()
     }
 
-    const updates = {}
-    if (nombre !== undefined) updates.nombre = nombre.trim()
-    if (rubro !== undefined) updates.rubro = rubro.trim()
+    // Campos de peso solo para pesables
+    if (peso_promedio_pieza !== undefined || peso_minimo !== undefined || peso_maximo !== undefined) {
+      if (!existente.es_pesable) {
+        return res.status(400).json({ error: 'Los campos de peso solo aplican a artículos pesables' })
+      }
+
+      const parsePeso = (v) => v === null ? null : parseFloat(v)
+      const ppp = parsePeso(peso_promedio_pieza)
+      const pmin = parsePeso(peso_minimo)
+      const pmax = parsePeso(peso_maximo)
+
+      if (ppp !== undefined && ppp !== null && ppp <= 0) {
+        return res.status(400).json({ error: 'peso_promedio_pieza debe ser mayor a 0' })
+      }
+      if (pmin !== undefined && pmin !== null && pmin <= 0) {
+        return res.status(400).json({ error: 'peso_minimo debe ser mayor a 0' })
+      }
+      if (pmax !== undefined && pmax !== null && pmax <= 0) {
+        return res.status(400).json({ error: 'peso_maximo debe ser mayor a 0' })
+      }
+      if (pmin != null && pmax != null && pmin >= pmax) {
+        return res.status(400).json({ error: 'peso_minimo debe ser menor que peso_maximo' })
+      }
+
+      if (peso_promedio_pieza !== undefined) updates.peso_promedio_pieza = ppp
+      if (peso_minimo !== undefined) updates.peso_minimo = pmin
+      if (peso_maximo !== undefined) updates.peso_maximo = pmax
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No se enviaron campos para actualizar' })

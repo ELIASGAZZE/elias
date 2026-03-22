@@ -11,7 +11,7 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, async (req, res) => {
   try {
-    const campos = 'id, id_centum, codigo, nombre, tipo, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at, tiene_imagen'
+    const campos = 'id, id_centum, codigo, nombre, tipo, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at, tiene_imagen, peso_promedio_pieza, peso_minimo, peso_maximo, peso_muestras'
 
     // Obtener IDs de combos habilitados (al menos en una sucursal)
     const { data: combosHab } = await supabase
@@ -52,6 +52,7 @@ router.get('/articulos', verificarAuth, async (req, res) => {
 
     const articulos = allData.map(a => ({
       id: a.id_centum || a.id,
+      dbId: a.id,
       codigo: a.codigo || '',
       nombre: a.nombre || '',
       precio: parseFloat(a.precio) || 0,
@@ -67,6 +68,10 @@ router.get('/articulos', verificarAuth, async (req, res) => {
       atributos: a.atributos || [],
       updatedAt: a.updated_at || null,
       tieneImagen: a.tiene_imagen || false,
+      pesoPromedioPieza: a.peso_promedio_pieza ? parseFloat(a.peso_promedio_pieza) : null,
+      pesoMinimo: a.peso_minimo ? parseFloat(a.peso_minimo) : null,
+      pesoMaximo: a.peso_maximo ? parseFloat(a.peso_maximo) : null,
+      pesoMuestras: a.peso_muestras || 0,
     }))
 
     res.json({ articulos, total: articulos.length })
