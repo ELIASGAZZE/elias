@@ -758,14 +758,26 @@ async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
     const centumData = await obtenerVentaCentum(idVentaCentum)
     const cae = centumData?.CAE || null
     const caeVto = centumData?.FechaVencimientoCAE || null
+
+    // Actualizar comprobante real de Centum (puede diferir del que se guardó al crear)
+    const numDocReal = centumData?.NumeroDocumento
+    const updates = {}
+    if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+      updates.centum_comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+    }
     if (cae) {
-      await supabase.from('ventas_pos').update({ numero_cae: cae }).eq('id', ventaPosId)
-      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}`)
+      updates.numero_cae = cae
+      await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
+      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}${updates.centum_comprobante ? `, comprobante=${updates.centum_comprobante}` : ''}`)
 
       // Envío automático de email (async, best effort)
       enviarComprobanteAutomatico(ventaPosId, cae, caeVto).catch(err => {
         console.warn(`[Email Auto] Error para venta ${ventaPosId}:`, err.message)
       })
+    } else if (updates.centum_comprobante) {
+      // Sin CAE pero con comprobante real actualizado (ej: NC sin autorizar ARCA)
+      await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
+      console.log(`[Centum POS] Comprobante actualizado para venta ${ventaPosId}: ${updates.centum_comprobante}`)
     }
     return cae
   } catch (err) {

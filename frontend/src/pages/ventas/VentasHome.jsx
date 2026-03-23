@@ -52,15 +52,25 @@ const VentasHome = () => {
   const cargarVentas = async () => {
     setCargando(true)
     try {
-      // Primero intentar obtener CAEs pendientes de ventas EMPRESA
-      await api.post('/api/pos/ventas/sync-caes').catch(() => {})
+      // Cargar ventas inmediatamente
       const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}`)
       setVentas(data.ventas || [])
+      // Sync CAEs en background (no bloquea la carga), recargar al terminar
+      api.post('/api/pos/ventas/sync-caes').then(r => {
+        if (r.data?.sincronizadas > 0) cargarVentasSilencioso()
+      }).catch(() => {})
     } catch (err) {
       console.error('Error al cargar ventas:', err)
     } finally {
       setCargando(false)
     }
+  }
+
+  const cargarVentasSilencioso = async () => {
+    try {
+      const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}`)
+      setVentas(data.ventas || [])
+    } catch {}
   }
 
   // Filtrar por búsqueda de cliente, clasificación, tipo y sucursal
