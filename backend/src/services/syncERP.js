@@ -239,24 +239,41 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     }
   }
 
-  // Sincronizar códigos de barra desde Centum BI (SQL Server) — skip en sync rápida
+  // Sincronizar códigos de barra con factor de unidad desde Centum BI (SQL Server) — skip en sync rápida
   let barcodesSincronizados = 0
   if (!skipBarcodes) try {
     const { getPool } = require('../config/centum')
     const db = await getPool()
+
+    // Traer barcodes con nivel de unidad
     const barcodeResult = await db.request().query(`
-      SELECT ArticuloID, CodigoBarras
+      SELECT ArticuloID, CodigoBarras, UnidadNivelDefectoVentasID
       FROM ArticulosCodigosBarras_VIEW
       WHERE CodigoBarras IS NOT NULL AND CodigoBarras != ''
         AND LEN(CodigoBarras) >= 8
     `)
 
-    // Agrupar barcodes por ArticuloID
+    // Traer factores de unidad alternativa por artículo
+    const unidadesResult = await db.request().query(`
+      SELECT ArticuloID, UnidadNivel1, UnidadNivel2
+      FROM Articulos_VIEW
+      WHERE UnidadNivel1 > 1 OR UnidadNivel2 > 1
+    `)
+    const unidadMap = {}
+    for (const row of unidadesResult.recordset) {
+      unidadMap[row.ArticuloID] = { n1: row.UnidadNivel1 || 1, n2: row.UnidadNivel2 || 1 }
+    }
+
+    // Agrupar barcodes por ArticuloID con factor calculado
     const barcodeMap = {}
     for (const row of barcodeResult.recordset) {
       const id = row.ArticuloID
       if (!barcodeMap[id]) barcodeMap[id] = []
-      barcodeMap[id].push(row.CodigoBarras.trim())
+      const nivel = row.UnidadNivelDefectoVentasID || 0
+      const u = unidadMap[id] || { n1: 1, n2: 1 }
+      // nivel 0 = unidad base (factor 1), nivel 1 = UnidadNivel1, nivel 2 = UnidadNivel1 * UnidadNivel2
+      const factor = nivel === 0 ? 1 : nivel === 1 ? u.n1 : u.n1 * u.n2
+      barcodeMap[id].push({ codigo: row.CodigoBarras.trim(), factor })
     }
 
     // Actualizar artículos que tienen barcodes (en paralelo, lotes de 50)

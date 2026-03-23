@@ -79,14 +79,18 @@ const NuevaOrden = () => {
 
   const abrirPopup = useCallback((articulo) => {
     const esPesable = articulo.esPesable || articulo.es_pesable || false
-    setPopupArticulo({ ...articulo, esPesable })
+    // Calcular factor de caja desde codigosBarras
+    const barcodes = articulo.codigosBarras || articulo.codigos_barras || []
+    const factorCaja = barcodes.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
+    const hasPeso = esPesable && (articulo.pesoPromedioPieza || articulo.peso_promedio_pieza)
+    setPopupArticulo({ ...articulo, esPesable, factorCaja })
     setPopupCantidad(esPesable ? '' : '1')
-    setPopupModo(esPesable ? 'uds' : 'uds')
+    setPopupModo(esPesable ? (hasPeso ? 'uds' : 'kg') : 'uds')
     setBusqueda('')
     setSelIdx(-1)
-    const hasPeso = esPesable && (articulo.pesoPromedioPieza || articulo.peso_promedio_pieza)
+    const hasToggle = esPesable || (!esPesable && factorCaja > 1)
     setTimeout(() => {
-      if (hasPeso && popupToggleRef.current) {
+      if (hasToggle && popupToggleRef.current) {
         popupToggleRef.current.focus()
       } else if (popupInputRef.current) {
         popupInputRef.current.focus()
@@ -103,10 +107,14 @@ const NuevaOrden = () => {
     const esPesable = popupArticulo.esPesable
     const ppp = popupArticulo.pesoPromedioPieza
 
-    // Calcular cantidad en kg para pesables
+    // Calcular cantidad final
     let cantidadFinal = cant
     if (esPesable && popupModo === 'uds' && ppp) {
       cantidadFinal = Math.round(cant * ppp * 1000) / 1000
+    } else if (!esPesable && popupModo === 'cajas' && popupArticulo.factorCaja > 1) {
+      cantidadFinal = Math.round(cant) * popupArticulo.factorCaja
+    } else if (!esPesable) {
+      cantidadFinal = Math.round(cant)
     }
 
     setItems(prev => {
@@ -151,7 +159,7 @@ const NuevaOrden = () => {
         // Búsqueda por código exacto (barcode)
         const porCodigo = todosArticulos.find(a =>
           a.codigo === busqueda ||
-          (a.codigosBarras && a.codigosBarras.includes(busqueda))
+          (a.codigosBarras && a.codigosBarras.some(b => (typeof b === 'object' ? b.codigo : b) === busqueda))
         )
         if (porCodigo) {
           abrirPopup(porCodigo)
@@ -331,10 +339,10 @@ const NuevaOrden = () => {
                   </div>
                   <input
                     type="number"
-                    min="0.001"
+                    min={item.es_pesable ? '0.001' : '1'}
                     step={item.es_pesable ? '0.1' : '1'}
                     value={item.cantidad_solicitada}
-                    onChange={e => actualizarCantidad(idx, e.target.value)}
+                    onChange={e => actualizarCantidad(idx, item.es_pesable ? e.target.value : String(Math.max(1, Math.round(parseFloat(e.target.value) || 0))))}
                     onFocus={e => e.target.select()}
                     className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center font-mono focus:border-sky-400 outline-none"
                   />
@@ -344,6 +352,18 @@ const NuevaOrden = () => {
                       ≈{Math.round(item.cantidad_solicitada / item.peso_promedio_pieza)} pzas
                     </span>
                   )}
+                  {!item.es_pesable && item.cantidad_solicitada > 0 && (() => {
+                    const art = todosArticulos.find(a => String(a.id) === item.articulo_id)
+                    const fc = art?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
+                    if (fc <= 1) return null
+                    const cajas = Math.floor(item.cantidad_solicitada / fc)
+                    const sueltas = item.cantidad_solicitada % fc
+                    return (
+                      <span className="text-xs text-sky-600 w-20 text-right">
+                        {cajas > 0 ? `${cajas} cj` : ''}{cajas > 0 && sueltas > 0 ? ` + ${sueltas}` : sueltas > 0 ? `${sueltas} ud${sueltas !== 1 ? 's' : ''}` : ''}
+                      </span>
+                    )
+                  })()}
                   <button onClick={() => quitarItem(idx)}
                     className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -371,11 +391,12 @@ const NuevaOrden = () => {
                 <div className={`text-xs text-center font-medium ${st > 0 ? 'text-emerald-600' : 'text-red-400'}`}>
                   Stock origen: {st}{popupArticulo.esPesable ? ' kg' : ' uds'}
                   {popupArticulo.esPesable && popupArticulo.pesoPromedioPieza && st > 0 && ` (≈${Math.round(st / popupArticulo.pesoPromedioPieza)} pzas)`}
+                  {!popupArticulo.esPesable && popupArticulo.factorCaja > 1 && st > 0 && ` (${Math.floor(st / popupArticulo.factorCaja)} cj${st % popupArticulo.factorCaja > 0 ? ` + ${st % popupArticulo.factorCaja}` : ''})`}
                 </div>
               ) : null })()}
 
-              {/* Toggle kg/uds para pesables con peso promedio — Tab cambia modo, Enter pasa al input */}
-              {popupArticulo.esPesable && popupArticulo.pesoPromedioPieza && (
+              {/* Toggle kg/uds para pesables — Tab cambia modo, Enter pasa al input */}
+              {popupArticulo.esPesable && (
                 <div
                   ref={popupToggleRef}
                   className="flex gap-1 bg-gray-100 rounded-lg p-1 outline-none focus:ring-2 focus:ring-sky-300 rounded-lg"
@@ -412,16 +433,54 @@ const NuevaOrden = () => {
                 </div>
               )}
 
+              {/* Toggle uds/cajas para unitarios con unidad alternativa */}
+              {!popupArticulo.esPesable && popupArticulo.factorCaja > 1 && (
+                <div
+                  ref={popupToggleRef}
+                  className="flex gap-1 bg-gray-100 rounded-lg p-1 outline-none focus:ring-2 focus:ring-sky-300 rounded-lg"
+                  tabIndex={0}
+                  onKeyDown={e => {
+                    if (e.key === 'Tab' && !e.shiftKey) {
+                      e.preventDefault()
+                      setPopupModo(prev => prev === 'uds' ? 'cajas' : 'uds')
+                      setPopupCantidad('')
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault()
+                      popupInputRef.current?.focus()
+                    }
+                  }}
+                >
+                  <button
+                    tabIndex={-1}
+                    onClick={() => { setPopupModo('uds'); setPopupCantidad('') }}
+                    className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      popupModo === 'uds' ? 'bg-white text-sky-700 shadow-sm' : 'text-gray-500'
+                    }`}
+                  >
+                    Unidades
+                  </button>
+                  <button
+                    tabIndex={-1}
+                    onClick={() => { setPopupModo('cajas'); setPopupCantidad('') }}
+                    className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      popupModo === 'cajas' ? 'bg-white text-sky-700 shadow-sm' : 'text-gray-500'
+                    }`}
+                  >
+                    Cajas (x{popupArticulo.factorCaja})
+                  </button>
+                </div>
+              )}
+
               <div>
                 <label className="text-xs text-gray-500 block mb-1">
                   {popupArticulo.esPesable
                     ? (popupModo === 'uds' ? 'Cantidad (unidades/piezas)' : 'Cantidad (kg)')
-                    : 'Cantidad (unidades)'}
+                    : (popupModo === 'cajas' ? `Cantidad (cajas de ${popupArticulo.factorCaja})` : 'Cantidad (unidades)')}
                 </label>
                 <input
                   ref={popupInputRef}
                   type="number"
-                  min="0.001"
+                  min={popupArticulo.esPesable && popupModo === 'kg' ? '0.001' : '1'}
                   step={popupArticulo.esPesable && popupModo === 'kg' ? '0.1' : '1'}
                   value={popupCantidad}
                   onChange={e => setPopupCantidad(e.target.value)}
@@ -432,7 +491,7 @@ const NuevaOrden = () => {
                 />
               </div>
 
-              {/* Conversión automática */}
+              {/* Conversión automática — pesables */}
               {popupArticulo.esPesable && popupArticulo.pesoPromedioPieza && popupCantidad && parseFloat(popupCantidad) > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-700 text-center">
                   {popupModo === 'uds'
@@ -442,9 +501,16 @@ const NuevaOrden = () => {
                 </div>
               )}
 
-              {popupArticulo.esPesable && !popupArticulo.pesoPromedioPieza && (
-                <p className="text-xs text-gray-400 text-center">
-                  Sin peso promedio configurado — solo se puede cargar en kg
+              {/* Conversión automática — unitarios con cajas */}
+              {!popupArticulo.esPesable && popupModo === 'cajas' && popupArticulo.factorCaja > 1 && popupCantidad && parseFloat(popupCantidad) > 0 && (
+                <div className="bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 text-sm text-sky-700 text-center">
+                  {`${parseFloat(popupCantidad)} caja${parseFloat(popupCantidad) !== 1 ? 's' : ''} = ${Math.round(parseFloat(popupCantidad) * popupArticulo.factorCaja)} unidades`}
+                </div>
+              )}
+
+              {popupArticulo.esPesable && popupModo === 'uds' && !popupArticulo.pesoPromedioPieza && (
+                <p className="text-xs text-amber-500 text-center">
+                  Sin peso promedio — se cargará como piezas sin conversión a kg
                 </p>
               )}
             </div>

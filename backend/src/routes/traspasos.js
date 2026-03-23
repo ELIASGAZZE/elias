@@ -455,7 +455,75 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
       // No falla la operación principal
     }
 
-    res.json(data)
+    // ── Artículos faltantes (pendientes) ──
+    const { articulos_faltantes, crear_nueva_orden } = req.body || {}
+    let nueva_orden_id = null
+    let nueva_orden_numero = null
+
+    try {
+      // Insertar registros de faltantes si vienen
+      if (Array.isArray(articulos_faltantes) && articulos_faltantes.length > 0) {
+        const rows = articulos_faltantes.map(f => ({
+          orden_traspaso_id: req.params.id,
+          articulo_id: f.articulo_id,
+          nombre: f.nombre || null,
+          codigo: f.codigo || null,
+          cantidad_solicitada: f.cantidad_solicitada,
+          cantidad_preparada: f.cantidad_preparada,
+          cantidad_faltante: f.cantidad_faltante,
+          motivo: f.motivo || null,
+          sucursal_id: data.sucursal_origen_id,
+        }))
+        const { error: faltErr } = await supabase
+          .from('traspaso_articulos_faltantes')
+          .insert(rows)
+        if (faltErr) console.error('Error insertando faltantes:', faltErr)
+      }
+
+      // Crear nueva orden con los faltantes si se pidió
+      if (crear_nueva_orden && Array.isArray(articulos_faltantes) && articulos_faltantes.length > 0) {
+        let numero
+        try {
+          const { count } = await supabase.from('ordenes_traspaso').select('*', { count: 'exact', head: true })
+          numero = `OT-${String((count || 0) + 1).padStart(6, '0')}`
+        } catch {
+          numero = `OT-${Date.now()}`
+        }
+
+        const nuevosItems = articulos_faltantes.map(f => ({
+          articulo_id: f.articulo_id,
+          nombre: f.nombre,
+          codigo: f.codigo,
+          cantidad_solicitada: f.cantidad_faltante,
+          cantidad: f.cantidad_faltante,
+        }))
+
+        const { data: nuevaOrden, error: nuevaErr } = await supabase
+          .from('ordenes_traspaso')
+          .insert({
+            numero,
+            sucursal_origen_id: data.sucursal_origen_id,
+            sucursal_destino_id: data.sucursal_destino_id,
+            items: nuevosItems,
+            notas: `Pendientes de ${data.numero}`,
+            creado_por: req.usuario?.id,
+          })
+          .select()
+          .single()
+
+        if (nuevaErr) {
+          console.error('Error creando orden con faltantes:', nuevaErr)
+        } else {
+          nueva_orden_id = nuevaOrden.id
+          nueva_orden_numero = nuevaOrden.numero
+        }
+      }
+    } catch (faltantesErr) {
+      console.error('Error procesando faltantes:', faltantesErr)
+      // No falla la operación principal
+    }
+
+    res.json({ ...data, nueva_orden_id, nueva_orden_numero })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -584,16 +652,49 @@ router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, async (req
       return res.status(400).json({ error: 'Solo se pueden crear canastos en órdenes en preparación' })
     }
 
-    const { precinto, items } = req.body
-    if (!precinto) return res.status(400).json({ error: 'Código de precinto requerido' })
+    const { precinto, items, tipo, nombre } = req.body
+    const esBulto = tipo === 'bulto'
+
+    if (!esBulto && !precinto) return res.status(400).json({ error: 'Código de precinto requerido' })
+
+    const precintoFinal = esBulto ? `BULTO-${Date.now()}` : precinto
+
+    // Verificar que el precinto no esté en uso en otra orden activa (solo para canastos normales)
+    if (!esBulto) {
+      const { data: canastosConMismoPrecinto } = await supabase
+        .from('traspaso_canastos')
+        .select('id, orden_traspaso_id')
+        .eq('precinto', precintoFinal)
+        .neq('orden_traspaso_id', req.params.id)
+
+      if (canastosConMismoPrecinto && canastosConMismoPrecinto.length > 0) {
+        const ordenIds = [...new Set(canastosConMismoPrecinto.map(c => c.orden_traspaso_id))]
+        const { data: ordenesActivas } = await supabase
+          .from('ordenes_traspaso')
+          .select('id, numero, estado')
+          .in('id', ordenIds)
+          .in('estado', ['en_preparacion', 'preparado'])
+
+        if (ordenesActivas && ordenesActivas.length > 0) {
+          const num = ordenesActivas[0].numero || ordenesActivas[0].id.slice(0, 8)
+          return res.status(400).json({ error: `Este canasto ya está en uso en la orden #${num} (${ordenesActivas[0].estado.replace(/_/g, ' ')})` })
+        }
+      }
+    }
+
+    const insertData = {
+      orden_traspaso_id: req.params.id,
+      precinto: precintoFinal,
+      items: items || [],
+    }
+    if (esBulto) {
+      insertData.tipo = 'bulto'
+      insertData.nombre = nombre || 'Bulto'
+    }
 
     const { data, error } = await supabase
       .from('traspaso_canastos')
-      .insert({
-        orden_traspaso_id: req.params.id,
-        precinto,
-        items: items || [],
-      })
+      .insert(insertData)
       .select()
       .single()
 
@@ -662,6 +763,7 @@ router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, async (req, 
       return res.json({ eliminado: true, id: req.params.id })
     }
 
+    // Bultos se cierran directamente sin validación de precinto
     const { data, error } = await supabase
       .from('traspaso_canastos')
       .update({ estado: 'cerrado', updated_at: new Date().toISOString() })
@@ -732,6 +834,72 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
   }
 })
 
+// Conteo ciego para bultos en recepción
+router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
+  try {
+    const { items } = req.body
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Items con cantidades recibidas requeridos' })
+    }
+
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto || canasto.estado !== 'despachado') {
+      return res.status(400).json({ error: 'Solo se pueden contar bultos despachados' })
+    }
+
+    if (canasto.tipo !== 'bulto') {
+      return res.status(400).json({ error: 'Conteo ciego solo aplica a bultos' })
+    }
+
+    // Comparar cantidades recibidas vs enviadas
+    const itemsCanasto = canasto.items || []
+    const diferencias = []
+    let hayDiferencias = false
+
+    for (const itemRecibido of items) {
+      const itemOriginal = itemsCanasto.find(i => i.articulo_id === itemRecibido.articulo_id)
+      const cantidadEsperada = itemOriginal ? itemOriginal.cantidad : 0
+      const cantidadRecibida = itemRecibido.cantidad_recibida || 0
+
+      if (cantidadEsperada !== cantidadRecibida) hayDiferencias = true
+
+      diferencias.push({
+        articulo_id: itemRecibido.articulo_id,
+        nombre: itemOriginal?.nombre || itemRecibido.nombre || '',
+        codigo: itemOriginal?.codigo || '',
+        cantidad_esperada: cantidadEsperada,
+        cantidad_real: cantidadRecibida,
+        tipo: cantidadEsperada === cantidadRecibida ? 'ok' : 'diferencia',
+      })
+    }
+
+    const nuevoEstado = hayDiferencias ? 'con_diferencia' : 'aprobado'
+
+    const { data, error } = await supabase
+      .from('traspaso_canastos')
+      .update({
+        estado: nuevoEstado,
+        diferencias: hayDiferencias ? diferencias : null,
+        verificado_por: req.usuario?.id,
+        verificado_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json({ ...data, hay_diferencias: hayDiferencias })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
   try {
     const { diferencias } = req.body
@@ -788,6 +956,207 @@ router.delete('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res)
 
     if (error) throw error
     res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Reparto — escaneo de canastos para despacho
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
+  try {
+    // Órdenes en estado preparado
+    const { data: ordenes, error } = await supabase
+      .from('ordenes_traspaso')
+      .select('*')
+      .eq('estado', 'preparado')
+      .order('preparado_at', { ascending: true })
+
+    if (error) throw error
+    if (!ordenes || ordenes.length === 0) return res.json([])
+
+    // Nombres de sucursal
+    const sucursalIds = new Set()
+    for (const o of ordenes) {
+      sucursalIds.add(o.sucursal_origen_id)
+      sucursalIds.add(o.sucursal_destino_id)
+    }
+    const { data: sucursales } = await supabase
+      .from('sucursales')
+      .select('id, nombre')
+      .in('id', [...sucursalIds])
+
+    const sucMap = {}
+    for (const s of (sucursales || [])) sucMap[s.id] = s.nombre
+
+    // Canastos de cada orden
+    const ordenIds = ordenes.map(o => o.id)
+    const { data: canastos } = await supabase
+      .from('traspaso_canastos')
+      .select('id, orden_traspaso_id, precinto, estado, tipo, nombre')
+      .in('orden_traspaso_id', ordenIds)
+
+    const canastosPorOrden = {}
+    for (const c of (canastos || [])) {
+      if (!canastosPorOrden[c.orden_traspaso_id]) canastosPorOrden[c.orden_traspaso_id] = []
+      canastosPorOrden[c.orden_traspaso_id].push(c)
+    }
+
+    const resultado = ordenes.map(o => {
+      const cs = canastosPorOrden[o.id] || []
+      return {
+        ...o,
+        sucursal_origen_nombre: sucMap[o.sucursal_origen_id] || 'Desconocida',
+        sucursal_destino_nombre: sucMap[o.sucursal_destino_id] || 'Desconocida',
+        canastos: cs,
+        total_canastos: cs.length,
+        canastos_despachados: cs.filter(c => c.estado === 'despachado').length,
+      }
+    })
+
+    res.json(resultado)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
+  try {
+    const { precinto, canasto_id } = req.body
+    if (!precinto && !canasto_id) return res.status(400).json({ error: 'Precinto o canasto_id requerido' })
+
+    // Buscar canasto por ID (bultos) o por precinto (canastos normales)
+    let canasto, errBuscar
+    if (canasto_id) {
+      const result = await supabase
+        .from('traspaso_canastos')
+        .select('*, orden_traspaso_id')
+        .eq('id', canasto_id)
+        .single()
+      canasto = result.data
+      errBuscar = result.error
+    } else {
+      const result = await supabase
+        .from('traspaso_canastos')
+        .select('*, orden_traspaso_id')
+        .eq('precinto', precinto)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      canasto = result.data
+      errBuscar = result.error
+    }
+
+    if (errBuscar || !canasto) {
+      return res.status(404).json({ error: canasto_id ? 'Canasto no encontrado' : `Canasto con precinto "${precinto}" no encontrado` })
+    }
+
+    // Si ya está despachado, devolver sin error
+    if (canasto.estado === 'despachado') {
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+
+      const { data: hermanos } = await supabase
+        .from('traspaso_canastos')
+        .select('id, estado')
+        .eq('orden_traspaso_id', canasto.orden_traspaso_id)
+
+      const total = (hermanos || []).length
+      const despachados = (hermanos || []).filter(c => c.estado === 'despachado').length
+
+      return res.json({
+        ya_escaneado: true,
+        canasto,
+        orden,
+        orden_completada: orden?.estado === 'despachado',
+        canastos_restantes: total - despachados,
+        total_canastos: total,
+      })
+    }
+
+    // Solo despachar canastos en estado cerrado
+    if (canasto.estado !== 'cerrado') {
+      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar cerrado para despachar` })
+    }
+
+    // Pasar canasto a despachado
+    const { data: canastoActualizado, error: errUpdate } = await supabase
+      .from('traspaso_canastos')
+      .update({ estado: 'despachado', updated_at: new Date().toISOString() })
+      .eq('id', canasto.id)
+      .select()
+      .single()
+
+    if (errUpdate) throw errUpdate
+
+    // Verificar si TODOS los canastos de la orden están despachados
+    const { data: todosCanastos } = await supabase
+      .from('traspaso_canastos')
+      .select('id, estado')
+      .eq('orden_traspaso_id', canasto.orden_traspaso_id)
+
+    const total = (todosCanastos || []).length
+    const despachados = (todosCanastos || []).filter(c => c.estado === 'despachado').length
+    let ordenCompletada = false
+    let ordenData = null
+
+    if (despachados === total) {
+      // Traer orden para ajuste stock
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('*')
+        .eq('id', canasto.orden_traspaso_id)
+        .eq('estado', 'preparado')
+        .single()
+
+      if (orden) {
+        const resultado = await ajusteStockNegativo(
+          orden.sucursal_origen_id,
+          orden.items || [],
+          orden.numero
+        )
+
+        const { data: ordenActualizada } = await supabase
+          .from('ordenes_traspaso')
+          .update({
+            estado: 'despachado',
+            despachado_por: req.usuario?.id,
+            despachado_at: new Date().toISOString(),
+            centum_ajuste_origen_id: resultado.ajusteId,
+            centum_error: resultado.error,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', orden.id)
+          .select()
+          .single()
+
+        ordenCompletada = true
+        ordenData = ordenActualizada
+      }
+    }
+
+    if (!ordenData) {
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+      ordenData = orden
+    }
+
+    res.json({
+      ya_escaneado: false,
+      canasto: canastoActualizado,
+      orden: ordenData,
+      orden_completada: ordenCompletada,
+      canastos_restantes: total - despachados,
+      total_canastos: total,
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

@@ -12,6 +12,7 @@ const Recepcion = () => {
   const [pesosDestino, setPesosDestino] = useState({})
   const [verificando, setVerificando] = useState(null)
   const [diferencias, setDiferencias] = useState([])
+  const [conteoCiego, setConteoCiego] = useState({}) // { canastoId: { articulo_id: cantidad } }
 
   const cargar = () => {
     api.get(`/api/traspasos/ordenes/${id}`)
@@ -81,6 +82,28 @@ const Recepcion = () => {
     }
   }
 
+  const confirmarConteoCiego = async (canastoId) => {
+    const cantidades = conteoCiego[canastoId] || {}
+    const canasto = (orden.canastos || []).find(c => c.id === canastoId)
+    if (!canasto) return
+
+    const items = (canasto.items || []).map(i => ({
+      articulo_id: i.articulo_id,
+      nombre: i.nombre,
+      cantidad_recibida: parseFloat(cantidades[i.articulo_id]) || 0,
+    }))
+
+    try {
+      const r = await api.put(`/api/traspasos/canastos/${canastoId}/conteo-ciego`, { items })
+      if (r.data.hay_diferencias) {
+        alert('Se encontraron diferencias en el conteo.')
+      }
+      cargar()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al confirmar conteo')
+    }
+  }
+
   const confirmarRecepcion = async () => {
     if (!window.confirm('¿Confirmar recepción? Se realizará el ajuste de stock en destino.')) return
     try {
@@ -121,6 +144,7 @@ const Recepcion = () => {
 
         {/* Canastos */}
         {canastos.map(canasto => {
+          const esBulto = canasto.tipo === 'bulto'
           const esDespachado = canasto.estado === 'despachado'
           const esVerificacionManual = canasto.estado === 'verificacion_manual'
           const esAprobado = canasto.estado === 'aprobado'
@@ -132,7 +156,10 @@ const Recepcion = () => {
             }`}>
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-800">Precinto: {canasto.precinto}</span>
+                  <span className="font-medium text-gray-800">
+                    {esBulto ? (canasto.nombre || 'Bulto') : `Precinto: ${canasto.precinto}`}
+                  </span>
+                  {esBulto && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Bulto</span>}
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
                     esAprobado ? 'bg-green-100 text-green-600' :
                     esDiferencia ? 'bg-red-100 text-red-600' :
@@ -142,13 +169,15 @@ const Recepcion = () => {
                     {canasto.estado.replace(/_/g, ' ')}
                   </span>
                 </div>
-                <div className="text-xs text-gray-400">
-                  Peso origen: <span className="font-medium text-gray-600">{canasto.peso_origen} kg</span>
-                </div>
+                {!esBulto && (
+                  <div className="text-xs text-gray-400">
+                    Peso origen: <span className="font-medium text-gray-600">{canasto.peso_origen} kg</span>
+                  </div>
+                )}
               </div>
 
-              {/* Pesaje (solo si está despachado) */}
-              {esDespachado && (
+              {/* Pesaje (solo canastos normales despachados) */}
+              {esDespachado && !esBulto && (
                 <div className="flex gap-2 items-center">
                   <input
                     type="number"
@@ -162,6 +191,47 @@ const Recepcion = () => {
                   <button onClick={() => pesarCanasto(canasto.id)}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                     Pesar
+                  </button>
+                </div>
+              )}
+
+              {/* Conteo ciego (solo bultos despachados) */}
+              {esDespachado && esBulto && (
+                <div className="space-y-2 border-t border-gray-100 pt-2 mt-1">
+                  <div className="bg-orange-50 rounded-lg p-2 text-xs text-orange-700">
+                    Conteo ciego: ingresá la cantidad recibida de cada artículo sin ver lo enviado.
+                  </div>
+                  {(canasto.items || []).map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-sm bg-gray-50 rounded-lg p-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-gray-800 truncate">{item.nombre}</div>
+                        <div className="text-xs text-gray-400">{item.codigo}</div>
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        placeholder="Cant."
+                        value={conteoCiego[canasto.id]?.[item.articulo_id] ?? ''}
+                        onChange={e => setConteoCiego(prev => ({
+                          ...prev,
+                          [canasto.id]: {
+                            ...(prev[canasto.id] || {}),
+                            [item.articulo_id]: e.target.value,
+                          }
+                        }))}
+                        className="w-20 border border-gray-200 rounded px-2 py-1 text-sm text-center"
+                      />
+                    </div>
+                  ))}
+                  <button onClick={() => confirmarConteoCiego(canasto.id)}
+                    disabled={(canasto.items || []).some(i => (conteoCiego[canasto.id]?.[i.articulo_id] ?? '') === '')}
+                    className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${
+                      (canasto.items || []).every(i => (conteoCiego[canasto.id]?.[i.articulo_id] ?? '') !== '')
+                        ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                        : 'bg-gray-200 text-gray-400'
+                    }`}>
+                    Confirmar conteo
                   </button>
                 </div>
               )}
@@ -228,7 +298,10 @@ const Recepcion = () => {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  Aprobado — Peso dentro de tolerancia ({canasto.peso_destino} kg)
+                  {esBulto
+                    ? 'Aprobado — Conteo verificado'
+                    : `Aprobado — Peso dentro de tolerancia (${canasto.peso_destino} kg)`
+                  }
                 </div>
               )}
 

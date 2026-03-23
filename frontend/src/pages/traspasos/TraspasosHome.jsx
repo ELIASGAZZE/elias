@@ -58,32 +58,36 @@ const TraspasosHome = () => {
       <Navbar titulo="Traspasos entre Sucursales" sinTabs volverA="/apps" />
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {/* KPIs */}
+        {/* KPIs clickeables como filtro */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-gray-600">{dashboard?.pendientes || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">Pendientes</div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-amber-600">{dashboard?.en_preparacion || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">En preparación</div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-blue-600">{dashboard?.preparados || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">Preparados</div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-purple-600">{dashboard?.despachados || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">Despachados</div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-emerald-600">{dashboard?.recibidos_hoy || 0}</div>
-            <div className="text-xs text-gray-500 mt-1">Recibidos hoy</div>
-          </div>
+          {[
+            { key: 'borrador', label: 'Pendientes', value: dashboard?.pendientes || 0,
+              textColor: 'text-gray-600', activeBorder: 'border-gray-400 bg-gray-50 ring-2 ring-gray-200' },
+            { key: 'en_preparacion', label: 'En preparación', value: dashboard?.en_preparacion || 0,
+              textColor: 'text-amber-600', activeBorder: 'border-amber-400 bg-amber-50 ring-2 ring-amber-200' },
+            { key: 'preparado', label: 'Preparados', value: dashboard?.preparados || 0,
+              textColor: 'text-blue-600', activeBorder: 'border-blue-400 bg-blue-50 ring-2 ring-blue-200' },
+            { key: 'despachado', label: 'Despachados', value: dashboard?.despachados || 0,
+              textColor: 'text-purple-600', activeBorder: 'border-purple-400 bg-purple-50 ring-2 ring-purple-200' },
+            { key: 'recibido', label: 'Recibidos hoy', value: dashboard?.recibidos_hoy || 0,
+              textColor: 'text-emerald-600', activeBorder: 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200' },
+          ].map(kpi => (
+            <button key={kpi.key}
+              onClick={() => setFiltroEstado(filtroEstado === kpi.key ? '' : kpi.key)}
+              className={`rounded-xl border-2 p-4 text-center transition-all cursor-pointer ${
+                filtroEstado === kpi.key
+                  ? kpi.activeBorder
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}
+            >
+              <div className={`text-2xl font-bold ${kpi.textColor}`}>{kpi.value}</div>
+              <div className="text-xs text-gray-500 mt-1">{kpi.label}</div>
+            </button>
+          ))}
         </div>
 
         {/* Accesos rápidos */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
           <Link to="/traspasos/nueva"
             className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow flex items-center gap-4">
             <div className="bg-sky-100 text-sky-600 w-12 h-12 rounded-xl flex items-center justify-center">
@@ -96,32 +100,20 @@ const TraspasosHome = () => {
               <div className="text-xs text-gray-400">Crear pedido de envío a sucursal</div>
             </div>
           </Link>
-
-          <Link to="/traspasos/ordenes"
-            className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow flex items-center gap-4">
-            <div className="bg-sky-100 text-sky-600 w-12 h-12 rounded-xl flex items-center justify-center">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-            </div>
-            <div>
-              <div className="font-semibold text-gray-800">Ver Órdenes</div>
-              <div className="text-xs text-gray-400">Listado de órdenes de traspaso</div>
-            </div>
-          </Link>
         </div>
 
         {/* Lista de órdenes */}
         <div className="bg-white rounded-xl border border-gray-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-700 text-sm">Órdenes de Traspaso</h2>
-            <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
-              <option value="">Todos</option>
-              {Object.entries(ESTADO_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <h2 className="font-semibold text-gray-700 text-sm">
+              {filtroEstado ? ESTADO_LABEL[filtroEstado] : 'Todas las órdenes'}
+            </h2>
+            {filtroEstado && (
+              <button onClick={() => setFiltroEstado('')}
+                className="text-xs text-sky-600 hover:text-sky-800 font-medium">
+                Ver todas
+              </button>
+            )}
           </div>
 
           {ordenes.length === 0 ? (

@@ -1972,7 +1972,7 @@ const POS = () => {
   }, [articulos, busquedaArt, modoDelivery, deliveryPriceMap])
 
   // Agregar al carrito — pesables abren popup para ingresar peso, no pesables suman 1
-  const agregarAlCarrito = useCallback((articulo) => {
+  const agregarAlCarrito = useCallback((articulo, cantidad = 1) => {
     if (articulo.esPesable) {
       setPopupPesable({ articulo })
       setPopupPesableKg('')
@@ -1983,10 +1983,10 @@ const POS = () => {
       const idx = prev.findIndex(i => i.articulo.id === articulo.id)
       if (idx >= 0) {
         const nuevo = [...prev]
-        nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + 1 }
+        nuevo[idx] = { ...nuevo[idx], cantidad: nuevo[idx].cantidad + cantidad }
         return nuevo
       }
-      return [...prev, { articulo, cantidad: 1, ...(deliveryPrice != null ? { precioOverride: parseFloat(deliveryPrice) } : {}) }]
+      return [...prev, { articulo, cantidad, ...(deliveryPrice != null ? { precioOverride: parseFloat(deliveryPrice) } : {}) }]
     })
   }, [modoDelivery, deliveryPriceMap])
 
@@ -2064,10 +2064,20 @@ const POS = () => {
       }
     }
 
-    // 2. Buscar en codigos_barras
-    let encontrado = articulos.find(a =>
-      a.codigosBarras && a.codigosBarras.length > 0 && a.codigosBarras.includes(codigo)
-    )
+    // 2. Buscar en codigos_barras (soporta formato objeto {codigo,factor} y string legacy)
+    let encontrado = null
+    let factorUnidad = 1
+    for (const a of articulos) {
+      if (!a.codigosBarras || a.codigosBarras.length === 0) continue
+      const match = a.codigosBarras.find(b =>
+        typeof b === 'object' ? b.codigo === codigo : b === codigo
+      )
+      if (match) {
+        encontrado = a
+        factorUnidad = typeof match === 'object' ? (match.factor || 1) : 1
+        break
+      }
+    }
     // 3. Si no se encuentra, buscar por código interno exacto
     if (!encontrado) {
       encontrado = articulos.find(a => a.codigo === codigo)
@@ -2083,12 +2093,12 @@ const POS = () => {
       const ahora = Date.now()
       const ultimo = ultimoBarcodeRef.current
       if (ultimo.codigo === codigo && (ahora - ultimo.time) < 1500) {
-        setAlertaDuplicado({ articulo: encontrado, cantidad: 1 })
+        setAlertaDuplicado({ articulo: encontrado, cantidad: factorUnidad })
         setBusquedaArt('')
         return true
       }
       ultimoBarcodeRef.current = { codigo, time: ahora }
-      agregarAlCarrito(encontrado)
+      agregarAlCarrito(encontrado, factorUnidad)
       setBusquedaArt('')
       return true
     }

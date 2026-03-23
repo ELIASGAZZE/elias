@@ -61,6 +61,7 @@ import OrdenDetalleTraspaso from './pages/traspasos/OrdenDetalle'
 import Preparacion from './pages/traspasos/Preparacion'
 import PreparacionAuto from './pages/traspasos/PreparacionAuto'
 import Recepcion from './pages/traspasos/Recepcion'
+import Reparto from './pages/traspasos/Reparto'
 
 // Páginas de la app Compras
 import ComprasHome from './pages/compras/ComprasHome'
@@ -269,6 +270,7 @@ const App = () => {
           <Route path="/traspasos/ordenes/:id/preparar" element={<RutaProtegida><Preparacion /></RutaProtegida>} />
           <Route path="/preparacion" element={<RutaProtegida><PreparacionAuto /></RutaProtegida>} />
           <Route path="/traspasos/recibir/:id" element={<RutaProtegida><Recepcion /></RutaProtegida>} />
+          <Route path="/reparto" element={<RutaProtegida><Reparto /></RutaProtegida>} />
 
           {/* App: Compras */}
           <Route path="/compras" element={<RutaProtegida soloAdmin><ComprasHome /></RutaProtegida>} />
