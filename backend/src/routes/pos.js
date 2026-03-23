@@ -991,6 +991,44 @@ router.post('/ventas/sync-caes', verificarAuth, async (req, res) => {
   }
 })
 
+// POST /api/pos/ventas/refresh-comprobantes — re-consulta Centum y corrige PV/número
+router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
+  try {
+    const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: ventas } = await supabase.from('ventas_pos')
+      .select('id, id_venta_centum, centum_comprobante')
+      .eq('centum_sync', true)
+      .not('id_venta_centum', 'is', null)
+      .gte('created_at', hace7d)
+      .limit(50)
+
+    if (!ventas || ventas.length === 0) return res.json({ actualizadas: 0 })
+
+    let actualizadas = 0
+    for (const v of ventas) {
+      try {
+        const centumData = await obtenerVentaCentum(v.id_venta_centum)
+        const numDoc = centumData?.NumeroDocumento
+        if (numDoc && numDoc.PuntoVenta && numDoc.Numero) {
+          const comprobanteReal = `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          if (comprobanteReal !== v.centum_comprobante) {
+            const updates = { centum_comprobante: comprobanteReal }
+            if (centumData.CAE) updates.numero_cae = centumData.CAE
+            await supabase.from('ventas_pos').update(updates).eq('id', v.id)
+            console.log(`[RefreshComprobantes] Venta ${v.id}: ${v.centum_comprobante} → ${comprobanteReal}`)
+            actualizadas++
+          }
+        }
+      } catch (e) {
+        console.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
+      }
+    }
+    res.json({ revisadas: ventas.length, actualizadas })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/pos/ventas/:id/cae — obtener CAE de AFIP desde Centum
 router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
   try {

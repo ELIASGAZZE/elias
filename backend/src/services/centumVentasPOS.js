@@ -720,22 +720,38 @@ async function retrySyncVentasCentum() {
         })
       }
 
-      const numDoc = resultado?.NumeroDocumento
-      const comprobante = numDoc
+      // Comprobante provisorio del POST (puede ser incorrecto para NCs)
+      let numDoc = resultado?.NumeroDocumento
+      let comprobante = numDoc
         ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
         : null
+
+      // GET real de Centum para obtener comprobante y CAE correctos
+      let caeReal = resultado?.CAE || null
+      if (resultado?.IdVenta) {
+        try {
+          const centumReal = await obtenerVentaCentum(resultado.IdVenta)
+          const numDocReal = centumReal?.NumeroDocumento
+          if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+            comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+          }
+          if (centumReal?.CAE) caeReal = centumReal.CAE
+        } catch (e) {
+          console.warn(`[RetryCentumVentas] No se pudo obtener datos reales de Centum para venta ${venta.id}:`, e.message)
+        }
+      }
 
       await supabase.from('ventas_pos').update({
         id_venta_centum: resultado?.IdVenta || null,
         centum_comprobante: comprobante,
         centum_sync: true,
         centum_error: null,
-        numero_cae: resultado?.CAE || null,
+        numero_cae: caeReal,
       }).eq('id', venta.id)
 
       console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
-      // Obtener CAE (best effort)
-      fetchAndSaveCAE(venta.id, resultado?.IdVenta)
+      // Obtener CAE en background (si no se obtuvo arriba)
+      if (!caeReal) fetchAndSaveCAE(venta.id, resultado?.IdVenta)
       exitosas++
     } catch (err) {
       console.error(`[RetryCentumVentas] Error venta ${venta.id}:`, err.message)
