@@ -1037,6 +1037,18 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
     const cae = centumData.CAE || null
     const caeVto = centumData.FechaVencimientoCAE || null
 
+    // Actualizar comprobante real y CAE en la DB
+    const numDocReal = centumData?.NumeroDocumento
+    const updates = {}
+    if (cae) updates.numero_cae = cae
+    if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+      updates.centum_comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+      baseResponse.comprobante = updates.centum_comprobante
+    }
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('ventas_pos').update(updates).eq('id', venta.id)
+    }
+
     res.json({ ...baseResponse, cae, cae_vencimiento: caeVto })
   } catch (err) {
     console.error('[POS] Error al obtener CAE:', err.message)
