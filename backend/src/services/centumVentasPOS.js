@@ -728,6 +728,7 @@ async function retrySyncVentasCentum() {
 
       // GET real de Centum para obtener comprobante y CAE correctos
       let caeReal = resultado?.CAE || null
+      let ventaConfirmada = !resultado?._creadoConWarning // si no hubo warning, está confirmada
       if (resultado?.IdVenta) {
         try {
           const centumReal = await obtenerVentaCentum(resultado.IdVenta)
@@ -736,18 +737,36 @@ async function retrySyncVentasCentum() {
             comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
           }
           if (centumReal?.CAE) caeReal = centumReal.CAE
+          ventaConfirmada = true // GET exitoso = la venta existe en Centum
         } catch (e) {
-          console.warn(`[RetryCentumVentas] No se pudo obtener datos reales de Centum para venta ${venta.id}:`, e.message)
+          console.warn(`[RetryCentumVentas] No se pudo verificar venta ${venta.id} en Centum:`, e.message)
+          if (resultado?._creadoConWarning) {
+            // HTTP 500 al crear + no se puede verificar = NO se creó
+            ventaConfirmada = false
+            comprobante = null
+          }
         }
       }
 
-      await supabase.from('ventas_pos').update({
-        id_venta_centum: resultado?.IdVenta || null,
-        centum_comprobante: comprobante,
-        centum_sync: true,
-        centum_error: null,
-        numero_cae: caeReal,
-      }).eq('id', venta.id)
+      if (ventaConfirmada) {
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: resultado?.IdVenta || null,
+          centum_comprobante: comprobante,
+          centum_sync: true,
+          centum_error: null,
+          numero_cae: caeReal,
+        }).eq('id', venta.id)
+      } else {
+        // No se confirmó en Centum — limpiar datos falsos
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: null,
+          centum_comprobante: null,
+          centum_sync: false,
+          centum_error: 'Centum devolvió 500 y la venta no se pudo verificar',
+          numero_cae: null,
+        }).eq('id', venta.id)
+        console.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada, marcada como no sincronizada`)
+      }
 
       console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
       // Obtener CAE en background (si no se obtuvo arriba)

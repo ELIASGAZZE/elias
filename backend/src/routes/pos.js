@@ -825,8 +825,9 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       query = query.limit(50)
     }
 
-    // No-admin solo ve sus ventas
-    if (req.perfil.rol !== 'admin') {
+    // No-admin solo ve sus ventas (excepto al reportar problema, que necesita ver todas)
+    const esProblema = req.query.problema === '1'
+    if (req.perfil.rol !== 'admin' && !esProblema) {
       query = query.eq('cajero_id', req.perfil.id)
     } else {
       if (req.query.sucursal_id) {
@@ -1005,6 +1006,7 @@ router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
     if (!ventas || ventas.length === 0) return res.json({ actualizadas: 0 })
 
     let actualizadas = 0
+    let limpiadas = 0
     for (const v of ventas) {
       try {
         const centumData = await obtenerVentaCentum(v.id_venta_centum)
@@ -1020,10 +1022,20 @@ router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
           }
         }
       } catch (e) {
-        console.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
+        // Venta no encontrada en Centum — limpiar datos falsos
+        if (e.message?.includes('no encontrada')) {
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: null, centum_comprobante: null,
+            centum_sync: false, centum_error: 'Venta no existe en Centum', numero_cae: null,
+          }).eq('id', v.id)
+          console.log(`[RefreshComprobantes] Venta ${v.id}: NO existe en Centum, limpiada`)
+          limpiadas++
+        } else {
+          console.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
+        }
       }
     }
-    res.json({ revisadas: ventas.length, actualizadas })
+    res.json({ revisadas: ventas.length, actualizadas, limpiadas })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
