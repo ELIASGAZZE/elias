@@ -122,6 +122,22 @@ function iniciarRefreshPreventivo() {
 }
 iniciarRefreshPreventivo()
 
+// Refresh inmediato al cargar la app (tras reinicio de PC, el token puede haber expirado)
+;(async () => {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return
+  try {
+    const { data } = await axios.post(
+      `${api.defaults.baseURL}/api/auth/refresh`,
+      { refresh_token: refreshToken }
+    )
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('refresh_token', data.refresh_token)
+  } catch {
+    // Si falla, el interceptor de 401 se encargará
+  }
+})()
+
 export function isNetworkError(err) {
   return !err.response && (err.code === 'ERR_NETWORK' || err.message === 'Network Error')
 }

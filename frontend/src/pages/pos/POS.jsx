@@ -3207,17 +3207,6 @@ const POS = () => {
               Consulta <span className="text-[9px] opacity-60 ml-1">F5</span>
             </button>
 
-            {/* Tab Consulta */}
-            <button
-              onClick={() => setVistaActiva('consulta')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
-                vistaActiva === 'consulta'
-                  ? 'bg-violet-700 text-white'
-                  : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
-              }`}
-            >
-              Consulta <span className="text-[9px] opacity-60 ml-1">F7</span>
-            </button>
           </div>
 
           {/* Derecha: info terminal + config */}
