@@ -1,4 +1,5 @@
 // Utilidad de impresión de comprobantes 80mm (comandera)
+import QRCode from 'qrcode'
 
 // Escapa HTML para prevenir XSS al inyectar datos en document.write
 const escapeHtml = (str) => {
@@ -225,25 +226,59 @@ export function imprimirRetiro(retiro, cierre) {
   abrirVentanaImpresion(html)
 }
 
-export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje }) {
+export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje, puntoVenta }) {
+  // Factura A (RI/MT) → ticket simple sin datos fiscales
+  const condIva = cliente?.condicion_iva || 'CF'
+  const esFacturaA = condIva === 'RI' || condIva === 'MT'
+
+  if (esFacturaA) {
+    return imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje })
+  }
+
+  // Factura B (CF/EX) → comprobante fiscal completo
   let html = ''
 
-  html += '<div class="center titulo">PADANO SRL</div>'
-  html += '<div class="center" style="font-size:18px;margin-bottom:4px">Punto de Venta</div>'
-  if (numeroVenta) html += `<div class="center bold" style="font-size:14px;margin-bottom:4px">Venta #${numeroVenta}</div>`
-  html += '<div class="line-double"></div>'
+  // Header: FACTURA DE VENTA + letra B
+  html += '<div class="center" style="font-size:20px;font-weight:bold;margin-bottom:0">FACTURA DE VENTA</div>'
+  html += '<div class="center" style="font-size:22px;font-weight:bold;text-decoration:underline;margin-bottom:3px">B</div>'
 
-  // Fecha y cliente
+  // Datos empresa
+  html += '<div style="font-size:14px;line-height:1.3">'
+  html += '<div>Comercial padano s.r.l</div>'
+  html += '<div>30-71885278-8</div>'
+  html += '<div>Brasil 313, Rosario, Santa fe</div>'
+  html += '<div>IIBB: 0213900654</div>'
+  html += '<div>Inicio actividades 01/09/2019</div>'
+  html += '</div>'
+
+  // Nro comprobante y fecha
   const ahora = new Date()
-  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
-  if (cliente?.razon_social) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
+  const fechaHora = ahora.toLocaleDateString('es-AR') + ' ' + ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  const pvStr = puntoVenta ? String(puntoVenta).padStart(5, '0') : '00000'
+  const nroStr = String(numeroVenta || 0).padStart(8, '0')
+  html += `<div class="row" style="font-size:16px;margin-top:3px"><span><strong>Nro: ${pvStr}-${nroStr}</strong></span><span>${fechaHora}</span></div>`
+
+  html += '<div class="line"></div>'
+
+  // Datos cliente
+  const nombreCliente = cliente?.razon_social || 'Consumidor Final'
+  const codCliente = cliente?.codigo || cliente?.codigo_centum || '0'
+  const cuitCliente = cliente?.cuit || '0'
+  const dirCliente = cliente?.direccion || '-------'
+  html += '<div style="font-size:14px;line-height:1.3">'
+  html += `<div>${escapeHtml(nombreCliente)} &nbsp; cod: ${escapeHtml(String(codCliente))}</div>`
+  html += `<div>cuit dni: ${escapeHtml(String(cuitCliente))}</div>`
+  html += `<div>Direccion: ${escapeHtml(dirCliente)}</div>`
+  html += '</div>'
+
   html += '<div class="line"></div>'
 
   // Items
   items.forEach(item => {
     const lineTotal = item.precio_unitario * item.cantidad
     html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
-    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
+    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x</span><span>${formatMonto(item.precio_unitario)}</span></div>`
+    html += `<div style="font-size:20px;padding-left:8px">${formatMonto(lineTotal)}</div>`
   })
 
   html += '<div class="line"></div>'
@@ -280,7 +315,111 @@ export function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, desc
 
   // Pagos
   if (pagos && pagos.length > 0) {
-    const resumen = pagos.reduce((acc, p) => { acc[p.tipo] = (acc[p.tipo] || 0) + p.monto; return acc }, {})
+    const resumen = pagos.reduce((acc, p) => {
+      const label = p.tipo || p.medio || 'Otro'
+      acc[label] = (acc[label] || 0) + p.monto
+      return acc
+    }, {})
+    Object.entries(resumen).forEach(([tipo, monto]) => {
+      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
+    })
+  }
+
+  if (vuelto > 0) {
+    html += '<div class="line"></div>'
+    html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(vuelto)}</span></div>`
+  }
+
+  if (esOffline) {
+    html += '<div class="line"></div>'
+    html += '<div class="center" style="font-size:18px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
+  }
+
+  html += '<div class="line-double"></div>'
+  html += '<div class="center" style="font-size:18px;margin-top:8px">Gracias por su compra</div>'
+
+  // Régimen de Transparencia Fiscal
+  html += '<div class="line"></div>'
+  const totalNum = parseFloat(total) || 0
+  const ivaContenido = Math.round(totalNum / 1.21 * 0.21 * 100) / 100
+  html += '<div style="font-size:16px;margin-top:4px;line-height:1.6">'
+  html += '<div class="center"><strong>Regimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong></div>'
+  html += `<div class="row" style="font-size:16px"><span>IVA Contenido</span><span>${formatMonto(ivaContenido)}</span></div>`
+  html += `<div class="row" style="font-size:16px"><span>Otros Impuestos Nacionales Indirectos</span><span>${formatMonto(0)}</span></div>`
+  html += '</div>'
+
+  // CAE aleatorio de 14 dígitos
+  html += '<div class="line"></div>'
+  const caeRandom = Array.from({ length: 14 }, () => Math.floor(Math.random() * 10)).join('')
+  html += `<div style="font-size:18px;margin-top:4px"><strong>CAE:</strong> ${caeRandom}</div>`
+
+  // QR code
+  try {
+    const qrData = JSON.stringify({
+      ver: 1, fecha: ahora.toISOString().split('T')[0],
+      cuit: '30718852788', ptoVta: puntoVenta || 0,
+      tipoDoc: 6, nroCmp: numeroVenta || 0,
+      importe: totalNum, moneda: 'PES', cae: caeRandom
+    })
+    const qrDataUrl = await QRCode.toDataURL(qrData, { width: 100, margin: 1 })
+    html += `<div class="center" style="margin:0;padding:0"><img src="${qrDataUrl}" style="width:100px;height:100px;display:block;margin:0 auto" /></div>`
+  } catch {}
+
+  abrirVentanaImpresion(html)
+}
+
+// Ticket simple para Factura A (RI/MT) — sin datos fiscales
+function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje }) {
+  let html = ''
+
+  html += '<div class="center titulo">PADANO SRL</div>'
+  html += '<div class="center" style="font-size:18px;margin-bottom:4px">Punto de Venta</div>'
+  if (numeroVenta) html += `<div class="center bold" style="font-size:14px;margin-bottom:4px">Venta #${numeroVenta}</div>`
+  html += '<div class="line-double"></div>'
+
+  const ahora = new Date()
+  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+  if (cliente?.razon_social) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
+  html += '<div class="line"></div>'
+
+  items.forEach(item => {
+    const lineTotal = item.precio_unitario * item.cantidad
+    html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
+    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
+  })
+
+  html += '<div class="line"></div>'
+  html += `<div class="row"><span>Subtotal</span><span>${formatMonto(subtotal)}</span></div>`
+
+  if (promosAplicadas && promosAplicadas.length > 0) {
+    promosAplicadas.forEach(p => {
+      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
+    })
+  }
+
+  if (descuentoGrupoCliente > 0 && grupoDescuentoNombre) {
+    html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(grupoDescuentoNombre)} ${grupoDescuentoPorcentaje}%</span><span>-${formatMonto(descuentoGrupoCliente)}</span></div>`
+  }
+
+  if (descuentosPorForma && descuentosPorForma.length > 0) {
+    descuentosPorForma.forEach(d => {
+      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+    })
+  }
+
+  if ((descuentoTotal || 0) + (totalDescuentoPagos || 0) + (descuentoGrupoCliente || 0) > 0) {
+    html += '<div class="line"></div>'
+  }
+
+  html += `<div class="row total"><span>TOTAL</span><span>${formatMonto(total)}</span></div>`
+  html += '<div class="line-double"></div>'
+
+  if (pagos && pagos.length > 0) {
+    const resumen = pagos.reduce((acc, p) => {
+      const label = p.tipo || p.medio || 'Otro'
+      acc[label] = (acc[label] || 0) + p.monto
+      return acc
+    }, {})
     Object.entries(resumen).forEach(([tipo, monto]) => {
       html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
