@@ -682,7 +682,7 @@ async function retrySyncVentasCentum() {
         if (venta.venta_origen_id) {
           const { data: ventaOrigen } = await supabase
             .from('ventas_pos').select('centum_comprobante, id_cliente_centum, pagos')
-            .eq('id', venta.venta_origen_id).single()
+            .eq('id', venta.venta_origen_id).maybeSingle()
           comprobanteOriginal = ventaOrigen?.centum_comprobante || null
           if (ventaOrigen) {
             idClienteNC = ventaOrigen.id_cliente_centum || 2
@@ -690,7 +690,7 @@ async function retrySyncVentasCentum() {
             if (ventaOrigen.id_cliente_centum) {
               const { data: cliOrig } = await supabase
                 .from('clientes').select('condicion_iva')
-                .eq('id_centum', ventaOrigen.id_cliente_centum).single()
+                .eq('id_centum', ventaOrigen.id_cliente_centum).maybeSingle()
               condIvaOrig = cliOrig?.condicion_iva || 'CF'
             }
             condicionIvaNC = condIvaOrig
