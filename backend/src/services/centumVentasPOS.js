@@ -607,8 +607,14 @@ async function retrySyncVentasCentum() {
       const centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
       const centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
 
+      // Ventas de empleados → Consumidor Final (id=2), siempre PRUEBA
+      const esEmpleado = venta.nombre_cliente && venta.nombre_cliente.startsWith('Empleado:')
+      if (esEmpleado) {
+        venta.id_cliente_centum = 2
+      }
+
       // Si el cliente no tiene id_centum, intentar resolver desde DB local
-      if (!venta.id_cliente_centum || venta.id_cliente_centum === 0) {
+      if (!esEmpleado && (!venta.id_cliente_centum || venta.id_cliente_centum === 0)) {
         if (venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final') {
           const { data: cliLocal } = await supabase
             .from('clientes')
@@ -643,7 +649,7 @@ async function retrySyncVentasCentum() {
       const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
       const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+      const idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
 
       const operadorMovilUser = idDivisionEmpresa === 2
         ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
