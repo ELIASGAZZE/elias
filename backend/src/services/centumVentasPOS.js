@@ -580,9 +580,14 @@ async function retrySyncVentasCentum() {
     .order('created_at', { ascending: true })
     .limit(20)
 
-  if (error || !pendientes?.length) {
+  if (error) {
+    console.error('[RetryCentumVentas] Error en query Supabase:', error.message || error)
     return { reintentadas: 0, exitosas: 0, fallidas: 0 }
   }
+  if (!pendientes?.length) {
+    return { reintentadas: 0, exitosas: 0, fallidas: 0 }
+  }
+  console.log(`[RetryCentumVentas] Encontradas ${pendientes.length} ventas pendientes`)
 
   let exitosas = 0
   let fallidas = 0
@@ -623,7 +628,7 @@ async function retrySyncVentasCentum() {
             .not('id_centum', 'is', null)
             .gt('id_centum', 0)
             .limit(1)
-            .single()
+            .maybeSingle()
           if (cliLocal?.id_centum) {
             venta.id_cliente_centum = cliLocal.id_centum
             await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
@@ -641,7 +646,7 @@ async function retrySyncVentasCentum() {
       if (!venta.condicion_iva && venta.id_cliente_centum) {
         const { data: cliente } = await supabase
           .from('clientes').select('condicion_iva')
-          .eq('id_centum', venta.id_cliente_centum).single()
+          .eq('id_centum', venta.id_cliente_centum).maybeSingle()
         condicionIva = cliente?.condicion_iva || 'CF'
       }
 
