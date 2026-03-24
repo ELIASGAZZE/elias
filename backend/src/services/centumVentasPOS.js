@@ -573,7 +573,7 @@ async function retrySyncVentasCentum() {
   // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, condicion_iva, tipo, venta_origen_id, nombre_cliente')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace7d)
