@@ -154,6 +154,29 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     }
   }
 
+  async function duplicarPedido(pedido) {
+    if (!confirm('¿Crear un nuevo pedido con los mismos artículos y cliente?')) return
+    try {
+      const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
+      const payload = {
+        id_cliente_centum: pedido.id_cliente_centum,
+        nombre_cliente: pedido.nombre_cliente,
+        items,
+        total: pedido.total,
+        tipo: pedido.tipo || 'retiro',
+        sucursal_id: pedido.sucursal_id || undefined,
+        tarjeta_regalo: pedido.tarjeta_regalo || undefined,
+        observaciones_pedido: pedido.observaciones_pedido || undefined,
+      }
+      await api.post('/api/pos/pedidos', payload)
+      alert('Pedido duplicado correctamente')
+      cargarPedidos()
+      setPedidoSeleccionado(null)
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
   async function generarLinkMP(pedidoId) {
     setGenerandoLink(pedidoId)
     try {
@@ -205,7 +228,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
         }
       } catch {}
     }
-    const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || [])
+    const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
     const fechaEntrega = pedido.fecha_entrega
       ? new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
       : ''
@@ -352,7 +375,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
         Una vez despachado el pedido se generara la factura para el cliente <strong>${esc(pedido.nombre_cliente || 'CONSUMIDOR FINAL')}</strong>${emailCliente ? ` y se enviara por email a <strong>${esc(emailCliente)}</strong>` : ''}.
       </div>
       <div class="cajero-info">
-        Cajero: ${esc(pedido.perfiles?.nombre || '')}
+        Cajero: ${esc(pedido.cajero_nombre || pedido.perfiles?.nombre || '')}
         ${pedido.sucursales?.nombre ? ` &nbsp;|&nbsp; Sucursal: ${esc(pedido.sucursales.nombre)}` : ''}
       </div>
     </div>
@@ -371,12 +394,12 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
   }
 
   function imprimirPedidoComandera(pedido) {
-    const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || [])
+    const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
     const esc = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const fechaEntrega = pedido.fecha_entrega
       ? new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
       : ''
-    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\|(?=[A-Z]+:)|$)/)
     const obsEntrega = obsEntregaMatch ? obsEntregaMatch[1].trim() : ''
     const dirMatch = (pedido.observaciones || '').match(/Dirección:\s*([^|]+)/)
     const dirEntrega = dirMatch ? dirMatch[1].trim() : ''
@@ -458,7 +481,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
     if (pedidoDetalle) {
       setEditObsPedido(pedidoDetalle.observaciones_pedido || '')
       setEditTarjeta(pedidoDetalle.tarjeta_regalo || '')
-      const m = (pedidoDetalle.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+      const m = (pedidoDetalle.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\|(?=[A-Z]+:)|$)/)
       setEditObsEntrega(m ? m[1].trim() : '')
     }
   }, [pedidoSeleccionado])
@@ -635,7 +658,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
               const pagaEfectivoEntrega = (pedido.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
               const pagaConLink = (pedido.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
               const diferencia = esPagado ? (pedido.total - totalPagado) : 0
-              const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
+              const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
 
               return (
                 <div
@@ -718,16 +741,16 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                           <span>{pedido.sucursales.nombre}</span>
                         </>
                       )}
-                      {pedido.perfiles?.nombre && (
+                      {(pedido.cajero_nombre || pedido.perfiles?.nombre) && (
                         <>
                           <span>|</span>
-                          <span>Cajero: {pedido.perfiles.nombre}</span>
+                          <span>Cajero: {pedido.cajero_nombre || pedido.perfiles.nombre}</span>
                         </>
                       )}
                     </div>
                     {/* Obs entrega, obs pedido, tarjeta regalo */}
                     {(() => {
-                      const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+                      const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\|(?=[A-Z]+:)|$)/)
                       const obsEntrega = obsEntregaMatch ? obsEntregaMatch[1].trim() : null
                       return (obsEntrega || pedido.observaciones_pedido || pedido.tarjeta_regalo) ? (
                         <div className="flex flex-col gap-1 mt-1.5">
@@ -753,6 +776,13 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {/* Botones de acción en la card */}
                     {pedido.estado !== 'pendiente' && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); duplicarPedido(pedido) }}
+                          className="bg-violet-100 hover:bg-violet-200 text-violet-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>
+                          Duplicar
+                        </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); descargarPrefactura({ ...pedido, items }) }}
                           className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
@@ -994,7 +1024,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     onClick={async () => {
                       setGuardandoExtras(true)
                       try {
-                        let obs = (pedidoDetalle.observaciones || '').replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\||$)/, '').trim()
+                        let obs = (pedidoDetalle.observaciones || '').replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\|(?=[A-Z]+:)|$)/, '').trim()
                         const entrega = editObsEntrega.trim()
                         if (entrega) {
                           obs = obs ? `${obs} | ENTREGA: ${entrega}` : `ENTREGA: ${entrega}`
@@ -1059,9 +1089,9 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                   Sucursal: {pedidoDetalle.sucursales.nombre}
                 </div>
               )}
-              {pedidoDetalle.perfiles?.nombre && (
+              {(pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre) && (
                 <div className="mt-1 text-xs text-gray-500">
-                  Cajero: {pedidoDetalle.perfiles.nombre}
+                  Cajero: {pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre}
                 </div>
               )}
             </div>
@@ -1150,6 +1180,17 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     className="bg-red-100 hover:bg-red-200 text-red-600 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
                   >
                     Cancelar
+                  </button>
+                </div>
+              )}
+              {pedidoDetalle.estado !== 'pendiente' && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => duplicarPedido(pedidoDetalle)}
+                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>
+                    Duplicar pedido
                   </button>
                 </div>
               )}

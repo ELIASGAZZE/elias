@@ -61,9 +61,8 @@ export default function ModalArticulosPedidos({ onCerrar, terminalConfig, sucurs
   useEffect(() => {
     setCargando(true)
     const params = { sucursal_id: sucursalId || undefined, fecha_desde: fechasRango.desde, fecha_hasta: fechasRango.hasta }
-    console.log('[ModalArticulos] Fetching con params:', params)
     api.get('/api/pos/pedidos/articulos-por-dia', { params })
-      .then(({ data }) => { console.log('[ModalArticulos] Response:', data); setDatos(data.dias || []) })
+      .then(({ data }) => { setDatos(data.dias || []) })
       .catch(err => console.error('Error cargando artículos:', err))
       .finally(() => setCargando(false))
   }, [sucursalId, fechasRango.desde, fechasRango.hasta])

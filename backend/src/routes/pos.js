@@ -992,7 +992,7 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
     // Si es venta de empleado y los items no tienen descuento_pct, enriquecer desde ventas_empleados
     const esEmpleado = (data.nombre_cliente || '').startsWith('Empleado:')
     if (esEmpleado) {
-      let itemsParsed = typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+      let itemsParsed = (() => { try { return typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || []) } catch { return [] } })()
       const faltaDesc = itemsParsed.length > 0 && !itemsParsed.some(it => it.descuento_pct > 0)
       if (faltaDesc) {
         // Buscar en ventas_empleados por fecha cercana y total igual
@@ -1005,7 +1005,7 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
           .limit(1)
           .single()
         if (ventaEmp?.items) {
-          const empItems = typeof ventaEmp.items === 'string' ? JSON.parse(ventaEmp.items) : ventaEmp.items
+          const empItems = (() => { try { return typeof ventaEmp.items === 'string' ? JSON.parse(ventaEmp.items) : ventaEmp.items } catch { return [] } })()
           // Enriquecer cada item con precio_original y descuento_pct
           for (const item of itemsParsed) {
             const match = empItems.find(ei => String(ei.articulo_id || ei.id_articulo) === String(item.id_articulo) && ei.codigo === item.codigo)
@@ -1352,7 +1352,7 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
 router.post('/pedidos', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido } = req.body
+    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido, cajero_nombre } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
@@ -1403,6 +1403,7 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
     if (total_pagado) insertData.total_pagado = total_pagado
     if (tarjeta_regalo?.trim()) insertData.tarjeta_regalo = tarjeta_regalo.trim()
     if (observaciones_pedido?.trim()) insertData.observaciones_pedido = observaciones_pedido.trim()
+    if (cajero_nombre?.trim()) insertData.cajero_nombre = cajero_nombre.trim()
 
     const { data, error } = await supabase
       .from('pedidos_pos')
@@ -2124,6 +2125,12 @@ router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
     }
 
     const nuevoTotalPagado = (parseFloat(pedido.total_pagado) || 0) + (parseFloat(total_pagado) || 0)
+
+    // Validar sobrepago (no permitir pagar más del total)
+    const totalPedido = parseFloat(pedido.total) || 0
+    if (total_pagado > 0 && nuevoTotalPagado > totalPedido * 1.01) { // 1% tolerancia por redondeo
+      return res.status(400).json({ error: `El monto excede el total del pedido. Total: $${totalPedido.toFixed(2)}, ya pagado: $${(parseFloat(pedido.total_pagado) || 0).toFixed(2)}` })
+    }
 
     const { data, error } = await supabase
       .from('pedidos_pos')
