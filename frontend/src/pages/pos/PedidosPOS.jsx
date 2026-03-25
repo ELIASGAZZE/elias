@@ -181,7 +181,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     if (!p) return null
     const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO')
     const pagaEfectivoEntrega = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
-    const pagaConLink = (p.observaciones || '').includes('PAGO PENDIENTE: LINK MP')
+    const pagaConLink = (p.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
     const totalPagado = parseFloat(p.total_pagado) || 0
     const diferencia = esPagado ? (p.total - totalPagado) : 0
     return {
@@ -353,7 +353,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
               const fecha = new Date(pedido.created_at)
               const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
               const pagaEfectivoEntrega = (pedido.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
-              const pagaConLink = (pedido.observaciones || '').includes('PAGO PENDIENTE: LINK MP')
+              const pagaConLink = (pedido.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
               const totalPagado = parseFloat(pedido.total_pagado) || 0
               const diferencia = esPagado ? (pedido.total - totalPagado) : 0
               const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
@@ -484,7 +484,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                           >
                             {generandoLink === pedido.id ? (
                               <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                            ) : linkCopiado === pedido.id ? 'Copiado!' : diferencia > 0 ? `MP dif. ${formatPrecio(diferencia)}` : 'Link MP'}
+                            ) : linkCopiado === pedido.id ? 'Copiado!' : diferencia > 0 ? `Link dif. ${formatPrecio(diferencia)}` : 'Link pago'}
                           </button>
                         </>)}
                         {!esPagado && !pagaEfectivoEntrega && (
@@ -692,7 +692,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                       disabled={generandoLink === pedidoDetalle.id}
                       className="bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
                     >
-                      {generandoLink === pedidoDetalle.id ? 'Generando...' : linkCopiado === pedidoDetalle.id ? 'Copiado!' : pedidoDetalle.diferencia > 0 ? `MP dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Link MP'}
+                      {generandoLink === pedidoDetalle.id ? 'Generando...' : linkCopiado === pedidoDetalle.id ? 'Copiado!' : pedidoDetalle.diferencia > 0 ? `Link dif. ${formatPrecio(pedidoDetalle.diferencia)}` : 'Link pago'}
                     </button>
                   </>)}
                   {!pedidoDetalle.esPagado && !pedidoDetalle.pagaEfectivoEntrega && (

@@ -2083,12 +2083,12 @@ router.put('/pedidos/:id/estado', verificarAuth, async (req, res) => {
   }
 })
 
-// ============ MERCADO PAGO ============
+// ============ TALO (Links de pago) ============
 
-const { crearPreferenciaPago, obtenerPago } = require('../services/mercadopago')
+const { crearPagoTalo, obtenerPagoTalo } = require('../services/talo')
 
 // POST /api/pos/pedidos/:id/link-pago
-// Genera link de pago de Mercado Pago para un pedido POS
+// Genera link de pago de Talo para un pedido POS
 router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
   try {
     const { data: pedido, error } = await supabase
@@ -2111,7 +2111,6 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
     let titulo = `Pedido POS #${pedido.numero}`
 
     if (esPagoAnticipado) {
-      // Ya pagó — cobrar solo la diferencia
       const diferencia = pedido.total - totalPagado
       if (diferencia <= 0) {
         return res.status(400).json({ error: 'El pedido ya está completamente pagado' })
@@ -2123,87 +2122,90 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
     const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 
-    const { id: prefId, init_point } = await crearPreferenciaPago({
+    const pago = await crearPagoTalo({
       idPedido: pedido.id,
       titulo,
       monto: montoACobrar,
-      notificationUrl: `${backendUrl}/api/pos/webhook-mp`,
-      backUrl: `${frontendUrl}/pos`,
+      webhookUrl: `${backendUrl}/api/pos/webhook-talo`,
+      redirectUrl: `${frontendUrl}/pos`,
     })
 
+    // Guardar referencia del pago Talo
     await supabase
       .from('pedidos_pos')
-      .update({ mp_preference_id: prefId })
+      .update({ mp_preference_id: pago.id || null })
       .eq('id', pedido.id)
 
-    res.json({ link: init_point })
+    res.json({ link: pago.payment_url })
   } catch (err) {
-    console.error('[POS Link MP] Error:', err)
+    console.error('[POS Link Talo] Error:', err)
     res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })
   }
 })
 
-// POST /api/pos/webhook-mp
-// Webhook de Mercado Pago — SIN auth (viene de servidores de MP)
-// Se valida re-consultando el pago a la API de MP (no se confía en el body)
-router.post('/webhook-mp', async (req, res) => {
+// POST /api/pos/webhook-talo
+// Webhook de Talo — SIN auth (viene de servidores de Talo)
+// Talo envía solo { message, paymentId } — se re-consulta el pago para validar
+router.post('/webhook-talo', async (req, res) => {
+  // Responder 200 inmediatamente
+  res.sendStatus(200)
+
   try {
-    // Validar que el request tenga estructura esperada de MP
-    if (!req.body || !req.body.type || !req.body.data) {
-      return res.sendStatus(400)
-    }
-    if (req.body.type === 'payment') {
-      const paymentId = req.body.data?.id
-      if (!paymentId || isNaN(Number(paymentId))) {
-        return res.sendStatus(400)
-      }
-      if (paymentId) {
-        const pago = await obtenerPago(paymentId)
-        if (pago.status === 'approved' && pago.external_reference) {
-          const pedidoId = pago.external_reference
-          const { data: pedido } = await supabase
-            .from('pedidos_pos')
-            .select('id, estado, observaciones, total, total_pagado')
-            .eq('id', pedidoId)
-            .maybeSingle()
+    const { paymentId } = req.body || {}
+    if (!paymentId) return
 
-          if (pedido && pedido.estado === 'pendiente') {
-            const obsActual = pedido.observaciones || ''
-            const yaEsPagoAnticipado = obsActual.includes('PAGO ANTICIPADO')
-            const totalPagadoActual = parseFloat(pedido.total_pagado) || 0
-            const montoPago = parseFloat(pago.transaction_amount) || parseFloat(pedido.total) || 0
+    console.log(`[Talo Webhook] Pago actualizado: ${paymentId}`)
 
-            if (yaEsPagoAnticipado) {
-              // Pago de diferencia — sumar al total_pagado
-              await supabase
-                .from('pedidos_pos')
-                .update({
-                  total_pagado: totalPagadoActual + montoPago,
-                  mp_payment_id: String(paymentId),
-                })
-                .eq('id', pedidoId)
-              console.log(`[POS MP Webhook] Pedido ${pedidoId} — diferencia pagada $${montoPago} (payment ${paymentId})`)
-            } else {
-              // Primer pago anticipado
-              const nuevaObs = obsActual ? `PAGO ANTICIPADO | ${obsActual}` : 'PAGO ANTICIPADO'
-              await supabase
-                .from('pedidos_pos')
-                .update({
-                  observaciones: nuevaObs,
-                  mp_payment_id: String(paymentId),
-                  total_pagado: parseFloat(pedido.total) || 0,
-                })
-                .eq('id', pedidoId)
-              console.log(`[POS MP Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)
-            }
-          }
-        }
-      }
+    const pago = await obtenerPagoTalo(paymentId)
+    const status = (pago.status || '').toUpperCase()
+
+    // Solo procesar pagos exitosos (SUCCESS, OVERPAID)
+    if (status !== 'SUCCESS' && status !== 'OVERPAID') {
+      console.log(`[Talo Webhook] Pago ${paymentId} status: ${status} — ignorado`)
+      return
     }
-    res.sendStatus(200)
+
+    const externalId = pago.external_id
+    if (!externalId) return
+    // external_id tiene formato "pedidoUUID_timestamp" — extraer solo el UUID
+    const pedidoId = externalId.replace(/_\d+$/, '')
+
+    const { data: pedido } = await supabase
+      .from('pedidos_pos')
+      .select('id, estado, observaciones, total, total_pagado')
+      .eq('id', pedidoId)
+      .maybeSingle()
+
+    if (!pedido || pedido.estado !== 'pendiente') return
+
+    const obsActual = pedido.observaciones || ''
+    const yaEsPagoAnticipado = obsActual.includes('PAGO ANTICIPADO')
+    const totalPagadoActual = parseFloat(pedido.total_pagado) || 0
+    const montoPago = parseFloat(pago.price?.amount) || parseFloat(pedido.total) || 0
+
+    if (yaEsPagoAnticipado) {
+      await supabase
+        .from('pedidos_pos')
+        .update({
+          total_pagado: totalPagadoActual + montoPago,
+          mp_payment_id: String(paymentId),
+        })
+        .eq('id', pedidoId)
+      console.log(`[Talo Webhook] Pedido ${pedidoId} — diferencia pagada $${montoPago} (payment ${paymentId})`)
+    } else {
+      const nuevaObs = obsActual ? `PAGO ANTICIPADO | ${obsActual}` : 'PAGO ANTICIPADO'
+      await supabase
+        .from('pedidos_pos')
+        .update({
+          observaciones: nuevaObs,
+          mp_payment_id: String(paymentId),
+          total_pagado: parseFloat(pedido.total) || 0,
+        })
+        .eq('id', pedidoId)
+      console.log(`[Talo Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)
+    }
   } catch (err) {
-    console.error('[POS MP Webhook] Error:', err)
-    res.sendStatus(200)
+    console.error('[Talo Webhook] Error:', err)
   }
 })
 

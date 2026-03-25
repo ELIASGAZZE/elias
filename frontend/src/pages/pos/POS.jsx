@@ -2967,7 +2967,7 @@ const POS = () => {
         items: itemsPayload,
         total,
         tipo: tipo || 'retiro',
-        observaciones: 'PAGO PENDIENTE: LINK MP',
+        observaciones: 'PAGO PENDIENTE: LINK TALO',
       }
       if (direccion) {
         payload.direccion_entrega = direccion.direccion + (direccion.localidad ? `, ${direccion.localidad}` : '')
@@ -3150,80 +3150,80 @@ const POS = () => {
             {/* Tab Venta */}
             <button
               onClick={() => setVistaActiva('venta')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'venta'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Venta <span className="text-[9px] opacity-60 ml-1">F1</span>
+              Venta <span className="text-[10px] opacity-60 ml-1">F1</span>
             </button>
 
             {/* Tab Pedidos */}
             <button
               onClick={() => setVistaActiva('pedidos')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'pedidos'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Pedidos <span className="text-[9px] opacity-60 ml-1">F2</span>
+              Pedidos <span className="text-[10px] opacity-60 ml-1">F2</span>
             </button>
 
             {/* Tab Saldos */}
             <button
               onClick={() => setVistaActiva('saldos')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'saldos'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Saldos <span className="text-[9px] opacity-60 ml-1">F3</span>
+              Saldos <span className="text-[10px] opacity-60 ml-1">F3</span>
             </button>
 
             {/* Tab Gift Cards */}
             <button
               onClick={() => setVistaActiva('giftcards')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'giftcards'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Gift Cards <span className="text-[9px] opacity-60 ml-1">F4</span>
+              Gift Cards <span className="text-[10px] opacity-60 ml-1">F4</span>
             </button>
 
             {/* Tab Consulta */}
             <button
               onClick={() => setVistaActiva('consulta')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'consulta'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Consulta <span className="text-[9px] opacity-60 ml-1">F5</span>
+              Consulta <span className="text-[10px] opacity-60 ml-1">F5</span>
             </button>
 
             {/* Tab Consulta */}
             <button
               onClick={() => setVistaActiva('consulta')}
-              className={`relative px-5 py-2 text-sm font-medium transition-colors rounded-t-lg mt-1 ${
+              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
                 vistaActiva === 'consulta'
                   ? 'bg-violet-700 text-white'
                   : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
               }`}
             >
-              Consulta <span className="text-[9px] opacity-60 ml-1">F7</span>
+              Consulta <span className="text-[10px] opacity-60 ml-1">F7</span>
             </button>
           </div>
 
           {/* Derecha: info terminal + config */}
-          <div className="flex items-center gap-2 pr-3 text-xs">
+          <div className="flex items-center gap-1.5 pr-3 text-xs">
             <span className="text-violet-300">{terminalConfig?.sucursal_nombre}</span>
-            <span className="bg-violet-700 text-violet-100 px-1.5 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
+            <span className="bg-violet-700 text-violet-100 px-2 py-0.5 rounded font-medium">{terminalConfig?.caja_nombre}</span>
             <span className="text-violet-300">|</span>
             <span className="text-violet-200 font-medium">Cajero: {cierreActivo?.empleado?.nombre || usuario?.nombre}</span>
             {/* Botón Delivery */}
@@ -3232,7 +3232,7 @@ const POS = () => {
               className={`${modoDelivery
                 ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse'
                 : 'bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white'
-              } px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
+              } px-2 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
               title={modoDelivery ? 'Desactivar modo delivery' : 'Activar modo delivery'}
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -3243,7 +3243,7 @@ const POS = () => {
             {empleadoActivo ? (
               <button
                 onClick={() => { setEmpleadoActivo(null); setDescuentosEmpleado({}); setCarrito([]); }}
-                className="bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 animate-pulse"
+                className="bg-orange-500 hover:bg-orange-600 text-white px-2 py-1 rounded font-semibold transition-colors flex items-center gap-1 animate-pulse"
                 title="Desactivar modo empleado"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -3261,10 +3261,10 @@ const POS = () => {
               <button
                 onClick={() => setMostrarVentaEmpleado(true)}
                 disabled={modoDelivery}
-                className={`${modoDelivery ? 'opacity-30 cursor-not-allowed' : 'bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white'} px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
+                className={`${modoDelivery ? 'opacity-30 cursor-not-allowed' : 'bg-orange-900/40 hover:bg-orange-500 text-orange-200 hover:text-white'} px-2 py-1 rounded font-semibold transition-colors flex items-center gap-1`}
                 title={modoDelivery ? 'Desactivado en modo delivery' : 'Venta a empleado (cta cte)'}
               >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
                 </svg>
                 Empleado
@@ -3272,36 +3272,36 @@ const POS = () => {
             )}
             <button
               onClick={() => window.open('/fichaje', '_blank')}
-              className="bg-cyan-700 hover:bg-cyan-600 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
+              className="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded font-semibold transition-colors flex items-center gap-1"
               title="Registrar asistencia"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Asistencia
             </button>
             <button
               onClick={() => setMostrarProblema(true)}
-              className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1"
+              className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded font-semibold transition-colors flex items-center gap-1"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
               </svg>
-              PROBLEMA <span className="text-[9px] opacity-70">F8</span>
+              PROBLEMA <span className="text-[10px] opacity-70">F8</span>
             </button>
             <button
               onClick={() => setMostrarCerrarCaja(true)}
-              className="text-violet-400 hover:text-red-300 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
+              className="text-violet-400 hover:text-red-300 px-1.5 py-0.5 rounded transition-colors flex items-center gap-1"
               title="Cerrar caja"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
               </svg>
               <span>Cerrar Caja</span>
             </button>
             <button
               onClick={() => setMostrarActualizaciones(true)}
-              className="text-violet-400 hover:text-white px-2 py-1 rounded transition-colors text-[11px] font-medium"
+              className="text-violet-400 hover:text-white px-1.5 py-0.5 rounded transition-colors text-[11px] font-medium"
               title="Ver actualizaciones de precios"
             >
               Actualizaciones
