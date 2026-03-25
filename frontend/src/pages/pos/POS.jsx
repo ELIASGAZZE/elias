@@ -1290,6 +1290,7 @@ const POS = () => {
   const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF', grupo_descuento_id: null, grupo_descuento_nombre: null, grupo_descuento_porcentaje: 0 }
+  const [descuentosGrupoRubros, setDescuentosGrupoRubros] = useState({}) // { rubroNombre: porcentaje }
 
   // Multi-ticket: 2 tickets en paralelo
   const [tickets, setTickets] = useState([
@@ -1449,6 +1450,16 @@ const POS = () => {
       grupo_descuento_nombre: cli.grupos_descuento?.nombre || null,
       grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
     })
+    // Cargar descuentos por rubro del grupo
+    if (cli.grupos_descuento?.grupos_descuento_rubros?.length > 0) {
+      const rubroMap = {}
+      for (const r of cli.grupos_descuento.grupos_descuento_rubros) {
+        rubroMap[r.rubro] = parseFloat(r.porcentaje) || 0
+      }
+      setDescuentosGrupoRubros(rubroMap)
+    } else {
+      setDescuentosGrupoRubros({})
+    }
     setMostrarDniPopup(false)
     setMostrarCobrar(true)
   }
@@ -1840,6 +1851,17 @@ const POS = () => {
       grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
     }
     setCliente(clienteLocal)
+
+    // Cargar descuentos por rubro del grupo
+    if (cli.grupos_descuento?.grupos_descuento_rubros?.length > 0) {
+      const rubroMap = {}
+      for (const r of cli.grupos_descuento.grupos_descuento_rubros) {
+        rubroMap[r.rubro] = parseFloat(r.porcentaje) || 0
+      }
+      setDescuentosGrupoRubros(rubroMap)
+    } else {
+      setDescuentosGrupoRubros({})
+    }
 
     // Verificar en Centum que el cliente esté activo (en background, con timeout)
     let emailFinal = clienteLocal.email
@@ -2453,6 +2475,7 @@ const POS = () => {
   function limpiarVenta() {
     setCarrito([])
     setCliente({ ...CLIENTE_DEFAULT })
+    setDescuentosGrupoRubros({})
     setBusquedaArt('')
     setBusquedaCliente('')
     setPedidoEnProceso(null)
@@ -2460,10 +2483,26 @@ const POS = () => {
     setMostrarAgregarGC(false)
   }
 
-  // Descuento por grupo de cliente
-  const descuentoGrupoCliente = cliente.grupo_descuento_porcentaje > 0
-    ? Math.round(total * cliente.grupo_descuento_porcentaje / 100 * 100) / 100
-    : 0
+  // Descuento por grupo de cliente (por rubro, con fallback al % general)
+  const { descuentoGrupoCliente, descuentoGrupoDetalle } = useMemo(() => {
+    if (cliente.grupo_descuento_porcentaje <= 0) return { descuentoGrupoCliente: 0, descuentoGrupoDetalle: [] }
+    const pctGeneral = cliente.grupo_descuento_porcentaje
+    const tieneRubros = Object.keys(descuentosGrupoRubros).length > 0
+    const rubroMap = {} // { rubroNombre: { rubro, porcentaje, descuento } }
+    for (const item of carrito) {
+      const rubroNombre = item.articulo.rubro?.nombre || 'Sin rubro'
+      const precio = item.precioOverride != null ? item.precioOverride : (item.articulo.precio || 0)
+      const pct = tieneRubros ? (descuentosGrupoRubros[rubroNombre] ?? pctGeneral) : pctGeneral
+      const desc = Math.round(precio * item.cantidad * pct / 100 * 100) / 100
+      if (!rubroMap[rubroNombre]) {
+        rubroMap[rubroNombre] = { rubro: rubroNombre, porcentaje: pct, descuento: 0 }
+      }
+      rubroMap[rubroNombre].descuento += desc
+    }
+    const detalle = Object.values(rubroMap).filter(d => d.descuento > 0)
+    const totalDesc = Math.round(detalle.reduce((s, d) => s + d.descuento, 0) * 100) / 100
+    return { descuentoGrupoCliente: totalDesc, descuentoGrupoDetalle: detalle }
+  }, [carrito, cliente.grupo_descuento_porcentaje, descuentosGrupoRubros])
   const totalConDescGrupo = Math.round((total - descuentoGrupoCliente) * 100) / 100
 
   const totalGiftCardsEnVenta = giftCardsEnVenta.reduce((s, g) => s + g.monto, 0)
@@ -2578,7 +2617,7 @@ const POS = () => {
     }
     setPedidoEnProceso(pedidoData)
     // Cargar campos extras del pedido
-    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\|(?=[A-Z]+:)|$)/)
     setObservacionEntregaPedido(obsEntregaMatch ? obsEntregaMatch[1].trim() : '')
     setTarjetaRegaloPedido(pedido.tarjeta_regalo || '')
     setObservacionesPedidoTexto(pedido.observaciones_pedido || '')
@@ -2651,7 +2690,7 @@ const POS = () => {
       // Reconstruir observaciones con entrega si corresponde
       let obsActualizada = pedidoEnProceso.observaciones || ''
       // Quitar entrega vieja si existía
-      obsActualizada = obsActualizada.replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\||$)/, '').trim()
+      obsActualizada = obsActualizada.replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\|(?=[A-Z]+:)|$)/, '').trim()
       if (observacionEntregaPedido.trim()) {
         obsActualizada = obsActualizada
           ? `${obsActualizada} | ENTREGA: ${observacionEntregaPedido.trim()}`
@@ -2767,6 +2806,7 @@ const POS = () => {
     }
     setCarrito([])
     setCliente({ ...CLIENTE_DEFAULT })
+    setDescuentosGrupoRubros({})
     setBusquedaArt('')
     setPedidoEnProceso(null)
     setGiftCardsEnVenta([])
@@ -3185,6 +3225,10 @@ const POS = () => {
       if (tipo === 'delivery') {
         payload.turno_entrega = turnoPedido || null
         payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
+      }
+      // Enviar nombre del empleado (cajero real) para mostrar en pedidos
+      if (cierreActivo?.empleado?.nombre) {
+        payload.cajero_nombre = cierreActivo.empleado.nombre
       }
       await api.post('/api/pos/pedidos', payload)
       limpiarVenta()
@@ -3694,7 +3738,7 @@ const POS = () => {
                     </button>
                   )}
                   <button
-                    onClick={() => setCliente({ ...CLIENTE_DEFAULT })}
+                    onClick={() => { setCliente({ ...CLIENTE_DEFAULT }); setDescuentosGrupoRubros({}) }}
                     className="text-gray-400 hover:text-red-500"
                     title="Volver a Consumidor Final"
                   >
@@ -4039,9 +4083,17 @@ const POS = () => {
                 </div>
               )}
               {descuentoGrupoCliente > 0 && (
-                <div className="flex justify-between text-violet-600">
-                  <span>{cliente.grupo_descuento_nombre} {cliente.grupo_descuento_porcentaje}%</span>
-                  <span>-{formatPrecio(descuentoGrupoCliente)}</span>
+                <div className="text-violet-600">
+                  <div className="flex justify-between">
+                    <span>{cliente.grupo_descuento_nombre}</span>
+                    <span>-{formatPrecio(descuentoGrupoCliente)}</span>
+                  </div>
+                  {descuentoGrupoDetalle.length > 1 && descuentoGrupoDetalle.map(d => (
+                    <div key={d.rubro} className="flex justify-between text-xs text-violet-400 pl-2">
+                      <span>{d.rubro} ({d.porcentaje}%)</span>
+                      <span>-{formatPrecio(d.descuento)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
               {totalGiftCardsEnVenta > 0 && (
