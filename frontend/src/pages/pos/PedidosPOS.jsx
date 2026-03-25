@@ -51,7 +51,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
   // Cargar sucursales para el dropdown
   useEffect(() => {
     api.get('/api/sucursales')
-      .then(({ data }) => setSucursales(data || []))
+      .then(({ data }) => setSucursales((data || []).filter(s => s.permite_pedidos)))
       .catch(() => {})
   }, [])
 
