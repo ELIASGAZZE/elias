@@ -304,7 +304,7 @@ const CerrarCajaPos = () => {
 
       if (modoEdicion) {
         await api.put(`/api/cierres-pos/${id}/editar-conteo`, payload)
-        navigate(`/cajas-pos/cierre/${id}`)
+        navigate('/cajas-pos')
       } else {
         const { data: cierreActualizado } = await api.put(`/api/cierres-pos/${id}/cerrar`, payload)
 
