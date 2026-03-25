@@ -140,11 +140,6 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     }
     try {
       const { data } = await api.get(`/api/empleados/por-codigo/${codigoEmpleado.trim()}`)
-      // No permitir que el cajero se pase artículos a sí mismo
-      if (cajero && data.nombre && cajero.nombre && data.nombre.toLowerCase() === cajero.nombre.toLowerCase()) {
-        setError('No podés registrar un retiro para vos mismo')
-        return
-      }
       // Cargar descuentos
       const { data: descs } = await api.get('/api/cuenta-empleados/descuentos')
       const map = {}
