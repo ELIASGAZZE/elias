@@ -112,6 +112,7 @@ const AdminConfiguracion = () => {
   const [editandoOperadorEmpresa, setEditandoOperadorEmpresa] = useState('')
   const [editandoOperadorPrueba, setEditandoOperadorPrueba] = useState('')
   const [editandoMostrarConsulta, setEditandoMostrarConsulta] = useState(false)
+  const [editandoPermitePedidos, setEditandoPermitePedidos] = useState(false)
 
   // Rubros
   const [rubros, setRubros] = useState([])
@@ -270,6 +271,7 @@ const AdminConfiguracion = () => {
     setEditandoOperadorEmpresa(sucursal.centum_operador_empresa || '')
     setEditandoOperadorPrueba(sucursal.centum_operador_prueba || '')
     setEditandoMostrarConsulta(sucursal.mostrar_en_consulta || false)
+    setEditandoPermitePedidos(sucursal.permite_pedidos || false)
   }
 
   const cancelarEdicionSucursal = () => {
@@ -279,6 +281,7 @@ const AdminConfiguracion = () => {
     setEditandoOperadorEmpresa('')
     setEditandoOperadorPrueba('')
     setEditandoMostrarConsulta(false)
+    setEditandoPermitePedidos(false)
   }
 
   const guardarEdicionSucursal = async (id) => {
@@ -290,6 +293,7 @@ const AdminConfiguracion = () => {
         centum_operador_empresa: editandoOperadorEmpresa || null,
         centum_operador_prueba: editandoOperadorPrueba || null,
         mostrar_en_consulta: editandoMostrarConsulta,
+        permite_pedidos: editandoPermitePedidos,
       })
       setEditandoSucursalId(null)
       setEditandoSucursalNombre('')
@@ -297,6 +301,7 @@ const AdminConfiguracion = () => {
       setEditandoOperadorEmpresa('')
       setEditandoOperadorPrueba('')
       setEditandoMostrarConsulta(false)
+      setEditandoPermitePedidos(false)
       await cargarSucursales()
     } catch (err) {
       alert(err.response?.data?.error || 'Error al editar sucursal')
@@ -1289,6 +1294,15 @@ const AdminConfiguracion = () => {
                             />
                             Mostrar en Consulta POS
                           </label>
+                          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editandoPermitePedidos}
+                              onChange={(e) => setEditandoPermitePedidos(e.target.checked)}
+                              className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                            />
+                            Permite pedidos
+                          </label>
                           <div className="flex gap-2">
                             <button
                               onClick={() => guardarEdicionSucursal(sucursal.id)}
@@ -1314,6 +1328,9 @@ const AdminConfiguracion = () => {
                               {sucursal.nombre}
                               {sucursal.mostrar_en_consulta && (
                                 <span className="ml-2 text-[10px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded font-medium">Consulta</span>
+                              )}
+                              {sucursal.permite_pedidos && (
+                                <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">Pedidos</span>
                               )}
                             </p>
                             {sucursal.centum_sucursal_id && (
