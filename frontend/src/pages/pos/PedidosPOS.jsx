@@ -370,6 +370,68 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     setTimeout(() => { win.print() }, 400)
   }
 
+  function imprimirPedidoComandera(pedido) {
+    const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || [])
+    const esc = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const fechaEntrega = pedido.fecha_entrega
+      ? new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
+      : ''
+    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+    const obsEntrega = obsEntregaMatch ? obsEntregaMatch[1].trim() : ''
+    const dirMatch = (pedido.observaciones || '').match(/Dirección:\s*([^|]+)/)
+    const dirEntrega = dirMatch ? dirMatch[1].trim() : ''
+
+    let filasItems = ''
+    items.forEach(item => {
+      const cant = parseFloat(item.cantidad || 1)
+      filasItems += `<tr>
+        <td style="width:20px;vertical-align:top;padding:3px 0;">&#9744;</td>
+        <td style="padding:3px 6px;font-size:13px;font-weight:600;">${item.esPesable ? cant.toFixed(3) + ' kg' : cant}x</td>
+        <td style="padding:3px 0;font-size:13px;">${esc(item.nombre)}</td>
+      </tr>`
+    })
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pedido #${pedido.numero}</title>
+<style>
+  @page { margin: 4mm; size: 80mm auto; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; width: 72mm; margin: 0 auto; }
+  .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 6px; }
+  .header h1 { font-size: 18px; margin-bottom: 2px; }
+  .header .num { font-size: 22px; font-weight: bold; }
+  .info { font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px dashed #000; }
+  .info div { margin-bottom: 2px; }
+  .info .lbl { font-weight: bold; }
+  .obs { font-size: 11px; margin-bottom: 6px; padding: 4px; border: 1px solid #000; background: #f5f5f5; }
+  .obs .lbl { font-weight: bold; font-size: 10px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  .sep { border-top: 2px dashed #000; padding-top: 6px; margin-top: 6px; text-align: center; font-size: 10px; color: #555; }
+</style></head><body>
+<div class="header">
+  <h1>PEDIDO</h1>
+  <div class="num">#${pedido.numero || '---'}</div>
+  <div style="font-size:11px;margin-top:2px;">${esc(pedido.nombre_cliente || 'Consumidor Final')}</div>
+</div>
+<div class="info">
+  ${pedido.tipo ? `<div><span class="lbl">${pedido.tipo === 'delivery' ? 'DELIVERY' : 'RETIRO'}</span></div>` : ''}
+  ${fechaEntrega ? `<div><span class="lbl">Entrega:</span> ${esc(fechaEntrega)} ${pedido.turno_entrega ? (pedido.turno_entrega === 'AM' ? '(9-13hs)' : '(17-21hs)') : ''}</div>` : ''}
+  ${dirEntrega ? `<div><span class="lbl">Dir:</span> ${esc(dirEntrega)}</div>` : ''}
+  ${pedido.sucursales?.nombre ? `<div><span class="lbl">Suc:</span> ${esc(pedido.sucursales.nombre)}</div>` : ''}
+</div>
+${obsEntrega ? `<div class="obs"><div class="lbl">Obs. entrega:</div>${esc(obsEntrega)}</div>` : ''}
+${pedido.observaciones_pedido ? `<div class="obs"><div class="lbl">Obs. pedido:</div>${esc(pedido.observaciones_pedido)}</div>` : ''}
+<table>${filasItems}</table>
+<div style="text-align:right;font-size:12px;font-weight:bold;border-top:1px dashed #000;padding-top:4px;">${items.length} artículos</div>
+${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="lbl">&#10084; Tarjeta regalo:</div>${esc(pedido.tarjeta_regalo)}</div>` : ''}
+<div class="sep">${new Date().toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}</div>
+</body></html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => { win.print() }, 400)
+  }
+
   // Datos del pedido seleccionado para el drawer
   const pedidoDetalle = useMemo(() => {
     if (!pedidoSeleccionado) return null
@@ -698,6 +760,13 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                           Prefactura
                         </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); imprimirPedidoComandera({ ...pedido, items }) }}
+                          className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-3 0h.008v.008h-.008V12z" /></svg>
+                          Imprimir pedido
+                        </button>
                       </div>
                     )}
                     {pedido.estado === 'pendiente' && (
@@ -753,13 +822,22 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                         >
                           Cancelar
                         </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); descargarPrefactura({ ...pedido, items }) }}
-                          className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1 ml-auto"
-                        >
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                          Prefactura
-                        </button>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); imprimirPedidoComandera({ ...pedido, items }) }}
+                            className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-3 0h.008v.008h-.008V12z" /></svg>
+                            Imprimir
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); descargarPrefactura({ ...pedido, items }) }}
+                            className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                            Prefactura
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -993,6 +1071,16 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm font-medium text-gray-500">Total</span>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => imprimirPedidoComandera(pedidoDetalle)}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                    title="Imprimir checklist del pedido"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-3 0h.008v.008h-.008V12z" />
+                    </svg>
+                    Imprimir
+                  </button>
                   <button
                     onClick={() => descargarPrefactura(pedidoDetalle)}
                     className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1"
