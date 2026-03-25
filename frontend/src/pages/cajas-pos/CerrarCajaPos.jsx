@@ -647,6 +647,7 @@ const CerrarCajaPos = () => {
         <ModalGastoPos
           cierreId={id}
           cierre={cierre}
+          gastosExistentes={gastos}
           onClose={() => setMostrarGasto(false)}
           onGastoCreado={(nuevoGasto) => {
             setGastos(prev => [...prev, nuevoGasto])

@@ -5,7 +5,7 @@ import api from '../../services/api'
 const formatMonto = (monto) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
 
-const ModalGastoPos = ({ cierreId, cierre, onClose, onGastoCreado }) => {
+const ModalGastoPos = ({ cierreId, cierre, gastosExistentes = [], onClose, onGastoCreado }) => {
   const [descripcion, setDescripcion] = useState('')
   const [importe, setImporte] = useState('')
   const [enviando, setEnviando] = useState(false)
@@ -58,6 +58,26 @@ const ModalGastoPos = ({ cierreId, cierre, onClose, onGastoCreado }) => {
         </div>
 
         <div className="p-4 space-y-4">
+          {/* Gastos ya registrados */}
+          {gastosExistentes.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+              <p className="text-xs font-semibold text-orange-800 mb-2">
+                Gastos ya registrados en este turno ({gastosExistentes.length}):
+              </p>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {gastosExistentes.map((g, i) => (
+                  <div key={g.id || i} className="flex items-center justify-between text-xs text-orange-700 bg-white/70 rounded-lg px-2 py-1">
+                    <span className="truncate flex-1">{g.descripcion}</span>
+                    <span className="font-medium ml-2 whitespace-nowrap">{formatMonto(g.importe)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-1.5 text-xs font-bold text-orange-800 text-right">
+                Total: {formatMonto(gastosExistentes.reduce((s, g) => s + parseFloat(g.importe || 0), 0))}
+              </div>
+            </div>
+          )}
+
           {/* Descripcion */}
           <div>
             <label className="text-sm font-medium text-gray-700 mb-1 block">Descripcion del gasto</label>
