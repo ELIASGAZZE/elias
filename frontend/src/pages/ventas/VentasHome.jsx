@@ -50,7 +50,7 @@ const VentasHome = () => {
 
   useEffect(() => {
     cargarVentas()
-  }, [fecha, page])
+  }, [fecha, page, filtroCentum])
 
   useEffect(() => {
     api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
@@ -63,7 +63,9 @@ const VentasHome = () => {
       if (syncCAE) {
         await api.post('/api/pos/ventas/sync-caes')
       }
-      const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}&page=${page}`)
+      const params = new URLSearchParams({ fecha, page })
+      if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
+      const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
       setTotalCount(data.totalCount || 0)

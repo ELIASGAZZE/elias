@@ -826,6 +826,10 @@ router.get('/ventas', verificarAuth, async (req, res) => {
         const desde = `${req.query.fecha}T00:00:00-03:00`
         query = query.gte('created_at', desde)
       }
+      // Filtro "Sin Centum": solo ventas no sincronizadas
+      if (req.query.sin_centum === '1') {
+        query = query.eq('centum_sync', false)
+      }
       query = query.range(from, to)
     }
 
