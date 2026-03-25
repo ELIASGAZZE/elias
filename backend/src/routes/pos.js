@@ -792,9 +792,14 @@ router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyn
 // Lista ventas del día con filtros opcionales
 router.get('/ventas', verificarAuth, async (req, res) => {
   try {
+    const pageSize = 50
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
+
     let query = supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)', { count: 'exact' })
       .order('created_at', { ascending: false })
 
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
@@ -808,7 +813,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       } else {
         query = query.ilike('centum_comprobante', `%${numFactura}%`)
       }
-      query = query.limit(50)
+      query = query.range(from, to)
     }
     // Filtros normales (fecha, cliente, etc.)
     else {
@@ -816,17 +821,21 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       if (buscar) {
         query = query.ilike('nombre_cliente', `%${buscar}%`)
       }
-      // Aplicar fecha si viene (ya no es obligatoria)
+      // Aplicar fecha "desde" si viene (horario Argentina UTC-3)
       if (req.query.fecha) {
-        const desde = `${req.query.fecha}T00:00:00`
-        const hasta = `${req.query.fecha}T23:59:59`
-        query = query.gte('created_at', desde).lte('created_at', hasta)
+        const desde = `${req.query.fecha}T00:00:00-03:00`
+        query = query.gte('created_at', desde)
       }
-      query = query.limit(50)
+      // Filtro "Sin Centum": solo ventas no sincronizadas
+      if (req.query.sin_centum === '1') {
+        query = query.eq('centum_sync', false)
+      }
+      query = query.range(from, to)
     }
 
-    // No-admin solo ve sus ventas
-    if (req.perfil.rol !== 'admin') {
+    // No-admin solo ve sus ventas (excepto al reportar problema, que necesita ver todas)
+    const esProblema = req.query.problema === '1'
+    if (req.perfil.rol !== 'admin' && !esProblema) {
       query = query.eq('cajero_id', req.perfil.id)
     } else {
       if (req.query.sucursal_id) {
@@ -837,7 +846,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       }
     }
 
-    const { data, error } = await query
+    const { data, error, count } = await query
     if (error) throw error
 
     let ventas = data || []
@@ -855,10 +864,13 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     const cajaIds = [...new Set(ventas.map(v => v.caja_id).filter(Boolean))]
     let cajasMap = {}
     if (cajaIds.length > 0) {
-      const { data: cajasData } = await supabase.from('cajas').select('id, nombre').in('id', cajaIds)
-      if (cajasData) cajasData.forEach(c => { cajasMap[c.id] = c.nombre })
+      const { data: cajasData } = await supabase.from('cajas').select('id, nombre, punto_venta_centum').in('id', cajaIds)
+      if (cajasData) cajasData.forEach(c => { cajasMap[c.id] = c })
     }
-    ventas = ventas.map(v => ({ ...v, cajas: v.caja_id && cajasMap[v.caja_id] ? { nombre: cajasMap[v.caja_id] } : null }))
+    ventas = ventas.map(v => {
+      const caja = v.caja_id && cajasMap[v.caja_id] ? cajasMap[v.caja_id] : null
+      return { ...v, cajas: caja ? { nombre: caja.nombre } : null, punto_venta_centum: caja?.punto_venta_centum || null }
+    })
 
     // Clasificar ventas: EMPRESA o PRUEBA
     // RI/MT (Factura A) → siempre EMPRESA
@@ -879,10 +891,10 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     ventas = ventas.map(v => {
       const condIva = condicionesIva[v.id_cliente_centum] || 'CF'
       const esFacturaA = condIva === 'RI' || condIva === 'MT'
-      if (esFacturaA) return { ...v, clasificacion: 'EMPRESA' }
+      if (esFacturaA) return { ...v, condicion_iva: condIva, clasificacion: 'EMPRESA' }
       const pagos = Array.isArray(v.pagos) ? v.pagos : []
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      return { ...v, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
+      return { ...v, condicion_iva: condIva, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
     })
 
     // Filtro por clasificación
@@ -890,7 +902,9 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       ventas = ventas.filter(v => v.clasificacion === req.query.clasificacion.toUpperCase())
     }
 
-    res.json({ ventas })
+    const totalCount = count ?? ventas.length
+    const totalPages = Math.ceil(totalCount / pageSize)
+    res.json({ ventas, page, totalPages, totalCount })
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
@@ -991,6 +1005,55 @@ router.post('/ventas/sync-caes', verificarAuth, async (req, res) => {
   }
 })
 
+// POST /api/pos/ventas/refresh-comprobantes — re-consulta Centum y corrige PV/número
+router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
+  try {
+    const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: ventas } = await supabase.from('ventas_pos')
+      .select('id, id_venta_centum, centum_comprobante')
+      .eq('centum_sync', true)
+      .not('id_venta_centum', 'is', null)
+      .gte('created_at', hace7d)
+      .limit(50)
+
+    if (!ventas || ventas.length === 0) return res.json({ actualizadas: 0 })
+
+    let actualizadas = 0
+    let limpiadas = 0
+    for (const v of ventas) {
+      try {
+        const centumData = await obtenerVentaCentum(v.id_venta_centum)
+        const numDoc = centumData?.NumeroDocumento
+        if (numDoc && numDoc.PuntoVenta && numDoc.Numero) {
+          const comprobanteReal = `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          if (comprobanteReal !== v.centum_comprobante) {
+            const updates = { centum_comprobante: comprobanteReal }
+            if (centumData.CAE) updates.numero_cae = centumData.CAE
+            await supabase.from('ventas_pos').update(updates).eq('id', v.id)
+            console.log(`[RefreshComprobantes] Venta ${v.id}: ${v.centum_comprobante} → ${comprobanteReal}`)
+            actualizadas++
+          }
+        }
+      } catch (e) {
+        // Venta no encontrada en Centum — limpiar datos falsos
+        if (e.message?.includes('no encontrada')) {
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: null, centum_comprobante: null,
+            centum_sync: false, centum_error: 'Venta no existe en Centum', numero_cae: null,
+          }).eq('id', v.id)
+          console.log(`[RefreshComprobantes] Venta ${v.id}: NO existe en Centum, limpiada`)
+          limpiadas++
+        } else {
+          console.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
+        }
+      }
+    }
+    res.json({ revisadas: ventas.length, actualizadas, limpiadas })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/pos/ventas/:id/cae — obtener CAE de AFIP desde Centum
 router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
   try {
@@ -1036,6 +1099,18 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
 
     const cae = centumData.CAE || null
     const caeVto = centumData.FechaVencimientoCAE || null
+
+    // Actualizar comprobante real y CAE en la DB
+    const numDocReal = centumData?.NumeroDocumento
+    const updates = {}
+    if (cae) updates.numero_cae = cae
+    if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+      updates.centum_comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+      baseResponse.comprobante = updates.centum_comprobante
+    }
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('ventas_pos').update(updates).eq('id', venta.id)
+    }
 
     res.json({ ...baseResponse, cae, cae_vencimiento: caeVto })
   } catch (err) {
@@ -3109,9 +3184,15 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
     const items = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
     const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
 
+    // Ventas de empleados → Consumidor Final (id=2), siempre PRUEBA
+    const esEmpleado = venta.nombre_cliente && venta.nombre_cliente.startsWith('Empleado:')
+    if (esEmpleado) {
+      venta.id_cliente_centum = 2
+    }
+
     // Obtener condición IVA del cliente
     let condicionIva = 'CF'
-    if (venta.id_cliente_centum) {
+    if (!esEmpleado && venta.id_cliente_centum) {
       const { data: cliente } = await supabase
         .from('clientes')
         .select('condicion_iva')
@@ -3123,7 +3204,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
     const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
     const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-    const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+    const idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
 
     // Obtener operador móvil según división
     const operadorMovilUser = idDivisionEmpresa === 2

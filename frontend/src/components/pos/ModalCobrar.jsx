@@ -732,6 +732,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       descuentoGrupoCliente,
       grupoDescuentoNombre,
       grupoDescuentoPorcentaje,
+      puntoVenta: terminalConfig.punto_venta_centum || null,
     }
 
     try {

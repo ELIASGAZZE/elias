@@ -40,27 +40,55 @@ const VentasHome = () => {
   const [cargando, setCargando] = useState(true)
   const [reenviando, setReenviando] = useState(null) // id de venta en proceso
   const [reenvioMasivo, setReenvioMasivo] = useState(false)
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+
+  useEffect(() => {
+    setPage(1)
+  }, [fecha])
 
   useEffect(() => {
     cargarVentas()
-  }, [fecha])
+  }, [fecha, page, filtroCentum])
 
   useEffect(() => {
     api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
   }, [])
 
-  const cargarVentas = async () => {
+  const cargarVentas = async ({ syncCAE = false } = {}) => {
     setCargando(true)
     try {
-      // Primero intentar obtener CAEs pendientes de ventas EMPRESA
-      await api.post('/api/pos/ventas/sync-caes').catch(() => {})
-      const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}`)
+      // Si se pide sync de CAEs, esperar a que termine antes de cargar
+      if (syncCAE) {
+        await api.post('/api/pos/ventas/sync-caes')
+      }
+      const params = new URLSearchParams({ fecha, page })
+      if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
+      const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
+      setTotalPages(data.totalPages || 1)
+      setTotalCount(data.totalCount || 0)
+      // En carga inicial, sync CAEs en background y recargar si encontró alguno
+      if (!syncCAE) {
+        api.post('/api/pos/ventas/sync-caes').then(r => {
+          if (r.data?.conCAE > 0) cargarVentasSilencioso()
+        }).catch(() => {})
+      }
     } catch (err) {
       console.error('Error al cargar ventas:', err)
     } finally {
       setCargando(false)
     }
+  }
+
+  const cargarVentasSilencioso = async () => {
+    try {
+      const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}&page=${page}`)
+      setVentas(data.ventas || [])
+      setTotalPages(data.totalPages || 1)
+      setTotalCount(data.totalCount || 0)
+    } catch {}
   }
 
   // Filtrar por búsqueda de cliente, clasificación, tipo y sucursal
@@ -136,12 +164,15 @@ const VentasHome = () => {
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* Filtros */}
         <div className="flex flex-col sm:flex-row gap-3">
-          <input
-            type="date"
-            value={fecha}
-            onChange={e => setFecha(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
-          />
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-gray-500">Desde</span>
+            <input
+              type="date"
+              value={fecha}
+              onChange={e => setFecha(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+            />
+          </div>
           <input
             type="text"
             placeholder="Buscar por cliente..."
@@ -150,7 +181,7 @@ const VentasHome = () => {
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
           />
           <button
-            onClick={cargarVentas}
+            onClick={() => cargarVentas({ syncCAE: true })}
             disabled={cargando}
             className="flex items-center justify-center gap-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
             title="Sincronizar ventas"
@@ -279,6 +310,27 @@ const VentasHome = () => {
           </div>
         ) : (
           <div className="space-y-2">
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="text-sm font-medium text-gray-600 hover:text-rose-600 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  &larr; Anterior
+                </button>
+                <span className="text-sm text-gray-500">
+                  Página {page} de {totalPages} ({totalCount} ventas)
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="text-sm font-medium text-gray-600 hover:text-rose-600 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  Siguiente &rarr;
+                </button>
+              </div>
+            )}
             {ventasFiltradas.map(v => {
               const pagos = v.pagos || []
               const mediosUsados = [...new Set(pagos.map(p => MEDIOS_LABELS[p.medio] || p.medio))]
@@ -384,13 +436,14 @@ const VentasHome = () => {
                             const pgos = v.pagos || []
                             imprimirTicketPOS({
                               items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario || i.precio })),
-                              cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente } : null,
-                              pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio, monto: parseFloat(p.monto) })),
+                              cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente, condicion_iva: v.condicion_iva || 'CF' } : null,
+                              pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio || p.tipo, monto: parseFloat(p.monto) })),
                               subtotal: parseFloat(v.subtotal || v.total),
                               total: parseFloat(v.total),
                               totalPagado: parseFloat(v.total),
                               vuelto: parseFloat(v.vuelto || 0),
                               numeroVenta: v.numero_venta,
+                              puntoVenta: v.punto_venta_centum || null,
                             })
                           }}
                           className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
@@ -444,6 +497,27 @@ const VentasHome = () => {
                 </Link>
               )
             })}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5">
+                <button
+                  onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo(0, 0) }}
+                  disabled={page <= 1}
+                  className="text-sm font-medium text-gray-600 hover:text-rose-600 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  &larr; Anterior
+                </button>
+                <span className="text-sm text-gray-500">
+                  Página {page} de {totalPages}
+                </span>
+                <button
+                  onClick={() => { setPage(p => Math.min(totalPages, p + 1)); window.scrollTo(0, 0) }}
+                  disabled={page >= totalPages}
+                  className="text-sm font-medium text-gray-600 hover:text-rose-600 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  Siguiente &rarr;
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

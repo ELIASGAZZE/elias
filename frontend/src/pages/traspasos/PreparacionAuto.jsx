@@ -92,7 +92,7 @@ const PreparacionAuto = () => {
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-gray-800">{o.numero}</span>
                           <span className={`text-xs px-2 py-0.5 rounded-full ${ESTADO_BADGE[o.estado]}`}>
-                            {o.estado === 'en_preparacion' ? 'En preparación' : 'Pendiente'}
+                            {o.estado === 'en_preparacion' ? 'En preparación' : 'Borrador'}
                           </span>
                         </div>
                         <div className="text-sm text-gray-500 mt-1">

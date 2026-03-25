@@ -200,6 +200,7 @@ const Preparacion = () => {
         rubro: cat.rubro?.nombre || '',
         marca: cat.marca || '',
         pesoPromedioPieza: item.peso_promedio_pieza || cat.pesoPromedioPieza || null,
+        pppOrden: item.peso_promedio_pieza || null, // el ppp con el que se creó la orden (para cálculo de piezas)
         pesoMinimo: cat.pesoMinimo || null,
         pesoMaximo: cat.pesoMaximo || null,
         plu: cat.codigo || item.codigo,
@@ -237,9 +238,10 @@ const Preparacion = () => {
   }, [orden])
 
   // Convertir cantidad pedida a piezas para pesables
+  // Usa pppOrden (el ppp al momento de crear la orden) — si no había ppp, cantidad_solicitada ya está en piezas
   const cantidadEnPiezas = (item) => {
-    if (!item.es_pesable || !item.pesoPromedioPieza) return item.cantidad_solicitada
-    return Math.round(item.cantidad_solicitada / item.pesoPromedioPieza)
+    if (!item.es_pesable || !item.pppOrden) return item.cantidad_solicitada
+    return Math.round(item.cantidad_solicitada / item.pppOrden)
   }
 
   const pickEnPiezas = (item) => {
@@ -1652,7 +1654,11 @@ const Preparacion = () => {
               <h2 className="text-sm font-semibold text-gray-800 leading-tight truncate">{itemDetalle.nombre}</h2>
               <div className="text-xs text-gray-400">{itemDetalle.codigo}
                 {stock !== undefined && (() => {
-                  if (itemDetalle.es_pesable) return <span className="ml-1">· Stock: {stock} kg</span>
+                  if (itemDetalle.es_pesable) {
+                    const ppp = itemDetalle.pesoPromedioPieza
+                    const pzasEst = ppp > 0 ? Math.round(stock / ppp) : null
+                    return <span className="ml-1">· Stock: {stock} kg{pzasEst !== null ? ` (~${pzasEst} pzas)` : ''}</span>
+                  }
                   // Para no pesables: mostrar uds + cajas si hay unidad alternativa
                   const cat = todosArticulos.find(a => String(a.id) === itemDetalle.articulo_id)
                   const factorCaja = cat?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
@@ -1676,23 +1682,25 @@ const Preparacion = () => {
 
         {/* Modal de piezas validadas */}
         {mostrarPiezas && (() => {
-          const canasto = (orden.canastos || []).find(c => c.id === canastoActivo?.id)
-          const itemCanasto = canasto ? (canasto.items || []).find(i => i.articulo_id === itemDetalle.articulo_id) : null
-          const pesos = itemCanasto?.pesos_escaneados || []
           const esPesable = itemDetalle.es_pesable
           const ppUnit = itemDetalle.pesoPromedioPieza
 
-          // Construir lista de piezas: si hay pesos_escaneados usar esos, sino generar desde cantidad
+          // Buscar en TODOS los canastos, no solo el activo
           let piezas = []
-          if (pesos.length > 0) {
-            piezas = pesos.map((p, i) => ({ idx: i, peso: p }))
-          } else if (esPesable && ppUnit && itemCanasto) {
-            // Fallback: N piezas con peso promedio
-            const n = Math.round(itemCanasto.cantidad / ppUnit)
-            piezas = Array.from({ length: n }, (_, i) => ({ idx: i, peso: Math.round(ppUnit * 1000) / 1000 }))
-          } else if (itemCanasto) {
-            piezas = Array.from({ length: itemCanasto.cantidad }, (_, i) => ({ idx: i, peso: null }))
+          for (const c of (orden.canastos || [])) {
+            const ic = (c.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
+            if (!ic) continue
+            const pesos = ic.pesos_escaneados || []
+            if (pesos.length > 0) {
+              pesos.forEach((p, i) => piezas.push({ canasto: c.precinto, peso: p }))
+            } else if (esPesable && ppUnit && ic.cantidad > 0) {
+              const n = Math.round(ic.cantidad / ppUnit)
+              for (let i = 0; i < n; i++) piezas.push({ canasto: c.precinto, peso: Math.round(ppUnit * 1000) / 1000 })
+            } else if (ic.cantidad > 0) {
+              for (let i = 0; i < ic.cantidad; i++) piezas.push({ canasto: c.precinto, peso: null })
+            }
           }
+          piezas = piezas.map((p, i) => ({ ...p, idx: i }))
           const totalKg = piezas.reduce((s, p) => s + (p.peso || 0), 0)
 
           return (
@@ -1718,16 +1726,13 @@ const Preparacion = () => {
                       <div key={pieza.idx} className="flex items-center justify-between px-4 py-3">
                         <div className="flex items-center gap-3">
                           <span className="bg-sky-100 text-sky-700 text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center">{pieza.idx + 1}</span>
-                          <span className="text-base font-medium text-gray-800">
-                            {pieza.peso != null ? `${pieza.peso} kg` : `Unidad ${pieza.idx + 1}`}
-                          </span>
+                          <div>
+                            <span className="text-base font-medium text-gray-800">
+                              {pieza.peso != null ? `${pieza.peso} kg` : `Unidad ${pieza.idx + 1}`}
+                            </span>
+                            {pieza.canasto && <span className="text-xs text-gray-400 ml-2">C: {pieza.canasto}</span>}
+                          </div>
                         </div>
-                        <button onClick={() => pesos.length > 0 ? eliminarPieza(pieza.idx) : eliminarUnidad()}
-                          className="text-red-500 active:text-red-700 p-2 rounded-lg active:bg-red-50">
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                          </svg>
-                        </button>
                       </div>
                     ))}
                   </div>

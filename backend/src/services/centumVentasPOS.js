@@ -573,21 +573,28 @@ async function retrySyncVentasCentum() {
   // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, condicion_iva, tipo, venta_origen_id, nombre_cliente')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace7d)
     .order('created_at', { ascending: true })
     .limit(20)
 
-  if (error || !pendientes?.length) {
+  if (error) {
+    console.error('[RetryCentumVentas] Error en query Supabase:', error.message || error)
     return { reintentadas: 0, exitosas: 0, fallidas: 0 }
   }
+  if (!pendientes?.length) {
+    return { reintentadas: 0, exitosas: 0, fallidas: 0 }
+  }
+  console.log(`[RetryCentumVentas] Encontradas ${pendientes.length} ventas pendientes`)
 
   let exitosas = 0
   let fallidas = 0
 
-  for (const venta of pendientes) {
+  for (let i = 0; i < pendientes.length; i++) {
+    const venta = pendientes[i]
+    console.log(`[RetryCentumVentas] Procesando ${i+1}/${pendientes.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, cliente: ${venta.nombre_cliente || 'CF'})`)
     try {
       // Obtener config de caja/sucursal
       const { data: cajaData } = await supabase
@@ -607,8 +614,14 @@ async function retrySyncVentasCentum() {
       const centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
       const centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
 
+      // Ventas de empleados → Consumidor Final (id=2), siempre PRUEBA
+      const esEmpleado = venta.nombre_cliente && venta.nombre_cliente.startsWith('Empleado:')
+      if (esEmpleado) {
+        venta.id_cliente_centum = 2
+      }
+
       // Si el cliente no tiene id_centum, intentar resolver desde DB local
-      if (!venta.id_cliente_centum || venta.id_cliente_centum === 0) {
+      if (!esEmpleado && (!venta.id_cliente_centum || venta.id_cliente_centum === 0)) {
         if (venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final') {
           const { data: cliLocal } = await supabase
             .from('clientes')
@@ -617,7 +630,7 @@ async function retrySyncVentasCentum() {
             .not('id_centum', 'is', null)
             .gt('id_centum', 0)
             .limit(1)
-            .single()
+            .maybeSingle()
           if (cliLocal?.id_centum) {
             venta.id_cliente_centum = cliLocal.id_centum
             await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
@@ -635,7 +648,7 @@ async function retrySyncVentasCentum() {
       if (!venta.condicion_iva && venta.id_cliente_centum) {
         const { data: cliente } = await supabase
           .from('clientes').select('condicion_iva')
-          .eq('id_centum', venta.id_cliente_centum).single()
+          .eq('id_centum', venta.id_cliente_centum).maybeSingle()
         condicionIva = cliente?.condicion_iva || 'CF'
       }
 
@@ -643,7 +656,7 @@ async function retrySyncVentasCentum() {
       const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
       const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+      const idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
 
       const operadorMovilUser = idDivisionEmpresa === 2
         ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
@@ -671,7 +684,7 @@ async function retrySyncVentasCentum() {
         if (venta.venta_origen_id) {
           const { data: ventaOrigen } = await supabase
             .from('ventas_pos').select('centum_comprobante, id_cliente_centum, pagos')
-            .eq('id', venta.venta_origen_id).single()
+            .eq('id', venta.venta_origen_id).maybeSingle()
           comprobanteOriginal = ventaOrigen?.centum_comprobante || null
           if (ventaOrigen) {
             idClienteNC = ventaOrigen.id_cliente_centum || 2
@@ -679,7 +692,7 @@ async function retrySyncVentasCentum() {
             if (ventaOrigen.id_cliente_centum) {
               const { data: cliOrig } = await supabase
                 .from('clientes').select('condicion_iva')
-                .eq('id_centum', ventaOrigen.id_cliente_centum).single()
+                .eq('id_centum', ventaOrigen.id_cliente_centum).maybeSingle()
               condIvaOrig = cliOrig?.condicion_iva || 'CF'
             }
             condicionIvaNC = condIvaOrig
@@ -720,30 +733,74 @@ async function retrySyncVentasCentum() {
         })
       }
 
-      const numDoc = resultado?.NumeroDocumento
-      const comprobante = numDoc
+      // Comprobante provisorio del POST (puede ser incorrecto para NCs)
+      let numDoc = resultado?.NumeroDocumento
+      let comprobante = numDoc
         ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
         : null
 
-      await supabase.from('ventas_pos').update({
-        id_venta_centum: resultado?.IdVenta || null,
-        centum_comprobante: comprobante,
-        centum_sync: true,
-        centum_error: null,
-        numero_cae: resultado?.CAE || null,
-      }).eq('id', venta.id)
+      // GET real de Centum para obtener comprobante y CAE correctos
+      let caeReal = resultado?.CAE || null
+      let ventaConfirmada = !resultado?._creadoConWarning // si no hubo warning, está confirmada
+      if (resultado?.IdVenta) {
+        try {
+          const centumReal = await obtenerVentaCentum(resultado.IdVenta)
+          const numDocReal = centumReal?.NumeroDocumento
+          if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+            comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+          }
+          if (centumReal?.CAE) caeReal = centumReal.CAE
+          ventaConfirmada = true // GET exitoso = la venta existe en Centum
+        } catch (e) {
+          console.warn(`[RetryCentumVentas] No se pudo verificar venta ${venta.id} en Centum:`, e.message)
+          if (resultado?._creadoConWarning) {
+            // HTTP 500 al crear + no se puede verificar = NO se creó
+            ventaConfirmada = false
+            comprobante = null
+          }
+        }
+      }
+
+      if (ventaConfirmada) {
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: resultado?.IdVenta || null,
+          centum_comprobante: comprobante,
+          centum_sync: true,
+          centum_error: null,
+          numero_cae: caeReal,
+        }).eq('id', venta.id)
+      } else {
+        // No se confirmó en Centum — limpiar datos falsos
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: null,
+          centum_comprobante: null,
+          centum_sync: false,
+          centum_error: 'Centum devolvió 500 y la venta no se pudo verificar',
+          numero_cae: null,
+        }).eq('id', venta.id)
+        console.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada, marcada como no sincronizada`)
+      }
 
       console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
-      // Obtener CAE (best effort)
-      fetchAndSaveCAE(venta.id, resultado?.IdVenta)
+      // Obtener CAE en background (si no se obtuvo arriba)
+      if (!caeReal) fetchAndSaveCAE(venta.id, resultado?.IdVenta)
       exitosas++
     } catch (err) {
-      console.error(`[RetryCentumVentas] Error venta ${venta.id}:`, err.message)
-      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message}` }).eq('id', venta.id).catch(e => console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
+      console.error(`[RetryCentumVentas] Error venta ${venta.id} (#${venta.numero_venta}):`, err.message)
+      registrarLlamada({
+        servicio: 'centum_ventas_retry', endpoint: `venta #${venta.numero_venta}`, metodo: 'POST',
+        estado: 'error', duracion_ms: 0, error_mensaje: err.message?.slice(0, 500), origen: 'cron',
+      })
+      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message?.slice(0, 200)}` }).eq('id', venta.id).catch(e => console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
       fallidas++
     }
   }
 
+  registrarLlamada({
+    servicio: 'centum_ventas_retry', endpoint: `retry batch`, metodo: 'BATCH',
+    estado: 'ok', duracion_ms: 0, items_procesados: pendientes.length,
+    error_mensaje: `exitosas: ${exitosas}, fallidas: ${fallidas}`, origen: 'cron',
+  })
   return { reintentadas: pendientes.length, exitosas, fallidas }
 }
 
@@ -758,14 +815,26 @@ async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
     const centumData = await obtenerVentaCentum(idVentaCentum)
     const cae = centumData?.CAE || null
     const caeVto = centumData?.FechaVencimientoCAE || null
+
+    // Actualizar comprobante real de Centum (puede diferir del que se guardó al crear)
+    const numDocReal = centumData?.NumeroDocumento
+    const updates = {}
+    if (numDocReal && numDocReal.PuntoVenta && numDocReal.Numero) {
+      updates.centum_comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
+    }
     if (cae) {
-      await supabase.from('ventas_pos').update({ numero_cae: cae }).eq('id', ventaPosId)
-      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}`)
+      updates.numero_cae = cae
+      await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
+      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}${updates.centum_comprobante ? `, comprobante=${updates.centum_comprobante}` : ''}`)
 
       // Envío automático de email (async, best effort)
       enviarComprobanteAutomatico(ventaPosId, cae, caeVto).catch(err => {
         console.warn(`[Email Auto] Error para venta ${ventaPosId}:`, err.message)
       })
+    } else if (updates.centum_comprobante) {
+      // Sin CAE pero con comprobante real actualizado (ej: NC sin autorizar ARCA)
+      await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
+      console.log(`[Centum POS] Comprobante actualizado para venta ${ventaPosId}: ${updates.centum_comprobante}`)
     }
     return cae
   } catch (err) {

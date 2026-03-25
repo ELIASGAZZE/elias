@@ -39,6 +39,9 @@ const OrdenDetalle = () => {
   const [orden, setOrden] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [accionando, setAccionando] = useState(false)
+  const [editando, setEditando] = useState(false)
+  const [itemsEdit, setItemsEdit] = useState([])
+  const [guardando, setGuardando] = useState(false)
 
   const cargar = () => {
     api.get(`/api/traspasos/ordenes/${id}`)
@@ -59,6 +62,28 @@ const OrdenDetalle = () => {
       alert(err.response?.data?.error || 'Error al ejecutar acción')
     }
     setAccionando(false)
+  }
+
+  const iniciarEdicion = () => {
+    setItemsEdit(items.map(i => ({ ...i })))
+    setEditando(true)
+  }
+
+  const guardarEdicion = async () => {
+    const itemsLimpios = itemsEdit.filter(i => i.cantidad_solicitada > 0)
+    if (itemsLimpios.length === 0) {
+      alert('La orden debe tener al menos un artículo')
+      return
+    }
+    setGuardando(true)
+    try {
+      await api.put(`/api/traspasos/ordenes/${id}`, { items: itemsLimpios })
+      setEditando(false)
+      cargar()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al guardar')
+    }
+    setGuardando(false)
   }
 
   const cancelar = async () => {
@@ -132,12 +157,24 @@ const OrdenDetalle = () => {
         <div className="flex gap-2 flex-wrap">
           {orden.estado === 'borrador' && (
             <>
-              <button onClick={() => ejecutarAccion('iniciar-preparacion', '¿Iniciar preparación?')}
-                disabled={accionando}
-                className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
-                Iniciar Preparación
-              </button>
-              <button onClick={cancelar} disabled={accionando}
+              {!editando ? (
+                <button onClick={iniciarEdicion}
+                  className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                  Editar artículos
+                </button>
+              ) : (
+                <>
+                  <button onClick={guardarEdicion} disabled={guardando}
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                    {guardando ? 'Guardando...' : 'Guardar'}
+                  </button>
+                  <button onClick={() => setEditando(false)} disabled={guardando}
+                    className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                    Cancelar edición
+                  </button>
+                </>
+              )}
+              <button onClick={cancelar} disabled={accionando || editando}
                 className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                 Cancelar Orden
               </button>
@@ -177,26 +214,50 @@ const OrdenDetalle = () => {
 
         {/* Items */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Artículos ({items.length})</h3>
-          {items.length === 0 ? (
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Artículos ({editando ? itemsEdit.length : items.length})</h3>
+          {(editando ? itemsEdit : items).length === 0 ? (
             <div className="text-center text-gray-400 text-sm py-4">Sin artículos</div>
           ) : (
             <div className="space-y-1">
-              {items.map((item, idx) => (
+              {(editando ? itemsEdit : items).map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between text-sm border-b border-gray-100 pb-1.5 last:border-0">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <span className="font-medium text-gray-800">{item.nombre}</span>
                     <span className="text-gray-400 ml-2 text-xs">{item.codigo}</span>
                     {item.es_pesable && <span className="text-amber-500 ml-1 text-xs">(pesable)</span>}
                   </div>
-                  <div className="text-right text-xs">
-                    <span className="text-gray-600 font-medium">
-                      {item.cantidad_solicitada} {item.es_pesable ? 'kg' : 'uds'}
-                    </span>
-                    {item.cantidad_preparada > 0 && item.cantidad_preparada !== item.cantidad_solicitada && (
-                      <span className="text-amber-600 ml-2">prep: {item.cantidad_preparada}</span>
-                    )}
-                  </div>
+                  {editando ? (
+                    <div className="flex items-center gap-2 ml-2">
+                      <input
+                        type="number"
+                        min={item.es_pesable ? '0.001' : '1'}
+                        step={item.es_pesable ? '0.1' : '1'}
+                        value={item.cantidad_solicitada}
+                        onChange={e => {
+                          const val = parseFloat(e.target.value) || 0
+                          setItemsEdit(prev => prev.map((it, i) => i === idx ? { ...it, cantidad_solicitada: val } : it))
+                        }}
+                        onFocus={e => e.target.select()}
+                        className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center font-mono focus:border-sky-400 outline-none"
+                      />
+                      <span className="text-xs text-gray-400">{item.es_pesable ? 'kg' : 'uds'}</span>
+                      <button onClick={() => setItemsEdit(prev => prev.filter((_, i) => i !== idx))}
+                        className="text-red-400 hover:text-red-600 p-1">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-right text-xs ml-2">
+                      <span className="text-gray-600 font-medium">
+                        {item.cantidad_solicitada} {item.es_pesable ? 'kg' : 'uds'}
+                      </span>
+                      {item.cantidad_preparada > 0 && item.cantidad_preparada !== item.cantidad_solicitada && (
+                        <span className="text-amber-600 ml-2">prep: {item.cantidad_preparada}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

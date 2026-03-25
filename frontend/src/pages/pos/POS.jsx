@@ -896,6 +896,7 @@ const ConfigurarTerminal = ({ onConfigurar, configActual }) => {
       sucursal_nombre: sucursalSeleccionada?.nombre || '',
       caja_id: cajaId,
       caja_nombre: cajaSeleccionada?.nombre || '',
+      punto_venta_centum: cajaSeleccionada?.punto_venta_centum || null,
       mp_device_id: mpDeviceId || null,
       mp_qr_pos_id: mpQrPosId,
     })
@@ -1574,6 +1575,7 @@ const POS = () => {
   const [problemaConfirmando, setProblemaConfirmando] = useState(false)
   const [problemaObservacion, setProblemaObservacion] = useState('')
   const [problemaPreciosCorregidos, setProblemaPreciosCorregidos] = useState({}) // { idx: precioCorreecto }
+  const [problemaEmailCliente, setProblemaEmailCliente] = useState('')
 
   // Modal cancelar venta
   const [mostrarCancelar, setMostrarCancelar] = useState(false)
@@ -1603,6 +1605,7 @@ const POS = () => {
     setProblemaObservacion('')
     setProblemaPreciosCorregidos({})
     setProblemaYaDevuelto({})
+    setProblemaEmailCliente('')
   }
 
   function buscarVentasProblemaDebounced(overrides = {}) {
@@ -1629,6 +1632,7 @@ const POS = () => {
         if (articulo && articulo.trim().length >= 2) params.articulo = articulo.trim()
         if (sucId) params.sucursal_id = sucId
       }
+      params.problema = 1
       const { data } = await api.get('/api/pos/ventas', { params })
       setProblemaVentas(data.ventas || [])
     } catch {
@@ -3207,17 +3211,6 @@ const POS = () => {
               Consulta <span className="text-[10px] opacity-60 ml-1">F5</span>
             </button>
 
-            {/* Tab Consulta */}
-            <button
-              onClick={() => setVistaActiva('consulta')}
-              className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
-                vistaActiva === 'consulta'
-                  ? 'bg-violet-700 text-white'
-                  : 'text-violet-400 hover:text-violet-200 hover:bg-violet-800/50'
-              }`}
-            >
-              Consulta <span className="text-[10px] opacity-60 ml-1">F7</span>
-            </button>
           </div>
 
           {/* Derecha: info terminal + config */}
@@ -5180,7 +5173,7 @@ const POS = () => {
                         {problemaCliente.celular && <div className="text-xs text-gray-400">Tel: {problemaCliente.celular}</div>}
                       </div>
                       <button
-                        onClick={() => { setProblemaCliente(null); setProblemaBusCliente('') }}
+                        onClick={() => { setProblemaCliente(null); setProblemaBusCliente(''); setProblemaEmailCliente('') }}
                         className="text-xs text-red-500 hover:text-red-700 font-medium"
                       >
                         Cambiar
@@ -5222,13 +5215,14 @@ const POS = () => {
                           problemaClientesRes.map(cli => (
                             <button
                               key={cli.id || cli.id_centum}
-                              onClick={() => { setProblemaCliente(cli); setProblemaClientesRes([]) }}
+                              onClick={() => { setProblemaCliente(cli); setProblemaEmailCliente(cli.email || ''); setProblemaClientesRes([]) }}
                               className="w-full text-left px-4 py-3 rounded-xl border-2 border-gray-200 hover:border-red-300 transition-all"
                             >
                               <div className="text-sm font-medium text-gray-800">{cli.razon_social}</div>
                               <div className="text-xs text-gray-400">
                                 {cli.cuit && <span>CUIT: {cli.cuit}</span>}
                                 {cli.celular && <span> · Tel: {cli.celular}</span>}
+                                {cli.email && <span> · {cli.email}</span>}
                               </div>
                             </button>
                           ))
@@ -5246,6 +5240,20 @@ const POS = () => {
                         </svg>
                         Crear cliente nuevo
                       </button>
+                    </div>
+                  )}
+
+                  {/* Email del cliente (editable) */}
+                  {problemaCliente && (
+                    <div className="mt-3 flex-shrink-0">
+                      <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Email para envío de factura</label>
+                      <input
+                        type="email"
+                        value={problemaEmailCliente}
+                        onChange={e => setProblemaEmailCliente(e.target.value)}
+                        placeholder="email@ejemplo.com"
+                        className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      />
                     </div>
                   )}
 
@@ -5268,7 +5276,7 @@ const POS = () => {
                   {problemaCrearCliente && (
                     <NuevoClienteModal
                       onClose={() => setProblemaCrearCliente(false)}
-                      onCreado={(cli) => { setProblemaCliente(cli); setProblemaCrearCliente(false) }}
+                      onCreado={(cli) => { setProblemaCliente(cli); setProblemaEmailCliente(cli.email || ''); setProblemaCrearCliente(false) }}
                       cuitInicial={problemaBusCliente.trim()}
                     />
                   )}
