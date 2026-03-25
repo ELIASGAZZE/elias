@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
-// GET /api/grupos-descuento — listar todos (con count de clientes)
+// GET /api/grupos-descuento — listar todos (con count de clientes + rubros)
 router.get('/', verificarAuth, async (req, res) => {
   try {
     const { data: grupos, error } = await supabase
@@ -26,9 +26,22 @@ router.get('/', verificarAuth, async (req, res) => {
       countMap[c.grupo_descuento_id] = (countMap[c.grupo_descuento_id] || 0) + 1
     }
 
+    // Cargar rubros por grupo
+    const { data: rubros } = await supabase
+      .from('grupos_descuento_rubros')
+      .select('*')
+      .order('rubro')
+
+    const rubrosMap = {}
+    for (const r of (rubros || [])) {
+      if (!rubrosMap[r.grupo_descuento_id]) rubrosMap[r.grupo_descuento_id] = []
+      rubrosMap[r.grupo_descuento_id].push(r)
+    }
+
     const resultado = (grupos || []).map(g => ({
       ...g,
       cantidad_clientes: countMap[g.id] || 0,
+      rubros: rubrosMap[g.id] || [],
     }))
 
     res.json({ grupos: resultado })
@@ -214,6 +227,72 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al eliminar grupo descuento:', err)
     res.status(500).json({ error: 'Error al eliminar grupo de descuento' })
+  }
+})
+
+// ─── RUBROS POR GRUPO ────────────────────────────────────────────────────────
+
+// GET /api/grupos-descuento/:id/rubros — listar rubros con descuento del grupo
+router.get('/:id/rubros', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('grupos_descuento_rubros')
+      .select('*')
+      .eq('grupo_descuento_id', req.params.id)
+      .order('rubro')
+    if (error) throw error
+    res.json({ rubros: data || [] })
+  } catch (err) {
+    console.error('Error al obtener rubros del grupo:', err)
+    res.status(500).json({ error: 'Error al obtener rubros' })
+  }
+})
+
+// POST /api/grupos-descuento/:id/rubros — guardar rubros (array completo, reemplaza todos)
+router.post('/:id/rubros', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { rubros } = req.body // [{ rubro, rubro_id_centum, porcentaje }]
+    if (!Array.isArray(rubros)) {
+      return res.status(400).json({ error: 'rubros debe ser un array' })
+    }
+
+    const grupoId = req.params.id
+
+    // Eliminar rubros existentes del grupo
+    const { error: delError } = await supabase
+      .from('grupos_descuento_rubros')
+      .delete()
+      .eq('grupo_descuento_id', grupoId)
+    if (delError) throw delError
+
+    // Insertar nuevos (solo los que tienen porcentaje distinto de null)
+    const toInsert = rubros
+      .filter(r => r.rubro && r.porcentaje !== '' && r.porcentaje !== null && r.porcentaje !== undefined)
+      .map(r => ({
+        grupo_descuento_id: grupoId,
+        rubro: r.rubro,
+        rubro_id_centum: r.rubro_id_centum || null,
+        porcentaje: parseFloat(r.porcentaje) || 0,
+      }))
+
+    if (toInsert.length > 0) {
+      const { error: insError } = await supabase
+        .from('grupos_descuento_rubros')
+        .insert(toInsert)
+      if (insError) throw insError
+    }
+
+    // Devolver rubros actualizados
+    const { data } = await supabase
+      .from('grupos_descuento_rubros')
+      .select('*')
+      .eq('grupo_descuento_id', grupoId)
+      .order('rubro')
+
+    res.json({ rubros: data || [] })
+  } catch (err) {
+    console.error('Error al guardar rubros del grupo:', err)
+    res.status(500).json({ error: 'Error al guardar rubros' })
   }
 })
 
