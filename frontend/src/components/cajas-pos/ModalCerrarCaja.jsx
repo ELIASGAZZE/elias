@@ -367,7 +367,24 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                     {gastos.map(g => (
                       <div key={g.id} className="flex items-center justify-between text-xs text-orange-700 bg-white/60 rounded-lg px-2 py-1">
                         <span className="truncate flex-1">{g.descripcion}</span>
-                        <span className="font-medium ml-2">{formatMonto(g.importe)}</span>
+                        <span className="font-medium ml-2 whitespace-nowrap">{formatMonto(g.importe)}</span>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`¿Eliminar gasto "${g.descripcion}"?`)) return
+                            try {
+                              await api.delete(`/api/gastos-pos/${g.id}`)
+                              setGastos(prev => prev.filter(x => x.id !== g.id))
+                            } catch (err) {
+                              setError(err.response?.data?.error || 'Error al eliminar gasto')
+                            }
+                          }}
+                          className="ml-2 text-red-400 hover:text-red-600 transition-colors flex-shrink-0"
+                          title="Eliminar gasto"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
                     ))}
                   </div>
