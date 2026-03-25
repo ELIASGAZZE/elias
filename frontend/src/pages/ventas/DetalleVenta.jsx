@@ -404,6 +404,17 @@ const DetalleVenta = () => {
                         {item.codigo && `${item.codigo} — `}
                         {cant} x {formatPrecio(precioUnit)}
                       </p>
+                      {item.descuento_pct > 0 && item.precio_original != null && (
+                        <p className="text-xs text-orange-500 mt-0.5">
+                          Desc. empleado -{item.descuento_pct}% (orig. {formatPrecio(item.precio_original)})
+                        </p>
+                      )}
+                      {item.cambio_precio && (
+                        <p className="text-xs text-blue-500 mt-0.5">
+                          Precio modificado: {formatPrecio(item.cambio_precio.precio_original)} → {formatPrecio(item.cambio_precio.precio_nuevo)}
+                          {item.cambio_precio.motivo && ` — ${item.cambio_precio.motivo}`}
+                        </p>
+                      )}
                     </div>
                     <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
                       {formatPrecio(subtotal)}
@@ -494,8 +505,14 @@ const DetalleVenta = () => {
             )}
             {parseFloat(venta.descuento_total) > 0 && (
               <div className="flex justify-between">
-                <span className="text-gray-500">Descuentos</span>
+                <span className="text-gray-500">Descuentos promociones</span>
                 <span className="text-green-600">-{formatPrecio(venta.descuento_total)}</span>
+              </div>
+            )}
+            {parseFloat(venta.descuento_grupo_cliente) > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Desc. {venta.grupo_descuento_nombre || 'grupo'}</span>
+                <span className="text-green-600">-{formatPrecio(venta.descuento_grupo_cliente)}</span>
               </div>
             )}
             {redondeoEfectivo !== 0 && (
