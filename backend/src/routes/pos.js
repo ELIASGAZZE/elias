@@ -710,7 +710,9 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           .eq('codigo', gc.codigo.trim())
           .maybeSingle()
 
-        if (existente) continue // Saltar si ya existe
+        if (existente) {
+          return res.status(400).json({ error: `La gift card ${gc.codigo} ya existe en el sistema` })
+        }
 
         const { data: giftCard } = await supabase
           .from('gift_cards')
@@ -985,6 +987,36 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
         .eq('tipo', 'venta')
         .single()
       data.venta_nueva_correccion = ventaNueva || null
+    }
+
+    // Si es venta de empleado y los items no tienen descuento_pct, enriquecer desde ventas_empleados
+    const esEmpleado = (data.nombre_cliente || '').startsWith('Empleado:')
+    if (esEmpleado) {
+      let itemsParsed = typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+      const faltaDesc = itemsParsed.length > 0 && !itemsParsed.some(it => it.descuento_pct > 0)
+      if (faltaDesc) {
+        // Buscar en ventas_empleados por fecha cercana y total igual
+        const { data: ventaEmp } = await supabase
+          .from('ventas_empleados')
+          .select('items')
+          .eq('total', data.total)
+          .gte('created_at', new Date(new Date(data.created_at).getTime() - 60000).toISOString())
+          .lte('created_at', new Date(new Date(data.created_at).getTime() + 60000).toISOString())
+          .limit(1)
+          .single()
+        if (ventaEmp?.items) {
+          const empItems = typeof ventaEmp.items === 'string' ? JSON.parse(ventaEmp.items) : ventaEmp.items
+          // Enriquecer cada item con precio_original y descuento_pct
+          for (const item of itemsParsed) {
+            const match = empItems.find(ei => String(ei.articulo_id || ei.id_articulo) === String(item.id_articulo) && ei.codigo === item.codigo)
+            if (match && match.descuento_pct > 0) {
+              item.precio_original = match.precio_original
+              item.descuento_pct = match.descuento_pct
+            }
+          }
+          data.items = typeof data.items === 'string' ? JSON.stringify(itemsParsed) : itemsParsed
+        }
+      }
     }
 
     res.json({ venta: data })
