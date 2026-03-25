@@ -573,7 +573,7 @@ async function retrySyncVentasCentum() {
   // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace7d)
@@ -592,7 +592,9 @@ async function retrySyncVentasCentum() {
   let exitosas = 0
   let fallidas = 0
 
-  for (const venta of pendientes) {
+  for (let i = 0; i < pendientes.length; i++) {
+    const venta = pendientes[i]
+    console.log(`[RetryCentumVentas] Procesando ${i+1}/${pendientes.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, cliente: ${venta.nombre_cliente || 'CF'})`)
     try {
       // Obtener config de caja/sucursal
       const { data: cajaData } = await supabase
