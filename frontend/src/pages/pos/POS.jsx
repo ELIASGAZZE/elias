@@ -2464,11 +2464,25 @@ const POS = () => {
   const totalGiftCardsEnVenta = giftCardsEnVenta.reduce((s, g) => s + g.monto, 0)
   const totalConGiftCards = totalConDescGrupo + totalGiftCardsEnVenta
 
-  function agregarGiftCardAVenta() {
+  async function agregarGiftCardAVenta() {
     if (!gcCodigo.trim() || !gcMonto || parseFloat(gcMonto) <= 0) return
     if (giftCardsEnVenta.some(g => g.codigo === gcCodigo.trim())) {
       setGcError('Esta gift card ya fue agregada')
       return
+    }
+    // Verificar que el código no exista ya en el sistema
+    try {
+      const { data } = await api.get(`/api/gift-cards/consultar/${encodeURIComponent(gcCodigo.trim())}`)
+      if (data.gift_card) {
+        setGcError('Este código de gift card ya existe en el sistema')
+        return
+      }
+    } catch (err) {
+      // 404 = no existe, está bien, se puede crear
+      if (err.response?.status !== 404) {
+        setGcError('Error al verificar el código')
+        return
+      }
     }
     setGiftCardsEnVenta(prev => [...prev, {
       codigo: gcCodigo.trim(),
