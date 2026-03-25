@@ -26,7 +26,7 @@ router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => 
       return res.status(400).json({ error: 'Solo se pueden crear gastos con la caja abierta o en edición' })
     }
 
-    if (rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
+    if (rol === 'operario' && cierre.estado === 'abierta' && cierre.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'Solo podés crear gastos en tu propia caja' })
     }
 
@@ -164,7 +164,7 @@ router.delete('/gastos-pos/:id', verificarAuth, async (req, res) => {
     }
 
     const { rol } = req.perfil
-    if (rol === 'operario' && gasto.cierre?.cajero_id !== req.perfil.id) {
+    if (rol === 'operario' && gasto.cierre?.estado === 'abierta' && gasto.cierre?.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'Solo podés eliminar gastos de tu propia caja' })
     }
 
