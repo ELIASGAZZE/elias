@@ -97,7 +97,8 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     if (filtroPago === 'todos') return pedidos
     return pedidos.filter(p => {
       const obs = p.observaciones || ''
-      const esPagado = obs.includes('PAGO ANTICIPADO')
+      const totalPagado = parseFloat(p.total_pagado) || 0
+      const esPagado = obs.includes('PAGO ANTICIPADO') || totalPagado > 0
       const pagaEfectivo = obs.includes('PAGO EN ENTREGA: EFECTIVO')
       if (filtroPago === 'pago') return esPagado
       if (filtroPago === 'efectivo') return pagaEfectivo
@@ -175,10 +176,10 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     if (!pedidoSeleccionado) return null
     const p = pedidos.find(p => p.id === pedidoSeleccionado)
     if (!p) return null
-    const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+    const totalPagado = parseFloat(p.total_pagado) || 0
+    const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
     const pagaEfectivoEntrega = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
     const pagaConLink = (p.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
-    const totalPagado = parseFloat(p.total_pagado) || 0
     const diferencia = esPagado ? (p.total - totalPagado) : 0
     return {
       ...p,
@@ -347,10 +348,10 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
           <div className="space-y-3">
             {pedidosFiltrados.map(pedido => {
               const fecha = new Date(pedido.created_at)
-              const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+              const totalPagado = parseFloat(pedido.total_pagado) || 0
+              const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
               const pagaEfectivoEntrega = (pedido.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
               const pagaConLink = (pedido.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
-              const totalPagado = parseFloat(pedido.total_pagado) || 0
               const diferencia = esPagado ? (pedido.total - totalPagado) : 0
               const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : pedido.items
 
