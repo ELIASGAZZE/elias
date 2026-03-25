@@ -787,11 +787,15 @@ async function retrySyncVentasCentum() {
       exitosas++
     } catch (err) {
       console.error(`[RetryCentumVentas] Error venta ${venta.id} (#${venta.numero_venta}):`, err.message)
-      registrarLlamada({
-        servicio: 'centum_ventas_retry', endpoint: `venta #${venta.numero_venta}`, metodo: 'POST',
-        estado: 'error', duracion_ms: 0, error_mensaje: err.message?.slice(0, 500), origen: 'cron',
-      })
-      await supabase.from('ventas_pos').update({ centum_error: `Retry: ${err.message?.slice(0, 200)}` }).eq('id', venta.id).catch(e => console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
+      try {
+        registrarLlamada({
+          servicio: 'centum_ventas_retry', endpoint: `venta #${venta.numero_venta}`, metodo: 'POST',
+          estado: 'error', duracion_ms: 0, error_mensaje: (err.message || '').slice(0, 500), origen: 'cron',
+        })
+        await supabase.from('ventas_pos').update({ centum_error: `Retry: ${(err.message || '').slice(0, 200)}` }).eq('id', venta.id)
+      } catch (e2) {
+        console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e2.message)
+      }
       fallidas++
     }
   }
