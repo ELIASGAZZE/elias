@@ -4,6 +4,7 @@ import api from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import ModalArticulosPedidos from '../../components/pos/ModalArticulosPedidos'
 import ModalGuiaDelivery from '../../components/pos/ModalGuiaDelivery'
+import ModalTarjetasRegalo from '../../components/pos/ModalTarjetasRegalo'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -47,6 +48,11 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
   const [linkCopiado, setLinkCopiado] = useState(null)
   const [mostrarArticulos, setMostrarArticulos] = useState(false)
   const [mostrarGuiaDelivery, setMostrarGuiaDelivery] = useState(false)
+  const [mostrarTarjetasRegalo, setMostrarTarjetasRegalo] = useState(false)
+  const [editObsPedido, setEditObsPedido] = useState('')
+  const [editTarjeta, setEditTarjeta] = useState('')
+  const [editObsEntrega, setEditObsEntrega] = useState('')
+  const [guardandoExtras, setGuardandoExtras] = useState(false)
 
   // Cargar sucursales para el dropdown
   useEffect(() => {
@@ -106,6 +112,14 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
       return true
     })
   }, [pedidos, filtroPago])
+
+  // Tarjetas de regalo para hoy
+  const tarjetasHoy = useMemo(() => {
+    const hoy = new Date().toISOString().split('T')[0]
+    return pedidos
+      .filter(p => p.tarjeta_regalo && p.estado === 'pendiente' && p.fecha_entrega === hoy)
+      .map(p => ({ numero: p.numero, cliente: p.nombre_cliente, mensaje: p.tarjeta_regalo, id: p.id }))
+  }, [pedidos])
 
   async function marcarPagaEfectivo(pedidoId) {
     try {
@@ -171,6 +185,191 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     }
   }
 
+  async function descargarPrefactura(pedido) {
+    // Buscar datos del cliente
+    let emailCliente = ''
+    let cuitCliente = ''
+    let condicionIva = ''
+    let celularCliente = ''
+    let direccionCliente = ''
+    if (pedido.id_cliente_centum) {
+      try {
+        const { data } = await api.get(`/api/clientes/por-centum/${pedido.id_cliente_centum}`)
+        if (data) {
+          emailCliente = data.email || ''
+          cuitCliente = data.cuit || ''
+          celularCliente = data.celular || data.telefono || ''
+          direccionCliente = [data.direccion, data.localidad, data.codigo_postal].filter(Boolean).join(' - ')
+          const COND = { RI: 'Responsable Inscripto', MT: 'Monotributista', CF: 'Consumidor Final', EX: 'Exento' }
+          condicionIva = COND[data.condicion_iva] || data.condicion_iva || 'Consumidor Final'
+        }
+      } catch {}
+    }
+    const items = typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || [])
+    const fechaEntrega = pedido.fecha_entrega
+      ? new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : ''
+    const fechaCreacion = new Date(pedido.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const totalNum = parseFloat(pedido.total) || 0
+
+    const esc = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+    let filasItems = ''
+    items.forEach(item => {
+      const precio = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
+      const cant = parseFloat(item.cantidad || 1)
+      const sub = Math.round(precio * cant * 100) / 100
+      filasItems += `<tr>
+        <td class="td">${esc(item.codigo || '')}</td>
+        <td class="td" style="text-align:center">${item.esPesable ? cant.toFixed(3) + ' kg' : cant}</td>
+        <td class="td">${esc(item.nombre)}</td>
+        <td class="td" style="text-align:right">${formatPrecio(precio)}</td>
+        <td class="td" style="text-align:right">${formatPrecio(sub)}</td>
+      </tr>`
+    })
+
+    // Extraer dirección de observaciones
+    const obsMatch = (pedido.observaciones || '').match(/Dirección:\s*([^|]+)/)
+    const direccionEntrega = obsMatch ? obsMatch[1].trim() : ''
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prefactura #${pedido.numero}</title>
+<style>
+  @page { margin: 10mm; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; }
+  .page { border: 2px solid #000; position: relative; }
+  .watermark { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg); font-size: 80px; font-weight: bold; color: rgba(0,0,0,0.04); white-space: nowrap; pointer-events: none; z-index: 0; letter-spacing: 10px; }
+
+  .hdr { display: flex; border-bottom: 2px solid #000; position: relative; z-index: 1; }
+  .hdr-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
+  .hdr-letra { width: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid #000; padding: 6px; }
+  .hdr-letra .letra { font-size: 28px; font-weight: bold; border: 2px solid #000; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
+  .hdr-letra .cod { font-size: 9px; margin-top: 2px; font-weight: 600; }
+  .hdr-right { flex: 1; padding: 10px 14px; }
+  .empresa-nombre { font-size: 18px; font-weight: bold; margin-bottom: 2px; }
+  .empresa-dir { font-size: 10px; color: #333; margin-bottom: 1px; }
+  .empresa-contacto { font-size: 10px; color: #555; }
+  .doc-tipo { font-size: 16px; font-weight: bold; text-align: right; }
+  .doc-num { font-size: 12px; margin-top: 4px; text-align: right; }
+  .doc-fecha { font-size: 11px; margin-top: 2px; text-align: right; }
+  .fiscal-data { font-size: 10px; margin-top: 6px; color: #333; line-height: 1.5; }
+  .fiscal-data span { display: inline-block; width: 70px; }
+
+  .cliente { border-bottom: 2px solid #000; padding: 8px 14px; font-size: 11px; line-height: 1.6; position: relative; z-index: 1; }
+  .cliente-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .cliente-row .lbl { color: #555; font-size: 10px; }
+
+  .entrega-info { border-bottom: 1px solid #999; padding: 6px 14px; font-size: 11px; line-height: 1.5; position: relative; z-index: 1; background: #fafafa; }
+  .entrega-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .entrega-row .lbl { color: #555; font-size: 10px; }
+
+  .items { padding: 0; position: relative; z-index: 1; }
+  .items table { width: 100%; border-collapse: collapse; }
+  .items th { background: #e8e8e8; padding: 5px 10px; text-align: left; font-size: 10px; font-weight: 700; border-bottom: 2px solid #000; border-top: 2px solid #000; text-transform: uppercase; letter-spacing: 0.3px; }
+  .td { padding: 4px 10px; border-bottom: 1px solid #ddd; font-size: 11px; }
+
+  .obs-section { border-top: 1px solid #999; padding: 6px 14px; font-size: 11px; position: relative; z-index: 1; background: #fffbeb; }
+  .obs-section .obs-title { font-weight: 700; color: #555; margin-bottom: 2px; font-size: 10px; text-transform: uppercase; }
+
+  .footer-zone { display: flex; border-top: 2px solid #000; position: relative; z-index: 1; }
+  .footer-left { flex: 1; padding: 10px 14px; border-right: 1px solid #000; }
+  .footer-right { width: 220px; padding: 10px 14px; }
+  .totales-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+  .totales-row.total { font-size: 16px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 6px; }
+  .prefactura-badge { background: #f3f4f6; border: 2px solid #999; padding: 3px 10px; font-size: 10px; font-weight: 700; color: #555; letter-spacing: 2px; display: inline-block; margin-top: 6px; }
+  .factura-msg { margin-top: 10px; font-size: 10px; color: #333; line-height: 1.6; border-top: 1px solid #ddd; padding-top: 8px; }
+  .cajero-info { margin-top: 6px; font-size: 9px; color: #999; }
+</style></head><body>
+<div class="page">
+  <div class="watermark">PREFACTURA</div>
+  <div class="hdr">
+    <div class="hdr-left">
+      <div class="empresa-nombre">Comercial Padano SRL</div>
+      <div class="empresa-dir">Brasil 313 Barrio Belgrano (2000) Rosario, Santa Fe</div>
+      <div class="empresa-contacto">Tel: +54 9 3412 28-6109 &nbsp;|&nbsp; administracion@padano.com.ar &nbsp;|&nbsp; www.padano.com.ar</div>
+    </div>
+    <div class="hdr-letra">
+      <div class="letra">X</div>
+      <div class="cod">PRE</div>
+    </div>
+    <div class="hdr-right">
+      <div class="doc-tipo">Prefactura</div>
+      <div class="doc-num">Pedido #${pedido.numero || '---'}</div>
+      <div class="doc-fecha">Fecha: ${esc(fechaCreacion)}</div>
+      <div class="fiscal-data">
+        <div><span>IVA:</span> Responsable Inscripto &nbsp;&nbsp; <span>CUIT:</span> 30-71885278-8</div>
+        <div><span>IIBB:</span> 0213900654 &nbsp;&nbsp; <span>Inicio Act.:</span> 01/09/2019</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cliente">
+    <div class="cliente-row">
+      <div><span class="lbl">Razon Social:</span> <strong style="font-size:13px">${esc(pedido.nombre_cliente || 'CONSUMIDOR FINAL')}</strong></div>
+      ${cuitCliente ? `<div><span class="lbl">CUIT:</span> <strong>${esc(cuitCliente)}</strong></div>` : ''}
+    </div>
+    <div class="cliente-row">
+      ${condicionIva ? `<div><span class="lbl">Cond. IVA:</span> ${esc(condicionIva)}</div>` : ''}
+      ${direccionCliente ? `<div><span class="lbl">Domicilio:</span> ${esc(direccionCliente)}</div>` : ''}
+    </div>
+    <div class="cliente-row">
+      ${emailCliente ? `<div><span class="lbl">Email:</span> ${esc(emailCliente)}</div>` : ''}
+      ${celularCliente ? `<div><span class="lbl">Celular:</span> ${esc(celularCliente)}</div>` : ''}
+    </div>
+  </div>
+
+  <div class="entrega-info">
+    <div class="entrega-row">
+      <div><span class="lbl">Tipo:</span> <strong>${pedido.tipo === 'delivery' ? 'Delivery' : 'Retiro en sucursal'}</strong></div>
+      ${fechaEntrega ? `<div><span class="lbl">Fecha entrega:</span> <strong>${esc(fechaEntrega)}</strong></div>` : ''}
+      ${pedido.turno_entrega ? `<div><span class="lbl">Turno:</span> <strong>${pedido.turno_entrega === 'AM' ? 'AM (9 a 13hs)' : 'PM (17 a 21hs)'}</strong></div>` : ''}
+    </div>
+    ${direccionEntrega ? `<div class="entrega-row"><div><span class="lbl">Dir. entrega:</span> <strong>${esc(direccionEntrega)}</strong></div></div>` : ''}
+  </div>
+
+  <div class="items">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:80px">Codigo</th>
+          <th style="width:65px;text-align:center">Cant.</th>
+          <th>Descripcion</th>
+          <th style="width:100px;text-align:right">Precio Unit.</th>
+          <th style="width:110px;text-align:right">Importe</th>
+        </tr>
+      </thead>
+      <tbody>${filasItems}</tbody>
+    </table>
+  </div>
+
+  ${pedido.observaciones_pedido ? `<div class="obs-section"><div class="obs-title">Observaciones del pedido:</div><div>${esc(pedido.observaciones_pedido)}</div></div>` : ''}
+
+  <div class="footer-zone">
+    <div class="footer-left">
+      <div style="font-size:11px;color:#555;font-weight:600">DOCUMENTO NO VALIDO COMO FACTURA</div>
+      <div class="prefactura-badge">PREFACTURA - SIN VALOR FISCAL</div>
+      <div class="factura-msg">
+        Una vez despachado el pedido se generara la factura para el cliente <strong>${esc(pedido.nombre_cliente || 'CONSUMIDOR FINAL')}</strong>${emailCliente ? ` y se enviara por email a <strong>${esc(emailCliente)}</strong>` : ''}.
+      </div>
+      <div class="cajero-info">
+        Cajero: ${esc(pedido.perfiles?.nombre || '')}
+        ${pedido.sucursales?.nombre ? ` &nbsp;|&nbsp; Sucursal: ${esc(pedido.sucursales.nombre)}` : ''}
+      </div>
+    </div>
+    <div class="footer-right">
+      <div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(totalNum)}</span></div>
+      <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>
+    </div>
+  </div>
+</div>
+</body></html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => { win.print() }, 400)
+  }
+
   // Datos del pedido seleccionado para el drawer
   const pedidoDetalle = useMemo(() => {
     if (!pedidoSeleccionado) return null
@@ -191,6 +390,16 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
       diferencia, // >0 debe más, <0 devolver
     }
   }, [pedidoSeleccionado, pedidos])
+
+  // Sincronizar campos editables al abrir drawer
+  useEffect(() => {
+    if (pedidoDetalle) {
+      setEditObsPedido(pedidoDetalle.observaciones_pedido || '')
+      setEditTarjeta(pedidoDetalle.tarjeta_regalo || '')
+      const m = (pedidoDetalle.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+      setEditObsEntrega(m ? m[1].trim() : '')
+    }
+  }, [pedidoSeleccionado])
 
   return (
     <div className={embebido ? 'h-full bg-gray-50 flex flex-col overflow-hidden' : 'min-h-screen bg-gray-50'}>
@@ -236,6 +445,17 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
             ))}
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              onClick={() => tarjetasHoy.length > 0 ? setMostrarTarjetasRegalo(true) : alert('No hay tarjetas de regalo para hoy')}
+              className={`relative text-sm font-medium px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                tarjetasHoy.length > 0
+                  ? 'bg-pink-100 hover:bg-pink-200 text-pink-700 animate-pulse'
+                  : 'bg-pink-50 hover:bg-pink-100 text-pink-400'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+              Tarjetas{tarjetasHoy.length > 0 ? ` (${tarjetasHoy.length})` : ''}
+            </button>
             <button
               onClick={() => setMostrarGuiaDelivery(true)}
               className="text-sm bg-amber-100 hover:bg-amber-200 text-amber-700 font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -443,7 +663,43 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                         </>
                       )}
                     </div>
+                    {/* Obs entrega, obs pedido, tarjeta regalo */}
+                    {(() => {
+                      const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+                      const obsEntrega = obsEntregaMatch ? obsEntregaMatch[1].trim() : null
+                      return (obsEntrega || pedido.observaciones_pedido || pedido.tarjeta_regalo) ? (
+                        <div className="flex flex-col gap-1 mt-1.5">
+                          {obsEntrega && (
+                            <div className="text-[11px] px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                              <span className="font-semibold">Entrega:</span> {obsEntrega}
+                            </div>
+                          )}
+                          {pedido.observaciones_pedido && (
+                            <div className="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                              <span className="font-semibold">Obs:</span> {pedido.observaciones_pedido}
+                            </div>
+                          )}
+                          {pedido.tarjeta_regalo && (
+                            <div className="text-[11px] px-2 py-1 rounded bg-pink-50 text-pink-700 border border-pink-200">
+                              <span className="font-semibold">Tarjeta:</span> {pedido.tarjeta_regalo}
+                            </div>
+                          )}
+                        </div>
+                      ) : null
+                    })()}
+
                     {/* Botones de acción en la card */}
+                    {pedido.estado !== 'pendiente' && (
+                      <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); descargarPrefactura({ ...pedido, items }) }}
+                          className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                          Prefactura
+                        </button>
+                      </div>
+                    )}
                     {pedido.estado === 'pendiente' && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
                         {onEditarPedido && (
@@ -496,6 +752,13 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                           className="bg-red-100 hover:bg-red-200 text-red-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors"
                         >
                           Cancelar
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); descargarPrefactura({ ...pedido, items }) }}
+                          className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1 ml-auto"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                          Prefactura
                         </button>
                       </div>
                     )}
@@ -612,9 +875,92 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                 </tbody>
               </table>
 
-              {/* Observaciones */}
+              {/* Campos editables: obs pedido, tarjeta, obs entrega */}
+              {pedidoDetalle.estado === 'pendiente' ? (
+                <div className="mt-4 space-y-2">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Observaciones del pedido</label>
+                    <textarea
+                      value={editObsPedido}
+                      onChange={e => setEditObsPedido(e.target.value)}
+                      placeholder="Ej: separar bebidas del resto..."
+                      rows={2}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 resize-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5 text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                      Tarjeta de regalo
+                    </label>
+                    <textarea
+                      value={editTarjeta}
+                      onChange={e => setEditTarjeta(e.target.value)}
+                      placeholder="Ej: Feliz cumpleaños Maria! De parte de Julian"
+                      rows={2}
+                      className="w-full text-sm border border-pink-200 rounded-lg px-3 py-2 focus:outline-none focus:border-pink-400 resize-none bg-pink-50/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Observacion de entrega</label>
+                    <textarea
+                      value={editObsEntrega}
+                      onChange={e => setEditObsEntrega(e.target.value)}
+                      placeholder="Ej: entregar antes de las 18hs..."
+                      rows={2}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 resize-none"
+                    />
+                  </div>
+                  <button
+                    disabled={guardandoExtras}
+                    onClick={async () => {
+                      setGuardandoExtras(true)
+                      try {
+                        let obs = (pedidoDetalle.observaciones || '').replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\||$)/, '').trim()
+                        const entrega = editObsEntrega.trim()
+                        if (entrega) {
+                          obs = obs ? `${obs} | ENTREGA: ${entrega}` : `ENTREGA: ${entrega}`
+                        }
+                        await api.put(`/api/pos/pedidos/${pedidoDetalle.id}`, {
+                          observaciones: obs || null,
+                          tarjeta_regalo: editTarjeta.trim() || null,
+                          observaciones_pedido: editObsPedido.trim() || null,
+                        })
+                        cargarPedidos()
+                        alert('Datos actualizados')
+                      } catch (err) {
+                        alert('Error: ' + (err.response?.data?.error || err.message))
+                      } finally {
+                        setGuardandoExtras(false)
+                      }
+                    }}
+                    className="w-full text-xs py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold transition-colors"
+                  >
+                    {guardandoExtras ? 'Guardando...' : 'Guardar cambios'}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {pedidoDetalle.observaciones_pedido && (
+                    <div className="mt-4 px-3 py-2 text-sm text-gray-700 bg-blue-50 rounded-lg border border-blue-200 flex items-start gap-2">
+                      <svg className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                      </svg>
+                      <span>{pedidoDetalle.observaciones_pedido}</span>
+                    </div>
+                  )}
+                  {pedidoDetalle.tarjeta_regalo && (
+                    <div className="mt-3 px-3 py-2 text-sm text-pink-700 bg-pink-50 rounded-lg border border-pink-200 flex items-start gap-2">
+                      <svg className="w-4 h-4 text-pink-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                      <span>{pedidoDetalle.tarjeta_regalo}</span>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Observaciones internas */}
               {pedidoDetalle.observaciones && (
-                <div className="mt-4 px-3 py-2 text-xs text-gray-600 bg-amber-50 rounded-lg border border-amber-100">
+                <div className="mt-3 px-3 py-2 text-xs text-gray-600 bg-amber-50 rounded-lg border border-amber-100">
                   {pedidoDetalle.observaciones}
                 </div>
               )}
@@ -646,7 +992,19 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
             <div className="border-t bg-gray-50 px-5 py-4">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm font-medium text-gray-500">Total</span>
-                <span className="text-xl font-bold text-gray-800">{formatPrecio(pedidoDetalle.total)}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => descargarPrefactura(pedidoDetalle)}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                    title="Descargar prefactura PDF"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Prefactura
+                  </button>
+                  <span className="text-xl font-bold text-gray-800">{formatPrecio(pedidoDetalle.total)}</span>
+                </div>
               </div>
 
               {pedidoDetalle.estado === 'pendiente' && (
@@ -724,6 +1082,14 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
       {/* Modal guía de delivery */}
       {mostrarGuiaDelivery && (
         <ModalGuiaDelivery onCerrar={() => setMostrarGuiaDelivery(false)} cajaId={terminalConfig?.caja_id} />
+      )}
+
+      {/* Modal tarjetas de regalo */}
+      {mostrarTarjetasRegalo && (
+        <ModalTarjetasRegalo
+          tarjetas={tarjetasHoy}
+          onCerrar={() => setMostrarTarjetasRegalo(false)}
+        />
       )}
 
       {/* CSS para animación del drawer */}
