@@ -22,8 +22,8 @@ router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => 
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    if (cierre.estado !== 'abierta') {
-      return res.status(400).json({ error: 'Solo se pueden crear gastos con la caja abierta' })
+    if (cierre.estado !== 'abierta' && cierre.estado !== 'pendiente_gestor') {
+      return res.status(400).json({ error: 'Solo se pueden crear gastos con la caja abierta o en edición' })
     }
 
     if (rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
@@ -159,8 +159,8 @@ router.delete('/gastos-pos/:id', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Gasto no encontrado' })
     }
 
-    if (gasto.cierre?.estado !== 'abierta') {
-      return res.status(400).json({ error: 'Solo se pueden eliminar gastos con la caja abierta' })
+    if (gasto.cierre?.estado !== 'abierta' && gasto.cierre?.estado !== 'pendiente_gestor') {
+      return res.status(400).json({ error: 'Solo se pueden eliminar gastos con la caja abierta o en edición' })
     }
 
     const { rol } = req.perfil
