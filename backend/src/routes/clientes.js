@@ -750,6 +750,25 @@ router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) =
   }
 })
 
+// GET /api/clientes/por-centum/:idCentum
+// Obtener cliente por id_centum
+router.get('/por-centum/:idCentum', verificarAuth, async (req, res) => {
+  try {
+    const idCentum = parseInt(req.params.idCentum)
+    if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
+    const { data, error } = await supabase
+      .from('clientes')
+      .select('*')
+      .eq('id_centum', idCentum)
+      .single()
+    if (error || !data) return res.status(404).json({ error: 'Cliente no encontrado' })
+    res.json(data)
+  } catch (err) {
+    console.error('Error al obtener cliente por centum:', err)
+    res.status(500).json({ error: 'Error al obtener cliente' })
+  }
+})
+
 // GET /api/clientes/por-centum/:idCentum/direcciones
 // Listar direcciones de entrega buscando por id_centum
 router.get('/por-centum/:idCentum/direcciones', verificarAuth, async (req, res) => {
@@ -835,6 +854,45 @@ router.post('/:id/direcciones', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('Error al agregar dirección:', err)
     res.status(500).json({ error: 'Error al agregar dirección' })
+  }
+})
+
+// PUT /api/clientes/:id/direcciones/:dirId
+// Editar dirección de entrega
+router.put('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
+  try {
+    const { direccion, localidad, referencia, es_principal } = req.body
+
+    if (!direccion || !direccion.trim()) {
+      return res.status(400).json({ error: 'La dirección es requerida' })
+    }
+
+    if (es_principal) {
+      await supabase
+        .from('direcciones_entrega')
+        .update({ es_principal: false })
+        .eq('cliente_id', req.params.id)
+    }
+
+    const { data, error } = await supabase
+      .from('direcciones_entrega')
+      .update({
+        direccion: direccion.trim(),
+        localidad: localidad?.trim() || null,
+        referencia: referencia?.trim() || null,
+        ...(es_principal !== undefined && { es_principal }),
+      })
+      .eq('id', req.params.dirId)
+      .eq('cliente_id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(404).json({ error: 'Dirección no encontrada' })
+    res.json(data)
+  } catch (err) {
+    console.error('Error al editar dirección:', err)
+    res.status(500).json({ error: 'Error al editar dirección' })
   }
 })
 

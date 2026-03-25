@@ -1352,7 +1352,7 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
 router.post('/pedidos', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id } = req.body
+    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
@@ -1401,6 +1401,8 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
       turno_entrega: turno_entrega || null,
     }
     if (total_pagado) insertData.total_pagado = total_pagado
+    if (tarjeta_regalo?.trim()) insertData.tarjeta_regalo = tarjeta_regalo.trim()
+    if (observaciones_pedido?.trim()) insertData.observaciones_pedido = observaciones_pedido.trim()
 
     const { data, error } = await supabase
       .from('pedidos_pos')
@@ -2001,17 +2003,21 @@ router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
 // PUT /api/pos/pedidos/:id — editar items/total/observaciones de un pedido pendiente
 router.put('/pedidos/:id', verificarAuth, async (req, res) => {
   try {
-    const { items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente, id_cliente_centum, turno_entrega, sucursal_id } = req.body
+    const { items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente, id_cliente_centum, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido } = req.body
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'items es requerido' })
-    }
-    if (total == null || total <= 0) {
-      return res.status(400).json({ error: 'total debe ser mayor a 0' })
+    // Permitir actualización parcial (solo campos extras sin items/total)
+    const esActualizacionParcial = !items && total == null
+    if (!esActualizacionParcial) {
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'items es requerido' })
+      }
+      if (total == null || total <= 0) {
+        return res.status(400).json({ error: 'total debe ser mayor a 0' })
+      }
     }
 
-    // Validar perecederos si cambia fecha_entrega
-    if (fecha_entrega) {
+    // Validar perecederos si cambia fecha_entrega (solo si hay items)
+    if (fecha_entrega && !esActualizacionParcial) {
       const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
       const manana = new Date()
       manana.setDate(manana.getDate() + 1)
@@ -2037,12 +2043,13 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
     }
 
     const totalPagado = parseFloat(pedidoActual.total_pagado) || 0
-    const nuevoTotal = parseFloat(total)
-    const updateData = {
-      items: JSON.stringify(items),
-      total: nuevoTotal,
-      observaciones: observaciones || null,
+    const nuevoTotal = esActualizacionParcial ? parseFloat(pedidoActual.total) : parseFloat(total)
+    const updateData = {}
+    if (!esActualizacionParcial) {
+      updateData.items = JSON.stringify(items)
+      updateData.total = nuevoTotal
     }
+    if (observaciones !== undefined) updateData.observaciones = observaciones || null
     if (tipo !== undefined) updateData.tipo = tipo
     if (fecha_entrega !== undefined) updateData.fecha_entrega = fecha_entrega || null
     if (nombre_cliente !== undefined) updateData.nombre_cliente = nombre_cliente
@@ -2057,10 +2064,12 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
       }
       updateData.observaciones = obs || null
     }
+    if (tarjeta_regalo !== undefined) updateData.tarjeta_regalo = tarjeta_regalo?.trim() || null
+    if (observaciones_pedido !== undefined) updateData.observaciones_pedido = observaciones_pedido?.trim() || null
 
     // Si el pedido estaba pagado y el nuevo total es menor, ajustar total_pagado y generar saldo
     let saldoGenerado = null
-    if (totalPagado > 0 && nuevoTotal < totalPagado) {
+    if (!esActualizacionParcial && totalPagado > 0 && nuevoTotal < totalPagado) {
       const diferencia = totalPagado - nuevoTotal
       updateData.total_pagado = nuevoTotal
 

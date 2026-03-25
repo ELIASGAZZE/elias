@@ -1492,6 +1492,9 @@ const POS = () => {
   const [pasoPedido, setPasoPedido] = useState(0) // 0=fecha, 1=cliente, 2=tipo, 3=dirección/sucursal, 4=pago
   const [fechaEntregaPedido, setFechaEntregaPedido] = useState('')
   const [turnoPedido, setTurnoPedido] = useState('')
+  const [observacionEntregaPedido, setObservacionEntregaPedido] = useState('')
+  const [tarjetaRegaloPedido, setTarjetaRegaloPedido] = useState('')
+  const [observacionesPedidoTexto, setObservacionesPedidoTexto] = useState('')
   const [bloqueosFecha, setBloqueosFecha] = useState([])
   const [mostrarCobrarPedido, setMostrarCobrarPedido] = useState(false)
   const [cobrarPedidoExistente, setCobrarPedidoExistente] = useState(null) // { id, total, items, cliente_nombre, id_cliente_centum }
@@ -1513,6 +1516,8 @@ const POS = () => {
   const [mostrarNuevaDirPedido, setMostrarNuevaDirPedido] = useState(false)
   const [nuevaDirPedido, setNuevaDirPedido] = useState({ direccion: '', localidad: '' })
   const [guardandoDirPedido, setGuardandoDirPedido] = useState(false)
+  const [editandoDirPedido, setEditandoDirPedido] = useState(null) // { id, direccion, localidad }
+  const [guardandoEditDirPedido, setGuardandoEditDirPedido] = useState(false)
 
   // Edición inline de precio
   const [editandoPrecio, setEditandoPrecio] = useState(null) // articuloId o null
@@ -2572,6 +2577,11 @@ const POS = () => {
       sucursal_id: pedido.sucursal_id || '',
     }
     setPedidoEnProceso(pedidoData)
+    // Cargar campos extras del pedido
+    const obsEntregaMatch = (pedido.observaciones || '').match(/ENTREGA:\s*(.+?)(?:\s*\||$)/)
+    setObservacionEntregaPedido(obsEntregaMatch ? obsEntregaMatch[1].trim() : '')
+    setTarjetaRegaloPedido(pedido.tarjeta_regalo || '')
+    setObservacionesPedidoTexto(pedido.observaciones_pedido || '')
     setVistaActiva('venta')
 
     // Cargar direcciones del cliente en background
@@ -2638,10 +2648,19 @@ const POS = () => {
 
     setGuardandoPedido(true)
     try {
+      // Reconstruir observaciones con entrega si corresponde
+      let obsActualizada = pedidoEnProceso.observaciones || ''
+      // Quitar entrega vieja si existía
+      obsActualizada = obsActualizada.replace(/\s*\|?\s*ENTREGA:\s*.+?(?:\s*\||$)/, '').trim()
+      if (observacionEntregaPedido.trim()) {
+        obsActualizada = obsActualizada
+          ? `${obsActualizada} | ENTREGA: ${observacionEntregaPedido.trim()}`
+          : `ENTREGA: ${observacionEntregaPedido.trim()}`
+      }
       await api.put(`/api/pos/pedidos/${pedidoEnProceso.id}`, {
         items,
         total: nuevoTotal,
-        observaciones: pedidoEnProceso.observaciones || null,
+        observaciones: obsActualizada || null,
         tipo: pedidoEnProceso.tipo,
         fecha_entrega: pedidoEnProceso.fecha_entrega || null,
         direccion_entrega: pedidoEnProceso.tipo === 'delivery' ? pedidoEnProceso.direccion_entrega : null,
@@ -2649,6 +2668,8 @@ const POS = () => {
         id_cliente_centum: cliente.id_centum || 0,
         turno_entrega: pedidoEnProceso.tipo === 'delivery' ? (pedidoEnProceso.turno_entrega || null) : null,
         sucursal_id: pedidoEnProceso.tipo === 'delivery' ? 'c254cac8-4c6e-4098-9119-485d7172f281' : pedidoEnProceso.sucursal_id || null,
+        tarjeta_regalo: tarjetaRegaloPedido.trim() || null,
+        observaciones_pedido: observacionesPedidoTexto.trim() || null,
       })
       alert(`Pedido #${pedidoEnProceso.numero} actualizado`)
       limpiarVenta()
@@ -2778,7 +2799,7 @@ const POS = () => {
     }
 
     if (wd) {
-      guardarComoPedidoConCliente(wd.cli, wd.tipo, wd.dirObj, wd.sucObj, true, wd.fecha, datosPago)
+      guardarComoPedidoConCliente(wd.cli, wd.tipo, wd.dirObj, wd.sucObj, true, wd.fecha, datosPago, null, { observacionEntrega: wd.observacionEntrega, tarjetaRegalo: wd.tarjetaRegalo, observacionesPedido: wd.observacionesPedido })
       pedidoWizardDataRef.current = null
     }
     // Limpiar wizard state
@@ -2854,6 +2875,9 @@ const POS = () => {
     setSucursalSeleccionadaPedido(null)
     setMostrarNuevaDirPedido(false)
     setNuevaDirPedido({ direccion: '', localidad: '' })
+    setObservacionEntregaPedido('')
+    setTarjetaRegaloPedido('')
+    setObservacionesPedidoTexto('')
   }
 
   function seleccionarClienteParaPedido(cli) {
@@ -2876,6 +2900,13 @@ const POS = () => {
     // Pre-cargar direcciones/sucursales
     setCargandoDetallePedido(true)
     try {
+      // Guardar email/celular si fueron editados
+      if (clientePedido.id_centum) {
+        api.put(`/api/clientes/contacto/${clientePedido.id_centum}`, {
+          email: clientePedido.email || null,
+          celular: clientePedido.celular || null,
+        }).catch(err => console.warn('Error guardando contacto:', err.message))
+      }
       if (tipo === 'delivery') {
         const { data } = await api.get(`/api/clientes/${clientePedido.id}/direcciones`)
         setDireccionesPedido(data || [])
@@ -2913,6 +2944,24 @@ const POS = () => {
     }
   }
 
+  async function guardarEditDirPedido() {
+    if (!editandoDirPedido || !editandoDirPedido.direccion.trim()) return
+    setGuardandoEditDirPedido(true)
+    try {
+      const { data } = await api.put(`/api/clientes/${clientePedido.id}/direcciones/${editandoDirPedido.id}`, {
+        direccion: editandoDirPedido.direccion.trim(),
+        localidad: editandoDirPedido.localidad.trim() || null,
+      })
+      setDireccionesPedido(prev => prev.map(d => d.id === data.id ? data : d))
+      setEditandoDirPedido(null)
+    } catch (err) {
+      console.error('Error editando dirección:', err)
+      alert('Error al editar dirección: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setGuardandoEditDirPedido(false)
+    }
+  }
+
   function confirmarPedidoWizard() {
     // Ir al paso 4: preguntar pago anticipado
     setPasoPedido(4)
@@ -2938,20 +2987,24 @@ const POS = () => {
       // Abrir pantalla de cobro — el wizard queda abierto detrás
       setMostrarBuscarClientePedido(false)
       setMostrarCobrarPedido(true)
-      pedidoWizardDataRef.current = { cli, tipo: tipoPedidoSeleccionado, dirObj, sucObj, fecha: fechaEntregaPedido }
+      const extras = { observacionEntrega: observacionEntregaPedido.trim() || null, tarjetaRegalo: tarjetaRegaloPedido.trim() || null, observacionesPedido: observacionesPedidoTexto.trim() || null }
+      pedidoWizardDataRef.current = { cli, tipo: tipoPedidoSeleccionado, dirObj, sucObj, fecha: fechaEntregaPedido, ...extras }
     } else if (modo === 'efectivo_entrega') {
+      const extras = { observacionEntrega: observacionEntregaPedido.trim() || null, tarjetaRegalo: tarjetaRegaloPedido.trim() || null, observacionesPedido: observacionesPedidoTexto.trim() || null }
       cerrarWizardPedido()
-      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido, null, 'PAGO EN ENTREGA: EFECTIVO')
+      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido, null, 'PAGO EN ENTREGA: EFECTIVO', extras)
     } else if (modo === 'link_pago') {
+      const extras = { observacionEntrega: observacionEntregaPedido.trim() || null, tarjetaRegalo: tarjetaRegaloPedido.trim() || null, observacionesPedido: observacionesPedidoTexto.trim() || null }
       cerrarWizardPedido()
-      guardarPedidoYGenerarLink(cli, tipoPedidoSeleccionado, dirObj, sucObj, fechaEntregaPedido)
+      guardarPedidoYGenerarLink(cli, tipoPedidoSeleccionado, dirObj, sucObj, fechaEntregaPedido, extras)
     } else {
+      const extras = { observacionEntrega: observacionEntregaPedido.trim() || null, tarjetaRegalo: tarjetaRegaloPedido.trim() || null, observacionesPedido: observacionesPedidoTexto.trim() || null }
       cerrarWizardPedido()
-      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido)
+      guardarComoPedidoConCliente(cli, tipoPedidoSeleccionado, dirObj, sucObj, false, fechaEntregaPedido, null, null, extras)
     }
   }
 
-  async function guardarPedidoYGenerarLink(cli, tipo, direccion, sucursal, fechaEntrega) {
+  async function guardarPedidoYGenerarLink(cli, tipo, direccion, sucursal, fechaEntrega, extras) {
     if (carrito.length === 0) return
     setGuardandoPedido(true)
     try {
@@ -2999,6 +3052,11 @@ const POS = () => {
       if (fechaEntrega) {
         payload.fecha_entrega = fechaEntrega
       }
+      if (extras?.observacionEntrega) {
+        payload.observaciones = `${payload.observaciones} | ENTREGA: ${extras.observacionEntrega}`
+      }
+      if (extras?.tarjetaRegalo) payload.tarjeta_regalo = extras.tarjetaRegalo
+      if (extras?.observacionesPedido) payload.observaciones_pedido = extras.observacionesPedido
       if (tipo === 'delivery') {
         payload.turno_entrega = turnoPedido || null
         payload.sucursal_id = 'c254cac8-4c6e-4098-9119-485d7172f281' // Fisherton
@@ -3055,7 +3113,7 @@ const POS = () => {
 
   // ---- Pedidos POS (página separada en /pos/pedidos) ----
 
-  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago, observacionExtra) {
+  async function guardarComoPedidoConCliente(cli, tipo, direccion, sucursal, pagado, fechaEntrega, datosPago, observacionExtra, extras) {
     if (carrito.length === 0) return
     if (!cli.id_centum || cli.id_centum === 0) return
     setGuardandoPedido(true)
@@ -3114,6 +3172,13 @@ const POS = () => {
       } else if (observacionExtra) {
         payload.observaciones = observacionExtra
       }
+      if (extras?.observacionEntrega) {
+        payload.observaciones = payload.observaciones
+          ? `${payload.observaciones} | ENTREGA: ${extras.observacionEntrega}`
+          : `ENTREGA: ${extras.observacionEntrega}`
+      }
+      if (extras?.tarjetaRegalo) payload.tarjeta_regalo = extras.tarjetaRegalo
+      if (extras?.observacionesPedido) payload.observaciones_pedido = extras.observacionesPedido
       if (fechaEntrega) {
         payload.fecha_entrega = fechaEntrega
       }
@@ -6079,6 +6144,29 @@ const POS = () => {
                       <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
                     </div>
                   </div>
+                  {/* Email y celular del cliente */}
+                  <div className="mt-2 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                      <input
+                        type="email"
+                        value={clientePedido.email || ''}
+                        onChange={e => setClientePedido(prev => ({ ...prev, email: e.target.value }))}
+                        placeholder="Email del cliente"
+                        className="flex-1 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
+                      <input
+                        type="tel"
+                        value={clientePedido.celular || ''}
+                        onChange={e => setClientePedido(prev => ({ ...prev, celular: e.target.value }))}
+                        placeholder="Celular del cliente"
+                        className="flex-1 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
                   {bloqueosFecha.length > 0 && (
                     <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 mt-2">
                       <div className="flex items-start gap-2">
@@ -6151,19 +6239,64 @@ const POS = () => {
                       {direccionesPedido.length > 0 && (
                         <div className="space-y-1">
                           {direccionesPedido.map(d => (
-                            <button
-                              key={d.id}
-                              onClick={() => { setDireccionSeleccionadaPedido(d.id); setMostrarNuevaDirPedido(false) }}
-                              className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                            editandoDirPedido?.id === d.id ? (
+                              <div key={d.id} className="bg-gray-50 rounded-lg p-3 space-y-2 border-2 border-amber-400">
+                                <input
+                                  type="text"
+                                  value={editandoDirPedido.direccion}
+                                  onChange={e => setEditandoDirPedido(prev => ({ ...prev, direccion: e.target.value }))}
+                                  placeholder="Direccion *"
+                                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400"
+                                  autoFocus
+                                />
+                                <input
+                                  type="text"
+                                  value={editandoDirPedido.localidad}
+                                  onChange={e => setEditandoDirPedido(prev => ({ ...prev, localidad: e.target.value }))}
+                                  placeholder="Localidad"
+                                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => setEditandoDirPedido(null)}
+                                    className="flex-1 text-sm py-2 rounded-lg bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    onClick={guardarEditDirPedido}
+                                    disabled={guardandoEditDirPedido || !editandoDirPedido.direccion.trim()}
+                                    className="flex-1 text-sm py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                                  >
+                                    {guardandoEditDirPedido ? 'Guardando...' : 'Guardar'}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div key={d.id} className={`flex items-center gap-1 rounded-lg border-2 transition-colors ${
                                 direccionSeleccionadaPedido === d.id
                                   ? 'border-amber-400 bg-amber-50'
                                   : 'border-gray-100 hover:border-gray-300'
-                              }`}
-                            >
-                              <span className="text-sm text-gray-800">{d.direccion}</span>
-                              {d.localidad && <span className="text-xs text-gray-400 ml-1">({d.localidad})</span>}
-                              {d.es_principal && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-2">Principal</span>}
-                            </button>
+                              }`}>
+                                <button
+                                  onClick={() => { setDireccionSeleccionadaPedido(d.id); setMostrarNuevaDirPedido(false); setEditandoDirPedido(null) }}
+                                  className="flex-1 text-left p-3"
+                                >
+                                  <span className="text-sm text-gray-800">{d.direccion}</span>
+                                  {d.localidad && <span className="text-xs text-gray-400 ml-1">({d.localidad})</span>}
+                                  {d.es_principal && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-2">Principal</span>}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditandoDirPedido({ id: d.id, direccion: d.direccion || '', localidad: d.localidad || '' }); setMostrarNuevaDirPedido(false) }}
+                                  className="p-2 mr-1 text-gray-400 hover:text-amber-600 transition-colors"
+                                  title="Editar dirección"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                                  </svg>
+                                </button>
+                              </div>
+                            )
                           ))}
                         </div>
                       )}
@@ -6214,6 +6347,18 @@ const POS = () => {
                         </button>
                       )}
 
+                      {/* Observación de entrega — debajo de direcciones */}
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500 mb-1 block">Observacion de entrega (opcional)</label>
+                        <textarea
+                          value={observacionEntregaPedido}
+                          onChange={e => setObservacionEntregaPedido(e.target.value)}
+                          placeholder="Ej: entregar antes de las 18hs, tocar timbre..."
+                          rows={2}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 resize-none"
+                        />
+                      </div>
+
                       {/* Turno de entrega */}
                       {(() => {
                         const esHoy = fechaEntregaPedido === new Date().toISOString().split('T')[0]
@@ -6259,6 +6404,33 @@ const POS = () => {
                         )
                       })()}
 
+                      {/* Observaciones del pedido + Tarjeta regalo */}
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Observaciones del pedido (opcional)</label>
+                          <textarea
+                            value={observacionesPedidoTexto}
+                            onChange={e => setObservacionesPedidoTexto(e.target.value)}
+                            placeholder="Ej: separar bebidas del resto, agregar cubiertos..."
+                            rows={2}
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 resize-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5 text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                            Tarjeta de regalo (opcional)
+                          </label>
+                          <textarea
+                            value={tarjetaRegaloPedido}
+                            onChange={e => setTarjetaRegaloPedido(e.target.value)}
+                            placeholder="Ej: Feliz cumpleaños Maria! De parte de Julian"
+                            rows={2}
+                            className="w-full text-sm border border-pink-200 rounded-lg px-3 py-2 focus:outline-none focus:border-pink-400 resize-none bg-pink-50/30"
+                          />
+                        </div>
+                      </div>
+
                       {/* Botón confirmar delivery */}
                       <button
                         onClick={confirmarPedidoWizard}
@@ -6288,6 +6460,45 @@ const POS = () => {
                           ))}
                         </div>
                       )}
+
+                      {/* Observación de entrega (retiro) */}
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500 mb-1 block">Observacion de entrega (opcional)</label>
+                        <textarea
+                          value={observacionEntregaPedido}
+                          onChange={e => setObservacionEntregaPedido(e.target.value)}
+                          placeholder="Ej: retira otra persona, avisar cuando esté listo..."
+                          rows={2}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 resize-none"
+                        />
+                      </div>
+
+                      {/* Observaciones del pedido + Tarjeta regalo (retiro) */}
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Observaciones del pedido (opcional)</label>
+                          <textarea
+                            value={observacionesPedidoTexto}
+                            onChange={e => setObservacionesPedidoTexto(e.target.value)}
+                            placeholder="Ej: separar bebidas del resto, agregar cubiertos..."
+                            rows={2}
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 resize-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5 text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                            Tarjeta de regalo (opcional)
+                          </label>
+                          <textarea
+                            value={tarjetaRegaloPedido}
+                            onChange={e => setTarjetaRegaloPedido(e.target.value)}
+                            placeholder="Ej: Feliz cumpleaños Maria! De parte de Julian"
+                            rows={2}
+                            className="w-full text-sm border border-pink-200 rounded-lg px-3 py-2 focus:outline-none focus:border-pink-400 resize-none bg-pink-50/30"
+                          />
+                        </div>
+                      </div>
 
                       {/* Botón confirmar retiro */}
                       <button
