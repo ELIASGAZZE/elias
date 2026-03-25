@@ -2202,16 +2202,25 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
       titulo,
       monto: montoACobrar,
       webhookUrl: `${backendUrl}/api/pos/webhook-talo`,
-      redirectUrl: `${frontendUrl}/pos`,
+      redirectUrl: 'https://zaatar.com.ar',
     })
 
-    // Guardar referencia del pago Talo
-    await supabase
-      .from('pedidos_pos')
-      .update({ mp_preference_id: pago.id || null })
-      .eq('id', pedido.id)
-
+    // Responder con el link inmediatamente
     res.json({ link: pago.payment_url })
+
+    // Guardar referencia y marcar como pendiente de pago (async, no bloquea respuesta)
+    const obsActual = pedido.observaciones || ''
+    const yaEsPago = obsActual.includes('PAGO ANTICIPADO') || obsActual.includes('PAGO PENDIENTE')
+    const updateData = { mp_preference_id: pago.id || null }
+    if (!yaEsPago) {
+      updateData.observaciones = obsActual ? `PAGO PENDIENTE: LINK TALO | ${obsActual}` : 'PAGO PENDIENTE: LINK TALO'
+    }
+    supabase
+      .from('pedidos_pos')
+      .update(updateData)
+      .eq('id', pedido.id)
+      .then(() => {})
+      .catch(err => console.error('[Talo] Error guardando referencia:', err))
   } catch (err) {
     console.error('[POS Link Talo] Error:', err)
     res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })

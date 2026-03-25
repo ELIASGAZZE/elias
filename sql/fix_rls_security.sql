@@ -1,0 +1,25 @@
+-- ============================================================
+-- FIX: Habilitar RLS en TODAS las tablas sin protección
+-- Ejecutado: 2026-03-25
+-- Estado: APLICADO - 28 tablas corregidas
+-- ============================================================
+-- NOTA: El backend usa service_key que bypasea RLS.
+-- Política "Sin acceso directo desde cliente" USING (false)
+-- bloquea acceso desde anon key (cliente público).
+-- ============================================================
+
+-- Tablas corregidas (28):
+-- analisis_ia, api_logs, articulos_delivery, asignaciones_turno,
+-- autorizaciones_horario, batch_analisis, config, direcciones_entrega,
+-- feriados, fichajes, gift_cards, grupos_descuento, licencias,
+-- movimientos_gift_card, movimientos_saldo_pos, pedidos_bloqueos,
+-- pedidos_pos, permisos_rol, pos_eliminaciones_log, promociones_pos,
+-- push_subscriptions, resoluciones_diferencias, retiros,
+-- stock_sucursales, traspaso_articulos_faltantes, turnos,
+-- ventas_pos, verificaciones_retiros
+
+-- ── Diagnóstico: verificar que no queden tablas sin RLS ─────
+-- SELECT tablename FROM pg_tables
+-- WHERE schemaname = 'public' AND rowsecurity = false
+-- ORDER BY tablename;
+-- Resultado esperado: 0 filas

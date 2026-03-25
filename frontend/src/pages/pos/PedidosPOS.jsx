@@ -26,7 +26,7 @@ function getFiltrosGuardados(defaultSucursal) {
     const saved = JSON.parse(sessionStorage.getItem(FILTROS_KEY))
     if (saved) return saved
   } catch {}
-  return { estado: 'pendiente', fecha: hoyISO(), sucursal: defaultSucursal || '' }
+  return { estado: 'pendiente', fecha: '', sucursal: '' }
 }
 
 const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido, onCobrarEnCaja }) => {
@@ -159,11 +159,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
         }
         setLinkCopiado(pedidoId)
         setTimeout(() => setLinkCopiado(null), 2000)
-        // Marcar como pendiente de pago por link
-        await api.put(`/api/pos/pedidos/${pedidoId}/pago`, {
-          total_pagado: 0,
-          observaciones: 'PAGO PENDIENTE: LINK MP',
-        })
+        // El backend ya actualiza observaciones al generar el link
         cargarPedidos()
       }
     } catch (err) {
