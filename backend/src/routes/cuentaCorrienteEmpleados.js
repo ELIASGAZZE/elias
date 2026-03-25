@@ -149,12 +149,6 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: 'Código de empleado inválido' })
     }
 
-    // No permitir que el cajero se pase artículos a sí mismo
-    if (req.perfil.nombre && empleado.nombre &&
-        req.perfil.nombre.toLowerCase() === empleado.nombre.toLowerCase()) {
-      return res.status(400).json({ error: 'No podés registrar un retiro para vos mismo' })
-    }
-
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Debe haber al menos un artículo' })
     }
