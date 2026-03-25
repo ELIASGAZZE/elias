@@ -21,7 +21,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
     let query = supabase
       .from('clientes')
-      .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
+      .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))', { count: 'exact' })
       .eq('activo', true)
       .order('razon_social', { ascending: true })
       .range(from, to)
@@ -47,7 +47,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const dniQuery = supabase
           .from('clientes')
-          .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
+          .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))', { count: 'exact' })
           .eq('activo', true)
           .or(orFilter)
           .order('razon_social', { ascending: true })
@@ -72,7 +72,7 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const cuitQuery = supabase
           .from('clientes')
-          .select('*, grupos_descuento(id, nombre, porcentaje)', { count: 'exact' })
+          .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))', { count: 'exact' })
           .eq('activo', true)
           .or(orFilter)
           .order('razon_social', { ascending: true })

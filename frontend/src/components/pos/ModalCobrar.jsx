@@ -1263,7 +1263,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               <div className="flex flex-col items-center mb-2">
                 {descuentoGrupoCliente > 0 && (
                   <span className="text-violet-300 text-xs font-medium">
-                    {grupoDescuentoNombre} {grupoDescuentoPorcentaje}%: -{formatPrecio(descuentoGrupoCliente)}
+                    {grupoDescuentoNombre}: -{formatPrecio(descuentoGrupoCliente)}
                   </span>
                 )}
                 {descuentosPorForma.map(d => (

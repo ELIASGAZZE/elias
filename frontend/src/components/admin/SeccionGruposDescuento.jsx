@@ -13,6 +13,7 @@ const SeccionGruposDescuento = () => {
 
   // Grupo expandido (ver/agregar clientes)
   const [expandido, setExpandido] = useState(null)
+  const [tabActivo, setTabActivo] = useState('clientes') // 'clientes' | 'rubros'
   const [clientesGrupo, setClientesGrupo] = useState([])
   const [cargandoClientes, setCargandoClientes] = useState(false)
 
@@ -21,6 +22,12 @@ const SeccionGruposDescuento = () => {
   const [resultados, setResultados] = useState([])
   const [buscando, setBuscando] = useState(false)
   const timeoutRef = useRef(null)
+
+  // Rubros
+  const [rubrosDisponibles, setRubrosDisponibles] = useState([])
+  const [rubrosGrupo, setRubrosGrupo] = useState({}) // { rubroNombre: porcentaje }
+  const [guardandoRubros, setGuardandoRubros] = useState(false)
+  const [rubrosModificados, setRubrosModificados] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -35,6 +42,13 @@ const SeccionGruposDescuento = () => {
   }, [])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Cargar rubros disponibles (una sola vez)
+  useEffect(() => {
+    api.get('/api/pos/rubros').then(({ data }) => {
+      setRubrosDisponibles((data.rubros || []).sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    }).catch(() => {})
+  }, [])
 
   const abrirCrear = () => {
     setForm({ nombre: '', porcentaje: '' })
@@ -92,15 +106,17 @@ const SeccionGruposDescuento = () => {
     }
   }
 
-  // Expandir grupo y cargar clientes
+  // Expandir grupo y cargar clientes + rubros
   const toggleExpandir = async (grupoId) => {
     if (expandido === grupoId) {
       setExpandido(null)
       return
     }
     setExpandido(grupoId)
+    setTabActivo('clientes')
     setBusqueda('')
     setResultados([])
+    setRubrosModificados(false)
     setCargandoClientes(true)
     try {
       const { data } = await api.get(`/api/grupos-descuento/${grupoId}/clientes`)
@@ -110,6 +126,13 @@ const SeccionGruposDescuento = () => {
     } finally {
       setCargandoClientes(false)
     }
+    // Cargar rubros del grupo
+    const grupo = grupos.find(g => g.id === grupoId)
+    const map = {}
+    for (const r of (grupo?.rubros || [])) {
+      map[r.rubro] = r.porcentaje
+    }
+    setRubrosGrupo(map)
   }
 
   // Buscar clientes con debounce
@@ -138,7 +161,6 @@ const SeccionGruposDescuento = () => {
       const { data } = await api.post(`/api/grupos-descuento/${expandido}/clientes`, { cliente_id: clienteId })
       setClientesGrupo(prev => [...prev, data].sort((a, b) => (a.razon_social || '').localeCompare(b.razon_social || '')))
       setResultados(prev => prev.filter(c => c.id !== clienteId))
-      // Actualizar count
       setGrupos(prev => prev.map(g => g.id === expandido ? { ...g, cantidad_clientes: g.cantidad_clientes + 1 } : g))
     } catch (err) {
       alert(err.response?.data?.error || 'Error al agregar cliente')
@@ -155,11 +177,45 @@ const SeccionGruposDescuento = () => {
     }
   }
 
+  // Rubros: cambiar porcentaje
+  const setRubroPct = (rubroNombre, valor) => {
+    setRubrosGrupo(prev => {
+      const next = { ...prev }
+      if (valor === '' || valor === null) {
+        delete next[rubroNombre]
+      } else {
+        next[rubroNombre] = valor
+      }
+      return next
+    })
+    setRubrosModificados(true)
+  }
+
+  const guardarRubros = async () => {
+    setGuardandoRubros(true)
+    try {
+      const rubrosArray = Object.entries(rubrosGrupo).map(([rubro, porcentaje]) => {
+        const rubroInfo = rubrosDisponibles.find(r => r.nombre === rubro)
+        return { rubro, rubro_id_centum: rubroInfo?.rubro_id_centum || null, porcentaje: parseFloat(porcentaje) || 0 }
+      })
+      const { data } = await api.post(`/api/grupos-descuento/${expandido}/rubros`, { rubros: rubrosArray })
+      // Actualizar grupo en state
+      setGrupos(prev => prev.map(g => g.id === expandido ? { ...g, rubros: data.rubros || [] } : g))
+      setRubrosModificados(false)
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al guardar rubros')
+    } finally {
+      setGuardandoRubros(false)
+    }
+  }
+
+  const grupoExpandido = grupos.find(g => g.id === expandido)
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">
-          Descuentos porcentuales aplicados automáticamente al seleccionar un cliente del grupo en el POS.
+          Descuentos porcentuales por rubro, aplicados automáticamente al seleccionar un cliente del grupo en el POS.
         </p>
         <button
           onClick={abrirCrear}
@@ -179,11 +235,16 @@ const SeccionGruposDescuento = () => {
             {/* Fila del grupo */}
             <div className="flex items-center px-4 py-3 hover:bg-gray-50">
               <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpandir(g.id)}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="font-medium text-gray-800">{g.nombre}</span>
                   <span className="bg-violet-50 text-violet-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {g.porcentaje}%
+                    General: {g.porcentaje}%
                   </span>
+                  {(g.rubros || []).length > 0 && (
+                    <span className="bg-indigo-50 text-indigo-600 text-xs font-medium px-2 py-0.5 rounded-full">
+                      {g.rubros.length} rubro{g.rubros.length !== 1 ? 's' : ''} personalizado{g.rubros.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
                   <span className="text-sm text-gray-500">
                     {g.cantidad_clientes} cliente{g.cantidad_clientes !== 1 ? 's' : ''}
                   </span>
@@ -212,82 +273,189 @@ const SeccionGruposDescuento = () => {
               </div>
             </div>
 
-            {/* Panel expandido: clientes del grupo */}
+            {/* Panel expandido */}
             {expandido === g.id && (
-              <div className="border-t border-gray-100 bg-gray-50 p-4">
-                {/* Buscador para agregar */}
-                <div className="mb-3">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={busqueda}
-                      onChange={e => handleBusqueda(e.target.value)}
-                      placeholder="Buscar cliente por nombre o CUIT para agregar..."
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    {buscando && (
-                      <div className="absolute right-3 top-2.5">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-600" />
+              <div className="border-t border-gray-100 bg-gray-50">
+                {/* Tabs */}
+                <div className="flex border-b border-gray-200">
+                  <button
+                    onClick={() => setTabActivo('clientes')}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      tabActivo === 'clientes'
+                        ? 'text-emerald-700 border-b-2 border-emerald-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Clientes ({g.cantidad_clientes})
+                  </button>
+                  <button
+                    onClick={() => setTabActivo('rubros')}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      tabActivo === 'rubros'
+                        ? 'text-violet-700 border-b-2 border-violet-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Descuentos por rubro
+                    {rubrosModificados && <span className="ml-1 text-amber-500">*</span>}
+                  </button>
+                </div>
+
+                {/* Tab: Clientes */}
+                {tabActivo === 'clientes' && (
+                  <div className="p-4">
+                    {/* Buscador para agregar */}
+                    <div className="mb-3">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={busqueda}
+                          onChange={e => handleBusqueda(e.target.value)}
+                          placeholder="Buscar cliente por nombre o CUIT para agregar..."
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        {buscando && (
+                          <div className="absolute right-3 top-2.5">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-600" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Resultados de búsqueda */}
+                      {resultados.length > 0 && (
+                        <div className="mt-1 border border-gray-200 rounded-lg bg-white shadow-sm max-h-48 overflow-y-auto divide-y divide-gray-100">
+                          {resultados.map(cli => {
+                            const yaEnGrupo = cli.grupo_descuento_id === g.id
+                            const enOtroGrupo = cli.grupo_descuento_id && cli.grupo_descuento_id !== g.id
+                            return (
+                              <div key={cli.id} className="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
+                                <div>
+                                  <span className="text-sm text-gray-800">{cli.razon_social}</span>
+                                  <span className="text-xs text-gray-400 ml-2">{cli.cuit}</span>
+                                  {enOtroGrupo && <span className="text-xs text-amber-600 ml-2">(en otro grupo)</span>}
+                                </div>
+                                {yaEnGrupo ? (
+                                  <span className="text-xs text-green-600">Ya en este grupo</span>
+                                ) : (
+                                  <button
+                                    onClick={() => agregarCliente(cli.id)}
+                                    className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg transition-colors"
+                                  >
+                                    {enOtroGrupo ? 'Mover aquí' : 'Agregar'}
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lista de clientes asignados */}
+                    {cargandoClientes ? (
+                      <div className="text-center py-4 text-sm text-gray-400">Cargando clientes...</div>
+                    ) : clientesGrupo.length === 0 ? (
+                      <div className="text-center py-4 text-sm text-gray-400">No hay clientes en este grupo</div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Clientes en el grupo ({clientesGrupo.length}):</p>
+                        <div className="max-h-60 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-lg bg-white">
+                          {clientesGrupo.map(cli => (
+                            <div key={cli.id} className="flex items-center justify-between px-3 py-2">
+                              <div>
+                                <span className="text-sm text-gray-800">{cli.razon_social}</span>
+                                <span className="text-xs text-gray-400 ml-2">{cli.cuit}</span>
+                              </div>
+                              <button
+                                onClick={() => quitarCliente(cli.id)}
+                                className="text-gray-300 hover:text-red-500 transition-colors" title="Quitar del grupo"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
+                )}
 
-                  {/* Resultados de búsqueda */}
-                  {resultados.length > 0 && (
-                    <div className="mt-1 border border-gray-200 rounded-lg bg-white shadow-sm max-h-48 overflow-y-auto divide-y divide-gray-100">
-                      {resultados.map(cli => {
-                        const yaEnGrupo = cli.grupo_descuento_id === g.id
-                        const enOtroGrupo = cli.grupo_descuento_id && cli.grupo_descuento_id !== g.id
-                        return (
-                          <div key={cli.id} className="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
-                            <div>
-                              <span className="text-sm text-gray-800">{cli.razon_social}</span>
-                              <span className="text-xs text-gray-400 ml-2">{cli.cuit}</span>
-                              {enOtroGrupo && <span className="text-xs text-amber-600 ml-2">(en otro grupo)</span>}
-                            </div>
-                            {yaEnGrupo ? (
-                              <span className="text-xs text-green-600">Ya en este grupo</span>
-                            ) : (
-                              <button
-                                onClick={() => agregarCliente(cli.id)}
-                                className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg transition-colors"
-                              >
-                                {enOtroGrupo ? 'Mover aquí' : 'Agregar'}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Lista de clientes asignados */}
-                {cargandoClientes ? (
-                  <div className="text-center py-4 text-sm text-gray-400">Cargando clientes...</div>
-                ) : clientesGrupo.length === 0 ? (
-                  <div className="text-center py-4 text-sm text-gray-400">No hay clientes en este grupo</div>
-                ) : (
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-gray-500 mb-2">Clientes en el grupo ({clientesGrupo.length}):</p>
-                    <div className="max-h-60 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-lg bg-white">
-                      {clientesGrupo.map(cli => (
-                        <div key={cli.id} className="flex items-center justify-between px-3 py-2">
-                          <div>
-                            <span className="text-sm text-gray-800">{cli.razon_social}</span>
-                            <span className="text-xs text-gray-400 ml-2">{cli.cuit}</span>
-                          </div>
+                {/* Tab: Rubros */}
+                {tabActivo === 'rubros' && (
+                  <div className="p-4">
+                    <p className="text-xs text-gray-500 mb-3">
+                      Asignar un porcentaje distinto por rubro. Los rubros sin porcentaje usan el general ({grupoExpandido?.porcentaje}%).
+                    </p>
+                    {rubrosDisponibles.length === 0 ? (
+                      <div className="text-center py-4 text-sm text-gray-400">Cargando rubros...</div>
+                    ) : (
+                      <>
+                        <div className="max-h-80 overflow-y-auto border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+                          {rubrosDisponibles.map(r => {
+                            const tieneCustom = rubrosGrupo[r.nombre] !== undefined
+                            const valor = tieneCustom ? rubrosGrupo[r.nombre] : ''
+                            return (
+                              <div key={r.nombre} className="flex items-center justify-between px-3 py-2">
+                                <span className={`text-sm ${tieneCustom ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
+                                  {r.nombre}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <div className="relative w-20">
+                                    <input
+                                      type="number"
+                                      value={valor}
+                                      onChange={e => setRubroPct(r.nombre, e.target.value === '' ? '' : e.target.value)}
+                                      onBlur={e => {
+                                        if (e.target.value === '') {
+                                          setRubroPct(r.nombre, null)
+                                        }
+                                      }}
+                                      className={`w-full px-2 py-1 border rounded text-sm text-right pr-6 focus:outline-none focus:ring-1 focus:ring-violet-500 ${
+                                        tieneCustom ? 'border-violet-300 bg-violet-50' : 'border-gray-200'
+                                      }`}
+                                      placeholder={String(grupoExpandido?.porcentaje || 0)}
+                                      min="0"
+                                      max="100"
+                                      step="0.1"
+                                    />
+                                    <span className="absolute right-2 top-1.5 text-gray-400 text-xs">%</span>
+                                  </div>
+                                  {tieneCustom && (
+                                    <button
+                                      onClick={() => setRubroPct(r.nombre, null)}
+                                      className="text-gray-300 hover:text-red-500 transition-colors"
+                                      title="Quitar (usar general)"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <div className="flex items-center justify-between mt-3">
+                          <span className="text-xs text-gray-400">
+                            {Object.keys(rubrosGrupo).length} rubro{Object.keys(rubrosGrupo).length !== 1 ? 's' : ''} con descuento personalizado
+                          </span>
                           <button
-                            onClick={() => quitarCliente(cli.id)}
-                            className="text-gray-300 hover:text-red-500 transition-colors" title="Quitar del grupo"
+                            onClick={guardarRubros}
+                            disabled={guardandoRubros || !rubrosModificados}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                              rubrosModificados
+                                ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                            }`}
                           >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
+                            {guardandoRubros ? 'Guardando...' : 'Guardar rubros'}
                           </button>
                         </div>
-                      ))}
-                    </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -320,7 +488,7 @@ const SeccionGruposDescuento = () => {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Porcentaje de descuento *</label>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Porcentaje general (fallback) *</label>
                 <div className="relative">
                   <input
                     type="number"
@@ -334,6 +502,7 @@ const SeccionGruposDescuento = () => {
                   />
                   <span className="absolute right-3 top-2.5 text-gray-400 text-sm">%</span>
                 </div>
+                <p className="text-xs text-gray-400 mt-1">Se usa para rubros que no tengan un porcentaje personalizado.</p>
               </div>
 
               {errorForm && (
