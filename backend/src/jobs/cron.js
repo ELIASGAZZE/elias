@@ -7,6 +7,21 @@ const { retrySyncVentasCentum, retrySyncCAE } = require('../services/centumVenta
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 
+// Lock simple para evitar ejecución paralela de crons en múltiples instancias
+const cronLocks = {}
+async function withLock(name, fn) {
+  if (cronLocks[name]) {
+    console.log(`[CRON] ${name} ya está corriendo, saltando...`)
+    return null
+  }
+  cronLocks[name] = true
+  try {
+    return await fn()
+  } finally {
+    cronLocks[name] = false
+  }
+}
+
 function iniciarCronJobs() {
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
   cron.schedule('0 6 * * *', async () => {
@@ -46,38 +61,44 @@ function iniciarCronJobs() {
 
   // Sync incremental de clientes: cada 5 minutos, últimas 2 horas
   cron.schedule('*/5 * * * *', async () => {
-    try {
-      const resultado = await syncClientesRecientes(2)
-      if (resultado.nuevos > 0 || resultado.actualizados > 0) {
-        console.log(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
+    await withLock('syncClientes', async () => {
+      try {
+        const resultado = await syncClientesRecientes(2)
+        if (resultado.nuevos > 0 || resultado.actualizados > 0) {
+          console.log(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
+        }
+      } catch (err) {
+        console.error('[SyncClientes] Error:', err.message)
       }
-    } catch (err) {
-      console.error('[SyncClientes] Error:', err.message)
-    }
+    })
   })
 
   // Retry clientes sin id_centum: cada 5 minutos (offset 2 min para no chocar con sync)
   cron.schedule('2-57/5 * * * *', async () => {
-    try {
-      const resultado = await retrySyncCentum()
-      if (resultado.reintentados > 0) {
-        console.log(`[RetryCentum] ${resultado.exitosos}/${resultado.reintentados} clientes sincronizados a Centum (${resultado.fallidos} fallidos)`)
+    await withLock('retryCentum', async () => {
+      try {
+        const resultado = await retrySyncCentum()
+        if (resultado.reintentados > 0) {
+          console.log(`[RetryCentum] ${resultado.exitosos}/${resultado.reintentados} clientes sincronizados a Centum (${resultado.fallidos} fallidos)`)
+        }
+      } catch (err) {
+        console.error('[RetryCentum] Error:', err.message)
       }
-    } catch (err) {
-      console.error('[RetryCentum] Error:', err.message)
-    }
+    })
   })
 
   // Full scan clientes faltantes: cada hora (minuto 30, para no chocar con stock)
   cron.schedule('30 * * * *', async () => {
-    try {
-      const resultado = await syncClientesFaltantes()
-      if (resultado.insertados > 0) {
-        console.log(`[SyncFaltantes] ${resultado.insertados} clientes faltantes importados de Centum BI`)
+    await withLock('syncFaltantes', async () => {
+      try {
+        const resultado = await syncClientesFaltantes()
+        if (resultado.insertados > 0) {
+          console.log(`[SyncFaltantes] ${resultado.insertados} clientes faltantes importados de Centum BI`)
+        }
+      } catch (err) {
+        console.error('[SyncFaltantes] Error:', err.message)
       }
-    } catch (err) {
-      console.error('[SyncFaltantes] Error:', err.message)
-    }
+    })
   })
 
   // Retry ventas pendientes de Centum: cada 5 minutos (offset 3 min)

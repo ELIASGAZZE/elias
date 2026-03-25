@@ -897,7 +897,7 @@ async function syncClientesFaltantes() {
   let insertados = 0
   for (let i = 0; i < inserts.length; i += 200) {
     const lote = inserts.slice(i, i + 200)
-    const { error } = await supabase.from('clientes').insert(lote)
+    const { data: upserted, error } = await supabase.from('clientes').upsert(lote, { onConflict: 'id_centum', ignoreDuplicates: true })
     if (error) {
       console.warn(`[SyncFaltantes] Error insertando lote ${i}:`, error.message)
     } else {
