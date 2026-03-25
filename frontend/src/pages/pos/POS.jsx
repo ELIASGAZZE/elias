@@ -3917,14 +3917,16 @@ const POS = () => {
                           >−</button>
                           {item.articulo.esPesable ? (
                             <input
-                              type="number"
-                              step="0.001"
-                              min="0.001"
-                              value={item.cantidad}
-                              onChange={e => {
+                              type="text"
+                              inputMode="decimal"
+                              defaultValue={item.cantidad}
+                              key={`${item.articulo.id}-${item.cantidad}`}
+                              onBlur={e => {
                                 const val = parseFloat(e.target.value)
                                 if (!isNaN(val) && val > 0) setCantidadDirecta(item.articulo.id, val)
+                                else e.target.value = item.cantidad
                               }}
+                              onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
                               onClick={e => e.target.select()}
                               className="w-16 text-center text-sm font-semibold border rounded px-1 py-0.5 focus:ring-1 focus:ring-violet-500 focus:border-transparent"
                             />
