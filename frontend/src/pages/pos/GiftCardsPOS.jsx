@@ -48,8 +48,15 @@ export default function GiftCardsPOS({ embebido }) {
   const [cargandoDetalle, setCargandoDetalle] = useState(false)
   const [anulando, setAnulando] = useState(false)
 
+  // Consulta individual (operarios)
+  const [consultaCodigo, setConsultaCodigo] = useState('')
+  const [consultaResult, setConsultaResult] = useState(null) // { gift_card, movimientos } | null
+  const [consultaError, setConsultaError] = useState(null)
+  const [consultando, setConsultando] = useState(false)
+  const consultaRef = useRef(null)
+
   useEffect(() => {
-    cargarGiftCards()
+    if (esAdmin) cargarGiftCards()
   }, [filtroEstado])
 
   async function cargarGiftCards() {
@@ -64,6 +71,22 @@ export default function GiftCardsPOS({ embebido }) {
       console.error('Error cargando gift cards:', err)
     } finally {
       setCargando(false)
+    }
+  }
+
+  async function handleConsulta(e) {
+    e.preventDefault()
+    if (!consultaCodigo.trim()) return
+    setConsultando(true)
+    setConsultaError(null)
+    setConsultaResult(null)
+    try {
+      const { data } = await api.get(`/api/gift-cards/consultar/${encodeURIComponent(consultaCodigo.trim())}`)
+      setConsultaResult(data)
+    } catch (err) {
+      setConsultaError(err.response?.data?.error || 'Gift card no encontrada')
+    } finally {
+      setConsultando(false)
     }
   }
 
@@ -192,75 +215,151 @@ export default function GiftCardsPOS({ embebido }) {
         )}
       </div>}
 
-      {/* Filtros */}
-      <div className="flex-shrink-0 px-5 py-3 flex items-center gap-3 bg-white border-b">
-        <div className="flex gap-1.5">
-          {ESTADOS.map(e => (
-            <button
-              key={e.value}
-              onClick={() => setFiltroEstado(e.value)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                filtroEstado === e.value
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {e.label}
-            </button>
-          ))}
-        </div>
-        <form onSubmit={handleBuscar} className="flex-1 flex gap-2">
-          <input
-            type="text"
-            value={buscar}
-            onChange={e => setBuscar(e.target.value)}
-            placeholder="Buscar por código..."
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
-          />
-          <button type="submit" className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">
-            Buscar
-          </button>
-        </form>
-      </div>
-
-      {/* Lista */}
-      <div className="flex-1 overflow-y-auto px-5 py-3">
-        {cargando ? (
-          <div className="text-center text-gray-400 py-12">Cargando...</div>
-        ) : giftCards.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">No hay gift cards</div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {giftCards.map(gc => (
+      {/* --- Vista OPERARIO: solo consultar por código --- */}
+      {!esAdmin && (
+        <div className="flex-1 flex flex-col items-center justify-center px-5 py-8">
+          <div className="w-full max-w-md">
+            <h3 className="text-lg font-semibold text-gray-700 text-center mb-1">Consultar Gift Card</h3>
+            <p className="text-sm text-gray-400 text-center mb-5">Ingresá o escaneá el código de la gift card</p>
+            <form onSubmit={handleConsulta} className="flex gap-2 mb-5">
+              <input
+                ref={consultaRef}
+                type="text"
+                value={consultaCodigo}
+                onChange={e => { setConsultaCodigo(e.target.value); setConsultaResult(null); setConsultaError(null) }}
+                placeholder="Código de gift card..."
+                className="flex-1 border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                autoFocus
+              />
               <button
-                key={gc.id}
-                onClick={() => abrirDetalle(gc)}
-                className="bg-white rounded-xl border border-gray-200 p-4 text-left hover:shadow-md hover:border-violet-300 transition-all"
+                type="submit"
+                disabled={consultando || !consultaCodigo.trim()}
+                className="bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono text-sm font-semibold text-gray-800">{gc.codigo}</span>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${BADGE_COLORS[gc.estado] || 'bg-gray-100'}`}>
-                    {gc.estado}
+                {consultando ? 'Buscando...' : 'Consultar'}
+              </button>
+            </form>
+
+            {consultaError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600 text-center">
+                {consultaError}
+              </div>
+            )}
+
+            {consultaResult && consultaResult.gift_card && (
+              <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-mono text-sm font-semibold text-gray-800">{consultaResult.gift_card.codigo}</span>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${BADGE_COLORS[consultaResult.gift_card.estado]}`}>
+                    {consultaResult.gift_card.estado}
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between">
+                <div className="grid grid-cols-2 gap-3 mb-4">
                   <div>
-                    <span className="text-xs text-gray-500">Saldo</span>
-                    <span className="block text-lg font-bold text-gray-900">{formatPrecio(parseFloat(gc.saldo))}</span>
+                    <span className="text-xs text-gray-500">Saldo actual</span>
+                    <span className="block text-2xl font-bold text-emerald-600">{formatPrecio(parseFloat(consultaResult.gift_card.saldo))}</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs text-gray-400">Monto inicial</span>
-                    <span className="block text-sm text-gray-500">{formatPrecio(parseFloat(gc.monto_inicial))}</span>
+                  <div>
+                    <span className="text-xs text-gray-500">Monto inicial</span>
+                    <span className="block text-2xl font-bold text-gray-400">{formatPrecio(parseFloat(consultaResult.gift_card.monto_inicial))}</span>
                   </div>
                 </div>
-                {gc.comprador_nombre && (
-                  <div className="mt-2 text-xs text-gray-400 truncate">{gc.comprador_nombre}</div>
+                {consultaResult.movimientos && consultaResult.movimientos.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Últimos movimientos</h4>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {consultaResult.movimientos.map(m => (
+                        <div key={m.id} className="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
+                          <div>
+                            <span className="block text-sm text-gray-700">{m.motivo}</span>
+                            <span className="block text-xs text-gray-400">{new Date(m.created_at).toLocaleString('es-AR')}</span>
+                          </div>
+                          <span className={`text-sm font-bold ${parseFloat(m.monto) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {parseFloat(m.monto) >= 0 ? '+' : ''}{formatPrecio(parseFloat(m.monto))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- Vista ADMIN: filtros + lista completa --- */}
+      {esAdmin && <>
+        {/* Filtros */}
+        <div className="flex-shrink-0 px-5 py-3 flex items-center gap-3 bg-white border-b">
+          <div className="flex gap-1.5">
+            {ESTADOS.map(e => (
+              <button
+                key={e.value}
+                onClick={() => setFiltroEstado(e.value)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  filtroEstado === e.value
+                    ? 'bg-violet-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {e.label}
               </button>
             ))}
           </div>
-        )}
-      </div>
+          <form onSubmit={handleBuscar} className="flex-1 flex gap-2">
+            <input
+              type="text"
+              value={buscar}
+              onChange={e => setBuscar(e.target.value)}
+              placeholder="Buscar por código..."
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+            />
+            <button type="submit" className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">
+              Buscar
+            </button>
+          </form>
+        </div>
+
+        {/* Lista */}
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {cargando ? (
+            <div className="text-center text-gray-400 py-12">Cargando...</div>
+          ) : giftCards.length === 0 ? (
+            <div className="text-center text-gray-400 py-12">No hay gift cards</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {giftCards.map(gc => (
+                <button
+                  key={gc.id}
+                  onClick={() => abrirDetalle(gc)}
+                  className="bg-white rounded-xl border border-gray-200 p-4 text-left hover:shadow-md hover:border-violet-300 transition-all"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-semibold text-gray-800">{gc.codigo}</span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${BADGE_COLORS[gc.estado] || 'bg-gray-100'}`}>
+                      {gc.estado}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <div>
+                      <span className="text-xs text-gray-500">Saldo</span>
+                      <span className="block text-lg font-bold text-gray-900">{formatPrecio(parseFloat(gc.saldo))}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-gray-400">Monto inicial</span>
+                      <span className="block text-sm text-gray-500">{formatPrecio(parseFloat(gc.monto_inicial))}</span>
+                    </div>
+                  </div>
+                  {gc.comprador_nombre && (
+                    <div className="mt-2 text-xs text-gray-400 truncate">{gc.comprador_nombre}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </>}
 
       {/* Drawer lateral */}
       {cardSeleccionada && (
