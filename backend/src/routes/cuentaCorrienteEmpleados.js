@@ -216,6 +216,10 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       cantidad: item.cantidad,
       iva_tasa: item.iva_tasa || 21,
       rubro: item.rubro || null,
+      ...(item.precio_original != null && item.descuento_pct > 0 ? {
+        precio_original: item.precio_original,
+        descuento_pct: item.descuento_pct,
+      } : {}),
     }))
 
     const { data: ventaPos, error: ventaPosError } = await supabase
