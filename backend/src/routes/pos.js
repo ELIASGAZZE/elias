@@ -2180,8 +2180,8 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'El pedido no tiene un total válido' })
     }
 
-    const esPagoAnticipado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
+    const esPagoAnticipado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
     let montoACobrar = Math.round(pedido.total * 100) / 100
     let titulo = `Pedido POS #${pedido.numero}`
 
