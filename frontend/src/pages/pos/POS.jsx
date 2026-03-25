@@ -2868,8 +2868,9 @@ const POS = () => {
         if (data && data.length > 0) setDireccionSeleccionadaPedido(data[0].id)
       } else {
         const { data } = await api.get('/api/sucursales')
-        setSucursalesPedido(data || [])
-        if (data && data.length > 0) setSucursalSeleccionadaPedido(data[0].id)
+        const conPedidos = (data || []).filter(s => s.permite_pedidos)
+        setSucursalesPedido(conPedidos)
+        if (conPedidos.length > 0) setSucursalSeleccionadaPedido(conPedidos[0].id)
       }
     } catch (err) {
       console.error('Error cargando datos paso 2:', err)
