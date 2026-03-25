@@ -11,6 +11,14 @@ const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 // Fallback: operador de env var (para backwards compat)
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
+// Redondear cantidad para evitar errores de punto flotante (ej 3.001 → 3)
+// Redondea a 3 decimales, y si queda a menos de 0.005 de un entero, redondea al entero
+function redondearCantidad(cant) {
+  let c = Math.round(parseFloat(cant || 1) * 1000) / 1000
+  if (Math.abs(c - Math.round(c)) < 0.005) c = Math.round(c)
+  return c || 1
+}
+
 function getHeaders({ operadorMovilUser } = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -67,7 +75,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
       IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
       Codigo: item.codigo || '',
       Nombre: item.nombre || '',
-      Cantidad: parseFloat(item.cantidad) || 1,
+      Cantidad: redondearCantidad(item.cantidad),
       Precio: precio,
       PorcentajeDescuento1: 0,
       PorcentajeDescuento2: 0,
@@ -272,7 +280,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
       IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
       Codigo: item.codigo || '',
       Nombre: item.nombre || '',
-      Cantidad: parseFloat(item.cantidad) || 1,
+      Cantidad: redondearCantidad(item.cantidad),
       Precio: precio,
       PorcentajeDescuento1: 0,
       PorcentajeDescuento2: 0,
@@ -568,7 +576,7 @@ async function obtenerVentaCentum(idVenta) {
  * Diseñado para correr desde un cron job.
  */
 async function retrySyncVentasCentum() {
-  const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
   // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
   const { data: pendientes, error } = await supabase
@@ -576,7 +584,7 @@ async function retrySyncVentasCentum() {
     .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
-    .gte('created_at', hace7d)
+    .gte('created_at', hace30d)
     .order('created_at', { ascending: true })
     .limit(20)
 
@@ -672,7 +680,7 @@ async function retrySyncVentasCentum() {
           precio_unitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
           precioUnitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
           precio: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
-          cantidad: Math.abs(parseFloat(it.cantidad || 1)),
+          cantidad: redondearCantidad(Math.abs(parseFloat(it.cantidad || 1))),
         }))
 
         let comprobanteOriginal = null

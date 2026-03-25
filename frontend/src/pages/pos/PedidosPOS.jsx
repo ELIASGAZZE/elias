@@ -415,16 +415,15 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
                         <span className="text-xs text-gray-400">{items.length} art.</span>
                       </div>
                     </div>
+                    {pedido.fecha_entrega && (
+                      <div className="mt-1">
+                        <span className="text-base font-bold text-purple-600">Entrega: {new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
                       <span>
                         {fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })} {fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      {pedido.fecha_entrega && (
-                        <>
-                          <span>|</span>
-                          <span>Entrega: {new Date(pedido.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
-                        </>
-                      )}
                       {pedido.turno_entrega && (
                         <>
                           <span>|</span>

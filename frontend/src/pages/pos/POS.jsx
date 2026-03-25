@@ -2638,6 +2638,7 @@ const POS = () => {
       })
       alert(`Pedido #${pedidoEnProceso.numero} actualizado`)
       limpiarVenta()
+      setVistaActiva('pedidos')
     } catch (err) {
       console.error('Error al guardar edición del pedido:', err)
       alert('Error: ' + (err.response?.data?.error || err.message))
