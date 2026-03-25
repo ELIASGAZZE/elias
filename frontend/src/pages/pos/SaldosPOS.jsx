@@ -33,6 +33,16 @@ function VistaAdmin({ embebido }) {
   const [ajusteMotivo, setAjusteMotivo] = useState('')
   const [ajustando, setAjustando] = useState(false)
 
+  // Cargar saldo a cliente nuevo
+  const [mostrarCargar, setMostrarCargar] = useState(false)
+  const [busquedaCliente, setBusquedaCliente] = useState('')
+  const [resultadosBusqueda, setResultadosBusqueda] = useState([])
+  const [buscandoCliente, setBuscandoCliente] = useState(false)
+  const [clienteNuevo, setClienteNuevo] = useState(null)
+  const [nuevoMonto, setNuevoMonto] = useState('')
+  const [nuevoMotivo, setNuevoMotivo] = useState('')
+  const [cargandoNuevo, setCargandoNuevo] = useState(false)
+
   const cargarSaldos = useCallback(async () => {
     setCargando(true)
     try {
@@ -69,6 +79,47 @@ function VistaAdmin({ embebido }) {
       console.error('Error cargando movimientos:', err)
     } finally {
       setCargandoMovimientos(false)
+    }
+  }
+
+  async function buscarClienteParaSaldo() {
+    const q = busquedaCliente.trim()
+    if (q.length < 2) return
+    setBuscandoCliente(true)
+    try {
+      const { data } = await api.get('/api/clientes', { params: { buscar: q, limit: 10 } })
+      setResultadosBusqueda(data.clientes || [])
+    } catch (err) {
+      console.error('Error buscando cliente:', err)
+    } finally {
+      setBuscandoCliente(false)
+    }
+  }
+
+  async function handleCargarSaldo() {
+    if (!clienteNuevo || !nuevoMonto || !nuevoMotivo.trim()) return
+    const monto = parseFloat(nuevoMonto)
+    if (isNaN(monto) || monto <= 0) return alert('El monto debe ser mayor a 0')
+    setCargandoNuevo(true)
+    try {
+      await api.post('/api/pos/saldos/ajuste', {
+        id_cliente_centum: clienteNuevo.id_centum,
+        nombre_cliente: clienteNuevo.razon_social,
+        monto,
+        motivo: nuevoMotivo.trim(),
+      })
+      // Reset y recargar
+      setMostrarCargar(false)
+      setClienteNuevo(null)
+      setBusquedaCliente('')
+      setResultadosBusqueda([])
+      setNuevoMonto('')
+      setNuevoMotivo('')
+      cargarSaldos()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cargar saldo')
+    } finally {
+      setCargandoNuevo(false)
     }
   }
 
@@ -123,11 +174,19 @@ function VistaAdmin({ embebido }) {
       <div className={embebido ? 'px-4 pt-3' : 'max-w-4xl mx-auto px-4 pt-4'}>
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm text-gray-500 font-medium">{clientes.length} cliente{clientes.length !== 1 ? 's' : ''} con saldo</span>
-          {embebido && (
-            <button onClick={cargarSaldos} className="text-sm text-violet-600 hover:text-violet-700 font-medium">
-              Actualizar
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { setMostrarCargar(true); setClienteNuevo(null); setBusquedaCliente(''); setResultadosBusqueda([]); setNuevoMonto(''); setNuevoMotivo('') }}
+              className="text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg transition-colors"
+            >
+              + Cargar saldo
             </button>
-          )}
+            {embebido && (
+              <button onClick={cargarSaldos} className="text-sm text-violet-600 hover:text-violet-700 font-medium">
+                Actualizar
+              </button>
+            )}
+          </div>
         </div>
         <div className="relative">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -188,6 +247,117 @@ function VistaAdmin({ embebido }) {
           </div>
         )}
       </div>
+
+      {/* Modal cargar saldo a cliente */}
+      {mostrarCargar && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setMostrarCargar(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-4 border-b">
+                <h2 className="text-lg font-bold text-gray-800">Cargar saldo a cliente</h2>
+                <button onClick={() => setMostrarCargar(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="px-5 py-4 flex-1 overflow-y-auto space-y-4">
+                {!clienteNuevo ? (
+                  <>
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Buscar cliente por nombre, CUIT o codigo</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={busquedaCliente}
+                          onChange={e => setBusquedaCliente(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && buscarClienteParaSaldo()}
+                          placeholder="Ej: Mesa Rosario, 20-12345678-9..."
+                          className="flex-1 text-sm border rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                          autoFocus
+                        />
+                        <button
+                          onClick={buscarClienteParaSaldo}
+                          disabled={buscandoCliente || busquedaCliente.trim().length < 2}
+                          className="px-3 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white rounded-lg transition-colors"
+                        >
+                          {buscandoCliente ? '...' : 'Buscar'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {resultadosBusqueda.length > 0 && (
+                      <div className="space-y-1 max-h-60 overflow-y-auto">
+                        {resultadosBusqueda.map(cli => (
+                          <button
+                            key={cli.id}
+                            onClick={() => setClienteNuevo(cli)}
+                            className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-violet-50 border border-transparent hover:border-violet-200 transition-colors"
+                          >
+                            <div className="text-sm font-medium text-gray-800">{cli.razon_social}</div>
+                            <div className="text-xs text-gray-400">{cli.cuit || 'Sin CUIT'} {cli.codigo ? `· ${cli.codigo}` : ''}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {!buscandoCliente && resultadosBusqueda.length === 0 && busquedaCliente.trim().length >= 2 && (
+                      <div className="text-center py-4 text-gray-400 text-sm">Sin resultados</div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="bg-violet-50 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-800">{clienteNuevo.razon_social}</div>
+                        <div className="text-xs text-gray-500">{clienteNuevo.cuit || 'Sin CUIT'}</div>
+                      </div>
+                      <button onClick={() => setClienteNuevo(null)} className="text-xs text-violet-600 hover:text-violet-800 font-medium">
+                        Cambiar
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Monto a cargar</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        value={nuevoMonto}
+                        onChange={e => setNuevoMonto(e.target.value)}
+                        className="w-full text-sm border rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                        placeholder="Ej: 5000"
+                        autoFocus
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Motivo</label>
+                      <input
+                        type="text"
+                        value={nuevoMotivo}
+                        onChange={e => setNuevoMotivo(e.target.value)}
+                        className="w-full text-sm border rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                        placeholder="Ej: Carga inicial, Bonificacion..."
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleCargarSaldo}
+                      disabled={cargandoNuevo || !nuevoMonto || !nuevoMotivo.trim()}
+                      className="w-full text-sm font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white py-2.5 rounded-lg transition-colors"
+                    >
+                      {cargandoNuevo ? 'Cargando...' : `Cargar ${nuevoMonto ? formatPrecio(parseFloat(nuevoMonto) || 0) : ''} a ${clienteNuevo.razon_social}`}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Drawer detalle movimientos + ajuste */}
       {clienteSeleccionado && (
