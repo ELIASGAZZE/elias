@@ -165,7 +165,7 @@ const CajasPosHome = () => {
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-semibold text-gray-800">
-                            Sesion POS · {formatHora(cierre.apertura_at)}
+                            {cierre.numero ? `#${cierre.numero} · ` : ''}Sesion POS · {formatHora(cierre.apertura_at)}
                           </span>
                           <BadgeEstado estado={cierre.estado} />
                         </div>
@@ -264,7 +264,7 @@ const CajasPosHome = () => {
                                 {cierre.observaciones_apertura || 'Delivery'}
                               </span>
                             ) : (
-                              <>Sesion POS · {formatHora(cierre.apertura_at)}</>
+                              <>{cierre.numero ? `#${cierre.numero} · ` : ''}Sesion POS · {formatHora(cierre.apertura_at)}</>
                             )}
                           </span>
                           <BadgeEstado estado={cierre.estado} />

@@ -665,8 +665,8 @@ const DetalleCierre = () => {
 
             <FilaComparativa
               label="Efectivo"
-              valorCajero={(parseFloat(cierre.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
-              valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
+              valorCajero={(parseFloat(cierre.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
+              valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
               valorErp={erpData ? erpData.total_efectivo : null}
               resolucion={getResolucion('efectivo')}
               puedeResolver={esGestor || esAdmin}
@@ -745,7 +745,7 @@ const DetalleCierre = () => {
 
             {/* Total general — ajustado con cambio y gastos */}
             {(() => {
-              const ajuste = (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)
+              const ajuste = retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)
               const totalCajero = (parseFloat(cierre.total_general) || 0) + ajuste
               const totalGestor = verificacion ? (parseFloat(verificacion.total_general) || 0) + ajuste : null
               const totalErp = erpData ? erpData.total_general : null

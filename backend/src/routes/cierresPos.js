@@ -290,6 +290,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
       if (antRes.data && antRes.data.length > 0) {
         cierre_anterior = {
+          id: antRes.data[0].id,
           apertura_at: antRes.data[0].apertura_at,
           cambio_billetes: antRes.data[0].cambio_billetes || {},
         }
@@ -297,6 +298,7 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
       if (sigRes.data && sigRes.data.length > 0) {
         apertura_siguiente = {
+          id: sigRes.data[0].id,
           apertura_at: sigRes.data[0].apertura_at,
           fondo_fijo_billetes: sigRes.data[0].fondo_fijo_billetes || {},
         }
@@ -353,9 +355,19 @@ router.post('/abrir', verificarAuth, async (req, res) => {
       return res.status(409).json({ error: 'Esta caja ya está abierta. Cerrala antes de abrir una nueva.' })
     }
 
+    // Obtener siguiente numero de cierre
+    const { data: ultimoCierre } = await supabase
+      .from('cierres_pos')
+      .select('numero')
+      .not('numero', 'is', null)
+      .order('numero', { ascending: false })
+      .limit(1)
+    const siguienteNumero = (ultimoCierre?.[0]?.numero || 0) + 1
+
     const { data, error } = await supabase
       .from('cierres_pos')
       .insert({
+        numero: siguienteNumero,
         caja_id,
         empleado_id: resolvedEmpleadoId,
         cajero_id: req.perfil.id,
@@ -692,7 +704,7 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres_pos')
-      .select('id, cajero_id, apertura_at, cierre_at, estado')
+      .select('id, cajero_id, caja_id, apertura_at, cierre_at, estado')
       .eq('id', req.params.id)
       .single()
 
@@ -706,8 +718,9 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
     // Query ventas_pos in the time range for this cajero
     const { data: ventas, error: errorVentas } = await supabase
       .from('ventas_pos')
-      .select('id, total, monto_pagado, vuelto, pagos, descuento_forma_pago, created_at')
+      .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, created_at')
       .eq('cajero_id', cierre.cajero_id)
+      .eq('caja_id', cierre.caja_id)
       .gte('created_at', desde)
       .lte('created_at', hasta)
       .order('created_at', { ascending: true })
@@ -723,20 +736,39 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       .lte('created_at', hasta)
       .not('pagos', 'is', null)
 
-    // Aggregate payments by type
+    // Separar ventas de empleados (cuenta_corriente) del resto
+    const ventasEmpleados = []
+    const ventasNormales = []
+    ;(ventas || []).forEach(v => {
+      const pagos = v.pagos || []
+      const esCuentaCorriente = pagos.some(p => (p.tipo || '').toLowerCase() === 'cuenta_corriente')
+      if (esCuentaCorriente) {
+        ventasEmpleados.push(v)
+      } else {
+        ventasNormales.push(v)
+      }
+    })
+
+    // Aggregate payments by type (solo ventas normales)
     const mediosPago = {}
     let totalEfectivo = 0
     let totalGeneral = 0
 
-    ;(ventas || []).forEach(v => {
+    ventasNormales.forEach(v => {
       totalGeneral += parseFloat(v.total) || 0
       const pagos = v.pagos || []
+      const vuelto = parseFloat(v.vuelto) || 0
+      const tieneEfectivo = pagos.some(p => (p.tipo || 'Efectivo') === 'Efectivo')
       pagos.forEach(p => {
         const tipo = p.tipo || 'Efectivo'
         if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
         mediosPago[tipo].total += parseFloat(p.monto) || 0
         mediosPago[tipo].cantidad += 1
       })
+      // Descontar vuelto del efectivo (el vuelto sale de la caja)
+      if (tieneEfectivo && vuelto > 0 && mediosPago['Efectivo']) {
+        mediosPago['Efectivo'].total -= vuelto
+      }
     })
 
     // Sumar pagos de gift cards activadas al movimiento de caja
@@ -757,21 +789,104 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       totalEfectivo = mediosPago['Efectivo'].total
     }
 
-    const mediosPagoArray = Object.values(mediosPago)
+    // Separar cupones Mercado Pago del cuadro comparativo
+    const TIPOS_MP = ['posnet mp', 'qr mp']
+    const cuponesMPDetalle = []
+    ventasNormales.forEach(v => {
+      const pagos = v.pagos || []
+      pagos.forEach(p => {
+        if (TIPOS_MP.includes((p.tipo || '').toLowerCase())) {
+          cuponesMPDetalle.push({
+            venta_id: v.id,
+            numero_venta: v.numero_venta,
+            tipo: p.tipo,
+            monto: parseFloat(p.monto) || 0,
+            mp_payment_id: p.detalle?.mp_payment_id || null,
+            mp_order_id: p.detalle?.mp_order_id || null,
+            payment_type: p.detalle?.payment_type || null,
+            card_last_four: p.detalle?.card_last_four || null,
+            card_brand: p.detalle?.card_brand || null,
+            mp_problema: p.detalle?.mp_problema || null,
+            mp_problema_desc: p.detalle?.mp_problema_desc || null,
+            created_at: v.created_at,
+          })
+        }
+      })
+    })
+
+    const cuponesMP = {
+      total: parseFloat(cuponesMPDetalle.reduce((s, c) => s + c.monto, 0).toFixed(2)),
+      cantidad: cuponesMPDetalle.length,
+      posnet: cuponesMPDetalle.filter(c => c.tipo.toLowerCase() === 'posnet mp').length,
+      qr: cuponesMPDetalle.filter(c => c.tipo.toLowerCase() === 'qr mp').length,
+      problemas: cuponesMPDetalle.filter(c => c.mp_problema).length,
+      detalle: cuponesMPDetalle,
+    }
+
+    // Excluir MP del cuadro comparativo
+    const mediosPagoArray = Object.values(mediosPago).filter(mp => !TIPOS_MP.includes(mp.nombre.toLowerCase()))
+
+    // Retiros de empleados — buscar items completos de ventas_empleados (tienen precio_original y descuento_pct)
+    let ventasEmpleadosDB = []
+    if (ventasEmpleados.length > 0) {
+      const { data: veDB } = await supabase
+        .from('ventas_empleados')
+        .select('id, empleado:empleados(id, nombre), items, total, created_at')
+        .eq('cajero_id', cierre.cajero_id)
+        .gte('created_at', desde)
+        .lte('created_at', hasta)
+        .order('created_at', { ascending: true })
+      ventasEmpleadosDB = veDB || []
+    }
+
+    const totalRetiroEmpleados = ventasEmpleados.reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
+    const retiroEmpleadosDetalle = ventasEmpleados.map(v => {
+      const nombre = (v.nombre_cliente || '').replace(/^Empleado:\s*/i, '')
+      // Buscar items de ventas_empleados por coincidencia de created_at y total
+      const veMatch = ventasEmpleadosDB.find(ve =>
+        ve.created_at === v.created_at || (Math.abs(parseFloat(ve.total) - parseFloat(v.total)) < 0.01 && ve.empleado?.nombre === nombre)
+      )
+      let items = []
+      if (veMatch) {
+        try { items = typeof veMatch.items === 'string' ? JSON.parse(veMatch.items) : (veMatch.items || []) } catch {}
+      } else {
+        try { items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []) } catch {}
+      }
+      return {
+        id: v.id,
+        numero_venta: v.numero_venta,
+        empleado_nombre: veMatch?.empleado?.nombre || nombre,
+        total: parseFloat(v.total) || 0,
+        items,
+        created_at: v.created_at,
+      }
+    })
+
+    // Total general del cuadro comparativo = solo medios que aparecen en el cuadro (excluye MP y cuenta_corriente)
+    const totalComparativo = mediosPagoArray.reduce((s, mp) => s + mp.total, 0)
 
     res.json({
       total_efectivo: parseFloat(totalEfectivo.toFixed(2)),
       medios_pago: mediosPagoArray,
-      total_general: parseFloat((totalGeneral + totalGiftCardsActivadas).toFixed(2)),
-      cantidad_ventas: (ventas || []).length,
+      total_general: parseFloat(totalComparativo.toFixed(2)),
+      total_general_todas: parseFloat((totalGeneral + totalGiftCardsActivadas).toFixed(2)),
+      cantidad_ventas: ventasNormales.length,
       gift_cards_activadas: (giftCardsActivadas || []).length,
       total_gift_cards_activadas: parseFloat(totalGiftCardsActivadas.toFixed(2)),
-      detalle_ventas: (ventas || []).map(v => ({
+      detalle_ventas: ventasNormales.map(v => ({
         id: v.id,
+        numero_venta: v.numero_venta,
         total: v.total,
+        vuelto: v.vuelto,
         pagos: v.pagos,
         created_at: v.created_at,
       })),
+      retiro_empleados: {
+        cantidad: ventasEmpleados.length,
+        total: parseFloat(totalRetiroEmpleados.toFixed(2)),
+        detalle: retiroEmpleadosDetalle,
+      },
+      cupones_mp: cuponesMP,
     })
   } catch (err) {
     console.error('Error al obtener ventas POS:', err)
