@@ -832,6 +832,12 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       if (req.query.sin_centum === '1') {
         query = query.eq('centum_sync', false)
       }
+      // Filtro empleados: solo ventas de empleados o solo no-empleados
+      if (req.query.filtro_empleado === 'empleados') {
+        query = query.ilike('nombre_cliente', 'Empleado:%')
+      } else if (req.query.filtro_empleado === 'no_empleados') {
+        query = query.not('nombre_cliente', 'ilike', 'Empleado:%')
+      }
       query = query.range(from, to)
     }
 

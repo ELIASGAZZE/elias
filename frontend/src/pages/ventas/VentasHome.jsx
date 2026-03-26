@@ -1,6 +1,6 @@
 // Historial de ventas POS
-import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import VentasTabBar from '../../components/ventas/VentasTabBar'
@@ -29,28 +29,46 @@ const MEDIOS_LABELS = {
 
 const VentasHome = () => {
   const { esAdmin } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Leer filtros iniciales desde URL
   const [ventas, setVentas] = useState([])
-  const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
-  const [busqueda, setBusqueda] = useState('')
-  const [filtroClasificacion, setFiltroClasificacion] = useState('') // '', 'EMPRESA', 'PRUEBA'
-  const [filtroTipo, setFiltroTipo] = useState('') // '', 'venta', 'nota_credito'
-  const [filtroCentum, setFiltroCentum] = useState('') // '', 'sin_centum'
-  const [filtroSucursal, setFiltroSucursal] = useState('')
+  const [fecha, setFecha] = useState(searchParams.get('fecha') || new Date().toISOString().split('T')[0])
+  const [busqueda, setBusqueda] = useState(searchParams.get('busqueda') || '')
+  const [filtroClasificacion, setFiltroClasificacion] = useState(searchParams.get('clasificacion') || '')
+  const [filtroTipo, setFiltroTipo] = useState(searchParams.get('tipo') || '')
+  const [filtroCentum, setFiltroCentum] = useState(searchParams.get('centum') || '')
+  const [filtroSucursal, setFiltroSucursal] = useState(searchParams.get('sucursal') || '')
+  const [filtroEmpleado, setFiltroEmpleado] = useState(searchParams.get('empleado') || '')
   const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(true)
-  const [reenviando, setReenviando] = useState(null) // id de venta en proceso
+  const [reenviando, setReenviando] = useState(null)
   const [reenvioMasivo, setReenvioMasivo] = useState(false)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(parseInt(searchParams.get('page')) || 1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
 
+  // Sincronizar filtros a la URL
+  useEffect(() => {
+    const params = {}
+    if (fecha && fecha !== new Date().toISOString().split('T')[0]) params.fecha = fecha
+    if (busqueda) params.busqueda = busqueda
+    if (filtroClasificacion) params.clasificacion = filtroClasificacion
+    if (filtroTipo) params.tipo = filtroTipo
+    if (filtroCentum) params.centum = filtroCentum
+    if (filtroSucursal) params.sucursal = filtroSucursal
+    if (filtroEmpleado) params.empleado = filtroEmpleado
+    if (page > 1) params.page = page
+    setSearchParams(params, { replace: true })
+  }, [fecha, busqueda, filtroClasificacion, filtroTipo, filtroCentum, filtroSucursal, filtroEmpleado, page])
+
   useEffect(() => {
     setPage(1)
-  }, [fecha])
+  }, [fecha, filtroEmpleado])
 
   useEffect(() => {
     cargarVentas()
-  }, [fecha, page, filtroCentum])
+  }, [fecha, page, filtroCentum, filtroEmpleado])
 
   useEffect(() => {
     api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
@@ -65,6 +83,7 @@ const VentasHome = () => {
       }
       const params = new URLSearchParams({ fecha, page })
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
+      if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
@@ -84,7 +103,9 @@ const VentasHome = () => {
 
   const cargarVentasSilencioso = async () => {
     try {
-      const { data } = await api.get(`/api/pos/ventas?fecha=${fecha}&page=${page}`)
+      const params = new URLSearchParams({ fecha, page })
+      if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
+      const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
       setTotalCount(data.totalCount || 0)
@@ -101,6 +122,7 @@ const VentasHome = () => {
     if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
     if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
     if (filtroSucursal && v.sucursal_id !== filtroSucursal) return false
+    // filtroEmpleado se aplica en el backend
     if (filtroCentum === 'sin_centum' && (v.centum_sync || v.centum_comprobante)) return false
     return true
   })
@@ -240,6 +262,25 @@ const VentasHome = () => {
               <option key={s.id} value={s.id}>{s.nombre}</option>
             ))}
           </select>
+          {/* Empleados */}
+          {esAdmin && <>
+            <div className="w-px bg-gray-300 mx-1" />
+            {['', 'empleados', 'no_empleados'].map(tipo => (
+              <button
+                key={`emp-${tipo}`}
+                onClick={() => setFiltroEmpleado(tipo)}
+                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                  filtroEmpleado === tipo
+                    ? tipo === 'empleados' ? 'bg-teal-600 text-white'
+                      : tipo === 'no_empleados' ? 'bg-orange-500 text-white'
+                      : 'bg-gray-800 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {tipo === 'empleados' ? 'Empleados' : tipo === 'no_empleados' ? 'No empleados' : 'Todas'}
+              </button>
+            ))}
+          </>}
           <div className="w-px bg-gray-300 mx-1" />
           <button
             onClick={() => setFiltroCentum(filtroCentum === 'sin_centum' ? '' : 'sin_centum')}
