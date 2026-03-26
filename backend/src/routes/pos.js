@@ -1358,6 +1358,11 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'items es requerido' })
     }
 
+    // No permitir pedidos sin cliente real
+    if (!id_cliente_centum || id_cliente_centum === 0) {
+      return res.status(400).json({ error: 'Debe seleccionar un cliente para crear un pedido' })
+    }
+
     // Validar: productos perecederos no pueden tener fecha de entrega > mañana
     if (fecha_entrega) {
       const RUBROS_PERECEDEROS = ['fiambres', 'quesos', 'frescos']
@@ -1403,7 +1408,21 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
     if (total_pagado) insertData.total_pagado = total_pagado
     if (tarjeta_regalo?.trim()) insertData.tarjeta_regalo = tarjeta_regalo.trim()
     if (observaciones_pedido?.trim()) insertData.observaciones_pedido = observaciones_pedido.trim()
-    if (cajero_nombre?.trim()) insertData.cajero_nombre = cajero_nombre.trim()
+    if (cajero_nombre?.trim()) {
+      insertData.cajero_nombre = cajero_nombre.trim()
+    } else {
+      // Buscar empleado del cierre activo
+      const { data: cierreAbierto } = await supabase
+        .from('cierres_pos')
+        .select('empleado_nombre')
+        .eq('cajero_id', req.perfil.id)
+        .is('cerrado_at', null)
+        .order('abierto_at', { ascending: false })
+        .limit(1)
+      if (cierreAbierto?.[0]?.empleado_nombre) {
+        insertData.cajero_nombre = cierreAbierto[0].empleado_nombre
+      }
+    }
 
     const { data, error } = await supabase
       .from('pedidos_pos')

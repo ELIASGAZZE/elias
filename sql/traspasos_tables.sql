@@ -9,7 +9,7 @@ CREATE TABLE ordenes_traspaso (
   numero TEXT UNIQUE,
   sucursal_origen_id UUID NOT NULL,
   sucursal_destino_id UUID NOT NULL,
-  estado TEXT DEFAULT 'borrador' CHECK (estado IN ('borrador', 'en_preparacion', 'preparado', 'despachado', 'recibido', 'con_diferencia', 'cancelado')),
+  estado TEXT DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_preparacion', 'preparado', 'despachado', 'recibido', 'con_diferencia', 'cancelado')),
   items JSONB DEFAULT '[]',
   notas TEXT,
   creado_por UUID,

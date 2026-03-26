@@ -30,6 +30,14 @@ const NuevaOrden = () => {
   const [popupModo, setPopupModo] = useState('kg') // 'kg' | 'uds'
   const popupInputRef = useRef(null)
   const popupToggleRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const [importResult, setImportResult] = useState(null) // { agregados, noEncontrados }
+
+  // Modal de pedidos pendientes
+  const [showPedidos, setShowPedidos] = useState(false)
+  const [pedidosPendientes, setPedidosPendientes] = useState([])
+  const [cargandoPedidos, setCargandoPedidos] = useState(false)
+  const [importandoPedido, setImportandoPedido] = useState(null)
 
   // Cargar sucursales inmediatamente, artículos en paralelo sin bloquear
   useEffect(() => {
@@ -142,6 +150,133 @@ const NuevaOrden = () => {
     setTimeout(() => inputRef.current?.focus(), 10)
   }, [popupArticulo, popupCantidad, popupModo])
 
+  // Abrir modal de pedidos pendientes
+  const abrirPedidos = useCallback(async () => {
+    setShowPedidos(true)
+    setCargandoPedidos(true)
+    try {
+      const r = await api.get('/api/pedidos', { params: { estado: 'pendiente', limit: 50 } })
+      setPedidosPendientes(r.data?.pedidos || [])
+    } catch (err) {
+      console.error('Error cargando pedidos:', err)
+      setPedidosPendientes([])
+    }
+    setCargandoPedidos(false)
+  }, [])
+
+  // Importar items de un pedido interno
+  const importarPedido = useCallback((pedido) => {
+    if (!pedido.items_pedido?.length) return
+    setImportandoPedido(pedido.id)
+
+    let agregados = 0
+    const noEncontrados = []
+
+    for (const item of pedido.items_pedido) {
+      const artPedido = item.articulos
+      if (!artPedido?.codigo) continue
+
+      // Buscar en artículos cargados
+      const art = todosArticulos.find(a => a.codigo === artPedido.codigo)
+      if (!art) {
+        noEncontrados.push(artPedido.codigo)
+        continue
+      }
+
+      const artId = String(art.id || art.articulo_id)
+      const esPesable = art.esPesable || art.es_pesable || false
+      const cantidad = item.cantidad
+
+      setItems(prev => {
+        const existente = prev.findIndex(i => i.articulo_id === artId)
+        if (existente >= 0) {
+          const nuevos = [...prev]
+          nuevos[existente] = {
+            ...nuevos[existente],
+            cantidad_solicitada: nuevos[existente].cantidad_solicitada + cantidad,
+          }
+          return nuevos
+        }
+        return [...prev, {
+          articulo_id: artId,
+          codigo: art.codigo,
+          nombre: art.nombre,
+          cantidad_solicitada: cantidad,
+          cantidad_preparada: 0,
+          es_pesable: esPesable,
+          peso_promedio_pieza: art.pesoPromedioPieza || art.peso_promedio_pieza || null,
+          modo: esPesable ? 'pzas' : 'uds',
+        }]
+      })
+      agregados++
+    }
+
+    setShowPedidos(false)
+    setImportandoPedido(null)
+    setImportResult({ agregados, noEncontrados })
+    setTimeout(() => setImportResult(null), 8000)
+    setTimeout(() => inputRef.current?.focus(), 10)
+  }, [todosArticulos])
+
+  // Importar TXT de pedido interno
+  const importarTxt = useCallback((e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = '' // reset para poder reimportar mismo archivo
+
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const texto = ev.target.result
+      const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean)
+      let agregados = 0
+      const noEncontrados = []
+
+      for (const linea of lineas) {
+        const partes = linea.split('\t')
+        if (partes.length < 2) continue
+        const codigo = partes[0].trim()
+        const cantidad = parseFloat(partes[1].trim())
+        if (!codigo || !cantidad || cantidad <= 0) continue
+
+        // Buscar artículo por código en la lista cargada
+        const art = todosArticulos.find(a => a.codigo === codigo)
+        if (!art) {
+          noEncontrados.push(codigo)
+          continue
+        }
+
+        const artId = String(art.id || art.articulo_id)
+        const esPesable = art.esPesable || art.es_pesable || false
+
+        setItems(prev => {
+          const existente = prev.findIndex(i => i.articulo_id === artId)
+          if (existente >= 0) {
+            const nuevos = [...prev]
+            nuevos[existente] = {
+              ...nuevos[existente],
+              cantidad_solicitada: nuevos[existente].cantidad_solicitada + cantidad,
+            }
+            return nuevos
+          }
+          return [...prev, {
+            articulo_id: artId,
+            codigo: art.codigo,
+            nombre: art.nombre,
+            cantidad_solicitada: cantidad,
+            cantidad_preparada: 0,
+            es_pesable: esPesable,
+            peso_promedio_pieza: art.pesoPromedioPieza || art.peso_promedio_pieza || null,
+          }]
+        })
+        agregados++
+      }
+
+      setImportResult({ agregados, noEncontrados })
+      setTimeout(() => setImportResult(null), 8000)
+    }
+    reader.readAsText(file)
+  }, [todosArticulos])
+
   const handleKeyDown = (e) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -189,10 +324,23 @@ const NuevaOrden = () => {
 
     setGuardando(true)
     try {
+      // Convertir items a unidad base antes de guardar
+      const itemsBase = items.map(item => {
+        const copia = { ...item }
+        if (item.modo === 'pzas' && item.peso_promedio_pieza) {
+          copia.cantidad_solicitada = Math.round(item.cantidad_solicitada * item.peso_promedio_pieza * 1000) / 1000
+        } else if (item.modo === 'cajas') {
+          const art = todosArticulos.find(a => String(a.id) === item.articulo_id)
+          const fc = art?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
+          if (fc > 1) copia.cantidad_solicitada = Math.round(item.cantidad_solicitada * fc)
+        }
+        delete copia.modo
+        return copia
+      })
       const r = await api.post('/api/traspasos/ordenes', {
         sucursal_origen_id: sucursalOrigenId,
         sucursal_destino_id: sucursalDestinoId,
-        items,
+        items: itemsBase,
         notas,
       })
       navigate(`/traspasos/ordenes/${r.data.id}`)
@@ -200,6 +348,41 @@ const NuevaOrden = () => {
       alert(err.response?.data?.error || 'Error al crear orden')
     }
     setGuardando(false)
+  }
+
+  // Toggle modo inline (kg↔pzas para pesables, uds↔cajas para unitarios)
+  const toggleModoItem = (idx) => {
+    setItems(prev => {
+      const nuevos = [...prev]
+      const item = { ...nuevos[idx] }
+      if (item.es_pesable) {
+        const ppp = item.peso_promedio_pieza
+        if (item.modo === 'pzas') {
+          // pzas → kg
+          if (ppp) item.cantidad_solicitada = Math.round(item.cantidad_solicitada * ppp * 1000) / 1000
+          item.modo = 'kg'
+        } else {
+          // kg → pzas
+          if (ppp) item.cantidad_solicitada = Math.round(item.cantidad_solicitada / ppp)
+          item.modo = 'pzas'
+        }
+      } else {
+        const art = todosArticulos.find(a => String(a.id) === item.articulo_id)
+        const fc = art?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
+        if (fc <= 1) return prev // sin factor de caja
+        if (item.modo === 'cajas') {
+          // cajas → uds
+          item.cantidad_solicitada = Math.round(item.cantidad_solicitada * fc)
+          item.modo = 'uds'
+        } else {
+          // uds → cajas (redondeo a 1 decimal)
+          item.cantidad_solicitada = Math.round(item.cantidad_solicitada / fc * 10) / 10
+          item.modo = 'cajas'
+        }
+      }
+      nuevos[idx] = item
+      return nuevos
+    })
   }
 
   // Cantidad en carrito por artículo (para badge)
@@ -242,6 +425,28 @@ const NuevaOrden = () => {
               placeholder="Observaciones (opcional)..."
             />
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt"
+            onChange={importarTxt}
+            className="hidden"
+          />
+          <button
+            onClick={abrirPedidos}
+            disabled={cargandoArticulos}
+            className="bg-amber-500 hover:bg-amber-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap text-sm"
+          >
+            Importar Pedido
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={cargandoArticulos}
+            className="border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 text-gray-600 px-3 py-2 rounded-lg font-medium transition-colors whitespace-nowrap text-sm"
+            title="Importar desde archivo TXT"
+          >
+            TXT
+          </button>
           <button
             onClick={guardar}
             disabled={guardando || items.length === 0}
@@ -250,6 +455,22 @@ const NuevaOrden = () => {
             {guardando ? 'Creando...' : `Crear OT (${items.length})`}
           </button>
         </div>
+
+        {/* Resultado de importación TXT */}
+        {importResult && (
+          <div className={`rounded-xl border p-3 text-sm ${importResult.noEncontrados.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+            <div className="flex items-center justify-between">
+              <span>
+                {importResult.agregados > 0 && <span className="text-emerald-700 font-medium">{importResult.agregados} artículo{importResult.agregados !== 1 ? 's' : ''} importado{importResult.agregados !== 1 ? 's' : ''}</span>}
+                {importResult.agregados > 0 && importResult.noEncontrados.length > 0 && <span className="text-gray-400 mx-1">·</span>}
+                {importResult.noEncontrados.length > 0 && (
+                  <span className="text-amber-700">{importResult.noEncontrados.length} código{importResult.noEncontrados.length !== 1 ? 's' : ''} no encontrado{importResult.noEncontrados.length !== 1 ? 's' : ''}: {importResult.noEncontrados.join(', ')}</span>
+                )}
+              </span>
+              <button onClick={() => setImportResult(null)} className="text-gray-400 hover:text-gray-600 ml-2">&times;</button>
+            </div>
+          </div>
+        )}
 
         {/* Buscador full width */}
         <div className="relative">
@@ -325,57 +546,159 @@ const NuevaOrden = () => {
               <h3 className="text-sm font-semibold text-gray-700">
                 Artículos <span className="text-sky-600">({items.length})</span>
               </h3>
-              <button onClick={() => { setItems([]); inputRef.current?.focus() }}
-                className="text-xs text-red-400 hover:text-red-600">Limpiar todo</button>
+              <div className="flex items-center gap-3">
+                {items.some(i => i.es_pesable) && (() => {
+                  const todoPzas = items.filter(i => i.es_pesable).every(i => i.modo === 'pzas')
+                  return (
+                    <button
+                      onClick={() => setItems(prev => prev.map(item => {
+                        if (!item.es_pesable) return item
+                        const actual = item.modo || 'kg'
+                        const target = todoPzas ? 'kg' : 'pzas'
+                        if (actual === target) return item
+                        const ppp = item.peso_promedio_pieza
+                        if (!ppp) return { ...item, modo: target }
+                        if (target === 'pzas') {
+                          return { ...item, modo: 'pzas', cantidad_solicitada: Math.round(item.cantidad_solicitada / ppp) }
+                        } else {
+                          return { ...item, modo: 'kg', cantidad_solicitada: Math.round(item.cantidad_solicitada * ppp * 1000) / 1000 }
+                        }
+                      }))}
+                      className="text-xs text-amber-600 hover:text-amber-800 font-medium"
+                    >
+                      {todoPzas ? 'Pesables → kg' : 'Pesables → pzas'}
+                    </button>
+                  )
+                })()}
+                <button onClick={() => { setItems([]); inputRef.current?.focus() }}
+                  className="text-xs text-red-400 hover:text-red-600">Limpiar todo</button>
+              </div>
             </div>
             <div className="divide-y divide-gray-50">
-              {items.map((item, idx) => (
-                <div key={item.articulo_id} className="flex items-center gap-3 px-4 py-2 group hover:bg-gray-50 transition-colors">
-                  <div className="text-xs text-gray-300 w-5 text-center">{idx + 1}</div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium text-gray-800">{item.nombre}</span>
-                    <span className="text-xs text-gray-400 ml-2">{item.codigo}</span>
-                    {item.es_pesable && <span className="text-xs text-amber-500 ml-1">· pesable</span>}
-                  </div>
-                  <input
-                    type="number"
-                    min={item.es_pesable ? '0.001' : '1'}
-                    step={item.es_pesable ? '0.1' : '1'}
-                    value={item.cantidad_solicitada}
-                    onChange={e => actualizarCantidad(idx, item.es_pesable ? e.target.value : String(Math.max(1, Math.round(parseFloat(e.target.value) || 0))))}
-                    onFocus={e => e.target.select()}
-                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center font-mono focus:border-sky-400 outline-none"
-                  />
-                  <span className="text-xs text-gray-400 w-6">{item.es_pesable ? 'kg' : 'uds'}</span>
-                  {item.es_pesable && item.peso_promedio_pieza && item.cantidad_solicitada > 0 && (
-                    <span className="text-xs text-amber-600 w-16 text-right">
-                      ≈{Math.round(item.cantidad_solicitada / item.peso_promedio_pieza)} pzas
-                    </span>
-                  )}
-                  {!item.es_pesable && item.cantidad_solicitada > 0 && (() => {
-                    const art = todosArticulos.find(a => String(a.id) === item.articulo_id)
-                    const fc = art?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
-                    if (fc <= 1) return null
-                    const cajas = Math.floor(item.cantidad_solicitada / fc)
-                    const sueltas = item.cantidad_solicitada % fc
-                    return (
-                      <span className="text-xs text-sky-600 w-20 text-right">
-                        {cajas > 0 ? `${cajas} cj` : ''}{cajas > 0 && sueltas > 0 ? ` + ${sueltas}` : sueltas > 0 ? `${sueltas} ud${sueltas !== 1 ? 's' : ''}` : ''}
+              {items.map((item, idx) => {
+                const modo = item.modo || (item.es_pesable ? 'kg' : 'uds')
+                const art = todosArticulos.find(a => String(a.id) === item.articulo_id)
+                const fc = art?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
+                const canToggle = item.es_pesable || fc > 1
+                return (
+                  <div key={item.articulo_id} className="flex items-center gap-3 px-4 py-2 group hover:bg-gray-50 transition-colors">
+                    <div className="text-xs text-gray-300 w-5 text-center">{idx + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium text-gray-800">{item.nombre}</span>
+                      <span className="text-xs text-gray-400 ml-2">{item.codigo}</span>
+                      {item.es_pesable && <span className="text-xs text-amber-500 ml-1">· pesable</span>}
+                    </div>
+                    <input
+                      type="number"
+                      min={modo === 'kg' ? '0.001' : '1'}
+                      step={modo === 'kg' ? '0.1' : '1'}
+                      value={item.cantidad_solicitada}
+                      onChange={e => actualizarCantidad(idx, modo === 'kg' ? e.target.value : String(Math.max(1, Math.round(parseFloat(e.target.value) || 0))))}
+                      onFocus={e => e.target.select()}
+                      className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center font-mono focus:border-sky-400 outline-none"
+                    />
+                    {canToggle ? (
+                      <button
+                        onClick={() => toggleModoItem(idx)}
+                        className="text-xs font-medium px-2 py-1 rounded-md border transition-colors min-w-[52px] text-center hover:bg-gray-100 border-gray-300 text-gray-600"
+                        title={item.es_pesable ? 'Alternar kg / piezas' : 'Alternar uds / cajas'}
+                      >
+                        {modo === 'kg' ? 'kg' : modo === 'pzas' ? 'pzas' : modo === 'cajas' ? `cj x${fc}` : 'uds'}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400 min-w-[52px] text-center">{item.es_pesable ? 'kg' : 'uds'}</span>
+                    )}
+                    {/* Equivalencia */}
+                    {item.es_pesable && item.peso_promedio_pieza && item.cantidad_solicitada > 0 && (
+                      <span className="text-xs text-amber-600 w-20 text-right">
+                        {modo === 'pzas'
+                          ? `≈${Math.round(item.cantidad_solicitada * item.peso_promedio_pieza * 1000) / 1000} kg`
+                          : `≈${Math.round(item.cantidad_solicitada / item.peso_promedio_pieza)} pzas`
+                        }
                       </span>
-                    )
-                  })()}
-                  <button onClick={() => quitarItem(idx)}
-                    className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
+                    )}
+                    {!item.es_pesable && fc > 1 && item.cantidad_solicitada > 0 && (
+                      <span className="text-xs text-sky-600 w-20 text-right">
+                        {modo === 'cajas'
+                          ? `= ${Math.round(item.cantidad_solicitada * fc)} uds`
+                          : (() => {
+                              const cajas = Math.floor(item.cantidad_solicitada / fc)
+                              const sueltas = item.cantidad_solicitada % fc
+                              return `${cajas > 0 ? `${cajas} cj` : ''}${cajas > 0 && sueltas > 0 ? ` + ${sueltas}` : sueltas > 0 ? `${sueltas} uds` : ''}`
+                            })()
+                        }
+                      </span>
+                    )}
+                    <button onClick={() => quitarItem(idx)}
+                      className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
       </div>
+
+      {/* Modal pedidos pendientes */}
+      {showPedidos && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowPedidos(false)}>
+          <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="font-semibold text-gray-800">Pedidos internos pendientes</h3>
+              <button onClick={() => setShowPedidos(false)} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {cargandoPedidos ? (
+                <div className="p-8 text-center text-gray-400 text-sm">Cargando pedidos...</div>
+              ) : pedidosPendientes.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-sm">No hay pedidos pendientes</div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {pedidosPendientes.map(p => {
+                    const itemsErp = (p.items_pedido || []).filter(i => i.articulos?.codigo)
+                    const itemsManual = (p.items_pedido || []).length - itemsErp.length
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => importarPedido(p)}
+                        disabled={importandoPedido === p.id || itemsErp.length === 0}
+                        className="w-full text-left px-4 py-3 hover:bg-sky-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-sm font-medium text-gray-800">
+                              {p.nombre || 'Sin nombre'}
+                            </span>
+                            <span className="text-xs text-gray-400 ml-2">
+                              {p.sucursales?.nombre}
+                            </span>
+                          </div>
+                          <span className="text-xs text-gray-400">
+                            {new Date(p.fecha || p.created_at).toLocaleDateString('es-AR')}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-xs text-sky-600">{itemsErp.length} art. importables</span>
+                          {itemsManual > 0 && (
+                            <span className="text-xs text-gray-400">{itemsManual} manuales (no se importan)</span>
+                          )}
+                        </div>
+                        {p.perfiles?.nombre && (
+                          <span className="text-xs text-gray-300">por {p.perfiles.nombre}</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Popup de cantidad */}
       {popupArticulo && (

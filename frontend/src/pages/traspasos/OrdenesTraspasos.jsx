@@ -5,7 +5,7 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADO_BADGE = {
-  borrador: 'bg-gray-100 text-gray-600',
+  pendiente: 'bg-gray-100 text-gray-600',
   en_preparacion: 'bg-amber-100 text-amber-600',
   preparado: 'bg-blue-100 text-blue-600',
   despachado: 'bg-purple-100 text-purple-600',
@@ -15,7 +15,7 @@ const ESTADO_BADGE = {
 }
 
 const ESTADO_LABEL = {
-  borrador: 'Borrador',
+  pendiente: 'Pendiente',
   en_preparacion: 'En preparación',
   preparado: 'Preparado',
   despachado: 'Despachado',

@@ -88,7 +88,7 @@ router.get('/dashboard', verificarAuth, async (req, res) => {
       .not('estado', 'eq', 'cancelado')
 
     const all = ordenes || []
-    const pendientes = all.filter(o => o.estado === 'borrador').length
+    const pendientes = all.filter(o => o.estado === 'pendiente').length
     const en_preparacion = all.filter(o => o.estado === 'en_preparacion').length
     const preparados = all.filter(o => o.estado === 'preparado').length
     const despachados = all.filter(o => o.estado === 'despachado').length
@@ -228,15 +228,15 @@ router.post('/ordenes', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
 router.put('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    // Solo editar borradores
+    // Solo editar pendientees
     const { data: orden } = await supabase
       .from('ordenes_traspaso')
       .select('estado')
       .eq('id', req.params.id)
       .single()
 
-    if (!orden || orden.estado !== 'borrador') {
-      return res.status(400).json({ error: 'Solo se pueden editar órdenes en borrador' })
+    if (!orden || orden.estado !== 'pendiente') {
+      return res.status(400).json({ error: 'Solo se pueden editar órdenes en pendiente' })
     }
 
     const { items, notas, sucursal_destino_id } = req.body
@@ -267,8 +267,8 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
       .eq('id', req.params.id)
       .single()
 
-    if (!orden || !['borrador', 'en_preparacion'].includes(orden.estado)) {
-      return res.status(400).json({ error: 'Solo se pueden cancelar órdenes en borrador o en preparación' })
+    if (!orden || !['pendiente', 'en_preparacion'].includes(orden.estado)) {
+      return res.status(400).json({ error: 'Solo se pueden cancelar órdenes en pendiente o en preparación' })
     }
 
     const { data, error } = await supabase
@@ -290,27 +290,29 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/traspasos/asignar-preparacion
-// Busca la orden borrador más antigua, la pasa a en_preparacion y la devuelve
+// Busca la orden pendiente más antigua, la pasa a en_preparacion y la devuelve
 router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
   try {
-    // Buscar la orden borrador más antigua
-    const { data: orden, error: errBuscar } = await supabase
+    // Buscar la orden pendiente más antigua
+    const { data: pendientes, error: errBuscar } = await supabase
       .from('ordenes_traspaso')
       .select('id')
-      .eq('estado', 'borrador')
+      .eq('estado', 'pendiente')
       .order('created_at', { ascending: true })
       .limit(1)
-      .single()
+
+    const orden = pendientes?.[0]
 
     if (errBuscar || !orden) {
-      // Si no hay borradores, buscar si hay alguna en_preparacion sin terminar
-      const { data: enPrep } = await supabase
+      // Si no hay pendientes, buscar si hay alguna en_preparacion sin terminar
+      const { data: enPrepList } = await supabase
         .from('ordenes_traspaso')
         .select('id')
         .eq('estado', 'en_preparacion')
         .order('updated_at', { ascending: true })
         .limit(1)
-        .single()
+
+      const enPrep = enPrepList?.[0]
 
       if (!enPrep) {
         return res.status(404).json({ error: 'No hay órdenes pendientes de preparación' })
@@ -327,12 +329,11 @@ router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
         updated_at: new Date().toISOString(),
       })
       .eq('id', orden.id)
-      .eq('estado', 'borrador')
+      .eq('estado', 'pendiente')
       .select('id')
-      .single()
 
     if (error) throw error
-    res.json({ orden: data, ya_en_preparacion: false })
+    res.json({ orden: data?.[0] || orden, ya_en_preparacion: false })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -348,13 +349,12 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
-      .eq('estado', 'borrador')
+      .eq('estado', 'pendiente')
       .select()
-      .single()
 
     if (error) throw error
-    if (!data) return res.status(400).json({ error: 'Solo se puede iniciar preparación de órdenes en borrador' })
-    res.json(data)
+    if (!data || data.length === 0) return res.status(400).json({ error: 'Solo se puede iniciar preparación de órdenes en pendiente' })
+    res.json(data[0])
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -362,21 +362,6 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
 
 router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    // Validar que todos los canastos estén cerrados
-    const { data: canastos } = await supabase
-      .from('traspaso_canastos')
-      .select('estado, items')
-      .eq('orden_traspaso_id', req.params.id)
-
-    if (!canastos || canastos.length === 0) {
-      return res.status(400).json({ error: 'Debe crear al menos un canasto antes de marcar como preparado' })
-    }
-
-    const noCerrados = canastos.filter(c => c.estado !== 'cerrado')
-    if (noCerrados.length > 0) {
-      return res.status(400).json({ error: `Hay ${noCerrados.length} canasto(s) sin cerrar` })
-    }
-
     const { data, error } = await supabase
       .from('ordenes_traspaso')
       .update({
@@ -392,16 +377,13 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
     if (error) throw error
     if (!data) return res.status(400).json({ error: 'La orden debe estar en preparación' })
 
-    // Auto-calcular pesos de pesables a partir de escaneos reales
+    // Auto-calcular pesos de pesables a partir de escaneos reales en items de la orden
     try {
-      // Agregar todos los pesos escaneados por artículo
       const pesosPorArticulo = {}
-      for (const c of canastos) {
-        for (const item of (c.items || [])) {
-          if (item.es_pesable && Array.isArray(item.pesos_escaneados) && item.pesos_escaneados.length > 0) {
-            if (!pesosPorArticulo[item.articulo_id]) pesosPorArticulo[item.articulo_id] = []
-            pesosPorArticulo[item.articulo_id].push(...item.pesos_escaneados)
-          }
+      for (const item of (data.items || [])) {
+        if (item.es_pesable && Array.isArray(item.pesos_escaneados) && item.pesos_escaneados.length > 0) {
+          if (!pesosPorArticulo[item.articulo_id]) pesosPorArticulo[item.articulo_id] = []
+          pesosPorArticulo[item.articulo_id].push(...item.pesos_escaneados)
         }
       }
 
@@ -636,7 +618,32 @@ router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
 })
 
 // ═══════════════════════════════════════════════════════════════
-// Canastos
+// Pick (guardar progreso de preparación en items de la orden)
+// ═══════════════════════════════════════════════════════════════
+
+router.put('/ordenes/:id/pick', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { items } = req.body
+    if (!Array.isArray(items)) return res.status(400).json({ error: 'items requerido' })
+
+    const { data, error } = await supabase
+      .from('ordenes_traspaso')
+      .update({ items, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('estado', 'en_preparacion')
+      .select()
+      .single()
+
+    if (error) throw error
+    if (!data) return res.status(400).json({ error: 'La orden debe estar en preparación' })
+    res.json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Canastos (legacy)
 // ═══════════════════════════════════════════════════════════════
 
 router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, async (req, res) => {
