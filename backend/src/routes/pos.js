@@ -630,10 +630,14 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             }
           } catch (err) {
             console.error(`[Centum POS] Error async al registrar venta ${data.id}:`, err.message)
-            await supabase
-              .from('ventas_pos')
-              .update({ centum_error: err.message })
-              .eq('id', data.id).catch(updateErr => console.error(`[Centum POS] No se pudo guardar centum_error para venta ${data.id}:`, updateErr.message))
+            try {
+              await supabase
+                .from('ventas_pos')
+                .update({ centum_error: err.message })
+                .eq('id', data.id)
+            } catch (updateErr) {
+              console.error(`[Centum POS] No se pudo guardar centum_error para venta ${data.id}:`, updateErr.message)
+            }
           }
         })()
       }
@@ -1727,7 +1731,11 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
             }
           } catch (err) {
             console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
-            await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id).catch(e => console.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message))
+            try {
+              await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id)
+            } catch (e) {
+              console.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message)
+            }
           }
         })()
       }
