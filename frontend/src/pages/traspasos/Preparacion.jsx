@@ -5,15 +5,6 @@ import api from '../../services/api'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
-// Flecha de volver simple — sin barra para maximizar espacio
-const BotonVolver = ({ onClick }) => (
-  <button onClick={onClick} className="fixed top-3 left-3 z-30 bg-white/90 active:bg-gray-100 shadow-md rounded-full w-10 h-10 flex items-center justify-center">
-    <svg className="w-5 h-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-    </svg>
-  </button>
-)
-
 // Círculo de progreso SVG
 const CirculoProgreso = ({ actual, total, size = 48 }) => {
   const pct = total > 0 ? Math.min(actual / total, 1) : 0
@@ -52,47 +43,22 @@ const Preparacion = () => {
 
   const [orden, setOrden] = useState(null)
   const [cargando, setCargando] = useState(true)
-  const [fase, setFase] = useState('canasto') // 'canasto' | 'picking' | 'detalle'
-  const [canastoActivo, setCanastoActivo] = useState(null)
-  const [itemDetalle, setItemDetalle] = useState(null) // item abierto para pickear
+  const [fase, setFase] = useState('picking') // 'picking' | 'detalle'
+  const [itemDetalle, setItemDetalle] = useState(null)
 
   // Stock y artículos completos (para imágenes, barras, rubro, marca)
   const [stockOrigen, setStockOrigen] = useState({})
   const [todosArticulos, setTodosArticulos] = useState([])
 
   // Escaneo
-  const scanCanastoRef = useRef(null)
   const scanArticuloRef = useRef(null)
-  const [scanCanasto, setScanCanasto] = useState('')
   const [scanArticulo, setScanArticulo] = useState('')
 
   // Panel de piezas validadas
   const [mostrarPiezas, setMostrarPiezas] = useState(false)
 
-  // Modal confirmar cierre de canasto
-  const [confirmarCierre, setConfirmarCierre] = useState(false)
-  const [scanCierre, setScanCierre] = useState('')
-  const scanCierreRef = useRef(null)
-  const [faseCierre, setFaseCierre] = useState('scan') // 'scan' | 'peso'
-  const [pesoCanasto, setPesoCanasto] = useState('')
-
-  // Modal cerrar pedido (listado de canastos con pesos)
-  const [mostrarCerrarPedido, setMostrarCerrarPedido] = useState(false)
-  const [pesosCanastos, setPesosCanastos] = useState({}) // { canastoId: 'peso' }
-  const [pesandoCanastoId, setPesandoCanastoId] = useState(null)
-  const [fasePesaje, setFasePesaje] = useState('scan') // 'scan' | 'peso'
-  const [scanPesaje, setScanPesaje] = useState('')
-
-  // Ver contenido de canasto cerrado
-  const [canastoViendo, setCanastoViendo] = useState(null) // canasto completo
-  const [moverItem, setMoverItem] = useState(null) // { item, canastoOrigenId }
-  const [moverFase, setMoverFase] = useState('destino') // 'destino' | 'cantidad'
-  const [moverCantidad, setMoverCantidad] = useState(1)
-  const [moverPiezasSeleccionadas, setMoverPiezasSeleccionadas] = useState([])
-  const [moverDestinoId, setMoverDestinoId] = useState(null)
-
   // Alerta de peso fuera de rango
-  const [alertaPeso, setAlertaPeso] = useState(null) // { peso, min, max, nombre }
+  const [alertaPeso, setAlertaPeso] = useState(null)
 
   // Pesaje manual (artículos sin etiqueta)
   const [mostrarPesoManual, setMostrarPesoManual] = useState(false)
@@ -101,15 +67,11 @@ const Preparacion = () => {
   const [pesoManualError, setPesoManualError] = useState(null)
 
   // Modal de artículos pendientes al cerrar
-  const [modalPendientes, setModalPendientes] = useState(null) // { fase: 'pregunta'|'motivos', pendientes: [...], motivos: {} }
+  const [modalPendientes, setModalPendientes] = useState(null)
   const [enviandoPendientes, setEnviandoPendientes] = useState(false)
 
-  // Bulto
-  const [mostrarNuevoBulto, setMostrarNuevoBulto] = useState(false)
-  const [nombreBulto, setNombreBulto] = useState('')
-
   // Feedback visual
-  const [feedback, setFeedback] = useState(null) // { msg, ok }
+  const [feedback, setFeedback] = useState(null)
 
   const mostrarFeedback = (msg, ok) => {
     setFeedback({ msg, ok })
@@ -130,11 +92,6 @@ const Preparacion = () => {
           .then(r => setStockOrigen(r.data || {}))
           .catch(() => {})
       }
-      const abierto = (data.canastos || []).find(c => c.estado === 'en_preparacion')
-      if (abierto) {
-        setCanastoActivo(abierto)
-        if (fase === 'canasto') setFase('picking')
-      }
     } catch (err) {
       console.error(err)
     } finally {
@@ -151,9 +108,8 @@ const Preparacion = () => {
   }, [])
 
   useEffect(() => {
-    if (fase === 'canasto') setTimeout(() => scanCanastoRef.current?.focus(), 150)
     if (fase === 'detalle') setTimeout(() => scanArticuloRef.current?.focus(), 150)
-  }, [fase, canastoActivo, itemDetalle])
+  }, [fase, itemDetalle])
 
   // Trackear si el artículo ya estaba completo al abrir el detalle
   const completoAlAbrir = useRef(false)
@@ -191,16 +147,20 @@ const Preparacion = () => {
     if (!orden) return []
     const items = Array.isArray(orden.items) ? orden.items : []
     const catalogo = {}
-    for (const a of todosArticulos) catalogo[String(a.id)] = a
+    for (const a of todosArticulos) {
+      catalogo[String(a.id)] = a
+      if (a.dbId) catalogo[String(a.dbId)] = a
+      if (a.codigo) catalogo['cod:' + a.codigo] = a
+    }
 
     return items.map(item => {
-      const cat = catalogo[item.articulo_id] || {}
+      const cat = catalogo[item.articulo_id] || catalogo['cod:' + item.codigo] || {}
       return {
         ...item,
         rubro: cat.rubro?.nombre || '',
         marca: cat.marca || '',
         pesoPromedioPieza: item.peso_promedio_pieza || cat.pesoPromedioPieza || null,
-        pppOrden: item.peso_promedio_pieza || null, // el ppp con el que se creó la orden (para cálculo de piezas)
+        pppOrden: item.peso_promedio_pieza || null,
         pesoMinimo: cat.pesoMinimo || null,
         pesoMaximo: cat.pesoMaximo || null,
         plu: cat.codigo || item.codigo,
@@ -217,42 +177,40 @@ const Preparacion = () => {
     })
   }, [itemsEnriquecidos])
 
-  // Cantidad pickeada por artículo: kg totales y piezas (conteo de escaneos)
+  // Cantidad pickeada por artículo — leída directamente de los items de la orden
   const pickeado = useMemo(() => {
-    const map = {} // { articulo_id: { kg, piezas } }
+    const map = {}
     if (!orden) return map
-    for (const c of (orden.canastos || [])) {
-      for (const ci of (c.items || [])) {
-        if (!map[ci.articulo_id]) map[ci.articulo_id] = { kg: 0, piezas: 0 }
-        map[ci.articulo_id].kg += ci.cantidad
-        // Contar piezas: si tiene pesos_escaneados, cada entrada = 1 pieza
-        // Si no (no pesable o escaneo viejo), cantidad = piezas
-        if (ci.es_pesable && Array.isArray(ci.pesos_escaneados)) {
-          map[ci.articulo_id].piezas += ci.pesos_escaneados.length
-        } else {
-          map[ci.articulo_id].piezas += ci.cantidad
-        }
+    for (const item of (orden.items || [])) {
+      const cp = item.cantidad_preparada || 0
+      if (cp <= 0) continue
+      if (item.es_pesable && Array.isArray(item.pesos_escaneados)) {
+        map[item.articulo_id] = { kg: cp, piezas: item.pesos_escaneados.length }
+      } else {
+        map[item.articulo_id] = { kg: 0, piezas: cp }
       }
     }
     return map
   }, [orden])
 
-  // Convertir cantidad pedida a piezas para pesables
-  // Usa pppOrden (el ppp al momento de crear la orden) — si no había ppp, cantidad_solicitada ya está en piezas
   const cantidadEnPiezas = (item) => {
     if (!item.es_pesable || !item.pppOrden) return item.cantidad_solicitada
     return Math.round(item.cantidad_solicitada / item.pppOrden)
   }
 
   const pickEnPiezas = (item) => {
-    const data = pickeado[item.articulo_id]
-    if (!data) return 0
-    if (!item.es_pesable) return data.piezas
-    return data.piezas
+    return pickeado[item.articulo_id]?.piezas || 0
   }
 
   const pickEnKg = (item) => {
     return pickeado[item.articulo_id]?.kg || 0
+  }
+
+  // Factor caja del catálogo
+  const getFactorCaja = (item) => {
+    if (item.es_pesable) return 0
+    const cat = todosArticulos.find(a => String(a.id) === String(item.articulo_id))
+    return cat?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
   }
 
   // Buscar artículo por código de barras
@@ -270,60 +228,32 @@ const Preparacion = () => {
     return null
   }
 
-  // === ACCIONES ===
+  // === PERSISTIR PICK ===
 
-  const handleScanCanasto = async (e) => {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    const precinto = scanCanasto.trim()
-    if (!precinto) return
-
-    const existente = (orden.canastos || []).find(c => c.precinto === precinto)
-    if (existente) {
-      if (existente.estado === 'en_preparacion') {
-        setCanastoActivo(existente)
-        setFase('picking')
-        setScanCanasto('')
-      } else {
-        alert('Ese canasto ya está cerrado')
-        setScanCanasto('')
-      }
-      return
-    }
-
-    try {
-      const { data } = await api.post(`/api/traspasos/ordenes/${id}/canastos`, { precinto })
-      setScanCanasto('')
-      await cargar()
-      if (data?.id) {
-        setCanastoActivo(data)
-        setFase('picking')
-      }
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al crear canasto')
-      setScanCanasto('')
-    }
-  }
-
-  const crearBulto = async () => {
-    const nombre = nombreBulto.trim()
-    if (!nombre) return
-    try {
-      const { data } = await api.post(`/api/traspasos/ordenes/${id}/canastos`, {
-        tipo: 'bulto',
-        nombre,
+  const persistirItems = (nuevosItems) => {
+    api.put(`/api/traspasos/ordenes/${id}/pick`, { items: nuevosItems })
+      .catch(err => {
+        alert(err.response?.data?.error || 'Error al guardar')
+        cargar()
       })
-      setMostrarNuevoBulto(false)
-      setNombreBulto('')
-      await cargar()
-      if (data?.id) {
-        setCanastoActivo(data)
-        setFase('picking')
-      }
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al crear bulto')
-    }
   }
+
+  // Actualizar un item específico en la orden (optimistic) y persistir
+  const actualizarItem = (articuloId, updater) => {
+    let nuevosItems
+    setOrden(prev => {
+      nuevosItems = (prev.items || []).map(i =>
+        i.articulo_id === articuloId ? updater(i) : i
+      )
+      return { ...prev, items: nuevosItems }
+    })
+    // Usar setTimeout para leer el state actualizado
+    setTimeout(() => {
+      if (nuevosItems) persistirItems(nuevosItems)
+    }, 0)
+  }
+
+  // === ACCIONES ===
 
   // Sonido de alerta para peso fuera de rango
   const reproducirAlerta = () => {
@@ -345,7 +275,7 @@ const Preparacion = () => {
     if (e.key !== 'Enter') return
     e.preventDefault()
     const codigo = scanArticulo.trim()
-    if (!codigo || !canastoActivo) return
+    if (!codigo) return
 
     const itemActual = itemDetalle
     if (!itemActual) { setScanArticulo(''); return }
@@ -366,7 +296,6 @@ const Preparacion = () => {
     let cantAgregar = 1
 
     if (balanza && itemActual.es_pesable) {
-      // Barcode de balanza: verificar PLU coincide con el artículo (normalizar sin ceros a la izquierda)
       const cat = todosArticulos.find(a => String(a.id) === itemActual.articulo_id)
       const codigoArticulo = cat?.codigo || itemActual.codigo
       const normPlu = balanza.plu.replace(/^0+/, '')
@@ -374,28 +303,19 @@ const Preparacion = () => {
       coincide = normCodigo === normPlu
 
       if (coincide) {
-        // Verificar peso contra min/max
         const enriched = itemsEnriquecidos.find(i => i.articulo_id === itemActual.articulo_id)
         const pesoMin = enriched?.pesoMinimo
         const pesoMax = enriched?.pesoMaximo
         if ((pesoMin && balanza.pesoKg < pesoMin) || (pesoMax && balanza.pesoKg > pesoMax)) {
           reproducirAlerta()
-          setAlertaPeso({
-            peso: balanza.pesoKg,
-            min: pesoMin,
-            max: pesoMax,
-            nombre: itemActual.nombre,
-            balanza,
-            itemActual,
-          })
+          setAlertaPeso({ peso: balanza.pesoKg, min: pesoMin, max: pesoMax, nombre: itemActual.nombre, balanza, itemActual })
           setScanArticulo('')
           return
         }
-        // Cada escaneo pesable = 1 pieza, peso real del escaneo
         cantAgregar = balanza.pesoKg
       }
     } else {
-      // Barcode normal — soporta formato objeto {codigo,factor} y string legacy
+      // Barcode normal
       if (itemActual.codigo === codigo) {
         coincide = true
       } else {
@@ -422,203 +342,108 @@ const Preparacion = () => {
       return
     }
 
-    // Agregar al canasto
-    const canasto = (orden.canastos || []).find(c => c.id === canastoActivo.id)
-    if (!canasto || canasto.estado !== 'en_preparacion') return
-
-    const itemsActuales = canasto.items || []
-    const yaExiste = itemsActuales.find(i => i.articulo_id === itemActual.articulo_id)
-
-    let nuevosItems
-    if (yaExiste) {
-      nuevosItems = itemsActuales.map(i => {
-        if (i.articulo_id !== itemActual.articulo_id) return i
-        const updated = { ...i, cantidad: Math.round((i.cantidad + cantAgregar) * 1000) / 1000 }
-        // Guardar pesos individuales de pesables para cálculo automático
-        if (balanza && itemActual.es_pesable) {
-          updated.pesos_escaneados = [...(i.pesos_escaneados || []), balanza.pesoKg]
-        }
-        return updated
-      })
-    } else {
-      const nuevoItem = {
-        articulo_id: itemActual.articulo_id,
-        codigo: itemActual.codigo,
-        nombre: itemActual.nombre,
-        cantidad: cantAgregar,
-        es_pesable: itemActual.es_pesable,
-      }
+    // Agregar al item de la orden
+    const nuevosItems = (orden.items || []).map(i => {
+      if (i.articulo_id !== itemActual.articulo_id) return i
+      const updated = { ...i }
       if (balanza && itemActual.es_pesable) {
-        nuevoItem.pesos_escaneados = [balanza.pesoKg]
+        updated.cantidad_preparada = Math.round(((i.cantidad_preparada || 0) + cantAgregar) * 1000) / 1000
+        updated.pesos_escaneados = [...(i.pesos_escaneados || []), balanza.pesoKg]
+      } else {
+        updated.cantidad_preparada = (i.cantidad_preparada || 0) + cantAgregar
       }
-      nuevosItems = [...itemsActuales, nuevoItem]
-    }
+      return updated
+    })
 
-    // Actualización optimista — actualizar estado local de inmediato
-    setOrden(prev => ({
-      ...prev,
-      canastos: prev.canastos.map(c =>
-        c.id === canastoActivo.id ? { ...c, items: nuevosItems } : c
-      )
-    }))
+    setOrden(prev => ({ ...prev, items: nuevosItems }))
     mostrarFeedback(`+${cantAgregar} ${itemActual.nombre}`, true)
     setScanArticulo('')
-
-    // Persistir en background
-    api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { items: nuevosItems })
-      .catch(err => {
-        alert(err.response?.data?.error || 'Error al guardar')
-        cargar() // revertir al estado real si falla
-      })
+    persistirItems(nuevosItems)
   }
 
   // Eliminar una pieza individual (por índice en pesos_escaneados)
-  const eliminarPieza = async (indicePieza) => {
-    if (!canastoActivo || !itemDetalle) return
-    const canasto = (orden.canastos || []).find(c => c.id === canastoActivo.id)
-    if (!canasto || canasto.estado !== 'en_preparacion') return
+  const eliminarPieza = (indicePieza) => {
+    if (!itemDetalle) return
+    const item = (orden.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
+    if (!item) return
 
-    const itemsActuales = canasto.items || []
-    const itemCanasto = itemsActuales.find(i => i.articulo_id === itemDetalle.articulo_id)
-    if (!itemCanasto) return
-
-    const pesos = [...(itemCanasto.pesos_escaneados || [])]
+    const pesos = [...(item.pesos_escaneados || [])]
     const pesoEliminado = pesos[indicePieza] || 0
     pesos.splice(indicePieza, 1)
 
-    const nuevaCantidad = Math.round((itemCanasto.cantidad - pesoEliminado) * 1000) / 1000
+    const nuevaCantidad = Math.round((item.cantidad_preparada - pesoEliminado) * 1000) / 1000
 
-    let nuevosItems
-    if (nuevaCantidad <= 0 || pesos.length === 0) {
-      // Eliminar el item completo si no quedan piezas
-      nuevosItems = itemsActuales.filter(i => i.articulo_id !== itemDetalle.articulo_id)
-    } else {
-      nuevosItems = itemsActuales.map(i =>
-        i.articulo_id === itemDetalle.articulo_id
-          ? { ...i, cantidad: nuevaCantidad, pesos_escaneados: pesos }
-          : i
-      )
-    }
+    const nuevosItems = (orden.items || []).map(i => {
+      if (i.articulo_id !== itemDetalle.articulo_id) return i
+      return {
+        ...i,
+        cantidad_preparada: Math.max(0, nuevaCantidad),
+        pesos_escaneados: pesos,
+      }
+    })
 
-    const quedanPiezas = pesos.length > 0
-
-    setOrden(prev => ({
-      ...prev,
-      canastos: prev.canastos.map(c =>
-        c.id === canastoActivo.id ? { ...c, items: nuevosItems } : c
-      )
-    }))
+    setOrden(prev => ({ ...prev, items: nuevosItems }))
     mostrarFeedback(`Pieza eliminada (${pesoEliminado}kg)`, true)
-    if (!quedanPiezas) setMostrarPiezas(false)
-
-    api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { items: nuevosItems })
-      .catch(err => {
-        alert(err.response?.data?.error || 'Error al eliminar pieza')
-        cargar()
-      })
+    if (pesos.length === 0) setMostrarPiezas(false)
+    persistirItems(nuevosItems)
   }
 
-  // Eliminar una unidad (no pesable resta 1, pesable sin pesos_escaneados resta pesoPromedioPieza)
-  const eliminarUnidad = async () => {
-    if (!canastoActivo || !itemDetalle) return
-    const canasto = (orden.canastos || []).find(c => c.id === canastoActivo.id)
-    if (!canasto || canasto.estado !== 'en_preparacion') return
-
-    const itemsActuales = canasto.items || []
-    const itemCanasto = itemsActuales.find(i => i.articulo_id === itemDetalle.articulo_id)
-    if (!itemCanasto) return
+  // Eliminar una unidad
+  const eliminarUnidad = () => {
+    if (!itemDetalle) return
+    const item = (orden.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
+    if (!item || !item.cantidad_preparada) return
 
     const restar = itemDetalle.es_pesable && itemDetalle.pesoPromedioPieza
       ? itemDetalle.pesoPromedioPieza
       : 1
-    const nuevaCantidad = Math.round((itemCanasto.cantidad - restar) * 1000) / 1000
-    let nuevosItems
-    if (nuevaCantidad <= 0) {
-      nuevosItems = itemsActuales.filter(i => i.articulo_id !== itemDetalle.articulo_id)
-    } else {
-      nuevosItems = itemsActuales.map(i =>
-        i.articulo_id === itemDetalle.articulo_id ? { ...i, cantidad: nuevaCantidad } : i
-      )
-    }
+    const nuevaCantidad = Math.round(((item.cantidad_preparada || 0) - restar) * 1000) / 1000
 
-    setOrden(prev => ({
-      ...prev,
-      canastos: prev.canastos.map(c =>
-        c.id === canastoActivo.id ? { ...c, items: nuevosItems } : c
-      )
-    }))
+    const nuevosItems = (orden.items || []).map(i => {
+      if (i.articulo_id !== itemDetalle.articulo_id) return i
+      return { ...i, cantidad_preparada: Math.max(0, nuevaCantidad) }
+    })
+
+    setOrden(prev => ({ ...prev, items: nuevosItems }))
     mostrarFeedback('-1 ' + itemDetalle.nombre, true)
     if (nuevaCantidad <= 0) setMostrarPiezas(false)
-
-    api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { items: nuevosItems })
-      .catch(err => {
-        alert(err.response?.data?.error || 'Error al eliminar unidad')
-        cargar()
-      })
+    persistirItems(nuevosItems)
   }
 
   // Confirmar pieza con peso fuera de rango
-  const confirmarPesoFueraDeRango = async () => {
-    if (!alertaPeso || !canastoActivo) return
+  const confirmarPesoFueraDeRango = () => {
+    if (!alertaPeso) return
     const { balanza, itemActual } = alertaPeso
 
-    // Bloquear si ya está completo
     if (pickEnPiezas(itemActual) >= cantidadEnPiezas(itemActual)) {
       mostrarFeedback('Artículo ya completo', false)
       setAlertaPeso(null)
       return
     }
 
-    const canasto = (orden.canastos || []).find(c => c.id === canastoActivo.id)
-    if (!canasto || canasto.estado !== 'en_preparacion') { setAlertaPeso(null); return }
-
     const cantAgregar = balanza.pesoKg
-    const itemsActuales = canasto.items || []
-    const yaExiste = itemsActuales.find(i => i.articulo_id === itemActual.articulo_id)
+    const nuevosItems = (orden.items || []).map(i => {
+      if (i.articulo_id !== itemActual.articulo_id) return i
+      return {
+        ...i,
+        cantidad_preparada: Math.round(((i.cantidad_preparada || 0) + cantAgregar) * 1000) / 1000,
+        pesos_escaneados: [...(i.pesos_escaneados || []), balanza.pesoKg],
+      }
+    })
 
-    let nuevosItems
-    if (yaExiste) {
-      nuevosItems = itemsActuales.map(i => {
-        if (i.articulo_id !== itemActual.articulo_id) return i
-        const updated = { ...i, cantidad: Math.round((i.cantidad + cantAgregar) * 1000) / 1000 }
-        updated.pesos_escaneados = [...(i.pesos_escaneados || []), balanza.pesoKg]
-        return updated
-      })
-    } else {
-      nuevosItems = [...itemsActuales, {
-        articulo_id: itemActual.articulo_id,
-        codigo: itemActual.codigo,
-        nombre: itemActual.nombre,
-        cantidad: cantAgregar,
-        es_pesable: itemActual.es_pesable,
-        pesos_escaneados: [balanza.pesoKg],
-      }]
-    }
-
-    setOrden(prev => ({
-      ...prev,
-      canastos: prev.canastos.map(c =>
-        c.id === canastoActivo.id ? { ...c, items: nuevosItems } : c
-      )
-    }))
+    setOrden(prev => ({ ...prev, items: nuevosItems }))
     mostrarFeedback('+1 ' + itemActual.nombre, true)
     setAlertaPeso(null)
-
-    api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { items: nuevosItems })
-      .catch(err => {
-        alert(err.response?.data?.error || 'Error al guardar')
-        cargar()
-      })
+    persistirItems(nuevosItems)
   }
 
   // Confirmar pesaje manual grupal
   const confirmarPesoManual = () => {
-    if (!canastoActivo || !itemDetalle) return
+    if (!itemDetalle) return
     const cantidad = parseInt(pesoManualCantidad, 10)
     const pesoTotal = parseFloat(pesoManualPeso)
     if (!cantidad || cantidad <= 0 || !pesoTotal || pesoTotal <= 0) return
 
-    // Validar que no exceda piezas pedidas
     const piezasYa = pickEnPiezas(itemDetalle)
     const piezasPedidas = cantidadEnPiezas(itemDetalle)
     const restantes = piezasPedidas - piezasYa
@@ -635,323 +460,47 @@ const Preparacion = () => {
     const enriched = itemsEnriquecidos.find(i => i.articulo_id === itemDetalle.articulo_id)
     const pesoMin = enriched?.pesoMinimo
     const pesoMax = enriched?.pesoMaximo
-
-    // Si fuera de rango, mostrar alerta pero no bloquear
     if ((pesoMin && promedio < pesoMin) || (pesoMax && promedio > pesoMax)) {
       reproducirAlerta()
     }
 
-    // Agregar N piezas al canasto
-    const canasto = (orden.canastos || []).find(c => c.id === canastoActivo.id)
-    if (!canasto || canasto.estado !== 'en_preparacion') return
-
-    const itemsActuales = canasto.items || []
-    const yaExiste = itemsActuales.find(i => i.articulo_id === itemDetalle.articulo_id)
     const nuevosPesos = Array.from({ length: cantidad }, () => promedio)
+    const nuevosItems = (orden.items || []).map(i => {
+      if (i.articulo_id !== itemDetalle.articulo_id) return i
+      return {
+        ...i,
+        cantidad_preparada: Math.round(((i.cantidad_preparada || 0) + pesoTotal) * 1000) / 1000,
+        pesos_escaneados: [...(i.pesos_escaneados || []), ...nuevosPesos],
+      }
+    })
 
-    let nuevosItems
-    if (yaExiste) {
-      nuevosItems = itemsActuales.map(i => {
-        if (i.articulo_id !== itemDetalle.articulo_id) return i
-        return {
-          ...i,
-          cantidad: Math.round((i.cantidad + pesoTotal) * 1000) / 1000,
-          pesos_escaneados: [...(i.pesos_escaneados || []), ...nuevosPesos],
-        }
-      })
-    } else {
-      nuevosItems = [...itemsActuales, {
-        articulo_id: itemDetalle.articulo_id,
-        codigo: itemDetalle.codigo,
-        nombre: itemDetalle.nombre,
-        cantidad: Math.round(pesoTotal * 1000) / 1000,
-        es_pesable: itemDetalle.es_pesable,
-        pesos_escaneados: nuevosPesos,
-      }]
-    }
-
-    setOrden(prev => ({
-      ...prev,
-      canastos: prev.canastos.map(c =>
-        c.id === canastoActivo.id ? { ...c, items: nuevosItems } : c
-      )
-    }))
+    setOrden(prev => ({ ...prev, items: nuevosItems }))
     mostrarFeedback(`+${cantidad} pzas (${pesoTotal}kg)`, true)
     setMostrarPesoManual(false)
     setPesoManualCantidad('')
     setPesoManualPeso('')
     setPesoManualError(null)
-
-    api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { items: nuevosItems })
-      .catch(err => {
-        alert(err.response?.data?.error || 'Error al guardar')
-        cargar()
-      })
-  }
-
-  const cerrarCanasto = async () => {
-    if (!canastoActivo) return
-    // Bultos: cerrar directamente sin escaneo de precinto
-    if (canastoActivo.tipo === 'bulto') {
-      try {
-        await api.put(`/api/traspasos/canastos/${canastoActivo.id}/cerrar`)
-        setCanastoActivo(null)
-        setItemDetalle(null)
-        setFase('canasto')
-        const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
-        setOrden(data)
-        const cs = data?.canastos || []
-        const todosCerr = cs.length > 0 && cs.every(c => c.estado === 'cerrado')
-        if (todosCerr) {
-          const pesos = {}
-          for (const c of cs) pesos[c.id] = c.peso_origen ? String(c.peso_origen) : ''
-          setPesosCanastos(pesos)
-          setPesandoCanastoId(null)
-          setMostrarCerrarPedido(true)
-        }
-      } catch (err) {
-        alert(err.response?.data?.error || 'Error al cerrar bulto')
-      }
-      return
-    }
-    setConfirmarCierre(true)
-    setFaseCierre('scan')
-    setScanCierre('')
-    setPesoCanasto('')
-    setTimeout(() => scanCierreRef.current?.focus(), 150)
-  }
-
-  const handleScanCierre = async (e) => {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    const codigo = scanCierre.trim()
-    if (!codigo) return
-
-    if (codigo !== canastoActivo.precinto) {
-      alert('El código no coincide con el canasto abierto')
-      setScanCierre('')
-      return
-    }
-
-    // Precinto validado → cerrar canasto y preguntar si pesar
-    try {
-      await api.put(`/api/traspasos/canastos/${canastoActivo.id}/cerrar`)
-      setFaseCierre('pregunta')
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al cerrar')
-      setScanCierre('')
-    }
-  }
-
-  const confirmarCierreConPeso = async () => {
-    const peso = parseFloat(pesoCanasto)
-    if (!peso || peso <= 0) return
-
-    try {
-      await api.put(`/api/traspasos/canastos/${canastoActivo.id}`, { peso_origen: peso })
-      setConfirmarCierre(false)
-      setCanastoActivo(null)
-      setItemDetalle(null)
-      setFase('canasto')
-      const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
-      setOrden(data)
-      const canastos = data?.canastos || []
-      const todosCerr = canastos.length > 0 && canastos.every(c => c.estado === 'cerrado')
-      if (todosCerr) {
-        const pesos = {}
-        for (const c of canastos) pesos[c.id] = c.peso_origen ? String(c.peso_origen) : ''
-        setPesosCanastos(pesos)
-        setPesandoCanastoId(null)
-        setMostrarCerrarPedido(true)
-      }
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al guardar peso')
-    }
-  }
-
-  const saltarPesaje = async () => {
-    setConfirmarCierre(false)
-    setCanastoActivo(null)
-    setItemDetalle(null)
-    setFase('canasto')
-    const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
-    setOrden(data)
-    // Si todos los canastos están cerrados, abrir modal cerrar pedido automáticamente
-    const canastos = data?.canastos || []
-    const todosCerr = canastos.length > 0 && canastos.every(c => c.estado === 'cerrado')
-    if (todosCerr) {
-      const pesos = {}
-      for (const c of canastos) pesos[c.id] = c.peso_origen ? String(c.peso_origen) : ''
-      setPesosCanastos(pesos)
-      setPesandoCanastoId(null)
-      setMostrarCerrarPedido(true)
-    }
-  }
-
-  const cancelarMover = () => {
-    setMoverItem(null)
-    setMoverFase('destino')
-    setMoverCantidad(1)
-    setMoverPiezasSeleccionadas([])
-    setMoverDestinoId(null)
-  }
-
-  const volverADestino = () => {
-    setMoverFase('destino')
-    setMoverCantidad(1)
-    setMoverPiezasSeleccionadas([])
-    setMoverDestinoId(null)
-  }
-
-  const seleccionarDestinoMover = (destinoId) => {
-    setMoverDestinoId(destinoId)
-    setMoverCantidad(1)
-    setMoverPiezasSeleccionadas([])
-    setMoverFase('cantidad')
-  }
-
-  const ejecutarMover = async () => {
-    if (!moverItem || !moverDestinoId) return
-    const { item, canastoOrigenId } = moverItem
-    const canastoOrigen = (orden.canastos || []).find(c => c.id === canastoOrigenId)
-    const canastoDestino = (orden.canastos || []).find(c => c.id === moverDestinoId)
-    if (!canastoOrigen || !canastoDestino) return
-
-    const esPesableConPiezas = item.es_pesable && (item.pesos_escaneados || []).length > 0
-    const totalDisponible = esPesableConPiezas ? (item.pesos_escaneados || []).length : item.cantidad
-    const moverTodo = esPesableConPiezas
-      ? moverPiezasSeleccionadas.length === totalDisponible
-      : moverCantidad >= totalDisponible
-
-    let itemParaMover
-    let itemOrigenRestante
-
-    if (esPesableConPiezas) {
-      // Pesable con piezas: mover las seleccionadas
-      const pesosSeleccionados = moverPiezasSeleccionadas.map(i => item.pesos_escaneados[i])
-      const pesosRestantes = item.pesos_escaneados.filter((_, i) => !moverPiezasSeleccionadas.includes(i))
-      const kgMover = Math.round(pesosSeleccionados.reduce((s, p) => s + p, 0) * 1000) / 1000
-      const kgRestante = Math.round(pesosRestantes.reduce((s, p) => s + p, 0) * 1000) / 1000
-
-      itemParaMover = { ...item, cantidad: kgMover, pesos_escaneados: pesosSeleccionados }
-      itemOrigenRestante = moverTodo ? null : { ...item, cantidad: kgRestante, pesos_escaneados: pesosRestantes }
-    } else {
-      // No pesable (o pesable sin piezas): mover por cantidad
-      const cantMover = Math.min(moverCantidad, totalDisponible)
-      itemParaMover = { ...item, cantidad: cantMover }
-      itemOrigenRestante = moverTodo ? null : { ...item, cantidad: Math.round((item.cantidad - cantMover) * 1000) / 1000 }
-    }
-
-    // Items origen: quitar o reducir
-    let itemsOrigen
-    if (moverTodo) {
-      itemsOrigen = (canastoOrigen.items || []).filter(i => i.articulo_id !== item.articulo_id)
-    } else {
-      itemsOrigen = (canastoOrigen.items || []).map(i => {
-        if (i.articulo_id !== item.articulo_id) return i
-        return itemOrigenRestante
-      })
-    }
-
-    // Items destino: merge si ya existe
-    const itemsDestino = canastoDestino.items || []
-    const yaExiste = itemsDestino.find(i => i.articulo_id === item.articulo_id)
-    let nuevosItemsDestino
-    if (yaExiste) {
-      nuevosItemsDestino = itemsDestino.map(i => {
-        if (i.articulo_id !== item.articulo_id) return i
-        return {
-          ...i,
-          cantidad: Math.round((i.cantidad + itemParaMover.cantidad) * 1000) / 1000,
-          pesos_escaneados: [...(i.pesos_escaneados || []), ...(itemParaMover.pesos_escaneados || [])],
-        }
-      })
-    } else {
-      nuevosItemsDestino = [...itemsDestino, { ...itemParaMover }]
-    }
-
-    try {
-      // Enviar peso_origen: null para forzar re-pesaje en ambos canastos
-      await api.put(`/api/traspasos/canastos/${canastoOrigenId}`, { items: itemsOrigen, peso_origen: null })
-      await api.put(`/api/traspasos/canastos/${moverDestinoId}`, { items: nuevosItemsDestino, peso_origen: null })
-      cancelarMover()
-      setCanastoViendo(null)
-      mostrarFeedback(`Movido a ${canastoDestino.precinto}`, true)
-      await cargar()
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al mover artículo')
-    }
-  }
-
-  const abrirCerrarPedido = () => {
-    // Si hay canasto activo, pedir cerrarlo primero
-    if (canastoActivo && canastoActivo.estado === 'en_preparacion') {
-      mostrarFeedback('Cerrá el canasto abierto primero', false)
-      cerrarCanasto()
-      return
-    }
-    const pesos = {}
-    for (const c of (orden.canastos || [])) {
-      pesos[c.id] = c.peso_origen ? String(c.peso_origen) : ''
-    }
-    setPesosCanastos(pesos)
-    setPesandoCanastoId(null)
-    setMostrarCerrarPedido(true)
-  }
-
-  const guardarPesoCanasto = async (canastoId) => {
-    const peso = parseFloat(pesosCanastos[canastoId])
-    if (!peso || peso <= 0) return
-    try {
-      await api.put(`/api/traspasos/canastos/${canastoId}`, { peso_origen: peso })
-      // Actualizar estado local sin recargar toda la orden
-      setOrden(prev => ({
-        ...prev,
-        canastos: (prev.canastos || []).map(c =>
-          c.id === canastoId ? { ...c, peso_origen: peso } : c
-        )
-      }))
-      setPesosCanastos(prev => ({ ...prev, [canastoId]: String(peso) }))
-      setPesandoCanastoId(null)
-      setFasePesaje('scan')
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error al guardar peso')
-    }
+    persistirItems(nuevosItems)
   }
 
   const calcularPendientes = () => {
     const items = orden.items || []
-    const preparadoPorArt = {}
-    for (const c of (orden.canastos || [])) {
-      for (const ci of (c.items || [])) {
-        preparadoPorArt[ci.articulo_id] = (preparadoPorArt[ci.articulo_id] || 0) + ci.cantidad
-      }
-    }
     return items
       .map(item => ({
         ...item,
-        cantidad_preparada: preparadoPorArt[item.articulo_id] || 0,
-        cantidad_faltante: (item.cantidad_solicitada || item.cantidad) - (preparadoPorArt[item.articulo_id] || 0),
+        cantidad_preparada_real: item.cantidad_preparada || 0,
+        cantidad_faltante: (item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0),
       }))
       .filter(item => item.cantidad_faltante > 0)
   }
 
   const marcarPreparado = async () => {
-    // Verificar que todos los canastos (excepto bultos) tengan peso
-    const sinPeso = (orden.canastos || []).filter(c => c.tipo !== 'bulto' && !c.peso_origen)
-    if (sinPeso.length > 0) {
-      alert('Todos los canastos deben tener peso registrado')
-      return
-    }
-
-    // Calcular artículos pendientes
     const pendientes = calcularPendientes()
     if (pendientes.length > 0) {
       setModalPendientes({ fase: 'pregunta', pendientes, motivos: {} })
       return
     }
 
-    // Sin pendientes → cerrar directamente
     try {
       await api.put(`/api/traspasos/ordenes/${id}/preparado`)
       navigate('/preparacion')
@@ -969,8 +518,8 @@ const Preparacion = () => {
         articulo_id: p.articulo_id,
         nombre: p.nombre,
         codigo: p.codigo,
-        cantidad_solicitada: p.cantidad_solicitada || p.cantidad,
-        cantidad_preparada: p.cantidad_preparada,
+        cantidad_solicitada: p.cantidad_solicitada || 0,
+        cantidad_preparada: p.cantidad_preparada_real,
         cantidad_faltante: p.cantidad_faltante,
         motivo: crearNuevaOrden ? null : (motivos[p.articulo_id] || null),
       }))
@@ -991,200 +540,6 @@ const Preparacion = () => {
       setEnviandoPendientes(false)
     }
   }
-
-  // Modal de confirmación de cierre de canasto
-  const modalCierreCanasto = confirmarCierre && (
-    <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => faseCierre === 'scan' ? setConfirmarCierre(false) : null}>
-      <div className="bg-white rounded-t-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
-        {faseCierre === 'scan' && (
-          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-gray-800">Cerrar canasto</h3>
-              <button onClick={() => setConfirmarCierre(false)} className="p-2 rounded-lg active:bg-gray-100">
-                <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-sm text-gray-500">Escaneá el precinto del canasto <span className="font-semibold text-gray-700">{canastoActivo?.precinto}</span> para confirmar el cierre</p>
-            <input ref={scanCierreRef} type="text" value={scanCierre}
-              onChange={e => setScanCierre(e.target.value)} onKeyDown={handleScanCierre}
-              placeholder="Escanear precinto..." autoComplete="off" autoFocus
-              className="w-full border-2 border-sky-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
-            />
-          </>
-        )}
-
-        {faseCierre === 'pregunta' && (
-          <>
-            <div className="text-center space-y-3 pt-2">
-              <div className="bg-emerald-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-800">Canasto cerrado</h3>
-              <p className="text-sm text-gray-500">¿Desea pesar el canasto ahora?</p>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={saltarPesaje}
-                className="flex-1 bg-gray-200 active:bg-gray-300 text-gray-700 py-4 rounded-xl text-base font-semibold">
-                No, después
-              </button>
-              <button onClick={() => { setFaseCierre('peso'); setPesoCanasto('') }}
-                className="flex-1 bg-sky-600 active:bg-sky-700 text-white py-4 rounded-xl text-base font-semibold">
-                Sí, pesar
-              </button>
-            </div>
-          </>
-        )}
-
-        {faseCierre === 'peso' && (
-          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-gray-800">Pesar canasto</h3>
-              <button onClick={saltarPesaje} className="p-2 rounded-lg active:bg-gray-100">
-                <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-sm text-gray-500">Ingresá el peso total del canasto <span className="font-semibold text-gray-700">{canastoActivo?.precinto}</span></p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg)</label>
-              <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                value={pesoCanasto} onChange={e => setPesoCanasto(e.target.value)}
-                placeholder="Ej: 12.500" autoFocus
-                className="w-full border-2 border-sky-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
-              />
-            </div>
-            <button onClick={confirmarCierreConPeso}
-              disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
-              className={`w-full py-4 rounded-xl text-base font-semibold ${
-                pesoCanasto && parseFloat(pesoCanasto) > 0
-                  ? 'bg-emerald-600 active:bg-emerald-700 text-white'
-                  : 'bg-gray-200 text-gray-400'
-              }`}>
-              Guardar peso · {pesoCanasto ? `${pesoCanasto} kg` : '—'}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  )
-
-  // Modal cerrar pedido — listado de canastos con pesos
-  const canastosOrden = orden?.canastos || []
-  const todosConPesoOrden = canastosOrden.length > 0 && canastosOrden.every(c => c.tipo === 'bulto' || c.peso_origen)
-  const handleScanPesaje = (e) => {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    const codigo = scanPesaje.trim()
-    if (!codigo || !pesandoCanastoId) return
-    const canasto = canastosOrden.find(c => c.id === pesandoCanastoId)
-    if (!canasto || codigo !== canasto.precinto) {
-      mostrarFeedback('Código no coincide con este canasto', false)
-      setScanPesaje('')
-      return
-    }
-    setFasePesaje('peso')
-    setScanPesaje('')
-  }
-
-  const modalCerrarPedido = mostrarCerrarPedido && (
-    <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => { if (!pesandoCanastoId) setMostrarCerrarPedido(false) }}>
-      <div className="bg-white rounded-t-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-          <h3 className="text-base font-semibold text-gray-800">
-            {pesandoCanastoId ? (fasePesaje === 'scan' ? 'Escanear canasto' : 'Pesar canasto') : 'Cerrar pedido'}
-          </h3>
-          <button onClick={() => { if (pesandoCanastoId) { setPesandoCanastoId(null); setFasePesaje('scan') } else { setMostrarCerrarPedido(false) } }} className="p-2 rounded-lg active:bg-gray-100">
-            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {!pesandoCanastoId ? (
-          <>
-            <div className="overflow-y-auto flex-1 px-5 py-3 space-y-3">
-              {canastosOrden.map(c => {
-                const esBulto = c.tipo === 'bulto'
-                const tienePeso = esBulto || !!c.peso_origen
-                const itemsCount = (c.items || []).length
-                return (
-                  <div key={c.id} className={`border rounded-xl p-4 space-y-2 ${tienePeso ? 'border-emerald-300 bg-emerald-50/50' : 'border-amber-300 bg-amber-50/50'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-gray-800">{esBulto ? (c.nombre || 'Bulto') : c.precinto}</span>
-                        {esBulto && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">Bulto</span>}
-                        <span className="text-xs text-gray-400">{itemsCount} item{itemsCount !== 1 ? 's' : ''}</span>
-                      </div>
-                      {esBulto ? (
-                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">Sin peso</span>
-                      ) : tienePeso ? (
-                        <span className="text-sm font-bold text-emerald-700">{c.peso_origen} kg</span>
-                      ) : (
-                        <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-medium">Sin peso</span>
-                      )}
-                    </div>
-                    {!esBulto && (
-                      <button onClick={() => { setPesandoCanastoId(c.id); setFasePesaje('scan'); setScanPesaje('') }}
-                        className={`w-full py-2 rounded-lg text-sm font-medium ${c.peso_origen ? 'text-emerald-700 active:bg-emerald-100' : 'bg-amber-200 text-amber-800 active:bg-amber-300'}`}>
-                        {c.peso_origen ? 'Cambiar peso' : 'Pesar ahora'}
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            <div className="px-5 py-4 border-t border-gray-200 flex-shrink-0">
-              <button onClick={() => { setMostrarCerrarPedido(false); marcarPreparado() }}
-                disabled={!todosConPesoOrden}
-                className={`w-full py-4 rounded-xl text-base font-semibold ${
-                  todosConPesoOrden
-                    ? 'bg-emerald-600 active:bg-emerald-700 text-white'
-                    : 'bg-gray-200 text-gray-400'
-                }`}>
-                {todosConPesoOrden ? 'Orden preparada' : 'Faltan pesos por registrar'}
-              </button>
-            </div>
-          </>
-        ) : fasePesaje === 'scan' ? (
-          <div className="px-5 py-4 space-y-4">
-            <p className="text-sm text-gray-500">Escaneá el precinto del canasto <span className="font-semibold text-gray-700">{canastosOrden.find(c => c.id === pesandoCanastoId)?.precinto}</span></p>
-            <input type="text" value={scanPesaje}
-              onChange={e => setScanPesaje(e.target.value)} onKeyDown={handleScanPesaje}
-              placeholder="Escanear precinto..." autoComplete="off" autoFocus
-              className="w-full border-2 border-sky-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
-            />
-          </div>
-        ) : (
-          <div className="px-5 py-4 space-y-4">
-            <p className="text-sm text-gray-500">Ingresá el peso del canasto <span className="font-semibold text-gray-700">{canastosOrden.find(c => c.id === pesandoCanastoId)?.precinto}</span></p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg)</label>
-              <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                value={pesosCanastos[pesandoCanastoId] || ''} onChange={e => setPesosCanastos(prev => ({ ...prev, [pesandoCanastoId]: e.target.value }))}
-                placeholder="Ej: 12.500" autoFocus
-                className="w-full border-2 border-sky-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
-              />
-            </div>
-            <button onClick={() => guardarPesoCanasto(pesandoCanastoId)}
-              disabled={!pesosCanastos[pesandoCanastoId] || parseFloat(pesosCanastos[pesandoCanastoId]) <= 0}
-              className={`w-full py-4 rounded-xl text-base font-semibold ${
-                pesosCanastos[pesandoCanastoId] && parseFloat(pesosCanastos[pesandoCanastoId]) > 0
-                  ? 'bg-emerald-600 active:bg-emerald-700 text-white'
-                  : 'bg-gray-200 text-gray-400'
-              }`}>
-              Guardar peso · {pesosCanastos[pesandoCanastoId] ? `${pesosCanastos[pesandoCanastoId]} kg` : '—'}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
 
   // Modal de artículos pendientes
   const MOTIVOS_FALTANTE = [
@@ -1229,8 +584,8 @@ const Preparacion = () => {
                         <div className="font-medium text-gray-800 truncate max-w-[180px]">{p.nombre}</div>
                         <div className="text-xs text-gray-400">{p.codigo}</div>
                       </td>
-                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_solicitada || p.cantidad}</td>
-                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_preparada}</td>
+                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_solicitada}</td>
+                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_preparada_real}</td>
                       <td className="py-2 pl-2 text-right font-semibold text-amber-600">{p.cantidad_faltante}</td>
                     </tr>
                   ))}
@@ -1302,7 +657,6 @@ const Preparacion = () => {
 
   if (cargando) return (
     <div className="min-h-screen bg-gray-100">
-      <BotonVolver onClick={() => navigate('/preparacion')} />
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-sky-600" />
       </div>
@@ -1311,301 +665,12 @@ const Preparacion = () => {
 
   if (!orden) return null
 
-  const canastos = orden.canastos || []
-  const todosCerrados = canastos.length > 0 && canastos.every(c => c.estado === 'cerrado')
-
   // ═══════════════════════════════════════
-  // FASE 1: ESCANEAR CANASTO
-  // ═══════════════════════════════════════
-  if (fase === 'canasto') {
-    return (
-      <div className="min-h-screen bg-gray-100">
-        <div className="bg-sky-600 text-white px-2 py-3 flex items-center gap-2">
-          <button onClick={() => navigate('/preparacion')} className="p-2 rounded-lg active:bg-sky-700">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-          <div className="flex-1">
-            <div className="text-base font-medium">{orden.sucursal_origen_nombre} → {orden.sucursal_destino_nombre}</div>
-            <div className="text-sky-200 text-sm">{itemsOrdenados.length} artículos · {canastos.length} canasto{canastos.length !== 1 ? 's' : ''}</div>
-          </div>
-        </div>
-
-        <div className="px-4 py-6 space-y-6">
-          {canastos.length > 0 && (
-            <div className="space-y-2">
-              {canastos.map(c => (
-                <button key={c.id}
-                  onClick={() => {
-                    if (c.estado === 'en_preparacion') { setCanastoActivo(c); setFase('picking') }
-                    else { setCanastoViendo(c) }
-                  }}
-                  className={`w-full text-left bg-white rounded-xl border p-4 flex items-center justify-between ${
-                    c.estado === 'en_preparacion' ? 'border-amber-300 active:bg-amber-50' : 'border-gray-200 active:bg-gray-50'
-                  }`}
-                >
-                  <div>
-                    <div className="font-medium text-gray-800 flex items-center gap-2">
-                      {c.tipo === 'bulto' ? (c.nombre || 'Bulto') : c.precinto}
-                      {c.tipo === 'bulto' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Bulto</span>}
-                    </div>
-                    <div className="text-xs text-gray-400">{(c.items || []).length} items{c.tipo !== 'bulto' && c.peso_origen ? ` · ${c.peso_origen}kg` : ''}</div>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full ${c.estado === 'en_preparacion' ? 'bg-amber-100 text-amber-700' : c.tipo === 'bulto' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {c.estado === 'en_preparacion' ? 'Abierto' : c.tipo === 'bulto' ? 'Bulto cerrado' : 'Cerrado'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center space-y-4">
-            <div className="bg-sky-100 text-sky-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-800">Escanear canasto</h2>
-              <p className="text-sm text-gray-500 mt-1">Escaneá el precinto para abrir un canasto</p>
-            </div>
-            <input ref={scanCanastoRef} type="text" value={scanCanasto}
-              onChange={e => setScanCanasto(e.target.value)} onKeyDown={handleScanCanasto}
-              placeholder="Código de precinto..." autoComplete="off" autoFocus
-              className="w-full border-2 border-sky-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
-            />
-            <button onClick={() => { setMostrarNuevoBulto(true); setNombreBulto('') }}
-              className="w-full mt-3 bg-orange-50 active:bg-orange-100 border-2 border-orange-300 text-orange-700 py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
-              Agregar bulto suelto
-            </button>
-          </div>
-
-          {todosCerrados && (
-            <button onClick={abrirCerrarPedido}
-              className="w-full bg-emerald-600 active:bg-emerald-700 text-white py-4 rounded-xl text-base font-semibold">
-              Cerrar pedido
-            </button>
-          )}
-        </div>
-        {/* Modal ver contenido de canasto cerrado */}
-        {canastoViendo && !moverItem && (
-          <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => setCanastoViendo(null)}>
-            <div className="bg-white rounded-t-2xl max-h-[75vh] flex flex-col" onClick={e => e.stopPropagation()}>
-              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-                <div>
-                  <h3 className="text-base font-semibold text-gray-800">{canastoViendo.tipo === 'bulto' ? `Bulto: ${canastoViendo.nombre || 'Bulto'}` : `Canasto ${canastoViendo.precinto}`}</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">{(canastoViendo.items || []).length} artículo{(canastoViendo.items || []).length !== 1 ? 's' : ''}{canastoViendo.tipo !== 'bulto' && canastoViendo.peso_origen ? ` · ${canastoViendo.peso_origen} kg` : ''}</p>
-                </div>
-                <button onClick={() => setCanastoViendo(null)} className="p-2 rounded-lg active:bg-gray-100">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
-                {(canastoViendo.items || []).map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between px-4 py-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{item.nombre}</div>
-                      <div className="text-xs text-gray-400">{item.codigo} · {item.es_pesable ? `${item.cantidad} kg` : `${item.cantidad} ud${item.cantidad !== 1 ? 's' : ''}`}
-                        {item.pesos_escaneados?.length > 0 && ` · ${item.pesos_escaneados.length} pza${item.pesos_escaneados.length !== 1 ? 's' : ''}`}
-                      </div>
-                    </div>
-                    {canastos.filter(c => c.id !== canastoViendo.id).length > 0 && (
-                      <button onClick={() => setMoverItem({ item, canastoOrigenId: canastoViendo.id })}
-                        className="text-red-500 active:text-red-700 p-2 rounded-lg active:bg-red-50 ml-2">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal mover artículo — 2 fases */}
-        {moverItem && (() => {
-          const _item = moverItem.item
-          const _esPesableConPiezas = _item.es_pesable && (_item.pesos_escaneados || []).length > 0
-          const _totalDisponible = _esPesableConPiezas ? (_item.pesos_escaneados || []).length : _item.cantidad
-          const _unidad = _item.es_pesable && !_esPesableConPiezas ? 'kg' : 'ud'
-
-          return (
-            <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={cancelarMover}>
-              <div className="bg-white rounded-t-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {moverFase === 'cantidad' && (
-                      <button onClick={volverADestino} className="p-1.5 rounded-lg active:bg-gray-100">
-                        <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                        </svg>
-                      </button>
-                    )}
-                    <div>
-                      <h3 className="text-base font-semibold text-gray-800">Mover artículo</h3>
-                      <p className="text-xs text-gray-500 mt-0.5 truncate max-w-[220px]">{_item.nombre}</p>
-                    </div>
-                  </div>
-                  <button onClick={cancelarMover} className="p-2 rounded-lg active:bg-gray-100">
-                    <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-
-                {/* Fase 1: elegir destino */}
-                {moverFase === 'destino' && (
-                  <>
-                    <p className="text-sm text-gray-500">¿A qué canasto querés moverlo?</p>
-                    <div className="space-y-2">
-                      {canastos.filter(c => c.id !== moverItem.canastoOrigenId).map(c => (
-                        <button key={c.id} onClick={() => seleccionarDestinoMover(c.id)}
-                          className="w-full text-left bg-gray-50 active:bg-gray-100 border border-gray-200 rounded-xl p-4 flex items-center justify-between">
-                          <div>
-                            <span className="font-semibold text-gray-800">{c.precinto}</span>
-                            <span className="text-xs text-gray-400 ml-2">{(c.items || []).length} items</span>
-                          </div>
-                          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                          </svg>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* Fase 2: elegir cantidad / piezas */}
-                {moverFase === 'cantidad' && (
-                  <>
-                    {_esPesableConPiezas ? (
-                      /* Pesable con piezas → checkboxes */
-                      <>
-                        <p className="text-sm text-gray-500">Seleccioná las piezas a mover</p>
-                        <div className="space-y-2 max-h-60 overflow-y-auto">
-                          {_item.pesos_escaneados.map((peso, idx) => {
-                            const sel = moverPiezasSeleccionadas.includes(idx)
-                            return (
-                              <label key={idx}
-                                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${sel ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 border-gray-200 active:bg-gray-100'}`}>
-                                <input type="checkbox" checked={sel}
-                                  onChange={() => {
-                                    setMoverPiezasSeleccionadas(prev =>
-                                      sel ? prev.filter(i => i !== idx) : [...prev, idx]
-                                    )
-                                  }}
-                                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                                <span className="text-sm text-gray-700">Pieza {idx + 1}</span>
-                                <span className="text-sm font-semibold text-gray-800 ml-auto">{peso.toFixed(3)} kg</span>
-                              </label>
-                            )
-                          })}
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
-                          <button onClick={() => {
-                            if (moverPiezasSeleccionadas.length === _item.pesos_escaneados.length) {
-                              setMoverPiezasSeleccionadas([])
-                            } else {
-                              setMoverPiezasSeleccionadas(_item.pesos_escaneados.map((_, i) => i))
-                            }
-                          }} className="text-blue-600 font-medium active:text-blue-800">
-                            {moverPiezasSeleccionadas.length === _item.pesos_escaneados.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
-                          </button>
-                          <span>{moverPiezasSeleccionadas.length} de {_item.pesos_escaneados.length} piezas</span>
-                        </div>
-                        <button onClick={ejecutarMover}
-                          disabled={moverPiezasSeleccionadas.length === 0}
-                          className={`w-full py-3 rounded-xl font-semibold text-white text-sm ${moverPiezasSeleccionadas.length > 0 ? 'bg-blue-600 active:bg-blue-700' : 'bg-gray-300'}`}>
-                          Mover {moverPiezasSeleccionadas.length} pieza{moverPiezasSeleccionadas.length !== 1 ? 's' : ''}
-                        </button>
-                      </>
-                    ) : (
-                      /* No pesable (o pesable sin piezas) → stepper */
-                      <>
-                        <p className="text-sm text-gray-500">¿Cuántas {_unidad === 'kg' ? 'kg' : 'unidades'} querés mover?</p>
-                        <div className="flex items-center justify-center gap-5 py-3">
-                          <button onClick={() => setMoverCantidad(prev => Math.max(1, prev - 1))}
-                            disabled={moverCantidad <= 1}
-                            className={`w-12 h-12 rounded-xl text-2xl font-bold flex items-center justify-center ${moverCantidad <= 1 ? 'bg-gray-100 text-gray-300' : 'bg-gray-200 text-gray-700 active:bg-gray-300'}`}>
-                            −
-                          </button>
-                          <div className="text-center">
-                            <span className="text-3xl font-bold text-gray-800">{moverCantidad}</span>
-                            <span className="text-lg text-gray-400 ml-1">/ {_totalDisponible}</span>
-                          </div>
-                          <button onClick={() => setMoverCantidad(prev => Math.min(_totalDisponible, prev + 1))}
-                            disabled={moverCantidad >= _totalDisponible}
-                            className={`w-12 h-12 rounded-xl text-2xl font-bold flex items-center justify-center ${moverCantidad >= _totalDisponible ? 'bg-gray-100 text-gray-300' : 'bg-gray-200 text-gray-700 active:bg-gray-300'}`}>
-                            +
-                          </button>
-                        </div>
-                        <button onClick={ejecutarMover}
-                          className="w-full py-3 rounded-xl font-semibold text-white text-sm bg-blue-600 active:bg-blue-700">
-                          Mover {moverCantidad} {_unidad === 'kg' ? 'kg' : `unidad${moverCantidad !== 1 ? 'es' : ''}`}
-                        </button>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          )
-        })()}
-
-        {/* Modal nuevo bulto */}
-        {mostrarNuevoBulto && (
-          <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setMostrarNuevoBulto(false)}>
-            <div className="bg-white rounded-t-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-gray-800">Nuevo bulto suelto</h3>
-                <button onClick={() => setMostrarNuevoBulto(false)} className="p-2 rounded-lg active:bg-gray-100">
-                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <p className="text-sm text-gray-500">Para artículos que no entran en canasto (cajas de vino, pallets, etc.)</p>
-              <input type="text" value={nombreBulto}
-                onChange={e => setNombreBulto(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') crearBulto() }}
-                placeholder="Nombre del bulto (ej: Caja vinos)" autoFocus
-                className="w-full border-2 border-orange-300 rounded-xl px-4 py-4 text-lg text-center focus:border-orange-500 focus:ring-2 focus:ring-orange-200 outline-none"
-              />
-              <button onClick={crearBulto}
-                disabled={!nombreBulto.trim()}
-                className={`w-full py-4 rounded-xl text-base font-semibold ${
-                  nombreBulto.trim()
-                    ? 'bg-orange-500 active:bg-orange-600 text-white'
-                    : 'bg-gray-200 text-gray-400'
-                }`}>
-                Crear bulto
-              </button>
-            </div>
-          </div>
-        )}
-
-        {modalCerrarPedido}
-        {modalPendientesJSX}
-      </div>
-    )
-  }
-
-  // ═══════════════════════════════════════
-  // FASE 3: DETALLE DE ARTÍCULO (escaneo)
+  // FASE: DETALLE DE ARTÍCULO (escaneo)
   // ═══════════════════════════════════════
   if (fase === 'detalle' && itemDetalle) {
     const pickKg = pickEnKg(itemDetalle)
     const pick = pickKg
-    const pedido = itemDetalle.cantidad_solicitada || 0
-    const ppp = itemDetalle.pesoPromedioPieza
     const stock = stockOrigen[itemDetalle.articulo_id]
 
     const pedidoPiezas = cantidadEnPiezas(itemDetalle)
@@ -1614,19 +679,15 @@ const Preparacion = () => {
 
     return (
       <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
-        {/* Banner canasto con navegación */}
-        <div className="bg-amber-500 text-white px-2 py-2 flex items-center gap-2 flex-shrink-0">
+        {/* Banner con navegación */}
+        <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2 flex-shrink-0">
           <button onClick={() => { setFase('picking'); setItemDetalle(null); setMostrarPiezas(false) }}
-            className="p-2 rounded-lg active:bg-amber-600">
+            className="p-2 rounded-lg active:bg-sky-700">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
           </button>
-          <span className="font-semibold text-sm flex-1">{canastoActivo?.tipo === 'bulto' ? `Bulto: ${canastoActivo?.nombre || 'Bulto'}` : `Canasto: ${canastoActivo?.precinto}`}</span>
-          <button onClick={cerrarCanasto}
-            className="text-xs bg-amber-600 active:bg-amber-700 px-3 py-1.5 rounded-lg font-medium">
-            Cerrar canasto
-          </button>
+          <span className="font-semibold text-sm flex-1">{orden.numero}</span>
         </div>
 
         {/* Feedback */}
@@ -1636,9 +697,9 @@ const Preparacion = () => {
           </div>
         )}
 
-        {/* Contenido central — flex-1 para ocupar todo el espacio disponible */}
+        {/* Contenido central */}
         <div className="flex-1 min-h-0 flex flex-col px-3 py-2 gap-2 overflow-hidden">
-          {/* Imagen ocupa todo el espacio libre */}
+          {/* Imagen */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden flex-1 min-h-0 flex items-center justify-center">
             <img
               src={`${API_BASE}/api/articulos/${itemDetalle.articulo_id}/imagen`}
@@ -1659,7 +720,6 @@ const Preparacion = () => {
                     const pzasEst = ppp > 0 ? Math.round(stock / ppp) : null
                     return <span className="ml-1">· Stock: {stock} kg{pzasEst !== null ? ` (~${pzasEst} pzas)` : ''}</span>
                   }
-                  // Para no pesables: mostrar uds + cajas si hay unidad alternativa
                   const cat = todosArticulos.find(a => String(a.id) === itemDetalle.articulo_id)
                   const factorCaja = cat?.codigosBarras?.reduce((max, b) => typeof b === 'object' && b.factor > 1 ? Math.max(max, b.factor) : max, 0) || 0
                   if (factorCaja > 1) {
@@ -1672,7 +732,18 @@ const Preparacion = () => {
               </div>
               <div className={`text-base font-bold ${completo ? 'text-emerald-600' : 'text-gray-800'}`}>
                 {pickPiezas} / {pedidoPiezas}
-                <span className="text-xs font-normal text-gray-500 ml-1">{itemDetalle.es_pesable ? 'pzas' : 'uds'}</span>
+                {(() => {
+                  const fc = !itemDetalle.es_pesable ? getFactorCaja(itemDetalle) : 0
+                  if (fc > 1) {
+                    const cajasTotal = Math.floor(pedidoPiezas / fc)
+                    const sueltas = pedidoPiezas % fc
+                    return <>
+                      <span className="text-xs font-normal text-gray-500 ml-1">unidades</span>
+                      <span className="text-xs font-normal text-gray-400 ml-1">· {cajasTotal} {cajasTotal === 1 ? 'caja' : 'cajas'}{sueltas > 0 ? ` +${sueltas}` : ''}</span>
+                    </>
+                  }
+                  return <span className="text-xs font-normal text-gray-500 ml-1">{itemDetalle.es_pesable ? 'piezas' : 'unidades'}</span>
+                })()}
                 {itemDetalle.es_pesable && <span className="text-xs font-semibold text-sky-600 ml-1">· {pick} kg</span>}
                 {completo && <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium ml-2">Completo</span>}
               </div>
@@ -1684,29 +755,24 @@ const Preparacion = () => {
         {mostrarPiezas && (() => {
           const esPesable = itemDetalle.es_pesable
           const ppUnit = itemDetalle.pesoPromedioPieza
+          const item = (orden.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
+          if (!item) return null
 
-          // Buscar en TODOS los canastos, no solo el activo
           let piezas = []
-          for (const c of (orden.canastos || [])) {
-            const ic = (c.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
-            if (!ic) continue
-            const pesos = ic.pesos_escaneados || []
-            if (pesos.length > 0) {
-              pesos.forEach((p, i) => piezas.push({ canasto: c.precinto, peso: p }))
-            } else if (esPesable && ppUnit && ic.cantidad > 0) {
-              const n = Math.round(ic.cantidad / ppUnit)
-              for (let i = 0; i < n; i++) piezas.push({ canasto: c.precinto, peso: Math.round(ppUnit * 1000) / 1000 })
-            } else if (ic.cantidad > 0) {
-              for (let i = 0; i < ic.cantidad; i++) piezas.push({ canasto: c.precinto, peso: null })
-            }
+          const pesos = item.pesos_escaneados || []
+          if (pesos.length > 0) {
+            pesos.forEach((p, i) => piezas.push({ peso: p, idx: i }))
+          } else if (esPesable && ppUnit && item.cantidad_preparada > 0) {
+            const n = Math.round(item.cantidad_preparada / ppUnit)
+            for (let i = 0; i < n; i++) piezas.push({ peso: Math.round(ppUnit * 1000) / 1000, idx: i })
+          } else if (item.cantidad_preparada > 0) {
+            for (let i = 0; i < item.cantidad_preparada; i++) piezas.push({ peso: null, idx: i })
           }
-          piezas = piezas.map((p, i) => ({ ...p, idx: i }))
           const totalKg = piezas.reduce((s, p) => s + (p.peso || 0), 0)
 
           return (
             <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => setMostrarPiezas(false)}>
               <div className="bg-white rounded-t-2xl max-h-[75vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                {/* Header */}
                 <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
                   <div>
                     <h3 className="text-base font-semibold text-gray-800">Piezas validadas</h3>
@@ -1718,27 +784,20 @@ const Preparacion = () => {
                     </svg>
                   </button>
                 </div>
-
-                {/* Lista scrolleable */}
                 <div className="overflow-y-auto flex-1">
                   <div className="divide-y divide-gray-100">
                     {piezas.map((pieza) => (
                       <div key={pieza.idx} className="flex items-center justify-between px-4 py-3">
                         <div className="flex items-center gap-3">
                           <span className="bg-sky-100 text-sky-700 text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center">{pieza.idx + 1}</span>
-                          <div>
-                            <span className="text-base font-medium text-gray-800">
-                              {pieza.peso != null ? `${pieza.peso} kg` : `Unidad ${pieza.idx + 1}`}
-                            </span>
-                            {pieza.canasto && <span className="text-xs text-gray-400 ml-2">C: {pieza.canasto}</span>}
-                          </div>
+                          <span className="text-base font-medium text-gray-800">
+                            {pieza.peso != null ? `${pieza.peso} kg` : `Unidad ${pieza.idx + 1}`}
+                          </span>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-
-                {/* Footer con total */}
                 {totalKg > 0 && (
                   <div className="px-4 py-3 border-t border-gray-200 flex justify-between items-center flex-shrink-0 bg-gray-50">
                     <span className="text-sm text-gray-500">Total · {piezas.length} pieza{piezas.length !== 1 ? 's' : ''}</span>
@@ -1775,7 +834,6 @@ const Preparacion = () => {
                     </svg>
                   </button>
                 </div>
-
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs font-medium text-gray-500 mb-1 block">Cantidad de piezas</label>
@@ -1794,8 +852,6 @@ const Preparacion = () => {
                     />
                   </div>
                 </div>
-
-                {/* Cálculo en vivo */}
                 {valido && (
                   <div className={`rounded-xl px-4 py-3 text-center ${fueraDeRango ? 'bg-amber-50 border border-amber-300' : 'bg-sky-50 border border-sky-200'}`}>
                     <div className={`text-2xl font-bold ${fueraDeRango ? 'text-amber-600' : 'text-sky-700'}`}>
@@ -1811,8 +867,6 @@ const Preparacion = () => {
                     )}
                   </div>
                 )}
-
-                {/* Error de validación */}
                 {pesoManualError && (
                   <div className="bg-red-50 border-2 border-red-300 rounded-xl px-4 py-3 flex items-center gap-3">
                     <div className="bg-red-100 w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0">
@@ -1823,12 +877,9 @@ const Preparacion = () => {
                     <span className="text-base font-semibold text-red-700">{pesoManualError}</span>
                   </div>
                 )}
-
                 <button onClick={confirmarPesoManual} disabled={!valido}
                   className={`w-full py-4 rounded-xl text-base font-semibold ${
-                    valido
-                      ? 'bg-sky-600 active:bg-sky-700 text-white'
-                      : 'bg-gray-200 text-gray-400'
+                    valido ? 'bg-sky-600 active:bg-sky-700 text-white' : 'bg-gray-200 text-gray-400'
                   }`}>
                   Confirmar {valido ? `· ${cant} pza${cant !== 1 ? 's' : ''} · ${peso}kg` : ''}
                 </button>
@@ -1837,7 +888,7 @@ const Preparacion = () => {
           )
         })()}
 
-        {/* Alerta de peso fuera de rango — advertencia con confirmación */}
+        {/* Alerta de peso fuera de rango */}
         {alertaPeso && (
           <div className="fixed inset-0 z-50 bg-amber-500 flex flex-col items-center justify-center p-6">
             <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center space-y-4">
@@ -1884,22 +935,19 @@ const Preparacion = () => {
           {pickPiezas > 0 && (
             <button onClick={() => setMostrarPiezas(true)}
               className="w-full bg-sky-50 active:bg-sky-100 border-2 border-sky-300 text-sky-700 py-2.5 rounded-xl text-sm font-semibold">
-              Validado · {pickPiezas} {itemDetalle.es_pesable ? 'pza' : 'ud'}{pickPiezas !== 1 ? 's' : ''}
+              Validado · {pickPiezas} {itemDetalle.es_pesable ? (pickPiezas !== 1 ? 'piezas' : 'pieza') : (pickPiezas !== 1 ? 'unidades' : 'unidad')}
               {itemDetalle.es_pesable && <span className="font-normal text-sky-500"> · {pick} kg</span>}
             </button>
           )}
         </div>
-
-        {modalCierreCanasto}
       </div>
     )
   }
 
   // ═══════════════════════════════════════
-  // FASE 2: LISTA DE ARTÍCULOS (picking)
+  // FASE: LISTA DE ARTÍCULOS (picking)
   // ═══════════════════════════════════════
 
-  // Agrupar por rubro
   const rubroGroups = {}
   for (const item of itemsOrdenados) {
     const rubro = item.rubro || 'Sin rubro'
@@ -1909,20 +957,26 @@ const Preparacion = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-20">
-      {/* Banner canasto con navegación */}
-      <div className="bg-amber-500 text-white px-2 py-2 flex items-center gap-2">
-        <button onClick={() => { setFase('canasto'); setCanastoActivo(null) }}
-          className="p-2 rounded-lg active:bg-amber-600">
+      {/* Banner */}
+      <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2">
+        <button onClick={() => navigate('/preparacion')}
+          className="p-2 rounded-lg active:bg-sky-700">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
         </button>
-        <span className="font-semibold flex-1">{canastoActivo?.tipo === 'bulto' ? `Bulto: ${canastoActivo?.nombre || 'Bulto'}` : `Canasto: ${canastoActivo?.precinto}`}</span>
-        <button onClick={cerrarCanasto}
-          className="text-xs bg-amber-600 active:bg-amber-700 px-3 py-1.5 rounded-lg font-medium">
-          Cerrar canasto
-        </button>
+        <div className="flex-1">
+          <div className="text-base font-medium">{orden.sucursal_origen_nombre} → {orden.sucursal_destino_nombre}</div>
+          <div className="text-sky-200 text-sm">{orden.numero} · {itemsOrdenados.length} artículos</div>
+        </div>
       </div>
+
+      {/* Feedback */}
+      {feedback && (
+        <div className={`px-4 py-1.5 text-sm font-medium text-center ${feedback.ok ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+          {feedback.msg}
+        </div>
+      )}
 
       {/* Lista de artículos por rubro */}
       <div className="px-3 py-3 space-y-4">
@@ -1933,12 +987,12 @@ const Preparacion = () => {
               {items.map((item, idx) => {
                 const piezasPedidas = cantidadEnPiezas(item)
                 const piezasPick = pickEnPiezas(item)
-                const completo = pickEnPiezas(item) >= cantidadEnPiezas(item)
+                const completo = piezasPick >= piezasPedidas
 
                 return (
                   <button key={idx}
                     onClick={() => {
-                      completoAlAbrir.current = pickEnPiezas(item) >= cantidadEnPiezas(item)
+                      completoAlAbrir.current = piezasPick >= piezasPedidas
                       setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false)
                     }}
                     className={`w-full text-left bg-white rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 ${
@@ -1963,7 +1017,18 @@ const Preparacion = () => {
                         {item.marca && <span className="ml-1">· {item.marca}</span>}
                       </div>
                       <div className={`text-xs mt-0.5 font-medium ${completo ? 'text-emerald-600' : 'text-blue-600'}`}>
-                        {piezasPick}/{piezasPedidas} {item.es_pesable ? 'pzas' : 'uds'}
+                        {(() => {
+                          const fc = !item.es_pesable ? getFactorCaja(item) : 0
+                          if (fc > 1) {
+                            const cajasTotal = Math.floor(piezasPedidas / fc)
+                            const sueltas = piezasPedidas % fc
+                            return <>
+                              {cajasTotal} {cajasTotal === 1 ? 'caja' : 'cajas'}{sueltas > 0 ? ` + ${sueltas} ud${sueltas !== 1 ? 's' : ''}` : ''}
+                              <span className="text-gray-400 font-normal ml-1">({piezasPick}/{piezasPedidas} unidades)</span>
+                            </>
+                          }
+                          return <>{piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}</>
+                        })()}
                       </div>
                     </div>
 
@@ -1977,16 +1042,14 @@ const Preparacion = () => {
         ))}
       </div>
 
-      {/* Barra inferior — cerrar pedido */}
+      {/* Barra inferior — marcar preparado */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 safe-area-bottom">
-        <button onClick={abrirCerrarPedido}
-          className="w-full bg-blue-600 active:bg-blue-700 text-white py-3.5 rounded-xl text-sm font-semibold">
-          Cerrar pedido
+        <button onClick={marcarPreparado}
+          className="w-full bg-emerald-600 active:bg-emerald-700 text-white py-3.5 rounded-xl text-sm font-semibold">
+          Orden preparada
         </button>
       </div>
 
-      {modalCerrarPedido}
-      {modalCierreCanasto}
       {modalPendientesJSX}
     </div>
   )

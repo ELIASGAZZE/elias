@@ -5,7 +5,7 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADO_BADGE = {
-  borrador: 'bg-gray-100 text-gray-600',
+  pendiente: 'bg-gray-100 text-gray-600',
   en_preparacion: 'bg-amber-100 text-amber-600',
 }
 
@@ -18,11 +18,11 @@ const PreparacionAuto = () => {
   const cargar = async () => {
     setCargando(true)
     try {
-      const [borradores, enPrep] = await Promise.all([
-        api.get('/api/traspasos/ordenes?estado=borrador'),
+      const [pendientees, enPrep] = await Promise.all([
+        api.get('/api/traspasos/ordenes?estado=pendiente'),
         api.get('/api/traspasos/ordenes?estado=en_preparacion'),
       ])
-      setOrdenes([...(enPrep.data || []), ...(borradores.data || [])])
+      setOrdenes([...(enPrep.data || []), ...(pendientees.data || [])])
     } catch (err) {
       console.error('Error cargando órdenes:', err)
     } finally {
@@ -38,7 +38,7 @@ const PreparacionAuto = () => {
       return
     }
 
-    // Borrador → iniciar preparación primero
+    // Pendiente → iniciar preparación primero
     setIniciando(orden.id)
     try {
       await api.put(`/api/traspasos/ordenes/${orden.id}/iniciar-preparacion`)
@@ -92,7 +92,7 @@ const PreparacionAuto = () => {
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-gray-800">{o.numero}</span>
                           <span className={`text-xs px-2 py-0.5 rounded-full ${ESTADO_BADGE[o.estado]}`}>
-                            {o.estado === 'en_preparacion' ? 'En preparación' : 'Borrador'}
+                            {o.estado === 'en_preparacion' ? 'En preparación' : 'Pendiente'}
                           </span>
                         </div>
                         <div className="text-sm text-gray-500 mt-1">

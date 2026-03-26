@@ -5,7 +5,7 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const ESTADO_BADGE = {
-  borrador: 'bg-gray-100 text-gray-600',
+  pendiente: 'bg-gray-100 text-gray-600',
   en_preparacion: 'bg-amber-100 text-amber-600',
   preparado: 'bg-blue-100 text-blue-600',
   despachado: 'bg-purple-100 text-purple-600',
@@ -15,7 +15,7 @@ const ESTADO_BADGE = {
 }
 
 const ESTADO_LABEL = {
-  borrador: 'Borrador',
+  pendiente: 'Pendiente',
   en_preparacion: 'En preparación',
   preparado: 'Preparado',
   despachado: 'Despachado',
@@ -61,7 +61,7 @@ const TraspasosHome = () => {
         {/* KPIs clickeables como filtro */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           {[
-            { key: 'borrador', label: 'Pendientes', value: dashboard?.pendientes || 0,
+            { key: 'pendiente', label: 'Pendientes', value: dashboard?.pendientes || 0,
               textColor: 'text-gray-600', activeBorder: 'border-gray-400 bg-gray-50 ring-2 ring-gray-200' },
             { key: 'en_preparacion', label: 'En preparación', value: dashboard?.en_preparacion || 0,
               textColor: 'text-amber-600', activeBorder: 'border-amber-400 bg-amber-50 ring-2 ring-amber-200' },
