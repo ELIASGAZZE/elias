@@ -74,6 +74,9 @@ const DetalleCierrePos = () => {
   const [gastos, setGastos] = useState([])
   const [cambiosPrecio, setCambiosPrecio] = useState([])
   const [controlandoGasto, setControlandoGasto] = useState(null)
+  const [retiroEmpleadoExpandido, setRetiroEmpleadoExpandido] = useState(null)
+  const [cuponesExpanded, setCuponesExpanded] = useState(false)
+  const [efectivoExpanded, setEfectivoExpanded] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
@@ -243,83 +246,46 @@ const DetalleCierrePos = () => {
 
       <div className="px-4 py-4 space-y-4">
 
-        {/* Seccion 1: Encabezado */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Metadata */}
-          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-800">{cierre.tipo === 'delivery' ? (cierre.observaciones_apertura || 'Delivery') : 'Sesion POS'}</h2>
-              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${estadoCfg.color}`}>
-                {estadoCfg.label}
-              </span>
-            </div>
-            <div className="text-sm text-gray-500 space-y-0.5">
-              {cierre.caja && (
-                <p>Caja: {cierre.caja.nombre}</p>
-              )}
-              {cierre.caja?.sucursales?.nombre && (
-                <p>Sucursal: {cierre.caja.sucursales.nombre}</p>
-              )}
-              {cierre.empleado && (
-                <p>Abrio: {cierre.empleado.nombre}</p>
-              )}
-              {cierre.cerrado_por && (
-                <p>Cerro: {cierre.cerrado_por.nombre}</p>
-              )}
-              <p>Fecha: {formatFecha(cierre.fecha)}</p>
-              {cierre.apertura_at && (
-                <p>Apertura: {formatHora(cierre.apertura_at)}</p>
-              )}
-              {cierre.cierre_at && (
-                <p>Cierre: {formatHora(cierre.cierre_at)}</p>
-              )}
-              {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && (
-                <p>Cambio inicial: {formatMonto(cierre.fondo_fijo)}</p>
-              )}
-              {posVentas && (
-                <p className="text-teal-600 font-medium">Ventas POS: {posVentas.cantidad_ventas} venta(s)</p>
-              )}
-            </div>
+        {/* Seccion 1: Encabezado — ancho completo */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-gray-800">{cierre.numero ? `#${cierre.numero} · ` : ''}{cierre.tipo === 'delivery' ? (cierre.observaciones_apertura || 'Delivery') : 'Sesion POS'}</h2>
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${estadoCfg.color}`}>
+              {estadoCfg.label}
+            </span>
           </div>
-
-          {/* Diferencias de apertura + Retiro y cambio */}
-          <div className="space-y-4">
-            {cierre.tipo !== 'delivery' && cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
-              <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
-                <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
-                <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
-                <div className="space-y-1">
-                  {Object.entries(cierre.diferencias_apertura).map(([denom, diff]) => (
-                    <div key={denom} className="flex justify-between text-sm">
-                      <span className="text-red-700">
-                        ${Number(denom).toLocaleString('es-AR')} ({diff.tipo === 'billete' ? 'billete' : 'moneda'})
-                      </span>
-                      <span className="text-red-800 font-medium">
-                        Anterior: {diff.anterior} → Actual: {diff.actual}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {cierre.estado !== 'abierta' && (parseFloat(cierre.cambio_que_queda) > 0 || parseFloat(cierre.efectivo_retirado) > 0) && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-amber-800 mb-2">Retiro y cambio</h3>
-                <div className="flex gap-4 text-sm">
-                  <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
-                    <span className="text-xs text-gray-500 block">Cambio que queda</span>
-                    <span className="font-bold text-amber-700">{formatMonto(cierre.cambio_que_queda)}</span>
-                  </div>
-                  <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
-                    <span className="text-xs text-gray-500 block">Efectivo retirado</span>
-                    <span className="font-bold text-teal-700">{formatMonto(cierre.efectivo_retirado)}</span>
-                  </div>
-                </div>
-              </div>
-            )}
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-500">
+            {cierre.caja && <span>Caja: <strong className="text-gray-700">{cierre.caja.nombre}</strong></span>}
+            {cierre.caja?.sucursales?.nombre && <span>Sucursal: <strong className="text-gray-700">{cierre.caja.sucursales.nombre}</strong></span>}
+            {cierre.empleado && <span>Abrió: <strong className="text-gray-700">{cierre.empleado.nombre}</strong></span>}
+            {cierre.cerrado_por && <span>Cerró: <strong className="text-gray-700">{cierre.cerrado_por.nombre}</strong></span>}
+            <span>Fecha: <strong className="text-gray-700">{formatFecha(cierre.fecha)}</strong></span>
+            {cierre.apertura_at && <span>Apertura: <strong className="text-gray-700">{formatHora(cierre.apertura_at)}</strong></span>}
+            {cierre.cierre_at && <span>Cierre: <strong className="text-gray-700">{formatHora(cierre.cierre_at)}</strong></span>}
+            {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && <span>Cambio inicial: <strong className="text-gray-700">{formatMonto(cierre.fondo_fijo)}</strong></span>}
+            {posVentas && <span className="text-teal-600 font-medium">Ventas POS: {posVentas.cantidad_ventas} venta(s)</span>}
           </div>
         </div>
+
+        {/* Diferencias de apertura */}
+        {cierre.tipo !== 'delivery' && cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
+          <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
+            <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
+            <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
+            <div className="space-y-1">
+              {Object.entries(cierre.diferencias_apertura).map(([denom, diff]) => (
+                <div key={denom} className="flex justify-between text-sm">
+                  <span className="text-red-700">
+                    ${Number(denom).toLocaleString('es-AR')} ({diff.tipo === 'billete' ? 'billete' : 'moneda'})
+                  </span>
+                  <span className="text-red-800 font-medium">
+                    Anterior: {diff.anterior} → Actual: {diff.actual}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Si esta abierta, botones cerrar + nuevo retiro */}
         {cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin) && (
@@ -374,7 +340,20 @@ const DetalleCierrePos = () => {
                 <div className="flex items-center text-xs font-medium text-gray-400 py-1 border-b border-gray-200">
                   <span className="flex-1">Denominacion</span>
                   {cierre.cierre_anterior && (
-                    <span className="w-24 text-right border-r border-gray-100 pr-3">Cierre ant.</span>
+                    <span className="w-24 text-right border-r border-gray-100 pr-3">
+                      {esAdmin && cierre.cierre_anterior.id ? (
+                        <a
+                          href={`/cajas-pos/cierre/${cierre.cierre_anterior.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-500 hover:text-blue-700 hover:underline cursor-pointer"
+                        >
+                          Cierre ant.
+                        </a>
+                      ) : (
+                        'Cierre ant.'
+                      )}
+                    </span>
                   )}
                   <span className="w-24 text-right border-r border-gray-100 pr-3">Apertura</span>
                   {cierre.cierre_anterior && (
@@ -456,7 +435,20 @@ const DetalleCierrePos = () => {
                   <span className="w-24 text-right border-r border-gray-100 pr-3">Cambio</span>
                   {cierre.apertura_siguiente ? (
                     <>
-                      <span className="w-24 text-right border-r border-gray-100 pr-3">Apert. sig.</span>
+                      <span className="w-24 text-right border-r border-gray-100 pr-3">
+                        {esAdmin && cierre.apertura_siguiente?.id ? (
+                          <a
+                            href={`/cajas-pos/cierre/${cierre.apertura_siguiente.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-500 hover:text-blue-700 hover:underline cursor-pointer"
+                          >
+                            Apert. sig.
+                          </a>
+                        ) : (
+                          'Apert. sig.'
+                        )}
+                      </span>
                       <span className="w-20 text-right">Dif.</span>
                     </>
                   ) : (
@@ -536,7 +528,7 @@ const DetalleCierrePos = () => {
 
             <div className="text-xs text-gray-400 space-y-0.5">
               {verificacion && <p>Gestor: {verificacion.gestor?.nombre}</p>}
-              {posVentas && <p>Ventas POS: {posVentas.cantidad_ventas} venta(s) — Total: {formatMonto(posVentas.total_general)}</p>}
+              {posVentas && <p>Ventas POS: {posVentas.cantidad_ventas} venta(s) — Total: {formatMonto(posVentas.total_general_todas || posVentas.total_general)}</p>}
               {posNoEncontrado && <p>Ventas POS: No encontrado</p>}
             </div>
 
@@ -549,12 +541,53 @@ const DetalleCierrePos = () => {
               <span className="w-28 text-right">Diferencia</span>
             </div>
 
-            <FilaComparativa
-              label="Efectivo"
-              valorCajero={(parseFloat(cierre.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
-              valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
-              valorPos={posVentas ? posVentas.total_efectivo : null}
-            />
+            <div
+              className="cursor-pointer hover:bg-gray-50 rounded transition-colors"
+              onClick={() => esAdmin && posVentas && setEfectivoExpanded(!efectivoExpanded)}
+            >
+              <FilaComparativa
+                label={esAdmin && posVentas ? (efectivoExpanded ? 'Efectivo ▲' : 'Efectivo ▼') : 'Efectivo'}
+                valorCajero={(parseFloat(cierre.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
+                valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
+                valorPos={posVentas ? posVentas.total_efectivo : null}
+              />
+            </div>
+            {efectivoExpanded && posVentas && (() => {
+              const ventasConEfectivo = (posVentas.detalle_ventas || []).filter(v =>
+                (v.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')
+              )
+              return ventasConEfectivo.length > 0 && (
+                <div className="bg-gray-50 rounded-lg p-3 -mt-1 mb-1">
+                  <div className="flex items-center text-[10px] font-medium text-gray-400 py-1 border-b border-gray-200 mb-1">
+                    <span className="w-16">Venta</span>
+                    <span className="w-14 text-center">Hora</span>
+                    <span className="flex-1 text-right">Total venta</span>
+                    <span className="w-24 text-right">Efectivo</span>
+                    <span className="w-20 text-right">Vuelto</span>
+                    <span className="w-24 text-right font-semibold">Neto</span>
+                  </div>
+                  {ventasConEfectivo.map(v => {
+                    const pagoEfectivo = (v.pagos || []).filter(p => (p.tipo || 'Efectivo') === 'Efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+                    const vuelto = parseFloat(v.vuelto) || 0
+                    const neto = pagoEfectivo - vuelto
+                    return (
+                      <div key={v.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0">
+                        <span className="w-16 text-blue-600 font-medium">#{v.numero_venta || '—'}</span>
+                        <span className="w-14 text-center text-gray-400">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="flex-1 text-right text-gray-500">{formatMonto(v.total)}</span>
+                        <span className="w-24 text-right text-gray-700">{formatMonto(pagoEfectivo)}</span>
+                        <span className="w-20 text-right text-red-500">{vuelto > 0 ? `-${formatMonto(vuelto)}` : '—'}</span>
+                        <span className="w-24 text-right font-medium text-teal-700">{formatMonto(neto)}</span>
+                      </div>
+                    )
+                  })}
+                  <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
+                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo</span>
+                    <span className="w-24 text-right text-teal-700">{formatMonto(posVentas.total_efectivo)}</span>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Medios de pago dinamicos */}
             {allFormaCobroIds.map(fcId => {
@@ -578,7 +611,7 @@ const DetalleCierrePos = () => {
               return !allFormaCobroIds.some(fcId => {
                 const nombre = cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || ''
                 return mediosSonIguales(nombre, pmp.nombre)
-              }) && upper !== 'EFECTIVO'
+              }) && upper !== 'EFECTIVO' && upper !== 'CUENTA_CORRIENTE' && upper !== 'POSNET MP' && upper !== 'QR MP'
             }).map((pmp, idx) => (
               <FilaComparativa
                 key={`pos-${pmp.nombre}-${idx}`}
@@ -591,7 +624,7 @@ const DetalleCierrePos = () => {
 
             {/* Total general — ajustado con cambio y gastos */}
             {(() => {
-              const ajuste = (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)
+              const ajuste = retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)
               const totalCajero = (parseFloat(cierre.total_general) || 0) + ajuste
               const totalGestor = verificacion ? (parseFloat(verificacion.total_general) || 0) + ajuste : null
               const totalPos = posVentas ? posVentas.total_general : null
@@ -753,6 +786,178 @@ const DetalleCierrePos = () => {
             )}
           </div>
         )}
+
+        {/* Retiros mercadería empleados */}
+        {esAdmin && posVentas?.retiro_empleados?.cantidad > 0 && (
+          <div className="bg-white border border-orange-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-orange-800">
+              Retiros mercadería empleados ({posVentas.retiro_empleados.cantidad})
+            </h3>
+            <div className="space-y-2">
+              {posVentas.retiro_empleados.detalle.map(re => {
+                const expandido = retiroEmpleadoExpandido === re.id
+                return (
+                  <div key={re.id} className="border border-orange-100 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setRetiroEmpleadoExpandido(expandido ? null : re.id)}
+                      className="w-full flex items-center justify-between p-3 hover:bg-orange-50 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-gray-800">{re.empleado_nombre}</span>
+                        <span className="text-xs text-gray-400">
+                          {re.numero_venta ? `Venta #${re.numero_venta}` : ''} · {new Date(re.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-orange-700">{formatMonto(re.total)}</span>
+                        <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandido ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </button>
+                    {expandido && re.items?.length > 0 && (() => {
+                      return (
+                        <div className="border-t border-orange-100 p-3 bg-orange-50/50">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-gray-500 border-b border-orange-100">
+                                <th className="text-left py-1 font-medium">Artículo</th>
+                                <th className="text-right py-1 font-medium w-16">Cant.</th>
+                                <th className="text-right py-1 font-medium w-24">Precio</th>
+                                <th className="text-right py-1 font-medium w-24">Subtotal</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {re.items.map((item, idx) => {
+                                const precioFinal = parseFloat(item.precio_final || item.precio_unitario || 0)
+                                const precioOriginal = parseFloat(item.precio_original || precioFinal)
+                                const cantidad = parseFloat(item.cantidad || 1)
+                                const descPct = item.descuento_pct || (precioOriginal > precioFinal ? Math.round((1 - precioFinal / precioOriginal) * 100) : 0)
+                                return (
+                                  <tr key={idx} className="border-b border-orange-50">
+                                    <td className="py-1.5 text-gray-700">
+                                      <div>
+                                        <span className="font-medium">{item.nombre}</span>
+                                        {item.codigo && <span className="text-gray-400 ml-1">({item.codigo})</span>}
+                                      </div>
+                                      {descPct > 0 && (
+                                        <div className="text-orange-600 text-[10px]">
+                                          Desc. empleado -{descPct}% (orig. {formatMonto(precioOriginal)})
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="text-right text-gray-600">{cantidad}</td>
+                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal)}</td>
+                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal * cantidad)}</td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="border-t border-orange-200 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-orange-800">Total retiros empleados</span>
+              <span className="text-orange-700">{formatMonto(posVentas.retiro_empleados.total)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Cupones Mercado Pago */}
+        {esAdmin && posVentas?.cupones_mp?.cantidad > 0 && (() => {
+          const mp = posVentas.cupones_mp
+          const problemas = mp.detalle.filter(c => c.mp_problema)
+          return (
+            <div className="bg-white border border-blue-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-blue-800 flex items-center gap-3">
+                  Cupones Mercado Pago
+                  {mp.posnet > 0 && (
+                    <span className="text-xs font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                      Posnet: {mp.posnet}
+                    </span>
+                  )}
+                  {mp.qr > 0 && (
+                    <span className="text-xs font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                      QR: {mp.qr}
+                    </span>
+                  )}
+                  {mp.problemas > 0 && (
+                    <span className="text-xs font-normal text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                      Problema: {mp.problemas}
+                    </span>
+                  )}
+                </h3>
+                <span className="text-sm font-bold text-blue-700">{formatMonto(mp.total)}</span>
+              </div>
+
+              <button
+                onClick={() => setCuponesExpanded(!cuponesExpanded)}
+                className="text-xs text-blue-500 hover:text-blue-700 font-medium"
+              >
+                {cuponesExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+              </button>
+
+              {cuponesExpanded && (
+                <div className="space-y-1">
+                  <div className="flex items-center text-[10px] font-medium text-gray-400 py-1 border-b border-blue-100">
+                    <span className="flex-1">Venta</span>
+                    <span className="w-20 text-center">Tipo</span>
+                    <span className="w-24 text-center">Tarjeta</span>
+                    <span className="w-16 text-center">Hora</span>
+                    <span className="w-24 text-right">Importe</span>
+                  </div>
+                  {mp.detalle.map((c, idx) => (
+                    <div key={idx} className={`flex items-center text-xs py-1.5 ${c.mp_problema ? 'bg-amber-50 rounded px-1 -mx-1' : 'border-b border-blue-50'}`}>
+                      <span className="flex-1 text-gray-700">
+                        {c.numero_venta ? `#${c.numero_venta}` : '—'}
+                      </span>
+                      <span className="w-20 text-center">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.tipo.toLowerCase() === 'qr mp' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                          {c.tipo.toLowerCase() === 'qr mp' ? 'QR' : 'Posnet'}
+                        </span>
+                      </span>
+                      <span className="w-24 text-center text-gray-500 text-[10px]">
+                        {c.card_brand && c.card_last_four ? `${c.card_brand} ···${c.card_last_four}` : c.payment_type === 'account_money' ? 'QR Wallet' : '—'}
+                      </span>
+                      <span className="w-16 text-center text-gray-400">
+                        {new Date(c.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span className="w-24 text-right font-medium text-gray-700">{formatMonto(c.monto)}</span>
+                    </div>
+                  ))}
+
+                  {/* Detalle de problemas */}
+                  {problemas.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-[10px] font-medium text-amber-700 uppercase">Problemas detectados</p>
+                      {problemas.map((c, idx) => (
+                        <div key={idx} className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-amber-800">
+                              Venta #{c.numero_venta || '—'} · {formatMonto(c.monto)}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-medium">
+                              {c.mp_problema === 'cobro_sin_confirmar' ? 'Cobro sin confirmar' : c.mp_problema === 'posnet_manual' ? 'Posnet manual' : c.mp_problema}
+                            </span>
+                          </div>
+                          {c.mp_problema_desc && (
+                            <p className="text-amber-700 mt-1">{c.mp_problema_desc}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* Gastos durante el turno */}
         {gastos.length > 0 && (
