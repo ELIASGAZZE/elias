@@ -2300,8 +2300,6 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
       .from('pedidos_pos')
       .update(updateData)
       .eq('id', pedido.id)
-      .then(() => {})
-      .catch(err => console.error('[Talo] Error guardando referencia:', err))
   } catch (err) {
     console.error('[POS Link Talo] Error:', err)
     res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })
