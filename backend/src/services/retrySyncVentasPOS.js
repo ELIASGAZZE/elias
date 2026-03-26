@@ -192,12 +192,12 @@ async function retrySyncVentasPOS() {
     } catch (err) {
       // Error: grabar el error para que no se reintente
       console.error(`[RetrySyncVentasPOS] ✗ Venta ${venta.id} (POS #${venta.numero_venta}): ${err.message}`)
-      await supabase
-        .from('ventas_pos')
-        .update({ centum_error: err.message })
-        .eq('id', venta.id)
-        .then(() => {})
-        .catch(() => {})
+      try {
+        await supabase
+          .from('ventas_pos')
+          .update({ centum_error: err.message })
+          .eq('id', venta.id)
+      } catch (_) {}
       fallidas++
     }
   }
