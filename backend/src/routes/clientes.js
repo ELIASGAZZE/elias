@@ -9,6 +9,95 @@ const { getPool } = require('../config/centum')
 const sql = require('mssql')
 const { consultarCUIT } = require('../services/afip')
 
+// Fallback: buscar cliente en Centum BI por CUIT/DNI y sincronizar a Supabase
+async function buscarEnCentumBI(soloDigitos) {
+  const mapCondicionIVA = (id) => {
+    if (id === 1895) return 'RI'
+    if (id === 1894) return 'MT'
+    if (id === 1893) return 'EX'
+    return 'CF'
+  }
+
+  let db
+  try {
+    db = await getPool()
+  } catch { return null }
+
+  const result = await db.request()
+    .input('cuit', sql.NVarChar, `%${soloDigitos}%`)
+    .query(`
+      SELECT TOP 5 ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
+             DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
+             CondicionIVAClienteID, ActivoCliente
+      FROM Clientes_VIEW
+      WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1
+    `)
+
+  if (!result.recordset || result.recordset.length === 0) return null
+
+  const r = result.recordset[0]
+  const centumData = {
+    razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
+    cuit: r.CUITCliente?.trim() || null,
+    direccion: r.DireccionCliente?.trim() || null,
+    localidad: r.LocalidadCliente?.trim() || null,
+    codigo_postal: r.CodigoPostalCliente?.trim() || null,
+    telefono: r.Telefono1Cliente?.trim() || null,
+    codigo_centum: r.CodigoCliente?.trim() || null,
+    ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
+  }
+
+  // Buscar si existe localmente por id_centum (puede tener CUIT viejo)
+  const { data: existente } = await supabase
+    .from('clientes')
+    .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))')
+    .eq('id_centum', r.ClienteID)
+    .limit(1)
+    .single()
+
+  if (existente) {
+    // Actualizar datos locales (incluye el CUIT nuevo)
+    await supabase.from('clientes').update({ ...centumData, activo: true }).eq('id', existente.id)
+    console.log(`[Clientes] Fallback BI: actualizado cliente ${existente.id} (CUIT ${centumData.cuit})`)
+    return { ...existente, ...centumData, activo: true }
+  }
+
+  // No existe localmente → crear
+  const { data: ultimo } = await supabase
+    .from('clientes')
+    .select('codigo')
+    .like('codigo', 'CLI-%')
+    .order('codigo', { ascending: false })
+    .limit(1)
+
+  let siguiente = 1
+  if (ultimo && ultimo.length > 0) {
+    const match = ultimo[0].codigo.match(/CLI-(\d+)/)
+    if (match) siguiente = parseInt(match[1]) + 1
+  }
+
+  const nuevo = {
+    codigo: `CLI-${String(siguiente).padStart(4, '0')}`,
+    ...centumData,
+    id_centum: r.ClienteID,
+    activo: true,
+  }
+
+  const { data: insertado, error: errInsert } = await supabase
+    .from('clientes')
+    .insert(nuevo)
+    .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))')
+    .single()
+
+  if (errInsert) {
+    console.warn('[Clientes] Fallback BI: error insertando:', errInsert.message)
+    return null
+  }
+
+  console.log(`[Clientes] Fallback BI: creado cliente ${insertado.id} desde Centum (${centumData.razon_social})`)
+  return insertado
+}
+
 // GET /api/clientes
 // Lista clientes con búsqueda y paginación
 router.get('/', verificarAuth, async (req, res) => {
@@ -55,6 +144,19 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const { data: dniData, error: dniError, count: dniCount } = await dniQuery
         if (dniError) throw dniError
+
+        // Fallback a Centum BI si no hay resultados locales
+        if ((!dniData || dniData.length === 0) && soloDigitos.length >= 7) {
+          try {
+            const clienteBI = await buscarEnCentumBI(soloDigitos)
+            if (clienteBI) {
+              return res.json({ clientes: [clienteBI], total: 1 })
+            }
+          } catch (errBI) {
+            console.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
+          }
+        }
+
         return res.json({ clientes: dniData, total: dniCount })
       }
 
@@ -80,6 +182,18 @@ router.get('/', verificarAuth, async (req, res) => {
 
         const { data: cuitData, error: cuitError, count: cuitCount } = await cuitQuery
         if (cuitError) throw cuitError
+
+        // Fallback a Centum BI si no hay resultados locales
+        if ((!cuitData || cuitData.length === 0) && soloDigitos.length >= 7) {
+          try {
+            const clienteBI = await buscarEnCentumBI(soloDigitos)
+            if (clienteBI) {
+              return res.json({ clientes: [clienteBI], total: 1 })
+            }
+          } catch (errBI) {
+            console.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
+          }
+        }
 
         return res.json({ clientes: cuitData, total: cuitCount })
       }
