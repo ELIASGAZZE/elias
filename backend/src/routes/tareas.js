@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
-const { obtenerTareasPendientes, fechaArgentina, calcularProximaFecha } = require('../services/tareasScheduler')
+const { obtenerTareasPendientes, fechaArgentina, calcularProximaFecha, evaluarConfigParaFecha } = require('../services/tareasScheduler')
 
 // ── CRUD Tareas (admin) ─────────────────────────────────────────────────────
 
@@ -308,6 +308,184 @@ router.delete('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
 
 // ── Panel general: todas las sucursales (admin/gestor) ─────────────────────
 
+// GET /api/tareas/panel-dia?fecha=YYYY-MM-DD — Registros + pendientes por sucursal para una fecha
+// Optimizado: solo 3 queries a DB en vez de N por sucursal
+router.get('/panel-dia', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { hoyStr } = fechaArgentina()
+    const fecha = req.query.fecha || hoyStr
+
+    // Query 1: Todas las configs activas con su tarea
+    const { data: allConfigs, error: errCfg } = await supabase
+      .from('tareas_config_sucursal')
+      .select('id, sucursal_id, tipo, frecuencia_dias, dias_semana, fecha_inicio, reprogramar_siguiente, sucursal:sucursales(id, nombre), tarea:tareas(id, nombre, activo, subtareas(id, activo))')
+      .eq('activo', true)
+
+    if (errCfg) throw errCfg
+    if (!allConfigs || allConfigs.length === 0) return res.json([])
+
+    // Filtrar solo configs con tarea activa
+    const configs = allConfigs.filter(c => c.tarea?.activo)
+    const configIds = configs.map(c => c.id)
+
+    // Query 2: Ejecuciones del día con detalle completo
+    const { data: ejecucionesDia, error: errEj } = await supabase
+      .from('ejecuciones_tarea')
+      .select(`
+        id, tarea_config_id, fecha_programada, fecha_ejecucion, observaciones, calificacion, created_at,
+        completada_por:perfiles(nombre),
+        ejecuciones_empleados(empleado:empleados(nombre)),
+        ejecuciones_subtareas(subtarea:subtareas(nombre), completada)
+      `)
+      .eq('fecha_ejecucion', fecha)
+      .in('tarea_config_id', configIds)
+      .order('created_at', { ascending: false })
+
+    if (errEj) throw errEj
+
+    // Query 3: Última ejecución ANTES de la fecha por cada config (para calcular pendientes)
+    // Usamos una sola query con distinct on emulado
+    const { data: ultimasEjecuciones } = await supabase
+      .from('ejecuciones_tarea')
+      .select('tarea_config_id, fecha_ejecucion')
+      .in('tarea_config_id', configIds)
+      .lt('fecha_ejecucion', fecha)
+      .order('fecha_ejecucion', { ascending: false })
+
+    // Mapear última ejecución por config (tomar la primera que aparece = más reciente)
+    const ultimaEjMap = {}
+    for (const ej of (ultimasEjecuciones || [])) {
+      if (!ultimaEjMap[ej.tarea_config_id]) {
+        ultimaEjMap[ej.tarea_config_id] = ej.fecha_ejecucion
+      }
+    }
+
+    // Set de configs ejecutadas el día consultado
+    const ejConfigIds = new Set()
+    const ejPorSuc = {}
+    for (const ej of (ejecucionesDia || [])) {
+      ejConfigIds.add(ej.tarea_config_id)
+      // Buscar sucursal_id del config
+      const cfg = configs.find(c => c.id === ej.tarea_config_id)
+      const sucId = String(cfg?.sucursal_id)
+      if (!ejPorSuc[sucId]) ejPorSuc[sucId] = []
+      ejPorSuc[sucId].push({
+        id: ej.id,
+        tarea: cfg?.tarea?.nombre || '-',
+        hora: ej.created_at,
+        empleados: (ej.ejecuciones_empleados || []).map(e => e.empleado?.nombre).filter(Boolean),
+        registrado_por: ej.completada_por?.nombre || '-',
+        calificacion: ej.calificacion,
+        observaciones: ej.observaciones,
+        a_tiempo: ej.fecha_programada ? ej.fecha_ejecucion <= ej.fecha_programada : null,
+        dias_tarde: ej.fecha_programada && ej.fecha_ejecucion > ej.fecha_programada
+          ? Math.round((new Date(ej.fecha_ejecucion) - new Date(ej.fecha_programada)) / 86400000) : 0,
+        subtareas_completadas: (ej.ejecuciones_subtareas || []).filter(s => s.completada).length,
+        subtareas_total: (ej.ejecuciones_subtareas || []).length,
+      })
+    }
+
+    // Agrupar configs por sucursal y evaluar pendientes (pura lógica, sin queries)
+    const sucursalesMap = {}
+    for (const c of configs) {
+      const sucId = String(c.sucursal?.id || c.sucursal_id)
+      if (!sucursalesMap[sucId]) {
+        sucursalesMap[sucId] = {
+          sucursal_id: sucId,
+          sucursal_nombre: c.sucursal?.nombre || 'Sin sucursal',
+          configs: [],
+        }
+      }
+      sucursalesMap[sucId].configs.push(c)
+    }
+
+    const resultado = []
+    for (const [sucId, suc] of Object.entries(sucursalesMap)) {
+      const registros = ejPorSuc[sucId] || []
+      const noRealizadas = []
+
+      for (const cfg of suc.configs) {
+        // Si ya fue ejecutada ese día, skip
+        if (ejConfigIds.has(cfg.id)) continue
+
+        // Evaluar si estaba programada para esa fecha
+        const ultimaFecha = ultimaEjMap[cfg.id] || null
+        const esRepetitiva = (cfg.tarea.subtareas || []).filter(s => s.activo).length > 0
+
+        let programada = false
+        let atrasada = false
+        let dias_atraso = 0
+
+        if (esRepetitiva) {
+          // Repetitivas: usar misma lógica que el scheduler
+          // Si tiene tipo/dias_semana, respetar la programación
+          const resultado_eval = evaluarConfigParaFecha(cfg, fecha, ultimaFecha)
+          if (resultado_eval.programada) {
+            programada = true
+            atrasada = resultado_eval.atrasada || false
+            dias_atraso = resultado_eval.dias_atraso || 0
+          } else {
+            // Fallback: si fecha >= fecha_inicio y no tiene tipo específico, aparece
+            const fechaInicio = new Date(cfg.fecha_inicio + 'T12:00:00')
+            const fechaConsulta = new Date(fecha + 'T12:00:00')
+            programada = fechaConsulta >= fechaInicio && (!cfg.tipo || cfg.tipo === 'frecuencia')
+          }
+        } else {
+          const resultado_eval = evaluarConfigParaFecha(cfg, fecha, ultimaFecha)
+          programada = resultado_eval.programada
+          atrasada = resultado_eval.atrasada || false
+          dias_atraso = resultado_eval.dias_atraso || 0
+        }
+
+        if (!programada) continue
+
+        // Calcular próxima fecha
+        let proxima_fecha = null
+        let reprogramada = false
+        if (cfg.reprogramar_siguiente) {
+          // Calcular próxima según la lógica real del scheduler
+          const prox = calcularProximaFecha(cfg, fecha)
+          if (prox) {
+            proxima_fecha = prox.toISOString().split('T')[0]
+          } else {
+            // Fallback: día siguiente
+            const sig = new Date(new Date(fecha + 'T12:00:00').getTime() + 86400000)
+            proxima_fecha = sig.toISOString().split('T')[0]
+          }
+          reprogramada = true
+        } else {
+          const prox = calcularProximaFecha(cfg, ultimaFecha || fecha)
+          if (prox) proxima_fecha = prox.toISOString().split('T')[0]
+        }
+
+        noRealizadas.push({
+          tarea_config_id: cfg.id,
+          nombre: cfg.tarea.nombre,
+          atrasada,
+          dias_atraso,
+          proxima_fecha,
+          reprogramada,
+        })
+      }
+
+      resultado.push({
+        sucursal_id: sucId,
+        sucursal_nombre: suc.sucursal_nombre,
+        registros,
+        no_realizadas: noRealizadas,
+        total_realizadas: registros.length,
+        total_no_realizadas: noRealizadas.length,
+      })
+    }
+
+    resultado.sort((a, b) => a.sucursal_nombre.localeCompare(b.sucursal_nombre))
+    res.json(resultado)
+  } catch (err) {
+    console.error('Error panel-dia:', err)
+    res.status(500).json({ error: 'Error al obtener panel por día' })
+  }
+})
+
 // GET /api/tareas/panel-general — Estado de todas las tareas en todas las sucursales
 // Reutiliza obtenerTareasPendientes para que la lógica sea idéntica a la vista de sucursal
 router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
@@ -345,10 +523,22 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
       ejMap[ej.tarea_config_id] = ej
     }
 
+    // Traer configs con nombre de tarea para enriquecer ejecuciones sin pendiente
+    const { data: allConfigs } = await supabase
+      .from('tareas_config_sucursal')
+      .select('id, sucursal_id, tarea:tareas(id, nombre, descripcion), frecuencia_dias')
+      .eq('activo', true)
+
+    const configMap = {}
+    for (const c of (allConfigs || [])) {
+      configMap[c.id] = c
+    }
+
     // Para cada sucursal, usar la misma lógica que la vista de operario
     const resultado = []
     for (const [sucId, sucNombre] of Object.entries(sucursalesMap)) {
       const pendientes = await obtenerTareasPendientes(sucId)
+      const pendientesIds = new Set(pendientes.map(t => t.tarea_config_id))
 
       const tareas = pendientes.map(t => {
         const ejecucion = ejMap[t.tarea_config_id]
@@ -367,6 +557,27 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
           hora_completada: ejecucion?.created_at || null,
         }
       })
+
+      // Agregar tareas ejecutadas hoy que ya no están en pendientes
+      // (porque obtenerTareasPendientes las saltea al estar completas)
+      for (const ej of (ejecucionesHoy || [])) {
+        const cfg = configMap[ej.tarea_config_id]
+        if (!cfg || String(cfg.sucursal_id) !== String(sucId)) continue
+        if (pendientesIds.has(ej.tarea_config_id)) continue
+        tareas.push({
+          tarea_config_id: ej.tarea_config_id,
+          tarea_id: cfg.tarea?.id,
+          nombre: cfg.tarea?.nombre || '-',
+          descripcion: cfg.tarea?.descripcion || null,
+          frecuencia_dias: cfg.frecuencia_dias,
+          fecha_programada: hoyStr,
+          completada: true,
+          atrasada: false,
+          dias_atraso: 0,
+          completada_por: ej.completada_por?.nombre || null,
+          hora_completada: ej.created_at || null,
+        })
+      }
 
       resultado.push({
         sucursal_id: sucId,
