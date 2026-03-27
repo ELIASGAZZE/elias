@@ -3429,6 +3429,7 @@ const POS = () => {
               </svg>
               PROBLEMA <span className="text-[10px] opacity-70">F8</span>
             </button>
+            <span className="text-violet-300 text-xs font-medium opacity-70">{cierreActivo?.numero ? `#${cierreActivo.numero}` : ''}</span>
             <button
               onClick={() => setMostrarCerrarCaja(true)}
               className="text-violet-400 hover:text-red-300 px-1.5 py-0.5 rounded transition-colors flex items-center gap-1"

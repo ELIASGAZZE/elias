@@ -28,24 +28,11 @@ POS_API_PATTERNS.forEach(pattern => {
   )
 })
 
-// Offline fallback: si la navegación falla (sin conexión), mostrar página offline
-self.addEventListener('fetch', (event) => {
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).catch(() => {
-        return new Response(
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sin conexión - Padano SRL</title>
-          <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb;color:#374151;text-align:center}
-          .c{max-width:320px;padding:2rem}.t{font-size:2.5rem;margin-bottom:1rem}.btn{margin-top:1.5rem;padding:0.75rem 1.5rem;background:#2563eb;color:#fff;border:none;border-radius:0.75rem;font-size:0.875rem;cursor:pointer}</style></head>
-          <body><div class="c"><div class="t">Sin conexión</div><p>No hay conexión a internet. Revisá tu conexión e intentá de nuevo.</p>
-          <button class="btn" onclick="location.reload()">Reintentar</button></div></body></html>`,
-          { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-        )
-      })
-    )
-  }
-})
+// Offline fallback para navegación: servir index.html cacheado (SPA)
+// precacheAndRoute ya cachea index.html — este handler solo actúa si falla el fetch
+import { NavigationRoute, createHandlerBoundToURL } from 'workbox-routing'
+const navHandler = createHandlerBoundToURL('/index.html')
+registerRoute(new NavigationRoute(navHandler))
 
 // Push notification listener
 self.addEventListener('push', (event) => {
