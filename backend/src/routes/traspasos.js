@@ -6,6 +6,41 @@ const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/au
 const { ajusteStockNegativo, ajusteStockPositivo } = require('../services/centumAjusteStock')
 
 // ═══════════════════════════════════════════════════════════════
+// Artículos ligero — solo los campos necesarios para preparación
+// ═══════════════════════════════════════════════════════════════
+
+router.post('/articulos-enriquecer', verificarAuth, async (req, res) => {
+  try {
+    const { ids } = req.body // array de id_centum (articulo_id en ordenes)
+    if (!Array.isArray(ids) || ids.length === 0) return res.json([])
+
+    const { data, error } = await supabase
+      .from('articulos')
+      .select('id, id_centum, codigo, nombre, rubro, rubro_id_centum, marca, es_pesable, codigos_barras, peso_promedio_pieza, peso_minimo, peso_maximo')
+      .in('id_centum', ids)
+
+    if (error) throw error
+
+    const articulos = (data || []).map(a => ({
+      id: a.id_centum || a.id,
+      codigo: a.codigo || '',
+      nombre: a.nombre || '',
+      rubro: a.rubro ? { nombre: a.rubro } : null,
+      marca: a.marca || null,
+      esPesable: a.es_pesable || false,
+      codigosBarras: a.codigos_barras || [],
+      pesoPromedioPieza: a.peso_promedio_pieza ? parseFloat(a.peso_promedio_pieza) : null,
+      pesoMinimo: a.peso_minimo ? parseFloat(a.peso_minimo) : null,
+      pesoMaximo: a.peso_maximo ? parseFloat(a.peso_maximo) : null,
+    }))
+
+    res.json(articulos)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
 // Stock por sucursal (para mostrar en picker de artículos)
 // ═══════════════════════════════════════════════════════════════
 
@@ -802,20 +837,20 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'Solo se pueden pesar canastos despachados' })
     }
 
-    // Obtener tolerancia
+    // Obtener tolerancia en gramos
     const { data: configRows } = await supabase
       .from('traspaso_config')
       .select('valor')
-      .eq('clave', 'tolerancia_peso_porcentaje')
+      .eq('clave', 'tolerancia_peso_gramos')
       .single()
 
-    const tolerancia = parseFloat(configRows?.valor || '2') / 100
+    const toleranciaGramos = parseFloat(configRows?.valor || '500')
     const pesoOrigen = parseFloat(canasto.peso_origen)
     const pesoDestino = parseFloat(peso_destino)
-    const diferenciaPct = Math.abs(pesoDestino - pesoOrigen) / pesoOrigen
+    const diferenciaGramos = Math.abs(pesoDestino - pesoOrigen) * 1000
 
     let nuevoEstado
-    if (diferenciaPct <= tolerancia) {
+    if (diferenciaGramos <= toleranciaGramos) {
       nuevoEstado = 'aprobado'
     } else {
       nuevoEstado = 'verificacion_manual'
@@ -835,7 +870,7 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
       .single()
 
     if (error) throw error
-    res.json({ ...data, dentro_tolerancia: nuevoEstado === 'aprobado' })
+    res.json({ ...data, dentro_tolerancia: nuevoEstado === 'aprobado', diferencia_gramos: Math.round(diferenciaGramos) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1002,7 +1037,7 @@ router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
     const ordenIds = ordenes.map(o => o.id)
     const { data: canastos } = await supabase
       .from('traspaso_canastos')
-      .select('id, orden_traspaso_id, precinto, estado, tipo, nombre')
+      .select('id, orden_traspaso_id, precinto, estado, tipo, nombre, numero_pallet, cantidad_bultos_origen')
       .in('orden_traspaso_id', ordenIds)
 
     const canastosPorOrden = {}
@@ -1024,6 +1059,40 @@ router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
     })
 
     res.json(resultado)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Buscar canasto/pallet por precinto (sin despachar) — para confirmar antes de cargar
+router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res) => {
+  try {
+    const precinto = req.params.precinto.trim()
+    if (!precinto) return res.status(400).json({ error: 'Precinto requerido' })
+
+    const { data: canasto, error } = await supabase
+      .from('traspaso_canastos')
+      .select('*, orden_traspaso_id')
+      .eq('precinto', precinto)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (error || !canasto) {
+      return res.status(404).json({ error: `No se encontró canasto/pallet con precinto "${precinto}"` })
+    }
+
+    // Traer datos de la orden con sucursales
+    const { data: orden } = await supabase
+      .from('ordenes_traspaso')
+      .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id, sucursal_origen_nombre, sucursal_destino_nombre')
+      .eq('id', canasto.orden_traspaso_id)
+      .single()
+
+    res.json({
+      canasto,
+      orden,
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1164,6 +1233,282 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
       canastos_restantes: total - despachados,
       total_canastos: total,
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Preparar con canastos (batch) — crea canastos + pallets y marca preparada
+// ═══════════════════════════════════════════════════════════════
+
+router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    const { canastos: canastosBody, pallets: palletsBody, articulos_faltantes, crear_nueva_orden, observacion } = req.body
+
+    // Validar orden en en_preparacion
+    const { data: orden } = await supabase
+      .from('ordenes_traspaso')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('estado', 'en_preparacion')
+      .single()
+
+    if (!orden) return res.status(400).json({ error: 'La orden debe estar en preparación' })
+
+    const canastosArr = Array.isArray(canastosBody) ? canastosBody : []
+    const palletsArr = Array.isArray(palletsBody) ? palletsBody : []
+
+    if (canastosArr.length === 0 && palletsArr.length === 0) {
+      return res.status(400).json({ error: 'Debe haber al menos un canasto o pallet' })
+    }
+
+    // Validar que cada canasto tiene peso
+    for (const c of canastosArr) {
+      if (!c.precinto) return res.status(400).json({ error: 'Cada canasto debe tener precinto' })
+      if (!c.peso_origen || parseFloat(c.peso_origen) <= 0) {
+        return res.status(400).json({ error: `Canasto "${c.precinto}" debe tener peso` })
+      }
+    }
+
+    // Validar precintos únicos y no en uso en otra orden activa
+    const precintos = canastosArr.map(c => c.precinto)
+    const precintosUnicos = new Set(precintos)
+    if (precintosUnicos.size !== precintos.length) {
+      return res.status(400).json({ error: 'Hay precintos duplicados' })
+    }
+
+    if (precintos.length > 0) {
+      const { data: existentes } = await supabase
+        .from('traspaso_canastos')
+        .select('precinto, orden_traspaso_id')
+        .in('precinto', precintos)
+        .neq('orden_traspaso_id', req.params.id)
+
+      if (existentes && existentes.length > 0) {
+        const ordenIds = [...new Set(existentes.map(c => c.orden_traspaso_id))]
+        const { data: ordenesActivas } = await supabase
+          .from('ordenes_traspaso')
+          .select('id, numero, estado')
+          .in('id', ordenIds)
+          .in('estado', ['en_preparacion', 'preparado', 'despachado'])
+
+        if (ordenesActivas && ordenesActivas.length > 0) {
+          const precintosEnUso = existentes
+            .filter(e => ordenesActivas.some(o => o.id === e.orden_traspaso_id))
+            .map(e => e.precinto)
+          return res.status(400).json({ error: `Precintos en uso en otra orden: ${precintosEnUso.join(', ')}` })
+        }
+      }
+    }
+
+    // Crear canastos
+    const canastosCreados = []
+    for (const c of canastosArr) {
+      const { data: nuevo, error: errC } = await supabase
+        .from('traspaso_canastos')
+        .insert({
+          orden_traspaso_id: req.params.id,
+          precinto: c.precinto,
+          peso_origen: parseFloat(c.peso_origen),
+          estado: 'cerrado',
+          items: [],
+        })
+        .select()
+        .single()
+      if (errC) throw errC
+      canastosCreados.push(nuevo)
+    }
+
+    // Crear pallets
+    const palletsCreados = []
+    for (const p of palletsArr) {
+      if (!p.cantidad_bultos || parseInt(p.cantidad_bultos) <= 0) {
+        return res.status(400).json({ error: 'Cada pallet debe tener cantidad de bultos' })
+      }
+
+      // Generar numero de pallet via secuencia
+      const { data: seqData } = await supabase.rpc('nextval_traspaso_pallet')
+      let numeroPallet
+      if (seqData) {
+        numeroPallet = `PAL-${String(seqData).padStart(6, '0')}`
+      } else {
+        // Fallback si la función RPC no existe
+        numeroPallet = `PAL-${Date.now()}`
+      }
+
+      const { data: nuevo, error: errP } = await supabase
+        .from('traspaso_canastos')
+        .insert({
+          orden_traspaso_id: req.params.id,
+          precinto: numeroPallet,
+          tipo: 'pallet',
+          numero_pallet: numeroPallet,
+          cantidad_bultos_origen: parseInt(p.cantidad_bultos),
+          nombre: p.items_descripcion || 'Pallet',
+          estado: 'cerrado',
+          items: [],
+        })
+        .select()
+        .single()
+      if (errP) throw errP
+      palletsCreados.push({ ...nuevo, items_descripcion: p.items_descripcion })
+    }
+
+    // Marcar orden como preparada (misma lógica que PUT /preparado)
+    const notasActualizadas = observacion
+      ? (orden.notas ? orden.notas + '\nObs. preparación: ' + observacion : 'Obs. preparación: ' + observacion)
+      : orden.notas
+    const { data: ordenPreparada, error: errPrep } = await supabase
+      .from('ordenes_traspaso')
+      .update({
+        estado: 'preparado',
+        preparado_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notas: notasActualizadas,
+      })
+      .eq('id', req.params.id)
+      .eq('estado', 'en_preparacion')
+      .select()
+      .single()
+
+    if (errPrep) throw errPrep
+
+    // Auto-learn weights (copiado de PUT /preparado)
+    try {
+      const pesosPorArticulo = {}
+      for (const item of (ordenPreparada.items || [])) {
+        if (item.es_pesable && Array.isArray(item.pesos_escaneados) && item.pesos_escaneados.length > 0) {
+          if (!pesosPorArticulo[item.articulo_id]) pesosPorArticulo[item.articulo_id] = []
+          pesosPorArticulo[item.articulo_id].push(...item.pesos_escaneados)
+        }
+      }
+      for (const [articuloId, pesos] of Object.entries(pesosPorArticulo)) {
+        if (pesos.length === 0) continue
+        const nuevoMin = Math.min(...pesos)
+        const nuevoMax = Math.max(...pesos)
+        const nuevoPromedio = pesos.reduce((s, p) => s + p, 0) / pesos.length
+        const { data: art } = await supabase
+          .from('articulos').select('id, peso_promedio_pieza, peso_minimo, peso_maximo, peso_muestras')
+          .eq('id_centum', articuloId).single()
+        if (!art) continue
+        const muestrasAnteriores = art.peso_muestras || 0
+        const muestrasNuevas = pesos.length
+        const totalMuestras = muestrasAnteriores + muestrasNuevas
+        const promedioAnterior = art.peso_promedio_pieza ? parseFloat(art.peso_promedio_pieza) : nuevoPromedio
+        const promedioActualizado = muestrasAnteriores > 0
+          ? (promedioAnterior * muestrasAnteriores + nuevoPromedio * muestrasNuevas) / totalMuestras
+          : nuevoPromedio
+        const minActualizado = art.peso_minimo ? Math.min(parseFloat(art.peso_minimo), nuevoMin) : nuevoMin
+        const maxActualizado = art.peso_maximo ? Math.max(parseFloat(art.peso_maximo), nuevoMax) : nuevoMax
+        await supabase.from('articulos').update({
+          peso_promedio_pieza: Math.round(promedioActualizado * 1000) / 1000,
+          peso_minimo: Math.round(minActualizado * 1000) / 1000,
+          peso_maximo: Math.round(maxActualizado * 1000) / 1000,
+          peso_muestras: totalMuestras,
+        }).eq('id', art.id)
+      }
+    } catch (pesoErr) {
+      console.error('Error actualizando pesos automáticos:', pesoErr)
+    }
+
+    // Manejar faltantes
+    let nueva_orden_id = null
+    let nueva_orden_numero = null
+    try {
+      if (Array.isArray(articulos_faltantes) && articulos_faltantes.length > 0) {
+        const rows = articulos_faltantes.map(f => ({
+          orden_traspaso_id: req.params.id,
+          articulo_id: f.articulo_id,
+          nombre: f.nombre || null,
+          codigo: f.codigo || null,
+          cantidad_solicitada: f.cantidad_solicitada,
+          cantidad_preparada: f.cantidad_preparada,
+          cantidad_faltante: f.cantidad_faltante,
+          motivo: f.motivo || null,
+          sucursal_id: ordenPreparada.sucursal_origen_id,
+        }))
+        await supabase.from('traspaso_articulos_faltantes').insert(rows)
+      }
+      if (crear_nueva_orden && Array.isArray(articulos_faltantes) && articulos_faltantes.length > 0) {
+        let numero
+        try {
+          const { count } = await supabase.from('ordenes_traspaso').select('*', { count: 'exact', head: true })
+          numero = `OT-${String((count || 0) + 1).padStart(6, '0')}`
+        } catch { numero = `OT-${Date.now()}` }
+        const nuevosItems = articulos_faltantes.map(f => ({
+          articulo_id: f.articulo_id, nombre: f.nombre, codigo: f.codigo,
+          cantidad_solicitada: f.cantidad_faltante, cantidad: f.cantidad_faltante,
+        }))
+        const { data: nuevaOrden } = await supabase.from('ordenes_traspaso').insert({
+          numero, sucursal_origen_id: ordenPreparada.sucursal_origen_id,
+          sucursal_destino_id: ordenPreparada.sucursal_destino_id,
+          items: nuevosItems, notas: `Pendientes de ${ordenPreparada.numero}`,
+          creado_por: req.usuario?.id,
+        }).select().single()
+        if (nuevaOrden) { nueva_orden_id = nuevaOrden.id; nueva_orden_numero = nuevaOrden.numero }
+      }
+    } catch (faltantesErr) {
+      console.error('Error procesando faltantes:', faltantesErr)
+    }
+
+    res.json({
+      ...ordenPreparada,
+      canastos_creados: canastosCreados,
+      pallets_creados: palletsCreados,
+      nueva_orden_id,
+      nueva_orden_numero,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Verificar pallet por conteo de bultos
+// ═══════════════════════════════════════════════════════════════
+
+router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => {
+  try {
+    const { cantidad_bultos_destino } = req.body
+    if (cantidad_bultos_destino === undefined || cantidad_bultos_destino === null) {
+      return res.status(400).json({ error: 'cantidad_bultos_destino requerido' })
+    }
+
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto || canasto.tipo !== 'pallet') {
+      return res.status(400).json({ error: 'Solo se pueden verificar pallets' })
+    }
+    if (canasto.estado !== 'despachado') {
+      return res.status(400).json({ error: 'El pallet debe estar despachado' })
+    }
+
+    const bultosOrigen = canasto.cantidad_bultos_origen || 0
+    const bultosDestino = parseInt(cantidad_bultos_destino)
+    const coincide = bultosOrigen === bultosDestino
+
+    const nuevoEstado = coincide ? 'aprobado' : 'verificacion_manual'
+
+    const { data, error } = await supabase
+      .from('traspaso_canastos')
+      .update({
+        cantidad_bultos_destino: bultosDestino,
+        estado: nuevoEstado,
+        verificado_por: req.usuario?.id,
+        verificado_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json({ ...data, bultos_coinciden: coincide })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

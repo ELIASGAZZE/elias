@@ -758,7 +758,48 @@ async function getFacturasTurno(nroDocumentos) {
   }
 }
 
+/**
+ * Obtiene ventas de Centum BI por rango de fecha.
+ * @param {string} fechaDesde - YYYY-MM-DD
+ * @param {string} fechaHasta - YYYY-MM-DD
+ * @returns {Array} recordset de ventas
+ */
+async function getVentasCentumByFecha(fechaDesde, fechaHasta) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+    const result = await db.request()
+      .input('fechaDesde', sql.VarChar, fechaDesde)
+      .input('fechaHasta', sql.VarChar, fechaHasta)
+      .query(`
+        SELECT v.VentaID, v.NumeroDocumento, v.FechaDocumento,
+               v.FechaCreacion, v.Total, v.ClienteID, v.Anulado
+        FROM Ventas_VIEW v
+        WHERE v.FechaDocumento >= @fechaDesde
+          AND v.FechaDocumento <= @fechaHasta
+          AND v.Anulado = 0
+        ORDER BY v.VentaID
+      `)
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumByFecha',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: result.recordset.length, origen: 'reconciliacion',
+    })
+
+    return result.recordset
+  } catch (err) {
+    console.error('[Centum BI] Error al obtener ventas por fecha:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumByFecha',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'reconciliacion',
+    })
+    throw err
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
-  getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno,
+  getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno, getVentasCentumByFecha,
 }
