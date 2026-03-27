@@ -198,17 +198,29 @@ const OrdenDetalle = () => {
             </>
           )}
           {orden.estado === 'preparado' && (
-            <button onClick={() => ejecutarAccion('despachar', '¿Despachar esta orden? Se realizará el ajuste de stock en origen.')}
-              disabled={accionando}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
-              Despachar
-            </button>
+            <>
+              <button onClick={() => ejecutarAccion('despachar', '¿Despachar esta orden? Se realizará el ajuste de stock en origen.')}
+                disabled={accionando}
+                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                Despachar
+              </button>
+              <button onClick={cancelar} disabled={accionando}
+                className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                Cancelar Orden
+              </button>
+            </>
           )}
           {orden.estado === 'despachado' && (
-            <Link to={`/traspasos/recibir/${id}`}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-              Ir a Recepción
-            </Link>
+            <>
+              <Link to={`/traspasos/recibir/${id}`}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Ir a Recepción
+              </Link>
+              <button onClick={cancelar} disabled={accionando}
+                className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                Cancelar Orden
+              </button>
+            </>
           )}
         </div>
 
