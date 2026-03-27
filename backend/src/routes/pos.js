@@ -1473,7 +1473,7 @@ router.get('/pedidos', verificarAuth, async (req, res) => {
     } else {
       // Filtros de fecha y sucursal solo cuando no hay búsqueda
       if (fecha) {
-        query = query.gte('created_at', `${fecha}T00:00:00`).lte('created_at', `${fecha}T23:59:59`)
+        query = query.eq('fecha_entrega', fecha)
       }
       if (sucursal_id) {
         query = query.eq('sucursal_id', sucursal_id)
