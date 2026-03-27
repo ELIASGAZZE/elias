@@ -890,23 +890,26 @@ async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
 }
 
 /**
- * Envía el comprobante PDF por email automáticamente si:
+ * Envía el comprobante por email automáticamente si:
  * - La venta es Factura A (RI/MT) o EMPRESA con pago electrónico
  * - El cliente tiene email cargado
  * - El email no fue enviado previamente
+ *
+ * Envía el comprobante como HTML embebido en el email (sin PDF/Puppeteer).
+ * El PDF se puede generar bajo demanda desde el envío manual.
  */
 async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   // Obtener venta completa
   const { data: venta, error } = await supabase.from('ventas_pos').select('*').eq('id', ventaPosId).single()
-  if (error || !venta) return
+  if (error || !venta) { console.log(`[Email Auto] Venta ${ventaPosId} no encontrada`); return }
   if (venta.email_enviado) return // Ya se envió
 
   // Obtener cliente y su email
-  if (!venta.id_cliente_centum) return
+  if (!venta.id_cliente_centum) { console.log(`[Email Auto] Venta ${ventaPosId} sin cliente asignado`); return }
   const { data: cli } = await supabase.from('clientes')
     .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo, email')
     .eq('id_centum', venta.id_cliente_centum).single()
-  if (!cli?.email) return // Sin email, no enviar
+  if (!cli?.email) { console.log(`[Email Auto] Cliente ${venta.id_cliente_centum} sin email (venta ${ventaPosId})`); return }
 
   // Verificar que sea EMPRESA (no PRUEBA)
   const condIva = cli.condicion_iva || 'CF'
@@ -919,22 +922,14 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
 
   const caeData = { cae, cae_vencimiento: caeVto, esFacturaA, cliente: cli }
 
-  // Generar HTML y PDF
+  // Generar HTML del comprobante (se envía embebido en el email, sin PDF)
   const { generarComprobanteHTML } = require('./comprobanteHTML')
   const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
 
-  const puppeteer = require('puppeteer')
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-  const page = await browser.newPage()
-  await page.setContent(comprobanteHTML, { waitUntil: 'networkidle0' })
-  const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } })
-  await browser.close()
-
-  // Enviar email
+  // Enviar email con el comprobante como HTML
   const esNC = venta.tipo === 'nota_credito'
   const tipoDoc = esNC ? 'Nota de Crédito' : 'Comprobante'
   const numDoc = venta.centum_comprobante || `#${venta.numero_venta || ''}`
-  const pdfFilename = `${tipoDoc.replace(/ /g, '_')}_${numDoc.replace(/\s+/g, '_')}.pdf`
 
   const escapeHtml = (s) => s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -942,18 +937,18 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   await enviarEmail({
     to: cli.email.trim(),
     subject: `${tipoDoc} ${numDoc} - Almacen Zaatar`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+    html: `<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px">
       <p>Estimado/a <strong>${escapeHtml(venta.nombre_cliente || 'Cliente')}</strong>,</p>
-      <p>Adjuntamos su comprobante de ${esNC ? 'nota de crédito' : 'compra'} en formato PDF.</p>
+      <p>Le enviamos su ${esNC ? 'nota de crédito' : 'comprobante de compra'}.</p>
       <p style="color:#555;font-size:13px">Número: <strong>${escapeHtml(numDoc)}</strong><br>
       Fecha: ${new Date(venta.created_at).toLocaleDateString('es-AR')}<br>
       Total: <strong>$${parseFloat(venta.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong></p>
       <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+      ${comprobanteHTML}
+      <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
       <p style="font-size:11px;color:#999">Comercial Padano SRL - Brasil 313, Rosario<br>
       Este email fue enviado desde un sistema automatizado. No responder a esta dirección.</p>
     </div>`,
-    pdfBuffer: Buffer.from(pdfBuffer),
-    pdfFilename,
   })
 
   // Marcar como enviado
