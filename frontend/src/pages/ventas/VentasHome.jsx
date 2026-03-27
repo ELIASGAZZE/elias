@@ -35,6 +35,7 @@ const VentasHome = () => {
   const [ventas, setVentas] = useState([])
   const [fecha, setFecha] = useState(searchParams.get('fecha') || new Date().toISOString().split('T')[0])
   const [busqueda, setBusqueda] = useState(searchParams.get('busqueda') || '')
+  const [busquedaFactura, setBusquedaFactura] = useState(searchParams.get('factura') || '')
   const [filtroClasificacion, setFiltroClasificacion] = useState(searchParams.get('clasificacion') || '')
   const [filtroTipo, setFiltroTipo] = useState(searchParams.get('tipo') || '')
   const [filtroCentum, setFiltroCentum] = useState(searchParams.get('centum') || '')
@@ -53,6 +54,7 @@ const VentasHome = () => {
     const params = {}
     if (fecha && fecha !== new Date().toISOString().split('T')[0]) params.fecha = fecha
     if (busqueda) params.busqueda = busqueda
+    if (busquedaFactura) params.factura = busquedaFactura
     if (filtroClasificacion) params.clasificacion = filtroClasificacion
     if (filtroTipo) params.tipo = filtroTipo
     if (filtroCentum) params.centum = filtroCentum
@@ -66,9 +68,23 @@ const VentasHome = () => {
     setPage(1)
   }, [fecha, filtroEmpleado])
 
+  // Debounce para búsqueda por factura
+  const [facturaDebounced, setFacturaDebounced] = useState(busquedaFactura)
+  useEffect(() => {
+    const t = setTimeout(() => setFacturaDebounced(busquedaFactura), 500)
+    return () => clearTimeout(t)
+  }, [busquedaFactura])
+
+  // Debounce para búsqueda por cliente
+  const [busquedaDebounced, setBusquedaDebounced] = useState(busqueda)
+  useEffect(() => {
+    const t = setTimeout(() => { setBusquedaDebounced(busqueda); setPage(1) }, 500)
+    return () => clearTimeout(t)
+  }, [busqueda])
+
   useEffect(() => {
     cargarVentas()
-  }, [fecha, page, filtroCentum, filtroEmpleado])
+  }, [fecha, page, filtroCentum, filtroEmpleado, facturaDebounced, busquedaDebounced])
 
   useEffect(() => {
     api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
@@ -81,7 +97,14 @@ const VentasHome = () => {
       if (syncCAE) {
         await api.post('/api/pos/ventas/sync-caes')
       }
-      const params = new URLSearchParams({ fecha, page })
+      const params = new URLSearchParams({ page })
+      if (facturaDebounced.trim()) {
+        params.append('numero_factura', facturaDebounced.trim())
+      } else if (busquedaDebounced.trim()) {
+        params.append('buscar', busquedaDebounced.trim())
+      } else {
+        params.append('fecha', fecha)
+      }
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       const { data } = await api.get(`/api/pos/ventas?${params}`)
@@ -112,12 +135,8 @@ const VentasHome = () => {
     } catch {}
   }
 
-  // Filtrar por búsqueda de cliente, clasificación, tipo y sucursal
+  // Filtrar por clasificación, tipo y sucursal (búsqueda por cliente ahora va al backend)
   const ventasFiltradas = ventas.filter(v => {
-    if (busqueda) {
-      const term = busqueda.toLowerCase()
-      if (!(v.nombre_cliente || '').toLowerCase().includes(term)) return false
-    }
     if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
     if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
     if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
@@ -201,6 +220,13 @@ const VentasHome = () => {
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+          />
+          <input
+            type="text"
+            placeholder="Nº factura Centum (ej. B00007-2942)"
+            value={busquedaFactura}
+            onChange={e => { setBusquedaFactura(e.target.value); setPage(1) }}
+            className="w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
           />
           <button
             onClick={() => cargarVentas({ syncCAE: true })}
