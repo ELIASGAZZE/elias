@@ -3758,7 +3758,19 @@ router.get('/consulta-data', verificarAuth, async (req, res) => {
 })
 
 // POST /api/pos/emails-pendientes/enviar — re-enviar emails de Factura A que no se enviaron
-router.post('/emails-pendientes/enviar', verificarAuth, async (req, res) => {
+// Auth: verificarAuth normal O header X-Admin-Key con SUPABASE_SERVICE_KEY
+router.post('/emails-pendientes/enviar', async (req, res) => {
+  const adminKey = req.headers['x-admin-key']
+  if (adminKey && adminKey === process.env.SUPABASE_SERVICE_KEY) {
+    // OK — acceso admin directo
+  } else {
+    // Fallback a auth normal
+    return verificarAuth(req, res, () => handleEmailBatch(req, res))
+  }
+  return handleEmailBatch(req, res)
+})
+
+async function handleEmailBatch(req, res) {
   try {
     const { enviarComprobanteAutomatico } = require('../services/centumVentasPOS')
 
@@ -3802,6 +3814,6 @@ router.post('/emails-pendientes/enviar', verificarAuth, async (req, res) => {
     console.error('[Email Batch] Error:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}
 
 module.exports = router
