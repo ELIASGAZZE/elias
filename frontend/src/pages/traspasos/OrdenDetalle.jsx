@@ -269,32 +269,50 @@ const OrdenDetalle = () => {
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-3">Canastos ({canastos.length})</h3>
             <div className="space-y-2">
-              {canastos.map(c => (
-                <div key={c.id} className="border border-gray-100 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800 text-sm">Precinto: {c.precinto}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${CANASTO_BADGE[c.estado]}`}>
-                        {c.estado.replace(/_/g, ' ')}
-                      </span>
+              {canastos.map(c => {
+                const esPallet = c.tipo === 'pallet'
+                return (
+                  <div key={c.id} className="border border-gray-100 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-800 text-sm">
+                          {esPallet ? (c.numero_pallet || c.precinto) : `Precinto: ${c.precinto}`}
+                        </span>
+                        {esPallet && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Pallet</span>}
+                        {c.tipo === 'bulto' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Bulto</span>}
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${CANASTO_BADGE[c.estado]}`}>
+                          {c.estado.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {esPallet ? (
+                          <>
+                            {c.cantidad_bultos_destino != null && <span>Recibidos: {c.cantidad_bultos_destino} bultos</span>}
+                          </>
+                        ) : (
+                          <>
+                            {c.peso_origen && <span>Origen: {c.peso_origen} kg</span>}
+                            {c.peso_destino && <span className="ml-3">Destino: {c.peso_destino} kg</span>}
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-400">
-                      {c.peso_origen && <span>Origen: {c.peso_origen} kg</span>}
-                      {c.peso_destino && <span className="ml-3">Destino: {c.peso_destino} kg</span>}
-                    </div>
+                    {c.items && c.items.length > 0 && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        {c.items.map(i => `${i.nombre} (${i.cantidad})`).join(', ')}
+                      </div>
+                    )}
+                    {esPallet && c.nombre && c.nombre !== 'Pallet' && (
+                      <div className="text-xs text-gray-500 mt-1">{c.nombre}</div>
+                    )}
+                    {c.diferencias && c.diferencias.length > 0 && (
+                      <div className="mt-2 bg-red-50 rounded p-2 text-xs text-red-600">
+                        Diferencias: {c.diferencias.map(d => `${d.articulo_id}: esperado ${d.cantidad_esperada}, real ${d.cantidad_real}`).join('; ')}
+                      </div>
+                    )}
                   </div>
-                  {c.items && c.items.length > 0 && (
-                    <div className="text-xs text-gray-500 mt-1">
-                      {c.items.map(i => `${i.nombre} (${i.cantidad})`).join(', ')}
-                    </div>
-                  )}
-                  {c.diferencias && c.diferencias.length > 0 && (
-                    <div className="mt-2 bg-red-50 rounded p-2 text-xs text-red-600">
-                      Diferencias: {c.diferencias.map(d => `${d.articulo_id}: esperado ${d.cantidad_esperada}, real ${d.cantidad_real}`).join('; ')}
-                    </div>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

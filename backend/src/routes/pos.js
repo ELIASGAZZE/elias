@@ -4,6 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
+const { getVentasCentumByFecha } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
@@ -610,15 +611,20 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                 : null
 
               // Guardar referencia de Centum en la venta local
+              const updateData = {
+                id_venta_centum: resultado.IdVenta || null,
+                centum_comprobante: comprobante,
+                centum_sync: true,
+                centum_error: null,
+                numero_cae: resultado.CAE || null,
+              }
+              // Guardar alerta si hubo discrepancia de total
+              if (resultado._discrepanciaTotal) {
+                updateData.centum_error = `ALERTA: Total POS=$${resultado._totalPOS} vs Centum=$${resultado._totalCentum}`
+              }
               await supabase
                 .from('ventas_pos')
-                .update({
-                  id_venta_centum: resultado.IdVenta || null,
-                  centum_comprobante: comprobante,
-                  centum_sync: true,
-                  centum_error: null,
-                  numero_cae: resultado.CAE || null,
-                })
+                .update(updateData)
                 .eq('id', data.id)
               console.log(`[Centum POS] Venta ${data.id} registrada en Centum: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
               // Obtener CAE desde Centum (best effort, async)
@@ -810,15 +816,23 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       .order('created_at', { ascending: false })
 
     // Filtro por número de factura (POS o Centum) — tiene prioridad sobre otros filtros
-    const numFactura = req.query.numero_factura?.trim()
+    let numFactura = req.query.numero_factura?.trim()
     if (numFactura) {
-      // numero_venta es integer, centum_comprobante es texto tipo "B PV2-7740"
+      // numero_venta es integer, centum_comprobante es texto tipo "B PV7-2942"
       const esNumero = /^\d+$/.test(numFactura)
       if (esNumero) {
         // Buscar nro exacto en POS, o que el comprobante Centum termine con ese número (después del guión)
         query = query.or(`numero_venta.eq.${numFactura},centum_comprobante.ilike.%-${numFactura}`)
       } else {
-        query = query.ilike('centum_comprobante', `%${numFactura}%`)
+        // Normalizar formato Centum: "B00007-00002942" → buscar por letra + PV sin ceros + numero sin ceros
+        const matchCentum = numFactura.match(/^([A-Za-z])\s*0*(\d+)-0*(\d+)$/)
+        if (matchCentum) {
+          const [, letra, pv, num] = matchCentum
+          // Buscar tanto el formato normalizado como el original
+          query = query.or(`centum_comprobante.ilike.${letra.toUpperCase()} PV${pv}-${num},centum_comprobante.ilike.%${numFactura}%`)
+        } else {
+          query = query.ilike('centum_comprobante', `%${numFactura}%`)
+        }
       }
       query = query.range(from, to)
     }
@@ -921,6 +935,119 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
+  }
+})
+
+// GET /api/pos/ventas/reconciliacion — Cruzar ventas POS vs Centum BI
+router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { fecha, fecha_hasta } = req.query
+    if (!fecha) return res.status(400).json({ error: 'Parámetro fecha requerido (YYYY-MM-DD)' })
+
+    const fechaDesde = fecha
+    const fechaHasta = fecha_hasta || fecha
+
+    // 1. Obtener PVs del POS
+    const { data: cajas } = await supabase
+      .from('cajas')
+      .select('punto_venta_centum')
+      .not('punto_venta_centum', 'is', null)
+    const pvsPos = new Set((cajas || []).map(c => c.punto_venta_centum))
+
+    // 2. Consultar Centum BI
+    const ventasCentum = await getVentasCentumByFecha(fechaDesde, fechaHasta)
+
+    // Helper: parsear NumeroDocumento "B00007-00002942" → { pv: 7, num: 2942 }
+    function parsearNumeroDocumento(str) {
+      if (!str) return null
+      const match = str.trim().match(/^[A-Z](\d+)-(\d+)$/)
+      if (!match) return null
+      return { pv: parseInt(match[1], 10), num: parseInt(match[2], 10) }
+    }
+
+    // 3. Filtrar ventas de Centum que usen PVs del POS
+    const centumPOS = ventasCentum.filter(v => {
+      const parsed = parsearNumeroDocumento(v.NumeroDocumento)
+      return parsed && pvsPos.has(parsed.pv)
+    })
+
+    // 4. Consultar ventas POS del mismo rango
+    const { data: ventasPOS } = await supabase
+      .from('ventas_pos')
+      .select('id, total, numero_comprobante, centum_sync, id_venta_centum, created_at')
+      .gte('created_at', `${fechaDesde}T00:00:00`)
+      .lte('created_at', `${fechaHasta}T23:59:59`)
+
+    // Indexar POS por id_venta_centum
+    const posPorVentaId = new Map()
+    for (const v of (ventasPOS || [])) {
+      if (v.id_venta_centum) posPorVentaId.set(v.id_venta_centum, v)
+    }
+
+    // Indexar Centum por VentaID
+    const centumPorId = new Set(centumPOS.map(v => v.VentaID))
+
+    // 5. Cruzar
+    const fantasmas = []
+    const discrepancias = []
+    const faltantes = []
+
+    for (const vc of centumPOS) {
+      const posMatch = posPorVentaId.get(vc.VentaID)
+      if (!posMatch) {
+        fantasmas.push({
+          venta_id: vc.VentaID,
+          numero_documento: vc.NumeroDocumento?.trim(),
+          total: vc.Total,
+          fecha: vc.FechaDocumento,
+          fecha_creacion: vc.FechaCreacion,
+          cliente_id: vc.ClienteID,
+        })
+      } else {
+        const totalCentum = parseFloat(vc.Total) || 0
+        const totalPOS = parseFloat(posMatch.total) || 0
+        if (totalPOS > 0 && Math.abs(totalCentum - totalPOS) / totalPOS > 0.05) {
+          discrepancias.push({
+            venta_id: vc.VentaID,
+            numero_documento: vc.NumeroDocumento?.trim(),
+            total_centum: totalCentum,
+            total_pos: totalPOS,
+            diferencia_pct: Math.round(Math.abs(totalCentum - totalPOS) / totalPOS * 100),
+            pos_id: posMatch.id,
+          })
+        }
+      }
+    }
+
+    for (const vp of (ventasPOS || [])) {
+      if (vp.centum_sync && vp.id_venta_centum && !centumPorId.has(vp.id_venta_centum)) {
+        faltantes.push({
+          pos_id: vp.id,
+          id_venta_centum: vp.id_venta_centum,
+          numero_comprobante: vp.numero_comprobante,
+          total: vp.total,
+          fecha: vp.created_at,
+        })
+      }
+    }
+
+    res.json({
+      fecha: fechaDesde,
+      fecha_hasta: fechaHasta,
+      resumen: {
+        centum_api_total: centumPOS.length,
+        pos_synced_total: (ventasPOS || []).filter(v => v.centum_sync).length,
+        fantasmas: fantasmas.length,
+        discrepancias: discrepancias.length,
+        faltantes_centum: faltantes.length,
+      },
+      fantasmas,
+      discrepancias,
+      faltantes_centum: faltantes,
+    })
+  } catch (err) {
+    console.error('[POS] Error en reconciliación:', err.message)
+    res.status(500).json({ error: 'Error al ejecutar reconciliación', detalle: err.message })
   }
 })
 
@@ -3225,6 +3352,40 @@ router.post('/log-eliminacion', verificarAuth, async (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     console.error('[POS] Error al registrar eliminación:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/pos/ventas/:id/centum — obtener detalle completo de la venta en Centum (diagnóstico)
+router.get('/ventas/:id/centum', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { data: venta, error } = await supabase
+      .from('ventas_pos')
+      .select('id, numero_venta, total, items, id_venta_centum, centum_comprobante')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
+    if (!venta.id_venta_centum) return res.status(400).json({ error: 'La venta no tiene ID de Centum' })
+
+    const centumData = await obtenerVentaCentum(venta.id_venta_centum)
+    const centumTotal = centumData?.Total || 0
+    const posTotal = parseFloat(venta.total) || 0
+    const discrepancia = Math.abs(centumTotal - posTotal) > posTotal * 0.05
+
+    res.json({
+      pos: { id: venta.id, numero_venta: venta.numero_venta, total: posTotal, items_count: Array.isArray(venta.items) ? venta.items.length : 0 },
+      centum: {
+        IdVenta: centumData.IdVenta,
+        Total: centumTotal,
+        NumeroDocumento: centumData.NumeroDocumento,
+        CAE: centumData.CAE,
+        VentaArticulos: centumData.VentaArticulos,
+        VentaValoresEfectivos: centumData.VentaValoresEfectivos,
+      },
+      discrepancia,
+    })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })

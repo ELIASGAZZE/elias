@@ -3,92 +3,112 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const Reparto = () => {
-  const [ordenes, setOrdenes] = useState([])
-  const [cargando, setCargando] = useState(true)
   const [precinto, setPrecinto] = useState('')
   const [enviando, setEnviando] = useState(false)
-  const [feedback, setFeedback] = useState(null) // { tipo, mensaje }
-  const [expandida, setExpandida] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+  const [confirmacion, setConfirmacion] = useState(null)
+  const [buscando, setBuscando] = useState(false)
+  const [cargados, setCargados] = useState([]) // historial de la sesión
   const inputRef = useRef(null)
 
-  const cargar = async () => {
-    try {
-      const r = await api.get('/api/traspasos/ordenes-reparto')
-      setOrdenes(r.data)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setCargando(false)
-    }
-  }
-
   useEffect(() => {
-    cargar()
-  }, [])
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [feedback])
-
-  const despacharBulto = async (canastoId) => {
-    setEnviando(true)
-    setFeedback(null)
-    try {
-      const r = await api.put('/api/traspasos/canastos/despachar-scan', { canasto_id: canastoId })
-      const d = r.data
-      if (d.orden_completada) {
-        setFeedback({ tipo: 'completada', mensaje: `Orden ${d.orden?.numero || ''} COMPLETADA - Todos los canastos despachados` })
-      } else {
-        setFeedback({ tipo: 'ok', mensaje: `Bulto despachado (${d.total_canastos - d.canastos_restantes}/${d.total_canastos})` })
-      }
-      cargar()
-    } catch (err) {
-      setFeedback({ tipo: 'error', mensaje: err.response?.data?.error || 'Error al despachar bulto' })
-    } finally {
-      setEnviando(false)
-    }
-  }
+    if (!confirmacion) inputRef.current?.focus()
+  }, [feedback, confirmacion])
 
   const escanear = async (e) => {
     e.preventDefault()
     const valor = precinto.trim()
-    if (!valor || enviando) return
+    if (!valor || buscando || enviando) return
 
+    setBuscando(true)
+    setFeedback(null)
+
+    try {
+      const r = await api.get(`/api/traspasos/canastos/buscar-precinto/${encodeURIComponent(valor)}`)
+      const { canasto, orden } = r.data
+      const esPallet = canasto.tipo === 'pallet'
+
+      if (canasto.estado === 'despachado') {
+        setFeedback({
+          tipo: 'duplicado',
+          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} "${esPallet ? (canasto.numero_pallet || valor) : valor}" ya fue despachado`,
+        })
+        setPrecinto('')
+        setBuscando(false)
+        return
+      }
+
+      if (canasto.estado !== 'cerrado') {
+        setFeedback({
+          tipo: 'error',
+          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} en estado "${canasto.estado}", debe estar cerrado para despachar`,
+        })
+        setPrecinto('')
+        setBuscando(false)
+        return
+      }
+
+      setConfirmacion({
+        canasto,
+        orden,
+        tipo: esPallet ? 'pallet' : (canasto.tipo === 'bulto' ? 'bulto' : 'canasto'),
+        label: esPallet ? (canasto.numero_pallet || valor) : valor,
+      })
+      setPrecinto('')
+    } catch (err) {
+      setFeedback({
+        tipo: 'error',
+        mensaje: err.response?.data?.error || 'Error al buscar',
+      })
+      setPrecinto('')
+    } finally {
+      setBuscando(false)
+    }
+  }
+
+  const confirmarDespacho = async () => {
+    if (!confirmacion || enviando) return
     setEnviando(true)
     setFeedback(null)
 
     try {
-      const r = await api.put('/api/traspasos/canastos/despachar-scan', { precinto: valor })
+      const r = await api.put('/api/traspasos/canastos/despachar-scan', { canasto_id: confirmacion.canasto.id })
       const d = r.data
+
+      const item = {
+        label: confirmacion.label,
+        tipo: confirmacion.tipo,
+        destino: confirmacion.orden?.sucursal_destino_nombre,
+        orden: d.orden?.numero,
+      }
 
       if (d.orden_completada) {
         setFeedback({
           tipo: 'completada',
-          mensaje: `Orden ${d.orden?.numero || ''} COMPLETADA - Todos los canastos despachados`,
-        })
-      } else if (d.ya_escaneado) {
-        setFeedback({
-          tipo: 'duplicado',
-          mensaje: `Canasto "${valor}" ya estaba escaneado (${d.total_canastos - d.canastos_restantes}/${d.total_canastos})`,
+          mensaje: `Orden ${d.orden?.numero || ''} COMPLETADA - Todos los bultos despachados`,
         })
       } else {
         setFeedback({
           tipo: 'ok',
-          mensaje: `Canasto "${valor}" despachado (${d.total_canastos - d.canastos_restantes}/${d.total_canastos})`,
+          mensaje: `${confirmacion.tipo === 'pallet' ? 'Pallet' : 'Canasto'} "${confirmacion.label}" cargado → ${confirmacion.orden?.sucursal_destino_nombre}`,
         })
       }
 
-      setPrecinto('')
-      cargar()
+      setCargados(prev => [item, ...prev])
+      setConfirmacion(null)
     } catch (err) {
       setFeedback({
         tipo: 'error',
-        mensaje: err.response?.data?.error || 'Error al escanear',
+        mensaje: err.response?.data?.error || 'Error al despachar',
       })
-      setPrecinto('')
+      setConfirmacion(null)
     } finally {
       setEnviando(false)
     }
+  }
+
+  const cancelarConfirmacion = () => {
+    setConfirmacion(null)
   }
 
   const feedbackColors = {
@@ -129,7 +149,7 @@ const Reparto = () => {
         {/* Input de escaneo */}
         <form onSubmit={escanear} className="bg-white rounded-xl border border-gray-200 p-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Escanear precinto de canasto
+            Escanear precinto de canasto o pallet
           </label>
           <div className="flex gap-2">
             <input
@@ -140,17 +160,59 @@ const Reparto = () => {
               placeholder="Escanear o escribir precinto..."
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
               autoFocus
-              disabled={enviando}
+              disabled={buscando || enviando || !!confirmacion}
             />
             <button
               type="submit"
-              disabled={!precinto.trim() || enviando}
+              disabled={!precinto.trim() || buscando || enviando || !!confirmacion}
               className="px-4 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {enviando ? 'Enviando...' : 'Despachar'}
+              {buscando ? 'Buscando...' : 'Buscar'}
             </button>
           </div>
         </form>
+
+        {/* Popup de confirmación */}
+        {confirmacion && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
+              <div className="text-center">
+                <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-purple-100 flex items-center justify-center">
+                  <svg className="w-7 h-7 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-gray-800 mb-1">Confirmar carga</h3>
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  El {confirmacion.tipo === 'pallet' ? 'pallet' : 'canasto'}{' '}
+                  <span className="font-bold text-gray-800">{confirmacion.label}</span>{' '}
+                  va a la sucursal{' '}
+                  <span className="font-bold text-purple-700">{confirmacion.orden?.sucursal_destino_nombre}</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Orden: {confirmacion.orden?.numero}
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={cancelarConfirmacion}
+                  disabled={enviando}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  No
+                </button>
+                <button
+                  onClick={confirmarDespacho}
+                  disabled={enviando}
+                  className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  {enviando ? 'Cargando...' : 'Sí, cargar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Feedback */}
         {feedback && (
@@ -160,117 +222,38 @@ const Reparto = () => {
           </div>
         )}
 
-        {/* Lista de órdenes */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-            Órdenes preparadas ({ordenes.length})
-          </h2>
-
-          {cargando ? (
-            <p className="text-sm text-gray-400 text-center py-8">Cargando...</p>
-          ) : ordenes.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-              <svg className="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-              <p className="text-sm text-gray-400">No hay órdenes preparadas para despachar</p>
-            </div>
-          ) : (
-            ordenes.map(orden => {
-              const progreso = orden.total_canastos > 0
-                ? Math.round((orden.canastos_despachados / orden.total_canastos) * 100)
-                : 0
-              const abierta = expandida === orden.id
-
-              return (
-                <div key={orden.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                  {/* Header de orden */}
-                  <button
-                    onClick={() => setExpandida(abierta ? null : orden.id)}
-                    className="w-full p-4 text-left"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-gray-800">{orden.numero}</span>
-                        <svg
-                          className={`w-4 h-4 text-gray-400 transition-transform ${abierta ? 'rotate-180' : ''}`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                        </svg>
-                      </div>
-                      <span className="text-xs font-medium text-gray-500">
-                        {orden.canastos_despachados}/{orden.total_canastos} canastos
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-gray-500 mb-2">
-                      {orden.sucursal_origen_nombre} → {orden.sucursal_destino_nombre}
-                    </p>
-
-                    {/* Barra de progreso */}
-                    <div className="w-full bg-gray-100 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full transition-all duration-300 ${
-                          progreso === 100 ? 'bg-purple-600' : 'bg-green-500'
-                        }`}
-                        style={{ width: `${progreso}%` }}
-                      />
-                    </div>
-                  </button>
-
-                  {/* Detalle de canastos */}
-                  {abierta && (
-                    <div className="border-t border-gray-100 px-4 pb-4">
-                      <div className="space-y-2 pt-3">
-                        {(orden.canastos || []).map(c => {
-                          const esBulto = c.tipo === 'bulto'
-                          return (
-                            <div
-                              key={c.id}
-                              className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
-                                c.estado === 'despachado'
-                                  ? 'bg-green-50 text-green-700'
-                                  : 'bg-gray-50 text-gray-600'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`font-medium ${esBulto ? '' : 'font-mono'} truncate`}>
-                                  {esBulto ? (c.nombre || 'Bulto') : c.precinto}
-                                </span>
-                                {esBulto && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium shrink-0">Bulto</span>}
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {esBulto && c.estado === 'cerrado' && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      despacharBulto(c.id)
-                                    }}
-                                    className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-lg font-medium active:bg-purple-200"
-                                  >
-                                    Despachar
-                                  </button>
-                                )}
-                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                                  c.estado === 'despachado'
-                                    ? 'bg-green-100 text-green-700'
-                                    : 'bg-gray-200 text-gray-500'
-                                }`}>
-                                  {c.estado === 'despachado' ? 'Despachado' : 'Pendiente'}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
+        {/* Historial de cargados en esta sesión */}
+        {cargados.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              Cargados ({cargados.length})
+            </h3>
+            <div className="space-y-1.5">
+              {cargados.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between text-sm bg-green-50 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                    <span className="font-medium text-gray-800">{item.label}</span>
+                    {item.tipo === 'pallet' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Pallet</span>}
+                  </div>
+                  <span className="text-xs text-gray-500">→ {item.destino}</span>
                 </div>
-              )
-            })
-          )}
-        </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Estado vacío */}
+        {cargados.length === 0 && !feedback && (
+          <div className="text-center py-16">
+            <svg className="w-16 h-16 text-gray-200 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+            </svg>
+            <p className="text-sm text-gray-400">Escaneá un canasto o pallet para cargarlo al vehículo</p>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../../services/api'
+import { imprimirPallet } from '../../utils/imprimirPallet'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
@@ -43,8 +44,19 @@ const Preparacion = () => {
 
   const [orden, setOrden] = useState(null)
   const [cargando, setCargando] = useState(true)
-  const [fase, setFase] = useState('picking') // 'picking' | 'detalle'
+  const [fase, setFase] = useState('picking') // 'picking' | 'detalle' | 'canastos'
   const [itemDetalle, setItemDetalle] = useState(null)
+
+  // Fase canastos
+  const [canastosPrep, setCanastosPrep] = useState([]) // [{precinto, peso_origen}]
+  const [palletsPrep, setPalletsPrep] = useState([])    // [{cantidad_bultos, items_descripcion}]
+  const [scanCanasto, setScanCanasto] = useState('')
+  const scanCanastoRef = useRef(null)
+  const [modalPallet, setModalPallet] = useState(false)
+  const [palletBultos, setPalletBultos] = useState('')
+  const [palletDesc, setPalletDesc] = useState('')
+  const [enviandoCanastos, setEnviandoCanastos] = useState(false)
+  const [observacionCanastos, setObservacionCanastos] = useState('')
 
   // Stock y artículos completos (para imágenes, barras, rubro, marca)
   const [stockOrigen, setStockOrigen] = useState({})
@@ -101,11 +113,15 @@ const Preparacion = () => {
 
   useEffect(() => { cargar() }, [id])
 
+  // Cargar solo los artículos de la orden (ligero, no todo el catálogo)
   useEffect(() => {
-    api.get('/api/pos/articulos')
-      .then(r => setTodosArticulos(r.data?.articulos || []))
+    if (!orden) return
+    const ids = (orden.items || []).map(i => i.articulo_id).filter(Boolean)
+    if (ids.length === 0) return
+    api.post('/api/traspasos/articulos-enriquecer', { ids })
+      .then(r => setTodosArticulos(r.data || []))
       .catch(() => {})
-  }, [])
+  }, [orden?.id])
 
   useEffect(() => {
     if (fase === 'detalle') setTimeout(() => scanArticuloRef.current?.focus(), 150)
@@ -501,12 +517,8 @@ const Preparacion = () => {
       return
     }
 
-    try {
-      await api.put(`/api/traspasos/ordenes/${id}/preparado`)
-      navigate('/preparacion')
-    } catch (err) {
-      alert(err.response?.data?.error || 'Error')
-    }
+    // Ir a fase canastos
+    setFase('canastos')
   }
 
   const confirmarConPendientes = async (crearNuevaOrden) => {
@@ -514,6 +526,7 @@ const Preparacion = () => {
     try {
       const pendientes = modalPendientes.pendientes
       const motivos = modalPendientes.motivos
+      // Guardar los faltantes para enviarlos después en el batch
       const articulosFaltantes = pendientes.map(p => ({
         articulo_id: p.articulo_id,
         nombre: p.nombre,
@@ -524,20 +537,92 @@ const Preparacion = () => {
         motivo: crearNuevaOrden ? null : (motivos[p.articulo_id] || null),
       }))
 
-      const res = await api.put(`/api/traspasos/ordenes/${id}/preparado`, {
-        crear_nueva_orden: crearNuevaOrden,
-        articulos_faltantes: articulosFaltantes,
-      })
-
+      // Guardar en state para enviar en el batch
+      setModalPendientes(prev => ({ ...prev, articulosFaltantes, crearNuevaOrden }))
       setModalPendientes(null)
-      if (crearNuevaOrden && res.data.nueva_orden_numero) {
-        alert(`Orden cerrada. Se creó nueva orden ${res.data.nueva_orden_numero} con los pendientes.`)
-      }
-      navigate('/preparacion')
+
+      // Ir a fase canastos con datos de faltantes
+      setFase('canastos')
+      // Guardar faltantes en ref para usar en el batch
+      faltantesRef.current = { articulosFaltantes, crearNuevaOrden }
     } catch (err) {
-      alert(err.response?.data?.error || 'Error al cerrar orden')
+      alert(err.response?.data?.error || 'Error')
     } finally {
       setEnviandoPendientes(false)
+    }
+  }
+
+  // Ref para faltantes pendientes (se envían en el batch de canastos)
+  const faltantesRef = useRef(null)
+
+  // Escanear canasto
+  const handleScanCanasto = (e) => {
+    if (e.key !== 'Enter') return
+    const valor = scanCanasto.trim()
+    if (!valor) return
+    // Evitar duplicados
+    if (canastosPrep.some(c => c.precinto === valor)) {
+      alert('Este precinto ya fue escaneado')
+      setScanCanasto('')
+      return
+    }
+    setCanastosPrep(prev => [...prev, { precinto: valor, peso_origen: '' }])
+    setScanCanasto('')
+  }
+
+  // Agregar pallet
+  const agregarPallet = () => {
+    const bultos = parseInt(palletBultos)
+    if (!bultos || bultos <= 0) return
+    setPalletsPrep(prev => [...prev, { cantidad_bultos: bultos, items_descripcion: palletDesc.trim() }])
+    setPalletBultos('')
+    setPalletDesc('')
+    setModalPallet(false)
+  }
+
+  // Confirmar canastos y marcar preparada
+  const confirmarCanastos = async () => {
+    if (canastosPrep.length === 0 && palletsPrep.length === 0) return
+    if (canastosPrep.some(c => !c.peso_origen || parseFloat(c.peso_origen) <= 0)) {
+      alert('Todos los canastos deben tener peso')
+      return
+    }
+
+    setEnviandoCanastos(true)
+    try {
+      const body = {
+        canastos: canastosPrep.map(c => ({ precinto: c.precinto, peso_origen: parseFloat(c.peso_origen) })),
+        pallets: palletsPrep,
+        observacion: observacionCanastos.trim() || undefined,
+      }
+      // Incluir faltantes si los hay
+      if (faltantesRef.current) {
+        body.articulos_faltantes = faltantesRef.current.articulosFaltantes
+        body.crear_nueva_orden = faltantesRef.current.crearNuevaOrden
+      }
+
+      const res = await api.post(`/api/traspasos/ordenes/${id}/preparar-con-canastos`, body)
+
+      // Imprimir pallets creados
+      if (res.data.pallets_creados) {
+        for (const pallet of res.data.pallets_creados) {
+          imprimirPallet(pallet, {
+            numero: orden.numero,
+            sucursal_origen_nombre: orden.sucursal_origen_nombre,
+            sucursal_destino_nombre: orden.sucursal_destino_nombre,
+          })
+        }
+      }
+
+      if (res.data.nueva_orden_numero) {
+        alert(`Orden cerrada. Se creó nueva orden ${res.data.nueva_orden_numero} con los pendientes.`)
+      }
+
+      navigate('/preparacion')
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al confirmar')
+    } finally {
+      setEnviandoCanastos(false)
     }
   }
 
@@ -939,6 +1024,177 @@ const Preparacion = () => {
               {itemDetalle.es_pesable && <span className="font-normal text-sky-500"> · {pick} kg</span>}
             </button>
           )}
+        </div>
+      </div>
+    )
+  }
+
+  // ═══════════════════════════════════════
+  // FASE: CANASTOS
+  // ═══════════════════════════════════════
+  if (fase === 'canastos') {
+    const canastosValidos = canastosPrep.every(c => c.peso_origen && parseFloat(c.peso_origen) > 0)
+    const hayAlgo = canastosPrep.length > 0 || palletsPrep.length > 0
+    const puedeConfirmar = hayAlgo && canastosValidos && !enviandoCanastos
+
+    return (
+      <div className="min-h-screen bg-gray-100 pb-24">
+        {/* Banner */}
+        <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2">
+          <button onClick={() => setFase('picking')}
+            className="p-2 rounded-lg active:bg-sky-700">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <div className="flex-1">
+            <div className="text-base font-medium">Escanea los canastos</div>
+            <div className="text-sky-200 text-sm">{orden.numero} · {orden.sucursal_origen_nombre} → {orden.sucursal_destino_nombre}</div>
+          </div>
+        </div>
+
+        <div className="px-3 py-3 space-y-4">
+          {/* Input escaneo canastos */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+            <label className="text-sm font-medium text-gray-700">Escanear precinto de canasto</label>
+            <input
+              ref={scanCanastoRef}
+              type="text"
+              value={scanCanasto}
+              onChange={e => setScanCanasto(e.target.value)}
+              onKeyDown={handleScanCanasto}
+              placeholder="Escanear o escribir precinto..."
+              className="w-full border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              autoFocus
+            />
+          </div>
+
+          {/* Lista canastos escaneados */}
+          {canastosPrep.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-700">Canastos ({canastosPrep.length})</h3>
+              {canastosPrep.map((c, idx) => (
+                <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-lg p-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-mono font-medium text-gray-800 truncate">{c.precinto}</div>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    placeholder="Peso (kg)"
+                    value={c.peso_origen}
+                    onChange={e => setCanastosPrep(prev => prev.map((x, i) => i === idx ? { ...x, peso_origen: e.target.value } : x))}
+                    className={`w-28 border rounded-lg px-2 py-2 text-sm text-center ${
+                      c.peso_origen && parseFloat(c.peso_origen) > 0 ? 'border-green-300' : 'border-red-300'
+                    }`}
+                  />
+                  <span className="text-xs text-gray-400">kg</span>
+                  <button onClick={() => setCanastosPrep(prev => prev.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600 p-1">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Sección pallets */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-700">Pallets ({palletsPrep.length})</h3>
+              <button onClick={() => { setModalPallet(true); setPalletBultos(''); setPalletDesc('') }}
+                className="text-sm bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg font-medium active:bg-orange-200">
+                + Generar Pallet
+              </button>
+            </div>
+            {palletsPrep.length > 0 && (
+              <div className="space-y-2">
+                {palletsPrep.map((p, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-orange-50 rounded-lg p-3">
+                    <span className="text-xs bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">Pallet</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800">{p.cantidad_bultos} bultos</div>
+                      {p.items_descripcion && <div className="text-xs text-gray-500 truncate">{p.items_descripcion}</div>}
+                    </div>
+                    <button onClick={() => setPalletsPrep(prev => prev.filter((_, i) => i !== idx))}
+                      className="text-red-400 hover:text-red-600 p-1">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Observación */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
+            <label className="text-sm font-medium text-gray-700">Observación (opcional)</label>
+            <textarea
+              value={observacionCanastos}
+              onChange={e => setObservacionCanastos(e.target.value)}
+              placeholder="Notas sobre la preparación..."
+              rows={2}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Modal pallet */}
+        {modalPallet && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setModalPallet(false)}>
+            <div className="bg-white rounded-t-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-gray-800">Nuevo Pallet</h3>
+                <button onClick={() => setModalPallet(false)} className="p-2 rounded-lg active:bg-gray-100">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Cantidad de bultos *</label>
+                <input type="number" min="1" step="1" value={palletBultos}
+                  onChange={e => setPalletBultos(e.target.value)} autoFocus
+                  placeholder="Ej: 12"
+                  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg text-center focus:border-orange-500 focus:ring-2 focus:ring-orange-200 outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Descripción (opcional)</label>
+                <input type="text" value={palletDesc}
+                  onChange={e => setPalletDesc(e.target.value)}
+                  placeholder="Ej: 6 cajas vino malbec"
+                  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-200 outline-none"
+                />
+              </div>
+              <button onClick={agregarPallet}
+                disabled={!palletBultos || parseInt(palletBultos) <= 0}
+                className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
+                  palletBultos && parseInt(palletBultos) > 0
+                    ? 'bg-orange-500 active:bg-orange-600 text-white'
+                    : 'bg-gray-200 text-gray-400'
+                }`}>
+                Agregar Pallet
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Botón confirmar */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 safe-area-bottom">
+          <button onClick={confirmarCanastos} disabled={!puedeConfirmar}
+            className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
+              puedeConfirmar
+                ? 'bg-emerald-600 active:bg-emerald-700 text-white'
+                : 'bg-gray-200 text-gray-400'
+            }`}>
+            {enviandoCanastos ? 'Procesando...' : 'Confirmar y marcar preparada'}
+          </button>
         </div>
       </div>
     )
