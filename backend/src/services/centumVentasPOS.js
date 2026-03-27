@@ -58,6 +58,14 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
+  // Guard: no enviar ventas sin items o sin total
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    throw new Error('No se puede crear venta en Centum: items vacíos o nulos')
+  }
+  if (!total || total <= 0) {
+    throw new Error(`No se puede crear venta en Centum: total inválido (${total})`)
+  }
+
   const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
 
   // Factura A (RI/MT): Centum espera precios NETOS (sin IVA) y discrimina IVA
@@ -122,7 +130,13 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
   const idValor = MEDIO_A_ID_VALOR[medioPrincipal] || 1
 
-  console.log(`[Centum POS] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, importeValor=${importeValor}, preciosArticulos=[${ventaArticulos.map(a => a.Precio).join(',')}]`)
+  // Validar que los precios de artículos no sean todos 0
+  const preciosTodosZero = ventaArticulos.every(a => a.Precio === 0)
+  if (preciosTodosZero) {
+    throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
+  }
+
+  console.log(`[Centum POS] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, importeValor=${importeValor}, items=${ventaArticulos.length}, preciosArticulos=[${ventaArticulos.map(a => `${a.Cantidad}x${a.Precio}`).join(',')}]`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -170,6 +184,21 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
       items_procesados: ventaArticulos.length, origen: 'pos',
     })
     console.log(`[Centum POS] Venta creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+
+    // Verificar discrepancia de total: si Centum devuelve un total muy diferente, logear alerta
+    const centumTotal = parseFloat(data.Total) || 0
+    if (centumTotal > 0 && Math.abs(centumTotal - total) > total * 0.05) {
+      console.error(`[Centum POS] ⚠️ DISCREPANCIA DE TOTAL: POS=${total}, Centum=${centumTotal}, IdVenta=${data.IdVenta}. Body enviado: items=${ventaArticulos.length}, importeValor=${importeValor}`)
+      registrarLlamada({
+        servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
+        estado: 'warning', status_code: response.status, duracion_ms: Date.now() - inicio,
+        error_mensaje: `DISCREPANCIA TOTAL: POS=${total} vs Centum=${centumTotal}`, origen: 'pos',
+      })
+      data._discrepanciaTotal = true
+      data._totalPOS = total
+      data._totalCentum = centumTotal
+    }
+
     return data
   }
 
@@ -770,13 +799,18 @@ async function retrySyncVentasCentum() {
       }
 
       if (ventaConfirmada) {
-        await supabase.from('ventas_pos').update({
+        const updateData = {
           id_venta_centum: resultado?.IdVenta || null,
           centum_comprobante: comprobante,
           centum_sync: true,
           centum_error: null,
           numero_cae: caeReal,
-        }).eq('id', venta.id)
+        }
+        // Guardar alerta si hubo discrepancia de total
+        if (resultado?._discrepanciaTotal) {
+          updateData.centum_error = `ALERTA: Total POS=$${resultado._totalPOS} vs Centum=$${resultado._totalCentum}`
+        }
+        await supabase.from('ventas_pos').update(updateData).eq('id', venta.id)
       } else {
         // No se confirmó en Centum — limpiar datos falsos
         await supabase.from('ventas_pos').update({
@@ -937,15 +971,15 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
  * e intenta obtenerlo. Si lo obtiene, dispara el envío automático de email.
  */
 async function retrySyncCAE() {
-  const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { data: ventas, error } = await supabase.from('ventas_pos')
     .select('id, numero_venta, id_venta_centum')
     .eq('centum_sync', true)
     .not('id_venta_centum', 'is', null)
     .is('numero_cae', null)
-    .gte('created_at', hace48h)
+    .gte('created_at', hace7d)
     .order('created_at', { ascending: false })
-    .limit(20)
+    .limit(30)
 
   if (error || !ventas || ventas.length === 0) return { revisadas: 0, conCAE: 0 }
 
