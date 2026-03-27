@@ -2,7 +2,7 @@
 import { openDB } from 'idb'
 
 const DB_NAME = 'padano-pos'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 function getDB() {
   return openDB(DB_NAME, DB_VERSION, {
@@ -27,6 +27,9 @@ function getDB() {
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' })
+      }
+      if (!db.objectStoreNames.contains('empleadosPIN')) {
+        db.createObjectStore('empleadosPIN', { keyPath: 'id' })
       }
     },
   })
@@ -149,6 +152,23 @@ export async function contarVentasPendientes() {
 export async function borrarVentaPendiente(id) {
   const db = await getDB()
   await db.delete('ventasPendientes', id)
+}
+
+// --- Empleados PIN (para login offline) ---
+export async function guardarEmpleadosPIN(items) {
+  const db = await getDB()
+  const tx = db.transaction('empleadosPIN', 'readwrite')
+  await tx.store.clear()
+  for (const item of items) {
+    await tx.store.put(item)
+  }
+  await tx.done
+  await setMeta('lastSync_empleadosPIN', Date.now())
+}
+
+export async function getEmpleadosPIN() {
+  const db = await getDB()
+  return db.getAll('empleadosPIN')
 }
 
 // --- Meta (timestamps de sync) ---

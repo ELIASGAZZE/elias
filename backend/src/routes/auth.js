@@ -426,6 +426,31 @@ router.post('/setup-admin', async (req, res) => {
   }
 })
 
+// GET /api/auth/offline-pins
+// Devuelve perfiles con PIN hasheado para validación offline
+router.get('/offline-pins', verificarAuth, async (req, res) => {
+  try {
+    const { data: empleados, error } = await supabase
+      .from('empleados')
+      .select('id, nombre, codigo, sucursal_id, pin_fichaje')
+      .eq('activo', true)
+      .not('pin_fichaje', 'is', null)
+
+    if (error) throw error
+
+    res.json((empleados || []).map(e => ({
+      id: e.id,
+      nombre: e.nombre,
+      codigo: e.codigo,
+      sucursal_id: e.sucursal_id,
+      pin_hash: e.pin_fichaje,
+    })))
+  } catch (err) {
+    console.error('Error obteniendo offline pins:', err)
+    res.status(500).json({ error: 'Error al obtener datos offline' })
+  }
+})
+
 // POST /api/auth/emergency-login
 // Login de emergencia sin Supabase (solo cuando no hay internet)
 // Usa un PIN configurado en variable de entorno
