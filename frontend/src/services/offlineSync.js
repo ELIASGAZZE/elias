@@ -19,6 +19,7 @@ export async function syncVentasPendientes() {
     for (const venta of pendientes) {
       try {
         const { id, _timestamp, ...payload } = venta
+        if (_timestamp) payload.created_at_offline = new Date(_timestamp).toISOString()
         await api.post('/api/pos/ventas', payload)
         await borrarVentaPendiente(id)
         synced++
