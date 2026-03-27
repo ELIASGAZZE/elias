@@ -234,6 +234,7 @@ function calcularPromocionesLocales(carrito, promociones) {
           itemsAfectados: itemsMatch.map(i => i.articulo.id),
           descuentoPorItem,
           cantPorItem,
+          _cantidadMinima: cantMin,
         })
         break
       }
@@ -263,6 +264,7 @@ function calcularPromocionesLocales(carrito, promociones) {
           itemsAfectados: itemsMatch.map(i => i.articulo.id),
           descuentoPorItem,
           cantPorItem,
+          _cantidadMinima: cantMin,
         })
         break
       }
@@ -298,6 +300,7 @@ function calcularPromocionesLocales(carrito, promociones) {
           itemsAfectados: itemsMatch.map(i => i.articulo.id),
           descuentoPorItem,
           cantPorItem,
+          _cantidadMinima: llevar,
         })
         break
       }
@@ -716,23 +719,13 @@ function calcularPromocionesLocales(carrito, promociones) {
       }
     }
 
-    // Paso 2: Per-unit dedup global (todas las promos menos forma_pago)
-    // Para cada artículo, asignar unidades a la promo con mejor descuento por unidad.
-    // Múltiples promos pueden compartir un artículo si hay suficientes unidades.
-    const todasPromos = [...noCondicionales, ...condValidas]
-    if (todasPromos.length <= 1) return [...formaPago, ...todasPromos]
-
-    // Recopilar todos los artículos afectados
-    const articulosAfectados = new Set()
-    for (const p of todasPromos) {
-      for (const id of (p.itemsAfectados || [])) articulosAfectados.add(id)
-    }
+    // Paso 2: Condicionales ya tienen su descuento final (del reeval).
+    // Solo las no-condicionales pasan por dedup per-unit contra unidades restantes.
+    if (noCondicionales.length === 0) return [...formaPago, ...condValidas]
 
     // Reservar TODAS las unidades involucradas en promos condicionales (condición + beneficio)
-    // para que no sean tomadas por promos tipo porcentaje/nxm/etc.
     const unidadesReservadas = {} // artId → cant reservada
     for (const promo of condValidas) {
-      // Para cada artículo, reservar el MAX entre condición y beneficio (no sumar, porque pueden solaparse)
       const porArt = {} // artId → { condicion, beneficio }
       for (const [artId, cant] of Object.entries(promo.itemsCondicionUsados || {})) {
         if (!porArt[artId]) porArt[artId] = { condicion: 0, beneficio: 0 }
@@ -751,7 +744,12 @@ function calcularPromocionesLocales(carrito, promociones) {
       }
     }
 
-    // Para cada artículo, asignar unidades por rate DESC
+    // Dedup solo para no-condicionales: asignar unidades restantes por rate DESC
+    const articulosAfectados = new Set()
+    for (const p of noCondicionales) {
+      for (const id of (p.itemsAfectados || [])) articulosAfectados.add(id)
+    }
+
     const promoDescFinal = new Map() // promoIdx -> descuento recalculado
     const promoItemsFinal = new Map() // promoIdx -> [itemIds]
     for (const artId of articulosAfectados) {
@@ -760,20 +758,28 @@ function calcularPromocionesLocales(carrito, promociones) {
       let unidadesDisp = itemCarrito.cantidad - (unidadesReservadas[artId] || 0)
       if (unidadesDisp <= 0) continue
 
-      // Recopilar promos que afectan este artículo con su rate por unidad
       const claims = []
-      todasPromos.forEach((promo, idx) => {
+      noCondicionales.forEach((promo, idx) => {
         if (!(promo.itemsAfectados || []).includes(artId)) return
+        // Re-validar cantidad_minima: si la promo requiere N unidades y no hay suficientes
+        // después de reservar condicionales, no aplicar
+        const cantMin = promo._cantidadMinima || 1
+        if (cantMin > 1) {
+          // Contar unidades disponibles totales de todos los items que matchean esta promo
+          const totalDisp = (promo.itemsAfectados || []).reduce((sum, id) => {
+            const ic = carrito.find(i => i.articulo.id === id)
+            return sum + ((ic?.cantidad || 0) - (unidadesReservadas[id] || 0))
+          }, 0)
+          if (totalDisp < cantMin) return
+        }
         const descTotal = (promo.descuentoPorItem || {})[artId] || 0
         const cantClaimed = (promo.cantPorItem || {})[artId] || 1
-        const rate = descTotal / cantClaimed // descuento por unidad
+        const rate = descTotal / cantClaimed
         claims.push({ idx, rate, cantClaimed })
       })
 
-      // Ordenar por rate DESC
       claims.sort((a, b) => b.rate - a.rate)
 
-      // Asignar unidades greedy
       for (const { idx, rate, cantClaimed } of claims) {
         if (unidadesDisp <= 0) break
         const asignadas = Math.min(cantClaimed, unidadesDisp)
@@ -785,8 +791,9 @@ function calcularPromocionesLocales(carrito, promociones) {
       }
     }
 
-    const resultado = [...formaPago]
-    todasPromos.forEach((promo, idx) => {
+    // Resultado: formaPago + condicionales (con su descuento original) + no-condicionales deduplicadas
+    const resultado = [...formaPago, ...condValidas]
+    noCondicionales.forEach((promo, idx) => {
       if (promoDescFinal.has(idx) && promoDescFinal.get(idx) > 0) {
         resultado.push({
           ...promo,
