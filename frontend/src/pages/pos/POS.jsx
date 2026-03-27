@@ -150,14 +150,19 @@ function calcularPromoCondicional(reglas, carrito) {
   }
 
   for (const [, group] of condGroups) {
-    const benefItems = group.items.filter(item => listaBenef.some(ab => itemMatchesBenef(item, ab)))
-    if (benefItems.length === 0) continue
+    const benefMatches = group.items.map(item => {
+      const ab = listaBenef.find(ab => itemMatchesBenef(item, ab))
+      return ab ? { item, ab } : null
+    }).filter(Boolean)
+    if (benefMatches.length === 0) continue
+    // Usar la cantidad del BENEFICIO (no de la condición) para limitar unidades descontadas
+    const cantBenefPorVez = benefMatches[0].ab.cantidad || 1
     const maxDesc = group.isOr
-      ? (vecesPromo - orDescontados) * group.cantReq
-      : vecesPromo * group.cantReq
+      ? (vecesPromo - orDescontados) * cantBenefPorVez
+      : vecesPromo * cantBenefPorVez
     if (maxDesc <= 0) continue
     let restante = maxDesc
-    for (const item of benefItems) {
+    for (const { item } of benefMatches) {
       if (restante <= 0) break
       const cantDesc = Math.min(restante, item.cantidad)
       const precio = calcularPrecioConDescuentosBase(item.articulo)
