@@ -29,14 +29,28 @@ const OrdenesTraspasos = () => {
   const [cargando, setCargando] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState('')
 
-  useEffect(() => {
+  const cargar = () => {
     setCargando(true)
     const params = filtroEstado ? `?estado=${filtroEstado}` : ''
     api.get(`/api/traspasos/ordenes${params}`)
       .then(r => setOrdenes(r.data))
       .catch(err => console.error(err))
       .finally(() => setCargando(false))
-  }, [filtroEstado])
+  }
+
+  useEffect(() => { cargar() }, [filtroEstado])
+
+  const cancelarOrden = async (e, orden) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!window.confirm(`¿Cancelar la orden ${orden.numero}?`)) return
+    try {
+      await api.delete(`/api/traspasos/ordenes/${orden.id}`)
+      cargar()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al cancelar')
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -83,9 +97,20 @@ const OrdenesTraspasos = () => {
                       {o.items && <span className="ml-2">{Array.isArray(o.items) ? o.items.length : 0} artículos</span>}
                     </div>
                   </div>
-                  <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+                  <div className="flex items-center gap-2">
+                    {o.estado !== 'cancelado' && o.estado !== 'recibido' && (
+                      <button onClick={(e) => cancelarOrden(e, o)}
+                        className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        title="Cancelar orden">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                    <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
                 </div>
               </Link>
             ))}
