@@ -728,14 +728,26 @@ function calcularPromocionesLocales(carrito, promociones) {
       for (const id of (p.itemsAfectados || [])) articulosAfectados.add(id)
     }
 
-    // Reservar unidades usadas como condición por promos condicionales
-    // (solo si el artículo NO es también beneficio de esa promo, ya que el dedup per-unit lo maneja)
-    const unidadesReservadas = {} // artId → cant reservada como condición
+    // Reservar TODAS las unidades involucradas en promos condicionales (condición + beneficio)
+    // para que no sean tomadas por promos tipo porcentaje/nxm/etc.
+    const unidadesReservadas = {} // artId → cant reservada
     for (const promo of condValidas) {
+      // Para cada artículo, reservar el MAX entre condición y beneficio (no sumar, porque pueden solaparse)
+      const porArt = {} // artId → { condicion, beneficio }
       for (const [artId, cant] of Object.entries(promo.itemsCondicionUsados || {})) {
-        if (!(promo.itemsAfectados || []).includes(Number(artId))) {
-          unidadesReservadas[artId] = (unidadesReservadas[artId] || 0) + cant
-        }
+        if (!porArt[artId]) porArt[artId] = { condicion: 0, beneficio: 0 }
+        porArt[artId].condicion += cant
+      }
+      for (const [artId, cant] of Object.entries(promo.cantPorItem || {})) {
+        if (!porArt[artId]) porArt[artId] = { condicion: 0, beneficio: 0 }
+        porArt[artId].beneficio += cant
+      }
+      for (const [artId, { condicion, beneficio }] of Object.entries(porArt)) {
+        // Si el artículo es ambos (condición + beneficio), las unidades de beneficio
+        // están contenidas en las de condición, así que tomar condición.
+        // Si solo es beneficio (artículo distinto), sumar beneficio.
+        const reservar = condicion > 0 ? condicion : beneficio
+        unidadesReservadas[artId] = (unidadesReservadas[artId] || 0) + reservar
       }
     }
 
