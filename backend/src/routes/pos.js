@@ -421,7 +421,7 @@ router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, r
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline } = req.body
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
@@ -485,6 +485,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       }
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
+      if (created_at_offline) insertData.created_at = created_at_offline
 
       const { data: ventaData, error } = await supabase
         .from('ventas_pos')
@@ -1473,7 +1474,7 @@ router.get('/pedidos', verificarAuth, async (req, res) => {
     } else {
       // Filtros de fecha y sucursal solo cuando no hay búsqueda
       if (fecha) {
-        query = query.gte('created_at', `${fecha}T00:00:00`).lte('created_at', `${fecha}T23:59:59`)
+        query = query.eq('fecha_entrega', fecha)
       }
       if (sucursal_id) {
         query = query.eq('sucursal_id', sucursal_id)
