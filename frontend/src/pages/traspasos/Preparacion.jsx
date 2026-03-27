@@ -173,10 +173,11 @@ const Preparacion = () => {
       const cat = catalogo[item.articulo_id] || catalogo['cod:' + item.codigo] || {}
       return {
         ...item,
+        es_pesable: item.es_pesable ?? cat.esPesable ?? false,
         rubro: cat.rubro?.nombre || '',
         marca: cat.marca || '',
         pesoPromedioPieza: item.peso_promedio_pieza || cat.pesoPromedioPieza || null,
-        pppOrden: item.peso_promedio_pieza || null,
+        pppOrden: item.peso_promedio_pieza || cat.pesoPromedioPieza || null,
         pesoMinimo: cat.pesoMinimo || null,
         pesoMaximo: cat.pesoMaximo || null,
         plu: cat.codigo || item.codigo,
@@ -819,9 +820,9 @@ const Preparacion = () => {
                 {pickPiezas} / {pedidoPiezas}
                 {(() => {
                   const fc = !itemDetalle.es_pesable ? getFactorCaja(itemDetalle) : 0
-                  if (fc > 1) {
-                    const cajasTotal = Math.floor(pedidoPiezas / fc)
-                    const sueltas = pedidoPiezas % fc
+                  const cajasTotal = fc > 1 ? Math.floor(pedidoPiezas / fc) : 0
+                  if (fc > 1 && cajasTotal >= 1) {
+                    const sueltas = pedidoPiezas - cajasTotal * fc
                     return <>
                       <span className="text-xs font-normal text-gray-500 ml-1">unidades</span>
                       <span className="text-xs font-normal text-gray-400 ml-1">· {cajasTotal} {cajasTotal === 1 ? 'caja' : 'cajas'}{sueltas > 0 ? ` +${sueltas}` : ''}</span>
@@ -1275,9 +1276,9 @@ const Preparacion = () => {
                       <div className={`text-xs mt-0.5 font-medium ${completo ? 'text-emerald-600' : 'text-blue-600'}`}>
                         {(() => {
                           const fc = !item.es_pesable ? getFactorCaja(item) : 0
-                          if (fc > 1) {
-                            const cajasTotal = Math.floor(piezasPedidas / fc)
-                            const sueltas = piezasPedidas % fc
+                          const cajasTotal = fc > 1 ? Math.floor(piezasPedidas / fc) : 0
+                          if (fc > 1 && cajasTotal >= 1) {
+                            const sueltas = piezasPedidas - cajasTotal * fc
                             return <>
                               {cajasTotal} {cajasTotal === 1 ? 'caja' : 'cajas'}{sueltas > 0 ? ` + ${sueltas} ud${sueltas !== 1 ? 's' : ''}` : ''}
                               <span className="text-gray-400 font-normal ml-1">({piezasPick}/{piezasPedidas} unidades)</span>

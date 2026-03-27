@@ -302,9 +302,8 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
       .eq('id', req.params.id)
       .single()
 
-    if (!orden || !['pendiente', 'en_preparacion'].includes(orden.estado)) {
-      return res.status(400).json({ error: 'Solo se pueden cancelar órdenes en pendiente o en preparación' })
-    }
+    if (!orden) return res.status(404).json({ error: 'Orden no encontrada' })
+    if (orden.estado === 'cancelado') return res.status(400).json({ error: 'La orden ya está cancelada' })
 
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -507,13 +506,16 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
           numero = `OT-${Date.now()}`
         }
 
-        const nuevosItems = articulos_faltantes.map(f => ({
-          articulo_id: f.articulo_id,
-          nombre: f.nombre,
-          codigo: f.codigo,
-          cantidad_solicitada: f.cantidad_faltante,
-          cantidad: f.cantidad_faltante,
-        }))
+        const itemsOrigen = data.items || []
+        const nuevosItems = articulos_faltantes.map(f => {
+          const orig = itemsOrigen.find(i => String(i.articulo_id) === String(f.articulo_id))
+          return {
+            articulo_id: f.articulo_id, nombre: f.nombre, codigo: f.codigo,
+            cantidad_solicitada: f.cantidad_faltante, cantidad: f.cantidad_faltante,
+            es_pesable: orig?.es_pesable || f.es_pesable || false,
+            peso_promedio_pieza: orig?.peso_promedio_pieza || f.peso_promedio_pieza || null,
+          }
+        })
 
         const { data: nuevaOrden, error: nuevaErr } = await supabase
           .from('ordenes_traspaso')
@@ -1436,10 +1438,16 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           const { count } = await supabase.from('ordenes_traspaso').select('*', { count: 'exact', head: true })
           numero = `OT-${String((count || 0) + 1).padStart(6, '0')}`
         } catch { numero = `OT-${Date.now()}` }
-        const nuevosItems = articulos_faltantes.map(f => ({
-          articulo_id: f.articulo_id, nombre: f.nombre, codigo: f.codigo,
-          cantidad_solicitada: f.cantidad_faltante, cantidad: f.cantidad_faltante,
-        }))
+        const itemsOrigen = ordenPreparada.items || []
+        const nuevosItems = articulos_faltantes.map(f => {
+          const orig = itemsOrigen.find(i => String(i.articulo_id) === String(f.articulo_id))
+          return {
+            articulo_id: f.articulo_id, nombre: f.nombre, codigo: f.codigo,
+            cantidad_solicitada: f.cantidad_faltante, cantidad: f.cantidad_faltante,
+            es_pesable: orig?.es_pesable || f.es_pesable || false,
+            peso_promedio_pieza: orig?.peso_promedio_pieza || f.peso_promedio_pieza || null,
+          }
+        })
         const { data: nuevaOrden } = await supabase.from('ordenes_traspaso').insert({
           numero, sucursal_origen_id: ordenPreparada.sucursal_origen_id,
           sucursal_destino_id: ordenPreparada.sucursal_destino_id,
