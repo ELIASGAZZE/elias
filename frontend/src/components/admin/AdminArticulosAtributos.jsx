@@ -21,6 +21,8 @@ const AdminArticulosAtributos = () => {
   const [busqueda, setBusqueda] = useState('')
   const [filtroAtributo, setFiltroAtributo] = useState('') // "id|id_valor"
   const [filtroRubro, setFiltroRubro] = useState('')
+  const [sincronizando, setSincronizando] = useState(false)
+  const [mensajeSync, setMensajeSync] = useState('')
 
   useEffect(() => {
     cargarArticulos()
@@ -110,6 +112,21 @@ const AdminArticulosAtributos = () => {
     return map
   }, [articulos, tab])
 
+  const sincronizarERP = async () => {
+    setSincronizando(true)
+    setMensajeSync('')
+    try {
+      const { data } = await api.post('/api/articulos/sincronizar-erp')
+      setMensajeSync(`ok:${data.mensaje}`)
+      await cargarArticulos()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al sincronizar con el ERP'
+      setMensajeSync(msg)
+    } finally {
+      setSincronizando(false)
+    }
+  }
+
   if (cargando) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -120,6 +137,25 @@ const AdminArticulosAtributos = () => {
 
   return (
     <div>
+      {/* Sync manual */}
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          onClick={sincronizarERP}
+          disabled={sincronizando}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors"
+        >
+          <svg className={`w-4 h-4 ${sincronizando ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          {sincronizando ? 'Sincronizando...' : 'Sincronizar con ERP'}
+        </button>
+        {mensajeSync && (
+          <span className={`text-sm ${mensajeSync.startsWith('ok:') ? 'text-green-600' : 'text-red-600'}`}>
+            {mensajeSync.startsWith('ok:') ? mensajeSync.slice(3) : mensajeSync}
+          </span>
+        )}
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1 w-fit">
         {TABS.map(t => (
