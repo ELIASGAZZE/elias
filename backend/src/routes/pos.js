@@ -3757,4 +3757,63 @@ router.get('/consulta-data', verificarAuth, async (req, res) => {
   }
 })
 
+// POST /api/pos/emails-pendientes/enviar — re-enviar emails de Factura A que no se enviaron
+// Auth: verificarAuth normal O header X-Admin-Key con SUPABASE_SERVICE_KEY
+router.post('/emails-pendientes/enviar', async (req, res) => {
+  const adminKey = req.headers['x-admin-key']
+  if (adminKey && adminKey === process.env.SUPABASE_SERVICE_KEY) {
+    // OK — acceso admin directo
+  } else {
+    // Fallback a auth normal
+    return verificarAuth(req, res, () => handleEmailBatch(req, res))
+  }
+  return handleEmailBatch(req, res)
+})
+
+async function handleEmailBatch(req, res) {
+  try {
+    const { enviarComprobanteAutomatico } = require('../services/centumVentasPOS')
+
+    // Buscar ventas con CAE, cliente asignado, email no enviado
+    const { data: ventas, error } = await supabase
+      .from('ventas_pos')
+      .select('id, numero_venta, numero_cae, id_cliente_centum')
+      .eq('email_enviado', false)
+      .not('numero_cae', 'is', null)
+      .gt('id_cliente_centum', 0)
+      .order('numero_venta', { ascending: true })
+
+    if (error) return res.status(500).json({ error: error.message })
+
+    let enviados = 0, fallidos = 0, saltados = 0
+    const detalles = []
+
+    for (const v of (ventas || [])) {
+      try {
+        // Obtener CAE vencimiento de Centum (best effort, no bloquea)
+        await enviarComprobanteAutomatico(v.id, v.numero_cae, null)
+        // Verificar si realmente se envió (pudo haber saltado por sin email, esPrueba, etc)
+        const { data: check } = await supabase.from('ventas_pos').select('email_enviado').eq('id', v.id).single()
+        if (check?.email_enviado) {
+          enviados++
+          detalles.push({ venta: v.numero_venta, status: 'enviado' })
+        } else {
+          saltados++
+          detalles.push({ venta: v.numero_venta, status: 'saltado (sin email/prueba/CF)' })
+        }
+      } catch (err) {
+        fallidos++
+        detalles.push({ venta: v.numero_venta, status: 'error', error: err.message })
+        console.error(`[Email Batch] Error venta ${v.numero_venta}:`, err.message)
+      }
+    }
+
+    console.log(`[Email Batch] Resultado: ${enviados} enviados, ${saltados} saltados, ${fallidos} fallidos de ${(ventas || []).length} pendientes`)
+    res.json({ total: (ventas || []).length, enviados, saltados, fallidos, detalles })
+  } catch (err) {
+    console.error('[Email Batch] Error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+}
+
 module.exports = router
