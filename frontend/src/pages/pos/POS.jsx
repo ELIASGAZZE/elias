@@ -1053,6 +1053,11 @@ const AbrirCajaPOS = ({ terminalConfig, onCajaAbierta }) => {
     return Object.keys(diffs).length > 0 ? diffs : null
   }
 
+  // Sync ventas offline pendientes al montar
+  useEffect(() => {
+    syncVentasPendientes().then(() => actualizarPendientes()).catch(() => {})
+  }, [])
+
   // Cargar denominaciones y último cambio al montar
   useEffect(() => {
     Promise.all([
@@ -1268,12 +1273,29 @@ const POS = () => {
         if (cancelled) return
         if (data.abierta) {
           setCierreActivo(data.cierre)
+          // Cachear cierre activo para modo offline
+          try { localStorage.setItem('cierre_activo', JSON.stringify(data.cierre)) } catch {}
+        } else {
+          setCierreActivo(null)
+          localStorage.removeItem('cierre_activo')
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        // Sin internet: restaurar cierre desde cache
+        if (isNetworkError(err)) {
+          try {
+            const cached = localStorage.getItem('cierre_activo')
+            if (cached) {
+              setCierreActivo(JSON.parse(cached))
+              console.log('[POS] Modo offline — cierre restaurado desde cache')
+            } else {
+              setCierreActivo(null)
+            }
+          } catch { setCierreActivo(null) }
         } else {
           setCierreActivo(null)
         }
-      })
-      .catch(() => {
-        if (!cancelled) setCierreActivo(null)
       })
       .finally(() => {
         if (!cancelled) setVerificandoCaja(false)
@@ -4488,6 +4510,7 @@ const POS = () => {
           onCajaCerrada={() => {
             setMostrarCerrarCaja(false)
             setCierreActivo(null)
+            localStorage.removeItem('cierre_activo')
           }}
         />
       )}
