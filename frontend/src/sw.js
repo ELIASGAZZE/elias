@@ -29,10 +29,13 @@ POS_API_PATTERNS.forEach(pattern => {
 })
 
 // Offline fallback para navegación: servir index.html cacheado (SPA)
-// precacheAndRoute ya cachea index.html — este handler solo actúa si falla el fetch
-import { NavigationRoute, createHandlerBoundToURL } from 'workbox-routing'
-const navHandler = createHandlerBoundToURL('/index.html')
-registerRoute(new NavigationRoute(navHandler))
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match('/index.html'))
+    )
+  }
+})
 
 // Push notification listener
 self.addEventListener('push', (event) => {
