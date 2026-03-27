@@ -139,8 +139,10 @@ function calcularProximaFecha(config, ultimaEjecucionFecha) {
 /**
  * Obtiene las tareas pendientes para una sucursal en la fecha actual.
  */
-async function obtenerTareasPendientes(sucursalId) {
-  const { hoy, hoyStr } = fechaArgentina()
+async function obtenerTareasPendientes(sucursalId, fechaOverride) {
+  const argHoy = fechaArgentina()
+  const hoyStr = fechaOverride || argHoy.hoyStr
+  const hoy = fechaOverride ? parseFechaLocal(fechaOverride) : argHoy.hoy
 
   // Traer todas las configs activas de esta sucursal con su tarea y subtareas
   const { data: configs, error } = await supabase
@@ -166,13 +168,21 @@ async function obtenerTareasPendientes(sucursalId) {
     const tipo = config.tipo || 'frecuencia'
 
     // Buscar última ejecución de esta config
-    const { data: ultimaEjecucion } = await supabase
+    // Si hay fechaOverride (consulta histórica), buscar ANTES de esa fecha
+    // para que las ejecutadas ese día no cuenten como "última" y aparezcan como pendientes
+    let ultimaQuery = supabase
       .from('ejecuciones_tarea')
       .select('fecha_ejecucion, fecha_programada')
       .eq('tarea_config_id', config.id)
+    if (fechaOverride) {
+      ultimaQuery = ultimaQuery.lt('fecha_ejecucion', hoyStr)
+    }
+    ultimaQuery = ultimaQuery
       .order('fecha_ejecucion', { ascending: false })
       .limit(1)
-      .single()
+      .maybeSingle()
+
+    const { data: ultimaEjecucion } = await ultimaQuery
 
     const ultimaFecha = ultimaEjecucion?.fecha_ejecucion || null
 
@@ -269,7 +279,7 @@ async function obtenerTareasPendientes(sucursalId) {
       } else if (config.reprogramar_siguiente && !ultimaFecha) {
         // Nunca ejecutada, verificar si ya pasó algún día programado
         const fechaInicio = parseFechaLocal(config.fecha_inicio)
-          if (fechaInicio <= hoy) {
+        if (fechaInicio <= hoy) {
           // Buscar primer día programado desde fecha_inicio
           const cursor = new Date(fechaInicio)
           let primerDia = null
@@ -479,4 +489,57 @@ async function obtenerTareasPendientes(sucursalId) {
   return pendientes
 }
 
-module.exports = { obtenerTareasPendientes, calcularProximaFecha, fechaArgentina, parseFechaLocal }
+/**
+ * Evalúa si un config está programado para una fecha dada, usando la última ejecución anterior.
+ * No hace queries — pura lógica. Retorna { programada: bool, atrasada: bool, dias_atraso: number }
+ */
+function evaluarConfigParaFecha(config, fechaStr, ultimaEjecucionFechaStr) {
+  const fecha = parseFechaLocal(fechaStr)
+  const tipo = config.tipo || 'frecuencia'
+  const fechaInicio = parseFechaLocal(config.fecha_inicio)
+  if (fecha < fechaInicio) return { programada: false }
+
+  if (tipo === 'dia_fijo') {
+    const { programada } = evaluarDiaFijo(config, fecha, ultimaEjecucionFechaStr)
+    if (programada) return { programada: true, atrasada: false, dias_atraso: 0 }
+
+    // Verificar reprogramación de días anteriores
+    if (config.reprogramar_siguiente && ultimaEjecucionFechaStr) {
+      const prox = proximaFechaDiaFijo(config, parseFechaLocal(ultimaEjecucionFechaStr))
+      if (prox) {
+        prox.setHours(0, 0, 0, 0)
+        if (prox <= fecha) {
+          const dias = Math.floor((fecha - prox) / (1000 * 60 * 60 * 24))
+          return { programada: true, atrasada: dias > 0, dias_atraso: dias }
+        }
+      }
+    } else if (config.reprogramar_siguiente && !ultimaEjecucionFechaStr) {
+      // Nunca ejecutada — buscar primer día programado
+      const cursor = new Date(fechaInicio)
+      for (let i = 0; i < 60; i++) {
+        const res = evaluarDiaFijo(config, cursor, null)
+        if (res.programada && cursor <= fecha) {
+          const dias = Math.floor((fecha - cursor) / (1000 * 60 * 60 * 24))
+          return { programada: true, atrasada: dias > 0, dias_atraso: dias }
+        }
+        if (cursor > fecha) break
+        cursor.setDate(cursor.getDate() + 1)
+      }
+    }
+    return { programada: false }
+  }
+
+  // tipo = 'frecuencia'
+  const proximaFecha = calcularProximaFechaFrecuencia(config, ultimaEjecucionFechaStr)
+  proximaFecha.setHours(0, 0, 0, 0)
+  if (proximaFecha > fecha) return { programada: false }
+  if (!config.reprogramar_siguiente && proximaFecha < fecha) return { programada: false }
+  const atrasada = proximaFecha < fecha
+  return {
+    programada: true,
+    atrasada,
+    dias_atraso: atrasada ? Math.floor((fecha - proximaFecha) / (1000 * 60 * 60 * 24)) : 0,
+  }
+}
+
+module.exports = { obtenerTareasPendientes, calcularProximaFecha, evaluarConfigParaFecha, fechaArgentina, parseFechaLocal }
