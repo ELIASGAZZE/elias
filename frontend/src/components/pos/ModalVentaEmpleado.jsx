@@ -150,7 +150,10 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     }
   }
 
+  const submittingRef = useRef(false)
+
   const confirmarVenta = async () => {
+    if (submittingRef.current) return
     setError('')
     if (!codigoConfirm.trim()) {
       setError('Ingresá tu código de empleado')
@@ -168,6 +171,7 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
       return
     }
 
+    submittingRef.current = true
     setGuardando(true)
     try {
       const { data } = await api.post('/api/cuenta-empleados/ventas', {
@@ -183,6 +187,7 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     } catch (err) {
       setError(err.response?.data?.error || 'Error al guardar la venta')
       setGuardando(false)
+      submittingRef.current = false
     }
   }
 
