@@ -2,6 +2,8 @@
 // Maneja el estado del usuario logueado y lo comparte con toda la app
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import api, { isNetworkError } from '../services/api'
+import { guardarEmpleadosPIN, getEmpleadosPIN } from '../services/offlineDB'
+import bcrypt from 'bcryptjs'
 
 // Creamos el contexto
 const AuthContext = createContext(null)
@@ -11,6 +13,19 @@ export const useAuth = () => {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth debe usarse dentro de AuthProvider')
   return ctx
+}
+
+// Sincronizar PINs de empleados para login offline
+async function syncOfflinePins() {
+  try {
+    const { data } = await api.get('/api/auth/offline-pins')
+    if (data && data.length > 0) {
+      await guardarEmpleadosPIN(data)
+      console.log(`[Auth] ${data.length} PINs cacheados para modo offline`)
+    }
+  } catch {
+    // Silencioso — no es crítico
+  }
 }
 
 // Proveedor del contexto: envuelve toda la app
@@ -35,6 +50,9 @@ export const AuthProvider = ({ children }) => {
           if (usr.rol === 'admin') {
             import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
           }
+
+          // Sync PINs en background
+          syncOfflinePins()
         } catch (err) {
           // Si es error de red (sin internet), usar sesión cacheada en localStorage
           if (isNetworkError(err) || err.response?.status === 503) {
@@ -69,16 +87,55 @@ export const AuthProvider = ({ children }) => {
       import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
     }
 
+    // Sync PINs en background para modo offline
+    syncOfflinePins()
+
     return data.usuario
   }
 
   // Login de emergencia (sin internet, con PIN)
+  // Primero intenta contra el backend, si falla valida localmente
   const loginEmergencia = async (pin) => {
-    const { data } = await api.post('/api/auth/emergency-login', { pin })
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('usuario', JSON.stringify(data.usuario))
-    setUsuario(data.usuario)
-    return data.usuario
+    // Intentar contra el backend primero
+    try {
+      const { data } = await api.post('/api/auth/emergency-login', { pin })
+      localStorage.setItem('token', data.token)
+      localStorage.setItem('usuario', JSON.stringify(data.usuario))
+      setUsuario(data.usuario)
+      return data.usuario
+    } catch (err) {
+      // Si el backend responde (no es error de red), propagar el error
+      if (!isNetworkError(err) && err.response?.status !== 502 && err.response?.status !== 503) {
+        throw err
+      }
+    }
+
+    // Backend no disponible — validar PIN localmente contra cache
+    const empleados = await getEmpleadosPIN()
+    if (!empleados || empleados.length === 0) {
+      throw { response: { data: { error: 'No hay datos de emergencia cacheados. Necesitás haber iniciado sesión al menos una vez con conexión.' } } }
+    }
+
+    for (const emp of empleados) {
+      const match = await bcrypt.compare(pin, emp.pin_hash)
+      if (match) {
+        const usr = {
+          id: emp.id,
+          username: emp.codigo || 'emergencia',
+          rol: 'operario',
+          nombre: emp.nombre,
+          sucursal_id: emp.sucursal_id || null,
+        }
+        const token = 'emergency-offline-' + Date.now()
+        localStorage.setItem('token', token)
+        localStorage.setItem('usuario', JSON.stringify(usr))
+        setUsuario(usr)
+        console.log(`[Auth] Login offline exitoso: ${emp.nombre}`)
+        return usr
+      }
+    }
+
+    throw { response: { data: { error: 'PIN incorrecto' } } }
   }
 
   // Función de logout
