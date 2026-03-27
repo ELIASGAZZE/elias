@@ -453,20 +453,21 @@ function calcularPromocionesLocales(carrito, promociones) {
           return cartItem.articulo.id === ab.id || (ab.codigo && String(cartItem.articulo.codigo) === String(ab.codigo))
         }
         // 1) Artículos que participaron en la condición Y están en beneficios
-        // AND items: siempre se descuentan. OR items: limitados por vecesPromo
+        // Usar la cantidad del BENEFICIO (no de la condición) para limitar unidades descontadas
         const descontados = new Set()
         const descuentoPorItem = {} // articuloId -> monto descuento
         const cantPorItem = {} // articuloId -> cant unidades descontadas
         let descuento = 0
         let orDescontados = 0
         for (const { item, cantReq, isOr } of itemsCondicion) {
-          const enBenef = listaBenef.some(ab => itemMatchesBenefLocal(item, ab))
-          if (!enBenef) continue
+          const abMatch = listaBenef.find(ab => itemMatchesBenefLocal(item, ab))
+          if (!abMatch) continue
+          // Usar cantidad del beneficio para limitar cuántas unidades se descuentan
+          const cantBenefPorVez = abMatch.cantidad || 1
           if (isOr) {
-            // Limitar items OR por vecesPromo
             const orDisponible = vecesPromo - orDescontados
             if (orDisponible <= 0) continue
-            const cantDescontada = Math.min(orDisponible * cantReq, item.cantidad)
+            const cantDescontada = Math.min(orDisponible * cantBenefPorVez, item.cantidad)
             const precio = calcularPrecioConDescuentosBase(item.articulo)
             let itemDesc = 0
             if (reglas.tipo_descuento === 'porcentaje') {
@@ -477,10 +478,10 @@ function calcularPromocionesLocales(carrito, promociones) {
             descuento += itemDesc
             descuentoPorItem[item.articulo.id] = (descuentoPorItem[item.articulo.id] || 0) + itemDesc
             cantPorItem[item.articulo.id] = (cantPorItem[item.articulo.id] || 0) + cantDescontada
-            orDescontados += Math.ceil(cantDescontada / cantReq)
+            orDescontados += Math.ceil(cantDescontada / cantBenefPorVez)
             descontados.add(item.articulo.id)
           } else {
-            const cantDescontada = Math.min(vecesPromo * cantReq, item.cantidad)
+            const cantDescontada = Math.min(vecesPromo * cantBenefPorVez, item.cantidad)
             const precio = calcularPrecioConDescuentosBase(item.articulo)
             let itemDesc = 0
             if (reglas.tipo_descuento === 'porcentaje') {
