@@ -4,8 +4,8 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { getVentasCentumByFecha } = require('../config/centum')
-const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
+const { getVentasCentumByFecha, getResumenVentasCentumBI } = require('../config/centum')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // GET /api/pos/articulos
@@ -497,6 +497,14 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       if (error) throw error
       data = ventaData
 
+      // Si la venta está vinculada a un pedido, actualizar total_pagado del pedido
+      if (pedido_pos_id && data) {
+        await supabase
+          .from('pedidos_pos')
+          .update({ total_pagado: total })
+          .eq('id', pedido_pos_id)
+      }
+
       // Registrar cambios de precio (async, no bloquea)
       if (data) {
         const cambiosItems = items.filter(i => i.cambio_precio)
@@ -594,6 +602,24 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                   return
                 }
               }
+            }
+
+            // Idempotencia: verificar si ya existe en Centum antes de crear (por si un intento previo creó pero falló al responder)
+            const existente = await buscarVentaExistenteEnCentum(data.id, sucursalFisicaId, puntoVenta, parseFloat(data.total) || 0)
+            if (existente) {
+              console.log(`[Centum POS] Venta ${data.id} ya existe en Centum (IdVenta=${existente.IdVenta}), vinculando sin crear duplicado`)
+              const numDocEx = existente.NumeroDocumento
+              const comprobanteEx = numDocEx
+                ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
+                : null
+              await supabase.from('ventas_pos').update({
+                id_venta_centum: existente.IdVenta || null,
+                centum_comprobante: comprobanteEx,
+                centum_sync: true,
+                centum_error: null,
+              }).eq('id', data.id)
+              fetchAndSaveCAE(data.id, existente.IdVenta)
+              return
             }
 
             const resultado = await registrarVentaPOSEnCentum(data, {
@@ -847,6 +873,11 @@ router.get('/ventas', verificarAuth, async (req, res) => {
         const desde = `${req.query.fecha}T00:00:00-03:00`
         query = query.gte('created_at', desde)
       }
+      // Aplicar fecha "hasta" si viene
+      if (req.query.fecha_hasta) {
+        const hasta = `${req.query.fecha_hasta}T23:59:59-03:00`
+        query = query.lte('created_at', hasta)
+      }
       // Filtro "Sin Centum": solo ventas no sincronizadas
       if (req.query.sin_centum === '1') {
         query = query.eq('centum_sync', false)
@@ -865,7 +896,11 @@ router.get('/ventas', verificarAuth, async (req, res) => {
     if (req.perfil.rol !== 'admin' && !esProblema) {
       query = query.eq('cajero_id', req.perfil.id)
     } else {
-      if (req.query.sucursal_id) {
+      if (req.query.sucursales) {
+        const sucIds = req.query.sucursales.split(',').filter(Boolean)
+        if (sucIds.length === 1) query = query.eq('sucursal_id', sucIds[0])
+        else if (sucIds.length > 1) query = query.in('sucursal_id', sucIds)
+      } else if (req.query.sucursal_id) {
         query = query.eq('sucursal_id', req.query.sucursal_id)
       }
       if (req.query.cajero_id) {
@@ -931,7 +966,65 @@ router.get('/ventas', verificarAuth, async (req, res) => {
 
     const totalCount = count ?? ventas.length
     const totalPages = Math.ceil(totalCount / pageSize)
-    res.json({ ventas, page, totalPages, totalCount })
+
+    // --- Resumen del período completo (sin paginación) ---
+    let resumen = null
+    if (req.perfil.rol === 'admin' && !numFactura) {
+      try {
+        let qResumen = supabase
+          .from('ventas_pos')
+          .select('total, tipo, pagos, id_cliente_centum')
+        if (req.query.fecha) qResumen = qResumen.gte('created_at', `${req.query.fecha}T00:00:00-03:00`)
+        if (req.query.fecha_hasta) qResumen = qResumen.lte('created_at', `${req.query.fecha_hasta}T23:59:59-03:00`)
+        if (req.query.sin_centum === '1') qResumen = qResumen.eq('centum_sync', false)
+        if (req.query.filtro_empleado === 'empleados') qResumen = qResumen.ilike('nombre_cliente', 'Empleado:%')
+        else if (req.query.filtro_empleado === 'no_empleados') qResumen = qResumen.not('nombre_cliente', 'ilike', 'Empleado:%')
+        const buscar = req.query.buscar?.trim()
+        if (buscar) qResumen = qResumen.ilike('nombre_cliente', `%${buscar}%`)
+        if (req.query.sucursales) {
+          const sucIds = req.query.sucursales.split(',').filter(Boolean)
+          if (sucIds.length === 1) qResumen = qResumen.eq('sucursal_id', sucIds[0])
+          else if (sucIds.length > 1) qResumen = qResumen.in('sucursal_id', sucIds)
+        }
+
+        const { data: allVentas } = await qResumen
+        if (allVentas) {
+          // Lookup condiciones IVA
+          const allClienteIds = [...new Set(allVentas.map(v => v.id_cliente_centum).filter(Boolean))]
+          let allCondiciones = {}
+          if (allClienteIds.length > 0) {
+            const { data: cls } = await supabase.from('clientes').select('id_centum, condicion_iva').in('id_centum', allClienteIds)
+            if (cls) cls.forEach(c => { allCondiciones[c.id_centum] = c.condicion_iva })
+          }
+          // Clasificar y calcular
+          let totalVentasR = 0, totalNCR = 0, totalEmpresaR = 0, totalPruebaR = 0, cantVentas = 0, cantNC = 0
+          const desgloseMediosR = {}
+          const filtroClasif = req.query.clasificacion?.toUpperCase() || ''
+          allVentas.forEach(v => {
+            const total = parseFloat(v.total) || 0
+            const condIva = allCondiciones[v.id_cliente_centum] || 'CF'
+            const esFacturaA = condIva === 'RI' || condIva === 'MT'
+            const pagos = Array.isArray(v.pagos) ? v.pagos : []
+            const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+            const clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
+            if (filtroClasif && clasificacion !== filtroClasif) return
+            if (v.tipo === 'nota_credito') { totalNCR += total; cantNC++ }
+            else { totalVentasR += total; cantVentas++ }
+            if (clasificacion === 'EMPRESA') totalEmpresaR += total
+            else totalPruebaR += total
+            pagos.forEach(p => {
+              const medio = p.medio || 'efectivo'
+              desgloseMediosR[medio] = (desgloseMediosR[medio] || 0) + (parseFloat(p.monto) || 0)
+            })
+          })
+          resumen = { totalVentas: totalVentasR, totalNC: totalNCR, totalEmpresa: totalEmpresaR, totalPrueba: totalPruebaR, cantVentas, cantNC, desgloseMedios: desgloseMediosR }
+        }
+      } catch (e) {
+        console.error('[POS] Error al calcular resumen:', e.message)
+      }
+    }
+
+    res.json({ ventas, page, totalPages, totalCount, resumen })
   } catch (err) {
     console.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
@@ -1048,6 +1141,51 @@ router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) 
   } catch (err) {
     console.error('[POS] Error en reconciliación:', err.message)
     res.status(500).json({ error: 'Error al ejecutar reconciliación', detalle: err.message })
+  }
+})
+
+// GET /api/pos/ventas/resumen-centum — resumen de ventas desde Centum BI para comparar con POS
+router.get('/ventas/resumen-centum', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { fecha, fecha_hasta, sucursales: sucursalesParam, clasificacion } = req.query
+    if (!fecha) return res.status(400).json({ error: 'Falta parámetro fecha' })
+    const hasta = fecha_hasta || fecha
+
+    // Resolver sucursales POS → sucursalFisicaId Centum
+    // Si no se filtra por sucursal, usar TODAS las sucursales POS (Centum tiene más sucursales que POS)
+    let sucursalIds = null
+    const sucFiltro = sucursalesParam ? sucursalesParam.split(',').filter(Boolean) : []
+    if (sucFiltro.length > 0) {
+      const { data: sucs } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .in('id', sucFiltro)
+        .not('centum_sucursal_id', 'is', null)
+      if (sucs?.length) sucursalIds = sucs.map(s => s.centum_sucursal_id).filter(Boolean)
+    } else {
+      // Solo sucursales que tienen cajas POS configuradas
+      const { data: cajas } = await supabase.from('cajas').select('sucursal_id')
+      const sucConCaja = [...new Set((cajas || []).map(c => c.sucursal_id).filter(Boolean))]
+      if (sucConCaja.length) {
+        const { data: allSucs } = await supabase
+          .from('sucursales')
+          .select('centum_sucursal_id')
+          .in('id', sucConCaja)
+          .not('centum_sucursal_id', 'is', null)
+        if (allSucs?.length) sucursalIds = allSucs.map(s => s.centum_sucursal_id).filter(Boolean)
+      }
+    }
+
+    // Clasificación: EMPRESA=3, PRUEBA=2
+    let divisionId = null
+    if (clasificacion === 'EMPRESA') divisionId = 3
+    else if (clasificacion === 'PRUEBA') divisionId = 2
+
+    const resumen = await getResumenVentasCentumBI(fecha, hasta, sucursalIds, divisionId)
+    res.json(resumen)
+  } catch (err) {
+    console.error('[POS] Error al obtener resumen Centum BI:', err.message)
+    res.status(500).json({ error: 'Error al consultar Centum BI' })
   }
 })
 
@@ -3461,6 +3599,31 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
       ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (centumOperadorEmpresa || null)
 
+    // --- Idempotencia: verificar si la venta ya existe en Centum antes de crear otra ---
+    if (venta.tipo !== 'nota_credito') {
+      const existente = await buscarVentaExistenteEnCentum(ventaId, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+      if (existente) {
+        console.log(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${existente.IdVenta}). Vinculando sin crear duplicado.`)
+        const numDoc = existente.NumeroDocumento
+        const comprobante = numDoc
+          ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          : null
+        await supabase
+          .from('ventas_pos')
+          .update({
+            id_venta_centum: existente.IdVenta || null,
+            centum_comprobante: comprobante,
+            centum_sync: true,
+            centum_error: null,
+            numero_cae: existente.CAE || null,
+          })
+          .eq('id', ventaId)
+        console.log(`[Centum POS] Reenvío venta ${ventaId} vinculada a existente: IdVenta=${existente.IdVenta}, Comprobante=${comprobante}`)
+        const cae = await fetchAndSaveCAE(ventaId, existente.IdVenta)
+        return res.json({ ok: true, comprobante, idVentaCentum: existente.IdVenta, cae, reutilizada: true })
+      }
+    }
+
     let resultado
     if (venta.tipo === 'nota_credito') {
       // NC: enviar con valores positivos (abs), Centum maneja el signo por tipo comprobante
@@ -3555,6 +3718,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
         total: parseFloat(venta.total) || 0,
         condicionIva,
         operadorMovilUser,
+        ventaPosId: ventaId,
       })
     }
 
