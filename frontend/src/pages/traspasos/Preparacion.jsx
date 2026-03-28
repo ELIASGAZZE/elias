@@ -73,6 +73,7 @@ const Preparacion = () => {
 
   // Escaneo
   const scanRef = useRef(null)
+  const scanDivDetalleRef = useRef(null)
   const [scanInput, setScanInput] = useState('')
 
   // Alertas y feedback
@@ -240,6 +241,38 @@ const Preparacion = () => {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [fase, tecladoVisible])
+
+  // Handler keydown para divs focusables (misma lógica que el global listener)
+  const handleDivKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      if (!codigo) return
+      if (faseRef.current === 'detalle' && itemDetalleRef.current) {
+        handleScanDetalleRef.current?.(codigo)
+      } else {
+        handleScanCodigoRef.current?.(codigo)
+      }
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      scanBufferRef.current += e.key
+      setScanInput(scanBufferRef.current)
+    }
+  }
+
+  // Auto-focus el div de scan cuando se cierra el teclado manual
+  useEffect(() => {
+    if (tecladoVisible) return
+    const timer = setTimeout(() => {
+      if (fase === 'detalle' && itemDetalle) {
+        scanDivDetalleRef.current?.focus()
+      } else if (fase === 'picking') {
+        scanRef.current?.focus()
+      }
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [tecladoVisible, fase, itemDetalle])
 
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
@@ -1144,7 +1177,10 @@ const Preparacion = () => {
                 className="flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center focus:border-sky-500 outline-none" />
             ) : (
               <div
-                className={`flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center select-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
+                tabIndex={0}
+                ref={scanDivDetalleRef}
+                onKeyDown={handleDivKeyDown}
+                className={`flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
               >
                 {scanInput || 'Escanear código de barras...'}
               </div>
@@ -1656,8 +1692,10 @@ const Preparacion = () => {
               }`} />
           ) : (
             <div
+              tabIndex={0}
               ref={scanRef}
-              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center select-none ${
+              onKeyDown={handleDivKeyDown}
+              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${
                 canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
               } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
             >
