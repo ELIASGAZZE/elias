@@ -253,6 +253,14 @@ const Preparacion = () => {
     } else {
       handleScanCodigoRef.current?.(codigo)
     }
+    // Re-enfocar el input de scan después de procesar
+    setTimeout(() => {
+      if (faseRef.current === 'detalle') {
+        scanDivDetalleRef.current?.focus()
+      } else {
+        scanRef.current?.focus()
+      }
+    }, 300)
   }
 
   // Handler onChange para inputs con inputMode="none" — captura DataWedge via InputConnection
