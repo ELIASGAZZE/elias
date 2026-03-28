@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
 import { imprimirPallet } from '../../utils/imprimirPallet'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
@@ -44,20 +45,16 @@ const CirculoProgreso = ({ actual, total, size = 48 }) => {
 const Preparacion = () => {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { usuario } = useAuth()
 
   const [orden, setOrden] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [fase, setFase] = useState('picking') // 'picking' | 'detalle' | 'finalizar'
   const [itemDetalle, setItemDetalle] = useState(null)
 
-  // Contenedores — persistidos en localStorage por orden
-  const storageKey = `prep_${id}`
-  const [canastoActivo, setCanastoActivo] = useState(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s).canastoActivo || null : null } catch { return null }
-  })
-  const [contenedores, setContenedores] = useState(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s).contenedores || [] : [] } catch { return [] }
-  })
+  // Contenedores — persistidos en servidor (preparacion_state)
+  const [canastoActivo, setCanastoActivo] = useState(null)
+  const [contenedores, setContenedores] = useState([])
   const [modalCerrarCanasto, setModalCerrarCanasto] = useState(null) // {precinto, callback}
   const [pesoCanasto, setPesoCanasto] = useState('')
 
@@ -147,8 +144,22 @@ const Preparacion = () => {
     try {
       const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
       setOrden(data)
+      // Restaurar estado de preparación (canastos/contenedores)
+      if (data.preparacion_state) {
+        const ps = data.preparacion_state
+        if (ps.canastoActivo) setCanastoActivo(ps.canastoActivo)
+        if (ps.contenedores?.length) setContenedores(ps.contenedores)
+        prepStateRef.current = ps
+      }
+      prepStateLoaded.current = true
       if (data.estado !== 'en_preparacion') {
         alert('Esta orden no está en preparación')
+        navigate('/preparacion')
+        return
+      }
+      // Verificar que el usuario actual sea quien inició la preparación
+      if (data.preparado_por && usuario?.id && data.preparado_por !== usuario.id) {
+        alert('Esta orden está siendo preparada por otro usuario')
         navigate('/preparacion')
         return
       }
@@ -166,10 +177,21 @@ const Preparacion = () => {
 
   useEffect(() => { cargar() }, [id])
 
-  // Persistir canasto y contenedores en localStorage
+  // Persistir canasto y contenedores en servidor
+  const prepStateRef = useRef({ canastoActivo: null, contenedores: [] })
+  const prepStateLoaded = useRef(false)
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify({ canastoActivo, contenedores })) } catch {}
-  }, [canastoActivo, contenedores, storageKey])
+    if (!prepStateLoaded.current) return // No persistir hasta que se cargue la orden
+    const state = { canastoActivo, contenedores }
+    // Evitar guardar si no cambió
+    if (JSON.stringify(state) === JSON.stringify(prepStateRef.current)) return
+    prepStateRef.current = state
+    // Guardar junto con items actuales
+    const items = orden?.items
+    if (items) {
+      api.put(`/api/traspasos/ordenes/${id}/pick`, { items, preparacion_state: state }).catch(() => {})
+    }
+  }, [canastoActivo, contenedores])
 
   useEffect(() => {
     if (!orden) return
@@ -867,7 +889,6 @@ const Preparacion = () => {
       if (res.data.nueva_orden_numero) {
         alert(`Orden cerrada. Se creó nueva orden ${res.data.nueva_orden_numero} con los pendientes.`)
       }
-      localStorage.removeItem(storageKey)
       navigate('/preparacion')
     } catch (err) {
       alert(err.response?.data?.error || 'Error al confirmar')

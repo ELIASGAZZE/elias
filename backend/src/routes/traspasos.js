@@ -660,12 +660,17 @@ router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
 
 router.put('/ordenes/:id/pick', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    const { items } = req.body
+    const { items, preparacion_state } = req.body
     if (!Array.isArray(items)) return res.status(400).json({ error: 'items requerido' })
+
+    const updateObj = { items, updated_at: new Date().toISOString() }
+    if (preparacion_state !== undefined) {
+      updateObj.preparacion_state = preparacion_state
+    }
 
     const { data, error } = await supabase
       .from('ordenes_traspaso')
-      .update({ items, updated_at: new Date().toISOString() })
+      .update(updateObj)
       .eq('id', req.params.id)
       .eq('estado', 'en_preparacion')
       .select()
