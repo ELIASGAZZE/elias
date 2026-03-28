@@ -420,13 +420,6 @@ const Preparacion = () => {
 
   const itemsOrdenados = useMemo(() => {
     return [...itemsEnriquecidos].sort((a, b) => {
-      const aPiezas = a.es_pesable && Array.isArray(a.pesos_escaneados) ? a.pesos_escaneados.length : (a.cantidad_preparada || 0)
-      const bPiezas = b.es_pesable && Array.isArray(b.pesos_escaneados) ? b.pesos_escaneados.length : (b.cantidad_preparada || 0)
-      const aPedidas = a.es_pesable && a.pppOrden ? Math.round(a.cantidad_solicitada / a.pppOrden) : a.cantidad_solicitada
-      const bPedidas = b.es_pesable && b.pppOrden ? Math.round(b.cantidad_solicitada / b.pppOrden) : b.cantidad_solicitada
-      const aCompleto = aPiezas >= aPedidas ? 1 : 0
-      const bCompleto = bPiezas >= bPedidas ? 1 : 0
-      if (aCompleto !== bCompleto) return aCompleto - bCompleto
       const rubroComp = (a.rubro || 'ZZZ').localeCompare(b.rubro || 'ZZZ')
       if (rubroComp !== 0) return rubroComp
       return (a.marca || 'ZZZ').localeCompare(b.marca || 'ZZZ')
@@ -1880,8 +1873,19 @@ const Preparacion = () => {
   // ═══════════════════════════════════════
   // FASE: PICKING (principal)
   // ═══════════════════════════════════════
-  const rubroGroups = {}
+  const itemsPendientes = []
+  const itemsCompletos = []
   for (const item of itemsOrdenados) {
+    const piezas = item.es_pesable && Array.isArray(item.pesos_escaneados) ? item.pesos_escaneados.length : (item.cantidad_preparada || 0)
+    const pedidas = item.es_pesable && item.pppOrden ? Math.round(item.cantidad_solicitada / item.pppOrden) : item.cantidad_solicitada
+    if (piezas >= pedidas) {
+      itemsCompletos.push(item)
+    } else {
+      itemsPendientes.push(item)
+    }
+  }
+  const rubroGroups = {}
+  for (const item of itemsPendientes) {
     const rubro = item.rubro || 'Sin rubro'
     if (!rubroGroups[rubro]) rubroGroups[rubro] = []
     rubroGroups[rubro].push(item)
@@ -2155,7 +2159,6 @@ const Preparacion = () => {
               {items.map((item, idx) => {
                 const piezasPedidas = cantidadEnPiezas(item)
                 const piezasPick = pickEnPiezas(item)
-                const completo = piezasPick >= piezasPedidas
                 return (
                   <button key={idx}
                     ref={el => { itemRefs.current[item.articulo_id] = el }}
@@ -2163,13 +2166,13 @@ const Preparacion = () => {
                     className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
                       ultimoEscaneado === item.articulo_id
                         ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
-                        : completo ? 'bg-white border-emerald-300' : 'bg-white border-gray-200'
+                        : 'bg-white border-gray-200'
                     }`}>
                     <img src={`${API_BASE}/api/articulos/${item.articulo_id}/imagen`} alt=""
                       className="w-12 h-12 rounded-lg object-cover bg-gray-100 flex-shrink-0"
                       onError={e => { e.target.style.display = 'none' }} />
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${completo ? 'text-emerald-700' : 'text-gray-800'}`}>{item.nombre}</div>
+                      <div className="text-sm font-medium truncate text-gray-800">{item.nombre}</div>
                       <div className="text-xs text-gray-400 mt-0.5">
                         {item.codigo}
                         {item.marca && <span className="ml-1">· {item.marca}</span>}
@@ -2177,7 +2180,7 @@ const Preparacion = () => {
                           <span className="ml-1">· Stock: {stockOrigen[item.articulo_id]}</span>
                         )}
                       </div>
-                      <div className={`text-xs mt-0.5 font-medium ${completo ? 'text-emerald-600' : 'text-blue-600'}`}>
+                      <div className="text-xs mt-0.5 font-medium text-blue-600">
                         {piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}
                       </div>
                     </div>
@@ -2188,6 +2191,49 @@ const Preparacion = () => {
             </div>
           </div>
         ))}
+
+        {/* Artículos completados */}
+        {itemsCompletos.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide px-1 mb-1.5 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              Completados ({itemsCompletos.length})
+            </div>
+            <div className="space-y-1.5">
+              {itemsCompletos.map((item, idx) => {
+                const piezasPedidas = cantidadEnPiezas(item)
+                const piezasPick = pickEnPiezas(item)
+                return (
+                  <button key={idx}
+                    ref={el => { itemRefs.current[item.articulo_id] = el }}
+                    onClick={() => { completoAlAbrir.current = true; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
+                    className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
+                      ultimoEscaneado === item.articulo_id
+                        ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
+                        : 'bg-emerald-50/50 border-emerald-200'
+                    }`}>
+                    <img src={`${API_BASE}/api/articulos/${item.articulo_id}/imagen`} alt=""
+                      className="w-12 h-12 rounded-lg object-cover bg-gray-100 flex-shrink-0"
+                      onError={e => { e.target.style.display = 'none' }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate text-emerald-700">{item.nombre}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {item.codigo}
+                        {item.marca && <span className="ml-1">· {item.marca}</span>}
+                      </div>
+                      <div className="text-xs mt-0.5 font-medium text-emerald-600">
+                        {piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}
+                      </div>
+                    </div>
+                    <CirculoProgreso actual={piezasPick} total={piezasPedidas} size={44} />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal confirmar eliminación de contenedor */}
