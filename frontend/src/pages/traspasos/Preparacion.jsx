@@ -420,13 +420,6 @@ const Preparacion = () => {
 
   const itemsOrdenados = useMemo(() => {
     return [...itemsEnriquecidos].sort((a, b) => {
-      const aPiezas = a.es_pesable && Array.isArray(a.pesos_escaneados) ? a.pesos_escaneados.length : (a.cantidad_preparada || 0)
-      const bPiezas = b.es_pesable && Array.isArray(b.pesos_escaneados) ? b.pesos_escaneados.length : (b.cantidad_preparada || 0)
-      const aPedidas = a.es_pesable && a.pppOrden ? Math.round(a.cantidad_solicitada / a.pppOrden) : a.cantidad_solicitada
-      const bPedidas = b.es_pesable && b.pppOrden ? Math.round(b.cantidad_solicitada / b.pppOrden) : b.cantidad_solicitada
-      const aCompleto = aPiezas >= aPedidas ? 1 : 0
-      const bCompleto = bPiezas >= bPedidas ? 1 : 0
-      if (aCompleto !== bCompleto) return aCompleto - bCompleto
       const rubroComp = (a.rubro || 'ZZZ').localeCompare(b.rubro || 'ZZZ')
       if (rubroComp !== 0) return rubroComp
       return (a.marca || 'ZZZ').localeCompare(b.marca || 'ZZZ')
@@ -762,6 +755,7 @@ const Preparacion = () => {
         return
       }
       if (canastoActivo) {
+        setPesoCanasto('')
         if (canastoActivo.precinto === codigo) {
           // Mismo canasto → solo cerrar (no reabrir)
           setModalCerrarCanasto({ precinto: null })
@@ -981,13 +975,12 @@ const Preparacion = () => {
     setContenedores(nuevosContenedores)
     setCanastoActivo(null)
     setPesoCanasto('')
-    // Recalcular progreso desde contenedores reales (canasto ahora cerrado, no hay activo)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, null)
       setTimeout(() => persistirItems(itemsSinc), 0)
       return { ...prev, items: itemsSinc }
     })
-    const msg = peso ? `🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)` : `🧺 Canasto ${canastoCerrado.precinto} cerrado (sin pesar)`
+    const msg = peso ? `🧺 ${canastoCerrado.precinto} cerrado (${peso}kg)` : `🧺 ${canastoCerrado.precinto} cerrado`
     mostrarFeedback(msg, true, 'info')
   }
 
@@ -1017,15 +1010,9 @@ const Preparacion = () => {
     abrirSiguienteCanasto()
   }
 
-  // Estado para pesar canastos pendientes al finalizar
+  // Pesar canastos pendientes al finalizar
   const [pesandoCanastoIdx, setPesandoCanastoIdx] = useState(null)
   const [pesandoCanastoPeso, setPesandoCanastoPeso] = useState('')
-
-  const canastosSinPeso = useMemo(() => {
-    return contenedores
-      .map((c, idx) => ({ ...c, idx }))
-      .filter(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
-  }, [contenedores])
 
   const confirmarPesoCanasto = () => {
     const peso = parseFloat(pesandoCanastoPeso)
@@ -1033,7 +1020,6 @@ const Preparacion = () => {
     const idx = pesandoCanastoIdx
     setContenedores(prev => {
       const updated = prev.map((c, i) => i === idx ? { ...c, peso_origen: peso } : c)
-      // Buscar siguiente canasto sin peso
       const siguiente = updated.findIndex(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
       if (siguiente !== -1) {
         setTimeout(() => { setPesandoCanastoIdx(siguiente); setPesandoCanastoPeso('') }, 50)
@@ -1336,15 +1322,8 @@ const Preparacion = () => {
   const marcarPreparado = () => {
     // Si hay canasto abierto, cerrarlo primero
     if (canastoActivo) {
+      setPesoCanasto('')
       setModalCerrarCanasto({ precinto: null })
-      return
-    }
-
-    // Si hay canastos sin pesar, pedir el peso del primero
-    const sinPeso = contenedores.findIndex(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
-    if (sinPeso !== -1) {
-      setPesandoCanastoIdx(sinPeso)
-      setPesandoCanastoPeso('')
       return
     }
 
@@ -1389,8 +1368,14 @@ const Preparacion = () => {
       alert('No hay contenedores para confirmar')
       return
     }
-    if (canastos.some(c => !c.peso_origen || c.peso_origen <= 0)) {
-      alert('Todos los canastos deben tener peso')
+    const sinPesoIdx = canastos.findIndex((c, i) => {
+      const realIdx = todosContenedores.indexOf(c)
+      return !c.peso_origen || c.peso_origen <= 0
+    })
+    if (sinPesoIdx !== -1) {
+      const realIdx = todosContenedores.findIndex(c => c.tipo === 'canasto' && (!c.peso_origen || c.peso_origen <= 0))
+      setPesandoCanastoIdx(realIdx)
+      setPesandoCanastoPeso('')
       return
     }
 
@@ -1781,7 +1766,7 @@ const Preparacion = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="font-mono font-medium text-sm text-gray-800">{c.precinto}</span>
-                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen != null ? `${c.peso_origen} kg` : 'Sin pesar'} · {c.items.length} art.</span>
+                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen ? `${c.peso_origen} kg` : 'Sin pesar'} · {c.items.length} art.</span>
                     </div>
                   </div>
                   {c.items.length > 0 && (
@@ -1888,8 +1873,19 @@ const Preparacion = () => {
   // ═══════════════════════════════════════
   // FASE: PICKING (principal)
   // ═══════════════════════════════════════
-  const rubroGroups = {}
+  const itemsPendientes = []
+  const itemsCompletos = []
   for (const item of itemsOrdenados) {
+    const piezas = item.es_pesable && Array.isArray(item.pesos_escaneados) ? item.pesos_escaneados.length : (item.cantidad_preparada || 0)
+    const pedidas = item.es_pesable && item.pppOrden ? Math.round(item.cantidad_solicitada / item.pppOrden) : item.cantidad_solicitada
+    if (piezas >= pedidas) {
+      itemsCompletos.push(item)
+    } else {
+      itemsPendientes.push(item)
+    }
+  }
+  const rubroGroups = {}
+  for (const item of itemsPendientes) {
     const rubro = item.rubro || 'Sin rubro'
     if (!rubroGroups[rubro]) rubroGroups[rubro] = []
     rubroGroups[rubro].push(item)
@@ -2006,7 +2002,7 @@ const Preparacion = () => {
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-800">Canasto {cont.precinto}</h3>
-                  <div className="text-xs text-gray-400">{cont.peso_origen != null ? `${cont.peso_origen}kg` : 'Sin pesar'} · {cont.items.reduce((s, i) => s + (i.es_pesable && i.pesos_escaneados ? i.pesos_escaneados.length : (i.cantidad || 0)), 0)} piezas</div>
+                  <div className="text-xs text-gray-400">{cont.peso_origen ? `${cont.peso_origen}kg` : 'Sin pesar'} · {cont.items.reduce((s, i) => s + (i.es_pesable && i.pesos_escaneados ? i.pesos_escaneados.length : (i.cantidad || 0)), 0)} piezas</div>
                 </div>
                 <button onClick={() => setCanastoEditando(null)} className="text-gray-400 p-1">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2114,7 +2110,7 @@ const Preparacion = () => {
                   <div className="flex-1 min-w-0">
                     <span className="font-medium text-gray-800">{c.tipo === 'canasto' ? c.precinto : c.nombre}</span>
                     <span className="text-gray-400 ml-1">
-                      {c.tipo === 'canasto' && (c.peso_origen != null ? ` · ${c.peso_origen}kg` : ' · Sin pesar')}
+                      {c.tipo === 'canasto' && (c.peso_origen ? `· ${c.peso_origen}kg` : '· Sin pesar')}
                       {` · ${c.items.length} art.`}
                     </span>
                   </div>
@@ -2163,7 +2159,6 @@ const Preparacion = () => {
               {items.map((item, idx) => {
                 const piezasPedidas = cantidadEnPiezas(item)
                 const piezasPick = pickEnPiezas(item)
-                const completo = piezasPick >= piezasPedidas
                 return (
                   <button key={idx}
                     ref={el => { itemRefs.current[item.articulo_id] = el }}
@@ -2171,13 +2166,13 @@ const Preparacion = () => {
                     className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
                       ultimoEscaneado === item.articulo_id
                         ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
-                        : completo ? 'bg-white border-emerald-300' : 'bg-white border-gray-200'
+                        : 'bg-white border-gray-200'
                     }`}>
                     <img src={`${API_BASE}/api/articulos/${item.articulo_id}/imagen`} alt=""
                       className="w-12 h-12 rounded-lg object-cover bg-gray-100 flex-shrink-0"
                       onError={e => { e.target.style.display = 'none' }} />
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${completo ? 'text-emerald-700' : 'text-gray-800'}`}>{item.nombre}</div>
+                      <div className="text-sm font-medium truncate text-gray-800">{item.nombre}</div>
                       <div className="text-xs text-gray-400 mt-0.5">
                         {item.codigo}
                         {item.marca && <span className="ml-1">· {item.marca}</span>}
@@ -2185,7 +2180,7 @@ const Preparacion = () => {
                           <span className="ml-1">· Stock: {stockOrigen[item.articulo_id]}</span>
                         )}
                       </div>
-                      <div className={`text-xs mt-0.5 font-medium ${completo ? 'text-emerald-600' : 'text-blue-600'}`}>
+                      <div className="text-xs mt-0.5 font-medium text-blue-600">
                         {piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}
                       </div>
                     </div>
@@ -2196,6 +2191,49 @@ const Preparacion = () => {
             </div>
           </div>
         ))}
+
+        {/* Artículos completados */}
+        {itemsCompletos.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide px-1 mb-1.5 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              Completados ({itemsCompletos.length})
+            </div>
+            <div className="space-y-1.5">
+              {itemsCompletos.map((item, idx) => {
+                const piezasPedidas = cantidadEnPiezas(item)
+                const piezasPick = pickEnPiezas(item)
+                return (
+                  <button key={idx}
+                    ref={el => { itemRefs.current[item.articulo_id] = el }}
+                    onClick={() => { completoAlAbrir.current = true; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
+                    className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
+                      ultimoEscaneado === item.articulo_id
+                        ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
+                        : 'bg-emerald-50/50 border-emerald-200'
+                    }`}>
+                    <img src={`${API_BASE}/api/articulos/${item.articulo_id}/imagen`} alt=""
+                      className="w-12 h-12 rounded-lg object-cover bg-gray-100 flex-shrink-0"
+                      onError={e => { e.target.style.display = 'none' }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate text-emerald-700">{item.nombre}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {item.codigo}
+                        {item.marca && <span className="ml-1">· {item.marca}</span>}
+                      </div>
+                      <div className="text-xs mt-0.5 font-medium text-emerald-600">
+                        {piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}
+                      </div>
+                    </div>
+                    <CirculoProgreso actual={piezasPick} total={piezasPedidas} size={44} />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal confirmar eliminación de contenedor */}
@@ -2253,56 +2291,75 @@ const Preparacion = () => {
         </div>
       )}
 
-      {/* Modal cerrar canasto (pesar ahora o después) */}
-      {modalCerrarCanasto && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setModalCerrarCanasto(null)}>
-          <div className="bg-white rounded-2xl p-5 space-y-4 w-[90%] max-w-sm" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-semibold text-gray-800">
+      {/* Modal cerrar canasto - pesar ahora o después */}
+      {modalCerrarCanasto && !pesoCanasto && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setModalCerrarCanasto(null)}>
+          <div className="bg-white rounded-t-2xl p-5 pb-8 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+            <h3 className="text-base font-semibold text-gray-800 text-center">
               Cerrar canasto {canastoActivo?.precinto}
             </h3>
-            <p className="text-sm text-gray-500">
-              {canastoActivo?.items.length || 0} artículos
+            <p className="text-sm text-gray-500 text-center">
+              {canastoActivo?.items.length || 0} artículos · ¿Pesar ahora?
             </p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg)</label>
-              <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                value={pesoCanasto} onChange={e => setPesoCanasto(e.target.value)} autoFocus
-                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
-            </div>
-            <button onClick={handleCerrarCanastoConPeso}
-              disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
-              className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
-                pesoCanasto && parseFloat(pesoCanasto) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
-              }`}>
+            <button onClick={() => setPesoCanasto('0')}
+              className="w-full py-4 rounded-xl text-base font-semibold bg-sky-600 text-white">
               Pesar ahora
             </button>
             <button onClick={handleCerrarCanastoSinPeso}
-              className="w-full py-3 rounded-xl text-sm font-medium border border-gray-300 text-gray-600 active:bg-gray-50">
+              className="w-full py-4 rounded-xl text-base font-semibold bg-gray-100 text-gray-700">
               Pesar después
             </button>
           </div>
         </div>
       )}
 
-      {/* Modal pesar canasto pendiente (al finalizar) */}
-      {pesandoCanastoIdx !== null && contenedores[pesandoCanastoIdx] && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12">
-          <div className="bg-white rounded-2xl p-5 space-y-4 w-[90%] max-w-sm">
-            <h3 className="text-base font-semibold text-gray-800">
-              Pesar canasto {contenedores[pesandoCanastoIdx].precinto}
+      {/* Modal ingresar peso canasto */}
+      {modalCerrarCanasto && pesoCanasto !== '' && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => { setPesoCanasto(''); setModalCerrarCanasto(null) }}>
+          <div className="bg-white rounded-t-2xl p-5 pb-8 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+            <h3 className="text-base font-semibold text-gray-800 text-center">
+              Peso de {canastoActivo?.precinto}
             </h3>
-            <p className="text-sm text-gray-500">
-              {contenedores[pesandoCanastoIdx].items.length} artículos · Pendiente de pesar
+            <input type="number" inputMode="decimal" min="0.001" step="0.001"
+              value={pesoCanasto === '0' ? '' : pesoCanasto}
+              onChange={e => setPesoCanasto(e.target.value)} autoFocus
+              placeholder="Peso en kg"
+              className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
+            <button onClick={handleCerrarCanastoConPeso}
+              disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
+              className={`w-full py-4 rounded-xl text-base font-semibold ${
+                pesoCanasto && parseFloat(pesoCanasto) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
+              }`}>
+              Confirmar peso y cerrar
+            </button>
+            <button onClick={() => setPesoCanasto('')}
+              className="w-full py-3 text-sm text-gray-500">
+              Volver
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal pesar canasto pendiente (al finalizar) */}
+      {pesandoCanastoIdx !== null && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end">
+          <div className="bg-white rounded-t-2xl p-5 pb-8 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+            <h3 className="text-base font-semibold text-gray-800 text-center">
+              Pesar canasto {contenedores[pesandoCanastoIdx]?.precinto}
+            </h3>
+            <p className="text-sm text-gray-500 text-center">
+              {contenedores[pesandoCanastoIdx]?.items.length || 0} artículos · Pendiente de peso
             </p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg) *</label>
-              <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                value={pesandoCanastoPeso} onChange={e => setPesandoCanastoPeso(e.target.value)} autoFocus
-                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
-            </div>
+            <input type="number" inputMode="decimal" min="0.001" step="0.001"
+              value={pesandoCanastoPeso} onChange={e => setPesandoCanastoPeso(e.target.value)} autoFocus
+              placeholder="Peso en kg"
+              className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
             <button onClick={confirmarPesoCanasto}
               disabled={!pesandoCanastoPeso || parseFloat(pesandoCanastoPeso) <= 0}
-              className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
+              className={`w-full py-4 rounded-xl text-base font-semibold ${
                 pesandoCanastoPeso && parseFloat(pesandoCanastoPeso) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
               }`}>
               Confirmar peso
