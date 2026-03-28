@@ -103,25 +103,30 @@ const Preparacion = () => {
     setFeedback({ msg, ok })
     if (fase === 'detalle' || fase === 'picking') {
       setAlertaFullscreen({ msg, ok })
-      if (!ok) {
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)()
-          const playBeep = (freq, start, dur) => {
-            const osc = ctx.createOscillator()
-            const gain = ctx.createGain()
-            osc.connect(gain)
-            gain.connect(ctx.destination)
-            osc.frequency.value = freq
-            osc.type = 'square'
-            gain.gain.value = 0.3
-            osc.start(ctx.currentTime + start)
-            osc.stop(ctx.currentTime + start + dur)
-          }
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        const playBeep = (freq, start, dur, type = 'square', vol = 0.3) => {
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.connect(gain)
+          gain.connect(ctx.destination)
+          osc.frequency.value = freq
+          osc.type = type
+          gain.gain.value = vol
+          osc.start(ctx.currentTime + start)
+          osc.stop(ctx.currentTime + start + dur)
+        }
+        if (ok) {
+          // Beep ascendente corto — éxito
+          playBeep(600, 0, 0.1, 'sine', 0.25)
+          playBeep(900, 0.1, 0.15, 'sine', 0.25)
+        } else {
+          // 3 beeps graves — error
           playBeep(800, 0, 0.15)
           playBeep(800, 0.25, 0.15)
           playBeep(800, 0.5, 0.15)
-        } catch (e) {}
-      }
+        }
+      } catch (e) {}
       setTimeout(() => setAlertaFullscreen(null), ok ? 800 : 2000)
     }
     setTimeout(() => setFeedback(null), 1500)
