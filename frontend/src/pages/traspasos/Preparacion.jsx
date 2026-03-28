@@ -160,6 +160,15 @@ const Preparacion = () => {
         if (ps.canastoActivo) setCanastoActivo(ps.canastoActivo)
         if (ps.contenedores?.length) setContenedores(ps.contenedores)
         prepStateRef.current = ps
+        // Sincronizar cantidad_preparada desde contenedores reales
+        const cont = ps.contenedores || []
+        const canasto = ps.canastoActivo || null
+        const itemsSinc = sincronizarProgreso(data.items, cont, canasto)
+        if (JSON.stringify(itemsSinc) !== JSON.stringify(data.items)) {
+          data.items = itemsSinc
+          setOrden(prev => ({ ...prev, items: itemsSinc }))
+          api.put(`/api/traspasos/ordenes/${id}/pick`, { items: itemsSinc, preparacion_state: ps }).catch(() => {})
+        }
       }
       prepStateLoaded.current = true
       if (data.estado !== 'en_preparacion') {
@@ -632,6 +641,44 @@ const Preparacion = () => {
     setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
   }
 
+  // === SINCRONIZAR PROGRESO DESDE CONTENEDORES ===
+  const sincronizarProgreso = (itemsOrden, contList, canasto) => {
+    return (itemsOrden || []).map(item => {
+      let total = 0
+      let pesos = []
+
+      // Sumar desde contenedores cerrados
+      for (const c of (contList || [])) {
+        for (const ci of (c.items || [])) {
+          if (ci.articulo_id !== item.articulo_id) continue
+          if (ci.es_pesable && ci.pesos_escaneados) {
+            total += ci.pesos_escaneados.reduce((s, p) => s + p, 0)
+            pesos.push(...ci.pesos_escaneados)
+          } else {
+            total += ci.cantidad || 0
+          }
+        }
+      }
+
+      // Sumar desde canasto abierto
+      if (canasto) {
+        for (const ci of (canasto.items || [])) {
+          if (ci.articulo_id !== item.articulo_id) continue
+          if (ci.es_pesable && ci.pesos_escaneados) {
+            total += ci.pesos_escaneados.reduce((s, p) => s + p, 0)
+            pesos.push(...ci.pesos_escaneados)
+          } else {
+            total += ci.cantidad || 0
+          }
+        }
+      }
+
+      total = Math.round(total * 1000) / 1000
+      if (total === (item.cantidad_preparada || 0)) return item
+      return { ...item, cantidad_preparada: total, pesos_escaneados: pesos.length ? pesos : undefined }
+    })
+  }
+
   // === HANDLER PRINCIPAL DE ESCANEO ===
   const handleScanCodigo = (codigo) => {
 
@@ -836,9 +883,16 @@ const Preparacion = () => {
       items: canastoActivo.items,
       peso_origen: parseFloat(peso),
     }
-    setContenedores(prev => [...prev, canastoCerrado])
+    const nuevosContenedores = [...contenedores, canastoCerrado]
+    setContenedores(nuevosContenedores)
     setCanastoActivo(null)
     setPesoCanasto('')
+    // Recalcular progreso desde contenedores reales (canasto ahora cerrado, no hay activo)
+    setOrden(prev => {
+      const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, null)
+      setTimeout(() => persistirItems(itemsSinc), 0)
+      return { ...prev, items: itemsSinc }
+    })
     mostrarFeedback(`🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)`, true)
   }
 
@@ -867,27 +921,14 @@ const Preparacion = () => {
   const eliminarContenedor = (idx) => {
     const c = contenedores[idx]
     if (!c) return
-    // Restar del progreso de la orden
-    for (const item of c.items) {
-      let nuevosItems
-      setOrden(prev => {
-        nuevosItems = (prev.items || []).map(i => {
-          if (i.articulo_id !== item.articulo_id) return i
-          const updated = { ...i }
-          if (item.es_pesable && item.pesos_escaneados) {
-            const totalRestar = item.pesos_escaneados.reduce((s, p) => s + p, 0)
-            updated.cantidad_preparada = Math.max(0, Math.round(((i.cantidad_preparada || 0) - totalRestar) * 1000) / 1000)
-            updated.pesos_escaneados = (i.pesos_escaneados || []).slice(0, (i.pesos_escaneados || []).length - item.pesos_escaneados.length)
-          } else {
-            updated.cantidad_preparada = Math.max(0, (i.cantidad_preparada || 0) - item.cantidad)
-          }
-          return updated
-        })
-        return { ...prev, items: nuevosItems }
-      })
-      setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
-    }
-    setContenedores(prev => prev.filter((_, i) => i !== idx))
+    const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
+    setContenedores(nuevosContenedores)
+    // Recalcular progreso desde contenedores reales
+    setOrden(prev => {
+      const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
+      setTimeout(() => persistirItems(itemsSinc), 0)
+      return { ...prev, items: itemsSinc }
+    })
   }
 
   // Pesaje manual (para pesables en detalle)
