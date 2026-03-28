@@ -1228,7 +1228,7 @@ const Preparacion = () => {
         <div className="bg-white border-t border-gray-200 px-3 py-2 space-y-1.5 flex-shrink-0 safe-area-bottom">
           <div className="flex gap-2">
             {tecladoVisible ? (
-              <input ref={inputManualRef} type="text" value={scanInput}
+              <input ref={inputManualRef} type="text" inputMode="numeric" value={scanInput}
                 onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -1744,7 +1744,7 @@ const Preparacion = () => {
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 space-y-2 safe-area-bottom">
         <div className="flex gap-2">
           {tecladoVisible ? (
-            <input ref={inputManualRef} type="text" value={scanInput}
+            <input ref={inputManualRef} type="text" inputMode="numeric" value={scanInput}
               onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
