@@ -8,6 +8,7 @@ import SaldosPOS from './SaldosPOS'
 import GiftCardsPOS from './GiftCardsPOS'
 import ConsultaPOS from '../../components/pos/ConsultaPOS'
 import NuevoClienteModal from '../../components/NuevoClienteModal'
+import EditarClienteModal from '../../components/EditarClienteModal'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
 import TecladoVirtual from '../../components/pos/TecladoVirtual'
 import api, { isNetworkError } from '../../services/api'
@@ -1335,6 +1336,7 @@ const POS = () => {
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
   const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
+  const [mostrarEditarCliente, setMostrarEditarCliente] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF', grupo_descuento_id: null, grupo_descuento_nombre: null, grupo_descuento_porcentaje: 0 }
   const [descuentosGrupoRubros, setDescuentosGrupoRubros] = useState({}) // { rubroNombre: porcentaje }
@@ -3759,31 +3761,42 @@ const POS = () => {
                     </span>
                   )}
                   {cliente.id_centum > 0 && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const { data } = await api.get(`/api/clientes/refresh/${cliente.id_centum}`)
-                          setCliente(prev => ({
-                            ...prev,
-                            razon_social: data.razon_social,
-                            codigo: data.codigo || prev.codigo || '',
-                            cuit: data.cuit,
-                            condicion_iva: data.condicion_iva || 'CF',
-                            email: data.email || '',
-                            celular: data.celular || '',
-                            lista_precio_id: data.lista_precio_id || 1,
-                          }))
-                        } catch (err) {
-                          console.error('Error refrescando cliente:', err)
-                        }
-                      }}
-                      className="text-gray-400 hover:text-violet-600"
-                      title="Actualizar datos del cliente"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => setMostrarEditarCliente(true)}
+                        className="text-gray-400 hover:text-violet-600"
+                        title="Editar cliente"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { data } = await api.get(`/api/clientes/refresh/${cliente.id_centum}`)
+                            setCliente(prev => ({
+                              ...prev,
+                              razon_social: data.razon_social,
+                              codigo: data.codigo || prev.codigo || '',
+                              cuit: data.cuit,
+                              condicion_iva: data.condicion_iva || 'CF',
+                              email: data.email || '',
+                              celular: data.celular || '',
+                              lista_precio_id: data.lista_precio_id || 1,
+                            }))
+                          } catch (err) {
+                            console.error('Error refrescando cliente:', err)
+                          }
+                        }}
+                        className="text-gray-400 hover:text-violet-600"
+                        title="Actualizar datos del cliente"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={() => { setCliente({ ...CLIENTE_DEFAULT }); setDescuentosGrupoRubros({}) }}
@@ -3874,6 +3887,16 @@ const POS = () => {
                         seleccionarCliente(cli)
                       }}
                       cuitInicial={busquedaCliente.trim()}
+                    />
+                  )}
+                  {mostrarEditarCliente && (
+                    <EditarClienteModal
+                      cliente={cliente}
+                      onClose={() => setMostrarEditarCliente(false)}
+                      onGuardado={(cli) => {
+                        setCliente(prev => ({ ...prev, ...cli }))
+                        setMostrarEditarCliente(false)
+                      }}
                     />
                   )}
                 </div>
