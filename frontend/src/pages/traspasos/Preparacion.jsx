@@ -206,46 +206,41 @@ const Preparacion = () => {
 
   // Input oculto para captura de escaneo — inputMode="none" no abre teclado
   const scanBufferRef = useRef('')
-  const hiddenInputRef = useRef(null)
   const handleScanCodigoRef = useRef(null)
   const handleScanDetalleRef = useRef(null)
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
+  const scanBufferRef = useRef('')
 
-  // Mantener foco en input oculto (con pausa tras cerrar teclado manual)
-  const refocusPausedRef = useRef(false)
+  // Listener global de keydown para capturar scanner sin input focuseado
   useEffect(() => {
     if (fase !== 'picking' && fase !== 'detalle') return
     if (tecladoVisible) return
-    const mantenerFoco = () => {
-      if (refocusPausedRef.current) return
-      if (hiddenInputRef.current && document.activeElement !== hiddenInputRef.current) {
-        hiddenInputRef.current.focus()
-      }
-    }
-    // Foco inicial inmediato
-    mantenerFoco()
-    const interval = setInterval(mantenerFoco, 1000)
-    return () => clearInterval(interval)
-  }, [fase, tecladoVisible])
 
-  const handleHiddenInput = (e) => {
-    setScanInput(e.target.value)
-  }
-  const handleHiddenKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const codigo = e.target.value.trim()
-      e.target.value = ''
-      setScanInput('')
-      if (!codigo) return
-      if (faseRef.current === 'detalle' && itemDetalleRef.current) {
-        handleScanDetalleRef.current?.(codigo)
-      } else {
-        handleScanCodigoRef.current?.(codigo)
+    const handleKeyDown = (e) => {
+      // Ignorar si el foco está en un input real (teclado manual)
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const codigo = scanBufferRef.current.trim()
+        scanBufferRef.current = ''
+        setScanInput('')
+        if (!codigo) return
+        if (faseRef.current === 'detalle' && itemDetalleRef.current) {
+          handleScanDetalleRef.current?.(codigo)
+        } else {
+          handleScanCodigoRef.current?.(codigo)
+        }
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanBufferRef.current += e.key
+        setScanInput(scanBufferRef.current)
       }
     }
-  }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [fase, tecladoVisible])
 
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
@@ -1344,18 +1339,7 @@ const Preparacion = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-36">
-      {/* Input para captura de escaneo — visible en barra inferior, sin teclado */}
-      {!tecladoVisible && (
-        <input
-          ref={hiddenInputRef}
-          type="text"
-          autoComplete="off"
-          enterKeyHint="go"
-          onInput={handleHiddenInput}
-          onKeyDown={handleHiddenKeyDown}
-          style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0 }}
-        />
-      )}
+      {/* Scanner capturado via keydown global — sin input oculto */}
       {/* Banner */}
       <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2">
         <button onClick={() => navigate('/preparacion')} className="p-2 rounded-lg active:bg-sky-700">
@@ -1682,14 +1666,7 @@ const Preparacion = () => {
             </div>
           )}
           <button onClick={() => {
-            setTecladoVisible(v => {
-              if (v) {
-                // Cerrando teclado — pausar refocus
-                refocusPausedRef.current = true
-                setTimeout(() => { refocusPausedRef.current = false }, 1500)
-              }
-              return !v
-            })
+            setTecladoVisible(v => !v)
             setTimeout(() => inputManualRef.current?.focus(), 100)
           }}
             className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-sky-500 bg-sky-50 text-sky-600' : 'border-gray-300 text-gray-400'}`}>
