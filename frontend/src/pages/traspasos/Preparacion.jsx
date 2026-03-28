@@ -918,7 +918,7 @@ const Preparacion = () => {
       setTimeout(() => persistirItems(itemsSinc), 0)
       return { ...prev, items: itemsSinc }
     })
-    mostrarFeedback(`🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)`, true)
+    mostrarFeedback(`🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)`, true, 'info')
   }
 
   const handleCerrarCanasto = () => {
