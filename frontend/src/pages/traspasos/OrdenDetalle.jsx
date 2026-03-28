@@ -276,58 +276,115 @@ const OrdenDetalle = () => {
           )}
         </div>
 
-        {/* Canastos */}
-        {canastos.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Canastos ({canastos.length})</h3>
-            <div className="space-y-2">
-              {canastos.map(c => {
-                const esPallet = c.tipo === 'pallet'
-                return (
-                  <div key={c.id} className="border border-gray-100 rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-800 text-sm">
-                          {esPallet ? (c.numero_pallet || c.precinto) : `Precinto: ${c.precinto}`}
-                        </span>
-                        {esPallet && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Pallet</span>}
-                        {c.tipo === 'bulto' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Bulto</span>}
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${CANASTO_BADGE[c.estado]}`}>
-                          {c.estado.replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {esPallet ? (
-                          <>
-                            {c.cantidad_bultos_destino != null && <span>Recibidos: {c.cantidad_bultos_destino} bultos</span>}
-                          </>
-                        ) : (
-                          <>
-                            {c.peso_origen && <span>Origen: {c.peso_origen} kg</span>}
-                            {c.peso_destino && <span className="ml-3">Destino: {c.peso_destino} kg</span>}
-                          </>
+        {/* Canastos y Pallets */}
+        {canastos.length > 0 && (() => {
+          const canastosNormales = canastos.filter(c => c.tipo !== 'pallet')
+          const pallets = canastos.filter(c => c.tipo === 'pallet')
+          return (
+            <>
+              {/* Canastos / Bultos */}
+              {canastosNormales.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                    Canastos ({canastosNormales.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {canastosNormales.map(c => (
+                      <div key={c.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
+                          <div className="flex items-center gap-2">
+                            {c.tipo === 'bulto' ? (
+                              <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">Bulto</span>
+                            ) : (
+                              <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full font-medium">Canasto</span>
+                            )}
+                            <span className="font-medium text-gray-800 text-sm font-mono">{c.precinto}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${CANASTO_BADGE[c.estado]}`}>
+                              {c.estado.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 font-medium">
+                            {c.items && c.items.length > 0 && <span>{c.items.length} art.</span>}
+                            {c.peso_origen && <span className="ml-2">{c.peso_origen} kg</span>}
+                            {c.peso_destino && <span className="ml-2 text-emerald-600">→ {c.peso_destino} kg</span>}
+                          </div>
+                        </div>
+                        {c.items && c.items.length > 0 && (
+                          <div className="px-3 py-2 divide-y divide-gray-50">
+                            {c.items.map((i, idx) => (
+                              <div key={idx} className="flex items-center justify-between py-1 text-sm">
+                                <span className="text-gray-700">{i.nombre}</span>
+                                <span className="text-gray-500 font-mono text-xs">{i.cantidad}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {c.tipo === 'bulto' && c.nombre && c.nombre !== 'Bulto' && (
+                          <div className="px-3 py-1.5 text-xs text-gray-500 border-t border-gray-100">{c.nombre}</div>
+                        )}
+                        {c.diferencias && c.diferencias.length > 0 && (
+                          <div className="px-3 py-2 bg-red-50 text-xs text-red-600 border-t border-red-100">
+                            {c.diferencias.map((d, idx) => (
+                              <div key={idx}>Esperado: {d.cantidad_esperada} → Real: {d.cantidad_real}</div>
+                            ))}
+                          </div>
                         )}
                       </div>
-                    </div>
-                    {c.items && c.items.length > 0 && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        {c.items.map(i => `${i.nombre} (${i.cantidad})`).join(', ')}
-                      </div>
-                    )}
-                    {esPallet && c.nombre && c.nombre !== 'Pallet' && (
-                      <div className="text-xs text-gray-500 mt-1">{c.nombre}</div>
-                    )}
-                    {c.diferencias && c.diferencias.length > 0 && (
-                      <div className="mt-2 bg-red-50 rounded p-2 text-xs text-red-600">
-                        Diferencias: {c.diferencias.map(d => `${d.articulo_id}: esperado ${d.cantidad_esperada}, real ${d.cantidad_real}`).join('; ')}
-                      </div>
-                    )}
+                    ))}
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
+                </div>
+              )}
+
+              {/* Pallets */}
+              {pallets.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                    Pallets ({pallets.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {pallets.map(c => (
+                      <div key={c.id} className="border border-orange-200 rounded-lg overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-orange-50">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">Pallet</span>
+                            <span className="font-medium text-gray-800 text-sm font-mono">{c.numero_pallet || c.precinto}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${CANASTO_BADGE[c.estado]}`}>
+                              {c.estado.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <span className="text-xs text-gray-500 font-medium">
+                            {c.cantidad_bultos_origen && <span>{c.cantidad_bultos_origen} bultos</span>}
+                            {c.cantidad_bultos_destino != null && <span className="ml-2 text-emerald-600">→ Recibidos: {c.cantidad_bultos_destino}</span>}
+                          </span>
+                        </div>
+                        {c.nombre && c.nombre !== 'Pallet' && (
+                          <div className="px-3 py-1.5 text-sm text-gray-600 border-t border-orange-100">{c.nombre}</div>
+                        )}
+                        {c.items && c.items.length > 0 && (
+                          <div className="px-3 py-2 divide-y divide-gray-50 border-t border-orange-100">
+                            {c.items.map((i, idx) => (
+                              <div key={idx} className="flex items-center justify-between py-1 text-sm">
+                                <span className="text-gray-700">{i.nombre}</span>
+                                <span className="text-gray-500 font-mono text-xs">{i.cantidad}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {c.diferencias && c.diferencias.length > 0 && (
+                          <div className="px-3 py-2 bg-red-50 text-xs text-red-600 border-t border-red-100">
+                            {c.diferencias.map((d, idx) => (
+                              <div key={idx}>Esperado: {d.cantidad_esperada} → Real: {d.cantidad_real}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
 
         {/* Timestamps */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 text-xs text-gray-400 space-y-1">

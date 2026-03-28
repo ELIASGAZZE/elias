@@ -84,9 +84,33 @@ const Preparacion = () => {
 
   // Feedback visual
   const [feedback, setFeedback] = useState(null)
+  const [alertaFullscreen, setAlertaFullscreen] = useState(null)
 
   const mostrarFeedback = (msg, ok) => {
     setFeedback({ msg, ok })
+    if (fase === 'detalle') {
+      setAlertaFullscreen({ msg, ok })
+      if (!ok) {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)()
+          const playBeep = (freq, start, dur) => {
+            const osc = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.frequency.value = freq
+            osc.type = 'square'
+            gain.gain.value = 0.3
+            osc.start(ctx.currentTime + start)
+            osc.stop(ctx.currentTime + start + dur)
+          }
+          playBeep(800, 0, 0.15)
+          playBeep(800, 0.25, 0.15)
+          playBeep(800, 0.5, 0.15)
+        } catch (e) {}
+      }
+      setTimeout(() => setAlertaFullscreen(null), ok ? 800 : 2000)
+    }
     setTimeout(() => setFeedback(null), 1500)
   }
 
@@ -501,12 +525,11 @@ const Preparacion = () => {
   }
 
   const calcularPendientes = () => {
-    const items = orden.items || []
-    return items
+    return itemsEnriquecidos
       .map(item => ({
         ...item,
         cantidad_preparada_real: item.cantidad_preparada || 0,
-        cantidad_faltante: (item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0),
+        cantidad_faltante: Math.round(((item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0)) * 1000) / 1000,
       }))
       .filter(item => item.cantidad_faltante > 0)
   }
@@ -664,17 +687,35 @@ const Preparacion = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {modalPendientes.pendientes.map(p => (
+                  {modalPendientes.pendientes.map(p => {
+                    const ppp = p.pesoPromedioPieza || p.pppOrden || p.peso_promedio_pieza || null
+                    const piezasPedidas = p.es_pesable && ppp ? Math.round(p.cantidad_solicitada / ppp) : null
+                    const piezasPrep = p.es_pesable && ppp ? Math.round(p.cantidad_preparada_real / ppp) : null
+                    const piezasFalta = (piezasPedidas != null && piezasPrep != null) ? Math.max(0, piezasPedidas - piezasPrep) : null
+                    return (
                     <tr key={p.articulo_id}>
                       <td className="py-2 pr-2">
                         <div className="font-medium text-gray-800 truncate max-w-[180px]">{p.nombre}</div>
                         <div className="text-xs text-gray-400">{p.codigo}</div>
                       </td>
-                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_solicitada}</td>
-                      <td className="py-2 px-2 text-right text-gray-600">{p.cantidad_preparada_real}</td>
-                      <td className="py-2 pl-2 text-right font-semibold text-amber-600">{p.cantidad_faltante}</td>
+                      <td className="py-2 px-2 text-right text-gray-600">
+                        {p.es_pesable ? (
+                          <>{piezasPedidas != null && <div>{piezasPedidas} pzas</div>}<div className="text-xs text-gray-400">{p.cantidad_solicitada} kg</div></>
+                        ) : p.cantidad_solicitada}
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-600">
+                        {p.es_pesable ? (
+                          <>{piezasPrep != null && <div>{piezasPrep} pzas</div>}<div className="text-xs text-gray-400">{p.cantidad_preparada_real} kg</div></>
+                        ) : p.cantidad_preparada_real}
+                      </td>
+                      <td className="py-2 pl-2 text-right font-semibold text-amber-600">
+                        {p.es_pesable ? (
+                          <>{piezasFalta != null && <div>{piezasFalta} pzas</div>}<div className="text-xs">{p.cantidad_faltante} kg</div></>
+                        ) : p.cantidad_faltante}
+                      </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1026,6 +1067,25 @@ const Preparacion = () => {
             </button>
           )}
         </div>
+
+        {/* Alerta fullscreen OK/Error */}
+        {alertaFullscreen && (
+          <div className={`fixed inset-0 z-[9999] flex items-center justify-center ${alertaFullscreen.ok ? 'bg-emerald-500' : 'bg-red-600 animate-pulse'}`}
+            onClick={() => setAlertaFullscreen(null)}>
+            <div className="text-center px-6">
+              {alertaFullscreen.ok ? (
+                <svg className="w-24 h-24 text-white mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-24 h-24 text-white mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              )}
+              <div className="text-white text-2xl font-bold">{alertaFullscreen.msg}</div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -1308,6 +1368,7 @@ const Preparacion = () => {
       </div>
 
       {modalPendientesJSX}
+
     </div>
   )
 }
