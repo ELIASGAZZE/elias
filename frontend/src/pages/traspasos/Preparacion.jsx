@@ -420,6 +420,13 @@ const Preparacion = () => {
 
   const itemsOrdenados = useMemo(() => {
     return [...itemsEnriquecidos].sort((a, b) => {
+      const aPiezas = a.es_pesable && Array.isArray(a.pesos_escaneados) ? a.pesos_escaneados.length : (a.cantidad_preparada || 0)
+      const bPiezas = b.es_pesable && Array.isArray(b.pesos_escaneados) ? b.pesos_escaneados.length : (b.cantidad_preparada || 0)
+      const aPedidas = a.es_pesable && a.pppOrden ? Math.round(a.cantidad_solicitada / a.pppOrden) : a.cantidad_solicitada
+      const bPedidas = b.es_pesable && b.pppOrden ? Math.round(b.cantidad_solicitada / b.pppOrden) : b.cantidad_solicitada
+      const aCompleto = aPiezas >= aPedidas ? 1 : 0
+      const bCompleto = bPiezas >= bPedidas ? 1 : 0
+      if (aCompleto !== bCompleto) return aCompleto - bCompleto
       const rubroComp = (a.rubro || 'ZZZ').localeCompare(b.rubro || 'ZZZ')
       if (rubroComp !== 0) return rubroComp
       return (a.marca || 'ZZZ').localeCompare(b.marca || 'ZZZ')
