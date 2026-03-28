@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
 import { imprimirPallet } from '../../utils/imprimirPallet'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
@@ -44,20 +45,16 @@ const CirculoProgreso = ({ actual, total, size = 48 }) => {
 const Preparacion = () => {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { usuario } = useAuth()
 
   const [orden, setOrden] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [fase, setFase] = useState('picking') // 'picking' | 'detalle' | 'finalizar'
   const [itemDetalle, setItemDetalle] = useState(null)
 
-  // Contenedores — persistidos en localStorage por orden
-  const storageKey = `prep_${id}`
-  const [canastoActivo, setCanastoActivo] = useState(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s).canastoActivo || null : null } catch { return null }
-  })
-  const [contenedores, setContenedores] = useState(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s).contenedores || [] : [] } catch { return [] }
-  })
+  // Contenedores — persistidos en servidor (preparacion_state)
+  const [canastoActivo, setCanastoActivo] = useState(null)
+  const [contenedores, setContenedores] = useState([])
   const [modalCerrarCanasto, setModalCerrarCanasto] = useState(null) // {precinto, callback}
   const [pesoCanasto, setPesoCanasto] = useState('')
 
@@ -147,8 +144,22 @@ const Preparacion = () => {
     try {
       const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
       setOrden(data)
+      // Restaurar estado de preparación (canastos/contenedores)
+      if (data.preparacion_state) {
+        const ps = data.preparacion_state
+        if (ps.canastoActivo) setCanastoActivo(ps.canastoActivo)
+        if (ps.contenedores?.length) setContenedores(ps.contenedores)
+        prepStateRef.current = ps
+      }
+      prepStateLoaded.current = true
       if (data.estado !== 'en_preparacion') {
         alert('Esta orden no está en preparación')
+        navigate('/preparacion')
+        return
+      }
+      // Verificar que el usuario actual sea quien inició la preparación
+      if (data.preparado_por && usuario?.id && data.preparado_por !== usuario.id) {
+        alert('Esta orden está siendo preparada por otro usuario')
         navigate('/preparacion')
         return
       }
@@ -166,10 +177,21 @@ const Preparacion = () => {
 
   useEffect(() => { cargar() }, [id])
 
-  // Persistir canasto y contenedores en localStorage
+  // Persistir canasto y contenedores en servidor
+  const prepStateRef = useRef({ canastoActivo: null, contenedores: [] })
+  const prepStateLoaded = useRef(false)
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify({ canastoActivo, contenedores })) } catch {}
-  }, [canastoActivo, contenedores, storageKey])
+    if (!prepStateLoaded.current) return // No persistir hasta que se cargue la orden
+    const state = { canastoActivo, contenedores }
+    // Evitar guardar si no cambió
+    if (JSON.stringify(state) === JSON.stringify(prepStateRef.current)) return
+    prepStateRef.current = state
+    // Guardar junto con items actuales
+    const items = orden?.items
+    if (items) {
+      api.put(`/api/traspasos/ordenes/${id}/pick`, { items, preparacion_state: state }).catch(() => {})
+    }
+  }, [canastoActivo, contenedores])
 
   useEffect(() => {
     if (!orden) return
@@ -180,19 +202,50 @@ const Preparacion = () => {
       .catch(() => {})
   }, [orden?.id])
 
+  // Captura global de escaneo — no requiere focus en input, no abre teclado
+  const scanBufferRef = useRef('')
+  const scanTimerRef = useRef(null)
   useEffect(() => {
-    if (fase === 'picking' || fase === 'detalle') {
-      setTimeout(() => scanRef.current?.focus(), 150)
-      // Re-focus automático cuando se pierde el foco
-      const refocus = () => {
-        if ((fase === 'picking' || fase === 'detalle') && !modalCerrarCanasto && !alertaPeso && !modalPendientes && !modalPallet) {
-          setTimeout(() => scanRef.current?.focus(), 50)
+    if (fase !== 'picking' && fase !== 'detalle') return
+    if (modalCerrarCanasto || alertaPeso || modalPendientes || modalPallet) return
+
+    const handleKeyDown = (e) => {
+      // Ignorar si hay un modal con input activo (ej: peso canasto)
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const codigo = scanBufferRef.current.trim()
+        scanBufferRef.current = ''
+        setScanInput('')
+        if (codigo) {
+          // Simular el handleScan
+          setScanInput('')
+          if (fase === 'detalle' && itemDetalle) {
+            handleScanDetalle(codigo)
+          } else {
+            handleScanCodigo(codigo)
+          }
         }
+        return
       }
-      document.addEventListener('click', refocus)
-      return () => document.removeEventListener('click', refocus)
+
+      // Solo caracteres imprimibles (1 char)
+      if (e.key.length === 1) {
+        e.preventDefault()
+        scanBufferRef.current += e.key
+        setScanInput(scanBufferRef.current)
+        // Reset timer — si no llega Enter en 100ms, limpiar (typing manual)
+        clearTimeout(scanTimerRef.current)
+        scanTimerRef.current = setTimeout(() => {
+          // No limpiar — dejar que el usuario pueda escribir lento también
+        }, 5000)
+      }
     }
-  }, [fase, itemDetalle, modalCerrarCanasto, alertaPeso, modalPendientes, modalPallet])
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [fase, itemDetalle, modalCerrarCanasto, alertaPeso, modalPendientes, modalPallet, canastoActivo, contenedores, orden])
 
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
@@ -474,18 +527,7 @@ const Preparacion = () => {
   }
 
   // === HANDLER PRINCIPAL DE ESCANEO ===
-  const handleScan = (e) => {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    const codigo = scanInput.trim()
-    if (!codigo) return
-    setScanInput('')
-
-    // Si estamos en fase detalle, delegar al handler específico
-    if (fase === 'detalle' && itemDetalle) {
-      handleScanDetalle(codigo)
-      return
-    }
+  const handleScanCodigo = (codigo) => {
 
     // 1. Detectar canasto por prefijo CAN-
     if (codigo.startsWith('CAN-')) {
@@ -550,6 +592,21 @@ const Preparacion = () => {
     } else {
       // 3. No matchea nada → error
       mostrarFeedback('Código no reconocido', false)
+    }
+  }
+
+  // Wrapper para input manual (fallback)
+  const handleScan = (e) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const codigo = scanInput.trim()
+    if (!codigo) return
+    setScanInput('')
+    scanBufferRef.current = ''
+    if (fase === 'detalle' && itemDetalle) {
+      handleScanDetalle(codigo)
+    } else {
+      handleScanCodigo(codigo)
     }
   }
 
@@ -867,7 +924,6 @@ const Preparacion = () => {
       if (res.data.nueva_orden_numero) {
         alert(`Orden cerrada. Se creó nueva orden ${res.data.nueva_orden_numero} con los pendientes.`)
       }
-      localStorage.removeItem(storageKey)
       navigate('/preparacion')
     } catch (err) {
       alert(err.response?.data?.error || 'Error al confirmar')
@@ -1067,10 +1123,11 @@ const Preparacion = () => {
 
         {/* Barra inferior */}
         <div className="bg-white border-t border-gray-200 px-3 py-2 space-y-1.5 flex-shrink-0 safe-area-bottom">
-          <input ref={scanRef} type="text" value={scanInput}
-            onChange={e => setScanInput(e.target.value)} onKeyDown={handleScan}
-            placeholder="Escanear código de barras..." autoComplete="off" autoFocus
-            className="w-full border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center focus:border-sky-500 outline-none" />
+          <div
+            className={`w-full border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center outline-none select-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
+          >
+            {scanInput || 'Escanear código de barras...'}
+          </div>
           {itemDetalle.es_pesable && (
             <button onClick={() => { setMostrarPesoManual(true); setPesoManualCantidad(''); setPesoManualPeso('') }}
               className="w-full text-xs text-gray-400 active:text-gray-600 py-0.5">Pesar manual</button>
@@ -1547,13 +1604,14 @@ const Preparacion = () => {
 
       {/* Barra inferior — escaneo + preparar */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 space-y-2 safe-area-bottom">
-        <input ref={scanRef} type="text" value={scanInput}
-          onChange={e => setScanInput(e.target.value)} onKeyDown={handleScan}
-          placeholder={canastoActivo ? `🧺 Escanear artículo → canasto ${canastoActivo.precinto}` : 'Escanear precinto o artículo...'}
-          autoComplete="off" autoFocus
-          className={`w-full border-2 rounded-xl px-4 py-3 text-base text-center outline-none ${
-            canastoActivo ? 'border-amber-400 focus:border-amber-500 bg-amber-50' : 'border-sky-300 focus:border-sky-500'
-          }`} />
+        <div
+          ref={scanRef}
+          className={`w-full border-2 rounded-xl px-4 py-3 text-base text-center outline-none select-none ${
+            canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
+          } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
+        >
+          {scanInput || (canastoActivo ? `🧺 Escanear artículo → canasto ${canastoActivo.precinto}` : 'Escanear precinto o artículo...')}
+        </div>
         <button onClick={marcarPreparado}
           className="w-full bg-emerald-600 active:bg-emerald-700 text-white py-3 rounded-xl text-sm font-semibold">
           Orden preparada {totalContenedores > 0 && `(${totalContenedores} contenedores)`}
