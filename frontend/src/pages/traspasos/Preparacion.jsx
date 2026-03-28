@@ -2060,6 +2060,9 @@ const Preparacion = () => {
                       <div className="text-xs text-gray-400 mt-0.5">
                         {item.codigo}
                         {item.marca && <span className="ml-1">· {item.marca}</span>}
+                        {stockOrigen[item.articulo_id] != null && (
+                          <span className="ml-1">· Stock: {stockOrigen[item.articulo_id]}</span>
+                        )}
                       </div>
                       <div className={`text-xs mt-0.5 font-medium ${completo ? 'text-emerald-600' : 'text-blue-600'}`}>
                         {piezasPick}/{piezasPedidas} {item.es_pesable ? 'piezas' : 'unidades'}
