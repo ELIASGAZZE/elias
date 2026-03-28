@@ -799,7 +799,111 @@ async function getVentasCentumByFecha(fechaDesde, fechaHasta) {
   }
 }
 
+/**
+ * Obtiene resumen de ventas de Centum BI para comparar con POS.
+ * Consulta Ventas_VIEW agrupando por tipo comprobante y división.
+ * @param {string} fechaDesde - YYYY-MM-DD
+ * @param {string} fechaHasta - YYYY-MM-DD
+ * @param {number[]} [sucursalIds] - IDs de sucursales físicas Centum (opcional)
+ * @returns {Object} { totalVentas, totalNC, totalEmpresa, totalPrueba, cantVentas, cantNC }
+ */
+async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, divisionId) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+
+    // Query principal: agrupar por tipo comprobante
+    // TipoComprobanteVentaID: 4=Factura B, 1=Factura A, 6=NC B, 3=NC A, etc.
+    // DivisionEmpresaGrupoEconomicoID: 2=PRUEBA, 3=EMPRESA
+    let whereExtra = ''
+    const request = db.request()
+      .input('fechaDesde', sql.VarChar, fechaDesde)
+      .input('fechaHasta', sql.VarChar, fechaHasta + 'T23:59:59')
+
+    if (sucursalIds && sucursalIds.length > 0) {
+      const placeholders = sucursalIds.map((id, i) => {
+        request.input(`suc${i}`, sql.Int, id)
+        return `@suc${i}`
+      }).join(',')
+      whereExtra = ` AND v.SucursalFisicaID IN (${placeholders})`
+    }
+
+    if (divisionId) {
+      request.input('divId', sql.Int, divisionId)
+      whereExtra += ` AND v.DivisionEmpresaGrupoEconomicoID = @divId`
+    }
+
+    const result = await request.query(`
+      SELECT
+        v.TipoComprobanteID,
+        v.DivisionEmpresaGrupoEconomicoID,
+        COUNT(*) AS cantidad,
+        SUM(v.Total) AS total
+      FROM Ventas_VIEW v
+      WHERE v.FechaDocumento >= @fechaDesde
+        AND v.FechaDocumento <= @fechaHasta
+        AND v.Anulado = 0
+        ${whereExtra}
+      GROUP BY v.TipoComprobanteID, v.DivisionEmpresaGrupoEconomicoID
+    `)
+
+    let totalVentas = 0
+    let totalNC = 0
+    let totalEmpresa = 0
+    let totalPrueba = 0
+    let cantVentas = 0
+    let cantNC = 0
+
+    // TipoComprobanteVentaID: 3=NC A, 6=NC B son notas de crédito
+    const tiposNC = [3, 6, 7, 8] // NC A, NC B, NC C, NC E
+
+    for (const row of result.recordset) {
+      const esNC = tiposNC.includes(row.TipoComprobanteID)
+      const total = parseFloat(row.total) || 0
+      const cant = row.cantidad || 0
+
+      if (esNC) {
+        totalNC -= Math.abs(total) // NC como negativo
+        cantNC += cant
+      } else {
+        totalVentas += total
+        cantVentas += cant
+      }
+
+      if (row.DivisionEmpresaGrupoEconomicoID === 3) {
+        totalEmpresa += esNC ? -Math.abs(total) : total
+      } else if (row.DivisionEmpresaGrupoEconomicoID === 2) {
+        totalPrueba += esNC ? -Math.abs(total) : total
+      }
+    }
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'ResumenVentasCentumBI',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: cantVentas + cantNC, origen: 'reconciliacion',
+    })
+
+    return {
+      totalVentas: Math.round(totalVentas * 100) / 100,
+      totalNC: Math.round(totalNC * 100) / 100,
+      totalEmpresa: Math.round(totalEmpresa * 100) / 100,
+      totalPrueba: Math.round(totalPrueba * 100) / 100,
+      cantVentas,
+      cantNC,
+    }
+  } catch (err) {
+    console.error('[Centum BI] Error al obtener resumen ventas:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'ResumenVentasCentumBI',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'reconciliacion',
+    })
+    throw err
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
   getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno, getVentasCentumByFecha,
+  getResumenVentasCentumBI,
 }

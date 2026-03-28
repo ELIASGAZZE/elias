@@ -34,12 +34,16 @@ const VentasHome = () => {
   // Leer filtros iniciales desde URL
   const [ventas, setVentas] = useState([])
   const [fecha, setFecha] = useState(searchParams.get('fecha') || new Date().toISOString().split('T')[0])
+  const [fechaHasta, setFechaHasta] = useState(searchParams.get('fecha_hasta') || new Date().toISOString().split('T')[0])
   const [busqueda, setBusqueda] = useState(searchParams.get('busqueda') || '')
   const [busquedaFactura, setBusquedaFactura] = useState(searchParams.get('factura') || '')
   const [filtroClasificacion, setFiltroClasificacion] = useState(searchParams.get('clasificacion') || '')
   const [filtroTipo, setFiltroTipo] = useState(searchParams.get('tipo') || '')
   const [filtroCentum, setFiltroCentum] = useState(searchParams.get('centum') || '')
-  const [filtroSucursal, setFiltroSucursal] = useState(searchParams.get('sucursal') || '')
+  const [filtroSucursales, setFiltroSucursales] = useState(() => {
+    const s = searchParams.get('sucursales')
+    return s ? s.split(',') : []
+  })
   const [filtroEmpleado, setFiltroEmpleado] = useState(searchParams.get('empleado') || '')
   const [sucursales, setSucursales] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -48,25 +52,29 @@ const VentasHome = () => {
   const [page, setPage] = useState(parseInt(searchParams.get('page')) || 1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [resumen, setResumen] = useState(null)
+  const [resumenCentum, setResumenCentum] = useState(null)
+  const [cargandoCentum, setCargandoCentum] = useState(false)
 
   // Sincronizar filtros a la URL
   useEffect(() => {
     const params = {}
     if (fecha && fecha !== new Date().toISOString().split('T')[0]) params.fecha = fecha
+    if (fechaHasta && fechaHasta !== new Date().toISOString().split('T')[0]) params.fecha_hasta = fechaHasta
     if (busqueda) params.busqueda = busqueda
     if (busquedaFactura) params.factura = busquedaFactura
     if (filtroClasificacion) params.clasificacion = filtroClasificacion
     if (filtroTipo) params.tipo = filtroTipo
     if (filtroCentum) params.centum = filtroCentum
-    if (filtroSucursal) params.sucursal = filtroSucursal
+    if (filtroSucursales.length > 0) params.sucursales = filtroSucursales.join(',')
     if (filtroEmpleado) params.empleado = filtroEmpleado
     if (page > 1) params.page = page
     setSearchParams(params, { replace: true })
-  }, [fecha, busqueda, filtroClasificacion, filtroTipo, filtroCentum, filtroSucursal, filtroEmpleado, page])
+  }, [fecha, fechaHasta, busqueda, filtroClasificacion, filtroTipo, filtroCentum, filtroSucursales, filtroEmpleado, page])
 
   useEffect(() => {
     setPage(1)
-  }, [fecha, filtroEmpleado])
+  }, [fecha, fechaHasta, filtroEmpleado])
 
   // Debounce para búsqueda por factura
   const [facturaDebounced, setFacturaDebounced] = useState(busquedaFactura)
@@ -84,11 +92,32 @@ const VentasHome = () => {
 
   useEffect(() => {
     cargarVentas()
-  }, [fecha, page, filtroCentum, filtroEmpleado, facturaDebounced, busquedaDebounced])
+  }, [fecha, fechaHasta, page, filtroCentum, filtroEmpleado, filtroSucursales, filtroClasificacion, facturaDebounced, busquedaDebounced])
 
   useEffect(() => {
-    api.get('/api/sucursales').then(r => setSucursales(r.data || [])).catch(() => {})
+    // Solo mostrar sucursales que tienen cajas POS configuradas
+    Promise.all([
+      api.get('/api/sucursales'),
+      api.get('/api/cajas'),
+    ]).then(([sucRes, cajRes]) => {
+      const sucConCaja = new Set((cajRes.data || []).map(c => c.sucursal_id))
+      setSucursales((sucRes.data || []).filter(s => sucConCaja.has(s.id)))
+    }).catch(() => {})
   }, [])
+
+  // Cargar resumen de Centum BI para comparar
+  const cargarResumenCentum = () => {
+    if (!esAdmin) return
+    setCargandoCentum(true)
+    const params = new URLSearchParams({ fecha, fecha_hasta: fechaHasta })
+    if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
+    if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
+    api.get(`/api/pos/ventas/resumen-centum?${params}`)
+      .then(r => setResumenCentum(r.data))
+      .catch(() => setResumenCentum(null))
+      .finally(() => setCargandoCentum(false))
+  }
+  useEffect(() => { cargarResumenCentum() }, [fecha, fechaHasta, filtroSucursales, filtroClasificacion, esAdmin])
 
   const cargarVentas = async ({ syncCAE = false } = {}) => {
     setCargando(true)
@@ -104,13 +133,17 @@ const VentasHome = () => {
         params.append('buscar', busquedaDebounced.trim())
       } else {
         params.append('fecha', fecha)
+        if (fechaHasta) params.append('fecha_hasta', fechaHasta)
       }
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
+      if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
+      if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
       setTotalCount(data.totalCount || 0)
+      if (data.resumen) setResumen(data.resumen)
       // En carga inicial, sync CAEs en background y recargar si encontró alguno
       if (!syncCAE) {
         api.post('/api/pos/ventas/sync-caes').then(r => {
@@ -127,11 +160,15 @@ const VentasHome = () => {
   const cargarVentasSilencioso = async () => {
     try {
       const params = new URLSearchParams({ fecha, page })
+      if (fechaHasta) params.append('fecha_hasta', fechaHasta)
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
+      if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
+      if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
       setTotalCount(data.totalCount || 0)
+      if (data.resumen) setResumen(data.resumen)
     } catch {}
   }
 
@@ -140,28 +177,21 @@ const VentasHome = () => {
     if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
     if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
     if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
-    if (filtroSucursal && v.sucursal_id !== filtroSucursal) return false
+    if (filtroSucursales.length > 0 && !filtroSucursales.includes(v.sucursal_id)) return false
     // filtroEmpleado se aplica en el backend
     if (filtroCentum === 'sin_centum' && (v.centum_sync || v.centum_comprobante)) return false
     return true
   })
 
-  // Resumen del día
-  const soloVentas = ventasFiltradas.filter(v => v.tipo !== 'nota_credito')
-  const soloNC = ventasFiltradas.filter(v => v.tipo === 'nota_credito')
-  const totalVentas = soloVentas.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
-  const totalNC = soloNC.reduce((sum, v) => sum + (parseFloat(v.total) || 0), 0)
+  // Resumen del período (viene del backend, incluye TODAS las ventas, no solo la página actual)
+  const totalVentas = resumen?.totalVentas ?? 0
+  const totalNC = resumen?.totalNC ?? 0
   const totalDia = totalVentas + totalNC
-  const totalEmpresa = ventasFiltradas.filter(v => v.clasificacion === 'EMPRESA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
-  const totalPrueba = ventasFiltradas.filter(v => v.clasificacion === 'PRUEBA').reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
-  const desgloseMedios = {}
-  ventasFiltradas.forEach(v => {
-    const pagos = v.pagos || []
-    pagos.forEach(p => {
-      const medio = p.medio || 'efectivo'
-      desgloseMedios[medio] = (desgloseMedios[medio] || 0) + (parseFloat(p.monto) || 0)
-    })
-  })
+  const totalEmpresa = resumen?.totalEmpresa ?? 0
+  const totalPrueba = resumen?.totalPrueba ?? 0
+  const cantVentas = resumen?.cantVentas ?? 0
+  const cantNC = resumen?.cantNC ?? 0
+  const desgloseMedios = resumen?.desgloseMedios ?? {}
 
   const reenviarCentum = async (e, ventaId) => {
     e.preventDefault()
@@ -214,6 +244,15 @@ const VentasHome = () => {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
             />
           </div>
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-gray-500">Hasta</span>
+            <input
+              type="date"
+              value={fechaHasta}
+              onChange={e => setFechaHasta(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+            />
+          </div>
           <input
             type="text"
             placeholder="Buscar por cliente..."
@@ -229,7 +268,7 @@ const VentasHome = () => {
             className="w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
           />
           <button
-            onClick={() => cargarVentas({ syncCAE: true })}
+            onClick={() => { cargarVentas({ syncCAE: true }); cargarResumenCentum() }}
             disabled={cargando}
             className="flex items-center justify-center gap-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
             title="Sincronizar ventas"
@@ -277,17 +316,27 @@ const VentasHome = () => {
             </button>
           ))}
           <div className="w-px bg-gray-300 mx-1" />
-          {/* Sucursal */}
-          <select
-            value={filtroSucursal}
-            onChange={e => setFiltroSucursal(e.target.value)}
-            className="text-xs px-3 py-1.5 rounded-full font-medium bg-gray-100 text-gray-600 border-none focus:ring-2 focus:ring-rose-500"
-          >
-            <option value="">Todas las sucursales</option>
-            {sucursales.map(s => (
-              <option key={s.id} value={s.id}>{s.nombre}</option>
-            ))}
-          </select>
+          {/* Sucursales (multi-select) */}
+          <button
+            onClick={() => setFiltroSucursales([])}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filtroSucursales.length === 0 ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >Todas</button>
+          {sucursales.map(s => {
+            const activa = filtroSucursales.includes(s.id)
+            return (
+              <button
+                key={s.id}
+                onClick={() => setFiltroSucursales(prev =>
+                  activa ? prev.filter(id => id !== s.id) : [...prev, s.id]
+                )}
+                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                  activa ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >{s.nombre}</button>
+            )
+          })}
           {/* Empleados */}
           {esAdmin && <>
             <div className="w-px bg-gray-300 mx-1" />
@@ -320,39 +369,107 @@ const VentasHome = () => {
           </button>
         </div>
 
-        {/* Resumen del día */}
-        {esAdmin && <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase">Resumen del día</h2>
-            <span className="text-xs text-gray-400">{soloVentas.length} venta{soloVentas.length !== 1 ? 's' : ''}{soloNC.length > 0 ? ` · ${soloNC.length} NC` : ''}</span>
-          </div>
-          <p className="text-2xl font-bold text-gray-800 mb-2">{formatPrecio(totalDia)}</p>
-          <div className="flex flex-wrap gap-2 mb-3">
-            <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
-              Ventas: {formatPrecio(totalVentas)}
-            </span>
-            {soloNC.length > 0 && (
-              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
-                NC: {formatPrecio(totalNC)}
-              </span>
-            )}
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
-              Empresa: {formatPrecio(totalEmpresa)}
-            </span>
-            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
-              Prueba: {formatPrecio(totalPrueba)}
-            </span>
-          </div>
-          {Object.keys(desgloseMedios).length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(desgloseMedios).map(([medio, monto]) => (
-                <span key={medio} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                  {MEDIOS_LABELS[medio] || medio}: {formatPrecio(monto)}
+        {/* Resumen del período: POS vs Centum BI */}
+        {esAdmin && resumen && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Resumen POS */}
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                  {fecha === fechaHasta ? 'Resumen POS' : 'Resumen POS (período)'}
+                </h2>
+                <span className="text-xs text-gray-400">{cantVentas} venta{cantVentas !== 1 ? 's' : ''}{cantNC > 0 ? ` · ${cantNC} NC` : ''}</span>
+              </div>
+              <p className="text-2xl font-bold text-gray-800 mb-2">{formatPrecio(totalDia)}</p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
+                  Ventas: {formatPrecio(totalVentas)}
                 </span>
-              ))}
+                {cantNC > 0 && (
+                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
+                    NC: {formatPrecio(totalNC)}
+                  </span>
+                )}
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
+                  Empresa: {formatPrecio(totalEmpresa)}
+                </span>
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
+                  Prueba: {formatPrecio(totalPrueba)}
+                </span>
+              </div>
+              {Object.keys(desgloseMedios).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(desgloseMedios).map(([medio, monto]) => (
+                    <span key={medio} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                      {MEDIOS_LABELS[medio] || medio}: {formatPrecio(monto)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>}
+
+            {/* Resumen Centum BI */}
+            <div className={`bg-white rounded-xl border p-4 ${
+              resumenCentum && Math.abs((resumenCentum.totalVentas + resumenCentum.totalNC) - totalDia) > 100
+                ? 'border-red-300 bg-red-50'
+                : 'border-gray-200'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                  {fecha === fechaHasta ? 'Centum BI' : 'Centum BI (período)'}
+                </h2>
+                {resumenCentum && (
+                  <span className="text-xs text-gray-400">{resumenCentum.cantVentas} venta{resumenCentum.cantVentas !== 1 ? 's' : ''}{resumenCentum.cantNC > 0 ? ` · ${resumenCentum.cantNC} NC` : ''}</span>
+                )}
+              </div>
+              {cargandoCentum ? (
+                <p className="text-sm text-gray-400">Consultando Centum BI...</p>
+              ) : resumenCentum ? (
+                <>
+                  {(() => {
+                    const totalCentum = resumenCentum.totalVentas + resumenCentum.totalNC
+                    const diff = totalCentum - totalDia
+                    const hayDiff = Math.abs(diff) > 100
+                    return (
+                      <>
+                        <p className="text-2xl font-bold text-gray-800 mb-1">{formatPrecio(totalCentum)}</p>
+                        {hayDiff && (
+                          <p className={`text-sm font-semibold mb-2 ${diff > 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                            {diff > 0 ? '+' : ''}{formatPrecio(diff)} vs POS
+                            {resumenCentum.cantVentas !== cantVentas && (
+                              <span className="text-xs font-normal ml-1">({resumenCentum.cantVentas - cantVentas > 0 ? '+' : ''}{resumenCentum.cantVentas - cantVentas} ventas)</span>
+                            )}
+                          </p>
+                        )}
+                        {!hayDiff && (
+                          <p className="text-sm text-emerald-600 font-medium mb-2">Coincide con POS</p>
+                        )}
+                      </>
+                    )
+                  })()}
+                  <div className="flex flex-wrap gap-2">
+                    <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
+                      Ventas: {formatPrecio(resumenCentum.totalVentas)}
+                    </span>
+                    {resumenCentum.cantNC > 0 && (
+                      <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
+                        NC: {formatPrecio(resumenCentum.totalNC)}
+                      </span>
+                    )}
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
+                      Empresa: {formatPrecio(resumenCentum.totalEmpresa)}
+                    </span>
+                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
+                      Prueba: {formatPrecio(resumenCentum.totalPrueba)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-gray-400">No se pudo conectar a Centum BI</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Botón reintentar todas en Centum */}
         {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (

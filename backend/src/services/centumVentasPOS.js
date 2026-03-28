@@ -54,7 +54,7 @@ const MEDIO_A_ID_VALOR = {
  * @param {number} params.total - Total de la venta
  * @returns {Promise<Object>} Venta creada en Centum
  */
-async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva, operadorMovilUser }) {
+async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva, operadorMovilUser, ventaPosId }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -155,6 +155,11 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
       Cotizacion: 1,
       Importe: importeValor,
     }],
+  }
+
+  // Guardar UUID de venta POS en ObservacionInterna para idempotencia
+  if (ventaPosId) {
+    body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
   let response
@@ -272,6 +277,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       total: parseFloat(ventaLocal.total) || 0,
       condicionIva,
       operadorMovilUser,
+      ventaPosId: ventaLocal.id,
     })
 
     return resultado
@@ -601,6 +607,91 @@ async function obtenerVentaCentum(idVenta) {
 }
 
 /**
+ * Busca si ya existe una venta en Centum para una venta POS específica.
+ * Consulta las últimas ventas del PV/sucursal y busca coincidencia por ObservacionInterna.
+ * @param {string} ventaPosId - UUID de la venta POS
+ * @param {number} sucursalFisicaId - IdSucursalFisica Centum
+ * @param {number} puntoVenta - Punto de venta Centum
+ * @param {number} total - Total esperado
+ * @returns {Promise<Object|null>} Venta encontrada o null
+ */
+async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoVenta, total) {
+  if (!ventaPosId || !total || total <= 0) return null
+
+  try {
+    // Buscar en Centum BI (SQL Server) si ya existe una venta con mismo total, sucursal y PV reciente
+    // Esto detecta duplicados cuando el POST a Centum creó la venta pero la respuesta falló
+    const { getPool } = require('../config/centum')
+    const sql = require('mssql')
+    const db = await getPool()
+
+    // Buscar ventas de hoy con mismo total y sucursal, que NO estén ya vinculadas a una venta POS
+    const hoy = new Date().toISOString().split('T')[0]
+    const result = await db.request()
+      .input('fecha', sql.VarChar, hoy)
+      .input('total', sql.Decimal(18, 2), total)
+      .input('sucursal', sql.Int, sucursalFisicaId)
+      .input('tolerancia', sql.Decimal(18, 2), 1.0)
+      .query(`
+        SELECT TOP 5 VentaID, NumeroDocumento, Total, FechaCreacion
+        FROM Ventas_VIEW
+        WHERE FechaDocumento >= @fecha
+          AND SucursalFisicaID = @sucursal
+          AND ABS(Total - @total) < @tolerancia
+          AND Anulado = 0
+        ORDER BY VentaID DESC
+      `)
+
+    if (result.recordset.length === 0) {
+      console.log(`[Centum POS] No se encontró venta existente en BI para total=${total}, sucursal=${sucursalFisicaId}`)
+      return null
+    }
+
+    // Buscar la primera venta que NO esté ya vinculada a otra venta POS
+    let existente = null
+    for (const row of result.recordset) {
+      const { data: yaVinculada } = await supabase
+        .from('ventas_pos')
+        .select('id')
+        .eq('id_venta_centum', row.VentaID)
+        .maybeSingle()
+
+      if (!yaVinculada) {
+        existente = row
+        break
+      } else {
+        console.log(`[Centum POS] Venta BI ${row.VentaID} ya vinculada a POS ${yaVinculada.id}, buscando otra`)
+      }
+    }
+
+    if (!existente) {
+      console.log(`[Centum POS] Todas las ventas BI con total=${total} ya están vinculadas`)
+      return null
+    }
+
+    // Parsear NumeroDocumento para armar la respuesta compatible
+    const numDocStr = (existente.NumeroDocumento || '').trim()
+    const numDocMatch = numDocStr.match(/^([A-Z])(\d+)-(\d+)$/)
+    const numDoc = numDocMatch ? {
+      LetraDocumento: numDocMatch[1],
+      PuntoVenta: parseInt(numDocMatch[2]),
+      Numero: parseInt(numDocMatch[3]),
+    } : null
+
+    console.log(`[Centum POS] Venta existente encontrada en BI: VentaID=${existente.VentaID}, NumDoc=${numDocStr}, Total=${existente.Total}`)
+    return {
+      IdVenta: existente.VentaID,
+      NumeroDocumento: numDoc,
+      Total: existente.Total,
+      CAE: null, // Se obtiene después con fetchAndSaveCAE
+    }
+  } catch (err) {
+    console.warn(`[Centum POS] Error al buscar venta existente en BI: ${err.message}`)
+    return null
+  }
+}
+
+/**
  * Retry automático: busca ventas con centum_sync=false de las últimas 24h y las reenvía.
  * Diseñado para correr desde un cron job.
  */
@@ -762,11 +853,32 @@ async function retrySyncVentasCentum() {
           })
         }
       } else {
+        // Idempotencia: verificar si ya existe en Centum antes de crear
+        const existente = await buscarVentaExistenteEnCentum(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+        if (existente) {
+          console.log(`[RetryCentumVentas] Venta ${venta.id} ya existe en Centum (IdVenta=${existente.IdVenta}), vinculando sin crear duplicado`)
+          const numDocEx = existente.NumeroDocumento
+          const comprobanteEx = numDocEx
+            ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
+            : null
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: existente.IdVenta || null,
+            centum_comprobante: comprobanteEx,
+            centum_sync: true,
+            centum_error: null,
+            numero_cae: existente.CAE || null,
+          }).eq('id', venta.id)
+          const cae = await fetchAndSaveCAE(venta.id, existente.IdVenta)
+          exitosas++
+          continue
+        }
+
         resultado = await crearVentaPOS({
           idCliente: venta.id_cliente_centum || 2,
           sucursalFisicaId, idDivisionEmpresa, puntoVenta,
           items, pagos, total: parseFloat(venta.total) || 0,
           condicionIva, operadorMovilUser,
+          ventaPosId: venta.id,
         })
       }
 
@@ -987,4 +1099,4 @@ async function retrySyncCAE() {
   return { revisadas: ventas.length, conCAE }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico }
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico }
