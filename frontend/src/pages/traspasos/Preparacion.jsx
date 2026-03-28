@@ -594,8 +594,13 @@ const Preparacion = () => {
     // 1. Detectar canasto por prefijo CAN-
     if (codigo.startsWith('CAN-')) {
       if (canastoActivo) {
-        // Ya hay canasto abierto → cerrar primero, después abrir nuevo
-        setModalCerrarCanasto({ precinto: codigo })
+        if (canastoActivo.precinto === codigo) {
+          // Mismo canasto → solo cerrar (no reabrir)
+          setModalCerrarCanasto({ precinto: null })
+        } else {
+          // Otro canasto → cerrar actual y abrir nuevo
+          setModalCerrarCanasto({ precinto: codigo })
+        }
         return
       }
       if (contenedores.some(c => c.precinto === codigo)) {
