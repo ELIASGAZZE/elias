@@ -812,9 +812,12 @@ const Preparacion = () => {
       }
 
       setUltimoEscaneado(item.articulo_id)
-      setTimeout(() => {
-        itemRefs.current[item.articulo_id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }, 100)
+      const seCompletaCon = (piezasYa + (peso || factor)) >= piezasPedidas
+      if (!seCompletaCon) {
+        setTimeout(() => {
+          itemRefs.current[item.articulo_id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 100)
+      }
 
       if (factor > 1) {
         // Código de caja → siempre bulto independiente
