@@ -566,12 +566,12 @@ router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, async (req
       orden.numero
     )
 
-    // Actualizar canastos a despachado
+    // Actualizar canastos a en_transito
     await supabase
       .from('traspaso_canastos')
-      .update({ estado: 'despachado', updated_at: new Date().toISOString() })
+      .update({ estado: 'en_transito', updated_at: new Date().toISOString() })
       .eq('orden_traspaso_id', req.params.id)
-      .eq('estado', 'cerrado')
+      .eq('estado', 'en_origen')
 
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -609,7 +609,7 @@ router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'No hay canastos para recibir' })
     }
 
-    const estadosFinales = ['aprobado', 'con_diferencia']
+    const estadosFinales = ['controlado', 'con_diferencia']
     const noVerificados = canastos.filter(c => !estadosFinales.includes(c.estado))
     if (noVerificados.length > 0) {
       return res.status(400).json({ error: `Hay ${noVerificados.length} canasto(s) sin verificar` })
@@ -762,9 +762,9 @@ router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) =>
     if (!canasto) {
       return res.status(404).json({ error: 'Canasto no encontrado' })
     }
-    // Canastos cerrados permiten actualizar peso_origen e items (para mover artículos)
+    // Canastos en_origen permiten actualizar peso_origen e items (para mover artículos)
     if (canasto.estado !== 'en_preparacion' && precinto !== undefined) {
-      return res.status(400).json({ error: 'No se puede cambiar el precinto de un canasto cerrado' })
+      return res.status(400).json({ error: 'No se puede cambiar el precinto de un canasto en origen' })
     }
     const updates = { updated_at: new Date().toISOString() }
     if (items !== undefined) updates.items = items
@@ -807,10 +807,10 @@ router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, async (req, 
       return res.json({ eliminado: true, id: req.params.id })
     }
 
-    // Bultos se cierran directamente sin validación de precinto
+    // Bultos se marcan en_origen directamente sin validación de precinto
     const { data, error } = await supabase
       .from('traspaso_canastos')
-      .update({ estado: 'cerrado', updated_at: new Date().toISOString() })
+      .update({ estado: 'en_origen', updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select()
       .single()
@@ -835,8 +835,8 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
       .eq('id', req.params.id)
       .single()
 
-    if (!canasto || canasto.estado !== 'despachado') {
-      return res.status(400).json({ error: 'Solo se pueden pesar canastos despachados' })
+    if (!canasto || canasto.estado !== 'en_destino') {
+      return res.status(400).json({ error: 'Solo se pueden pesar canastos en destino' })
     }
 
     // Obtener tolerancia en gramos
@@ -853,9 +853,9 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
 
     let nuevoEstado
     if (diferenciaGramos <= toleranciaGramos) {
-      nuevoEstado = 'aprobado'
+      nuevoEstado = 'controlado'
     } else {
-      nuevoEstado = 'verificacion_manual'
+      nuevoEstado = 'con_diferencia'
     }
 
     const { data, error } = await supabase
@@ -872,7 +872,7 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
       .single()
 
     if (error) throw error
-    res.json({ ...data, dentro_tolerancia: nuevoEstado === 'aprobado', diferencia_gramos: Math.round(diferenciaGramos) })
+    res.json({ ...data, dentro_tolerancia: nuevoEstado === 'controlado', diferencia_gramos: Math.round(diferenciaGramos) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -892,8 +892,8 @@ router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
       .eq('id', req.params.id)
       .single()
 
-    if (!canasto || canasto.estado !== 'despachado') {
-      return res.status(400).json({ error: 'Solo se pueden contar bultos despachados' })
+    if (!canasto || canasto.estado !== 'en_destino') {
+      return res.status(400).json({ error: 'Solo se pueden contar bultos en destino' })
     }
 
     if (canasto.tipo !== 'bulto') {
@@ -922,7 +922,7 @@ router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
       })
     }
 
-    const nuevoEstado = hayDiferencias ? 'con_diferencia' : 'aprobado'
+    const nuevoEstado = hayDiferencias ? 'con_diferencia' : 'controlado'
 
     const { data, error } = await supabase
       .from('traspaso_canastos')
@@ -955,8 +955,8 @@ router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
       .eq('id', req.params.id)
       .single()
 
-    if (!canasto || canasto.estado !== 'verificacion_manual') {
-      return res.status(400).json({ error: 'Solo se pueden verificar canastos en verificación manual' })
+    if (!canasto || canasto.estado !== 'con_diferencia') {
+      return res.status(400).json({ error: 'Solo se pueden verificar canastos con diferencia' })
     }
 
     const hayDiferencias = diferencias.some(d => d.cantidad_esperada !== d.cantidad_real)
@@ -965,7 +965,7 @@ router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
       .from('traspaso_canastos')
       .update({
         diferencias,
-        estado: hayDiferencias ? 'con_diferencia' : 'aprobado',
+        estado: hayDiferencias ? 'con_diferencia' : 'controlado',
         verificado_por: req.usuario?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -1056,12 +1056,70 @@ router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
         sucursal_destino_nombre: sucMap[o.sucursal_destino_id] || 'Desconocida',
         canastos: cs,
         total_canastos: cs.length,
-        canastos_despachados: cs.filter(c => c.estado === 'despachado').length,
+        canastos_despachados: cs.filter(c => c.estado === 'en_transito').length,
       }
     })
 
     res.json(resultado)
   } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Listar bultos (canastos + pallets) de órdenes preparadas/despachadas/recibidas
+router.get('/bultos', verificarAuth, async (req, res) => {
+  try {
+    // Obtener órdenes que ya pasaron de preparación
+    const estadosValidos = ['preparado', 'despachado', 'recibido', 'con_diferencia']
+    let qOrdenes = supabase
+      .from('ordenes_traspaso')
+      .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id, preparado_at, despachado_at, recibido_at')
+      .in('estado', estadosValidos)
+      .order('preparado_at', { ascending: false })
+
+    if (req.query.sucursal_origen) qOrdenes = qOrdenes.eq('sucursal_origen_id', req.query.sucursal_origen)
+    if (req.query.sucursal_destino) qOrdenes = qOrdenes.eq('sucursal_destino_id', req.query.sucursal_destino)
+
+    const { data: ordenesData, error: ordErr } = await qOrdenes
+    if (ordErr) throw ordErr
+    if (!ordenesData?.length) return res.json([])
+
+    const ordenIds = ordenesData.map(o => o.id)
+    const ordenMap = {}
+    ordenesData.forEach(o => { ordenMap[o.id] = o })
+
+    // Obtener sucursales para nombres
+    const sucIds = [...new Set([...ordenesData.map(o => o.sucursal_origen_id), ...ordenesData.map(o => o.sucursal_destino_id)].filter(Boolean))]
+    const { data: sucs } = await supabase.from('sucursales').select('id, nombre').in('id', sucIds)
+    const sucMap = {}
+    if (sucs) sucs.forEach(s => { sucMap[s.id] = s.nombre })
+
+    // Obtener canastos/pallets de esas órdenes
+    const { data: bultos, error: bulErr } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .in('orden_traspaso_id', ordenIds)
+      .order('created_at', { ascending: false })
+    if (bulErr) throw bulErr
+
+    // Enriquecer con datos de la orden
+    const resultado = (bultos || []).map(b => {
+      const orden = ordenMap[b.orden_traspaso_id] || {}
+      return {
+        ...b,
+        orden_numero: orden.numero,
+        orden_estado: orden.estado,
+        sucursal_origen: sucMap[orden.sucursal_origen_id] || null,
+        sucursal_destino: sucMap[orden.sucursal_destino_id] || null,
+        preparado_at: orden.preparado_at,
+        despachado_at: orden.despachado_at,
+        recibido_at: orden.recibido_at,
+      }
+    })
+
+    res.json(resultado)
+  } catch (err) {
+    console.error('[Traspasos] Error al listar bultos:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
@@ -1131,8 +1189,8 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
       return res.status(404).json({ error: canasto_id ? 'Canasto no encontrado' : `Canasto con precinto "${precinto}" no encontrado` })
     }
 
-    // Si ya está despachado, devolver sin error
-    if (canasto.estado === 'despachado') {
+    // Si ya está en_transito, devolver sin error
+    if (canasto.estado === 'en_transito') {
       const { data: orden } = await supabase
         .from('ordenes_traspaso')
         .select('id, numero, estado')
@@ -1145,41 +1203,41 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
         .eq('orden_traspaso_id', canasto.orden_traspaso_id)
 
       const total = (hermanos || []).length
-      const despachados = (hermanos || []).filter(c => c.estado === 'despachado').length
+      const enTransito = (hermanos || []).filter(c => c.estado === 'en_transito').length
 
       return res.json({
         ya_escaneado: true,
         canasto,
         orden,
         orden_completada: orden?.estado === 'despachado',
-        canastos_restantes: total - despachados,
+        canastos_restantes: total - enTransito,
         total_canastos: total,
       })
     }
 
-    // Solo despachar canastos en estado cerrado
-    if (canasto.estado !== 'cerrado') {
-      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar cerrado para despachar` })
+    // Solo despachar canastos en estado en_origen
+    if (canasto.estado !== 'en_origen') {
+      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar en origen para despachar` })
     }
 
-    // Pasar canasto a despachado
+    // Pasar canasto a en_transito
     const { data: canastoActualizado, error: errUpdate } = await supabase
       .from('traspaso_canastos')
-      .update({ estado: 'despachado', updated_at: new Date().toISOString() })
+      .update({ estado: 'en_transito', updated_at: new Date().toISOString() })
       .eq('id', canasto.id)
       .select()
       .single()
 
     if (errUpdate) throw errUpdate
 
-    // Verificar si TODOS los canastos de la orden están despachados
+    // Verificar si TODOS los canastos de la orden están en_transito
     const { data: todosCanastos } = await supabase
       .from('traspaso_canastos')
       .select('id, estado')
       .eq('orden_traspaso_id', canasto.orden_traspaso_id)
 
     const total = (todosCanastos || []).length
-    const despachados = (todosCanastos || []).filter(c => c.estado === 'despachado').length
+    const despachados = (todosCanastos || []).filter(c => c.estado === 'en_transito').length
     let ordenCompletada = false
     let ordenData = null
 
@@ -1246,7 +1304,7 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
 
 router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
-    const { canastos: canastosBody, pallets: palletsBody, articulos_faltantes, crear_nueva_orden, observacion } = req.body
+    const { canastos: canastosBody, pallets: palletsBody, bultos: bultosBody, articulos_faltantes, crear_nueva_orden, observacion } = req.body
 
     // Validar orden en en_preparacion
     const { data: orden } = await supabase
@@ -1260,9 +1318,10 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
 
     const canastosArr = Array.isArray(canastosBody) ? canastosBody : []
     const palletsArr = Array.isArray(palletsBody) ? palletsBody : []
+    const bultosArr = Array.isArray(bultosBody) ? bultosBody : []
 
-    if (canastosArr.length === 0 && palletsArr.length === 0) {
-      return res.status(400).json({ error: 'Debe haber al menos un canasto o pallet' })
+    if (canastosArr.length === 0 && palletsArr.length === 0 && bultosArr.length === 0) {
+      return res.status(400).json({ error: 'Debe haber al menos un canasto, pallet o bulto' })
     }
 
     // Validar que cada canasto tiene peso
@@ -1270,6 +1329,13 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
       if (!c.precinto) return res.status(400).json({ error: 'Cada canasto debe tener precinto' })
       if (!c.peso_origen || parseFloat(c.peso_origen) <= 0) {
         return res.status(400).json({ error: `Canasto "${c.precinto}" debe tener peso` })
+      }
+    }
+
+    // Validar que cada bulto tiene items
+    for (const b of bultosArr) {
+      if (!Array.isArray(b.items) || b.items.length === 0) {
+        return res.status(400).json({ error: `Cada bulto debe tener al menos un item` })
       }
     }
 
@@ -1313,8 +1379,9 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           orden_traspaso_id: req.params.id,
           precinto: c.precinto,
           peso_origen: parseFloat(c.peso_origen),
-          estado: 'cerrado',
-          items: [],
+          tipo: 'canasto',
+          estado: 'en_origen',
+          items: Array.isArray(c.items) ? c.items : [],
         })
         .select()
         .single()
@@ -1348,13 +1415,35 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           numero_pallet: numeroPallet,
           cantidad_bultos_origen: parseInt(p.cantidad_bultos),
           nombre: p.items_descripcion || 'Pallet',
-          estado: 'cerrado',
+          estado: 'en_origen',
           items: [],
         })
         .select()
         .single()
       if (errP) throw errP
       palletsCreados.push({ ...nuevo, items_descripcion: p.items_descripcion })
+    }
+
+    // Crear bultos
+    const bultosCreados = []
+    const bultoTimestamp = Date.now()
+    for (let i = 0; i < bultosArr.length; i++) {
+      const b = bultosArr[i]
+      const precintoBulto = `BULTO-${bultoTimestamp}-${i + 1}`
+      const { data: nuevo, error: errB } = await supabase
+        .from('traspaso_canastos')
+        .insert({
+          orden_traspaso_id: req.params.id,
+          precinto: precintoBulto,
+          tipo: 'bulto',
+          nombre: b.nombre || 'Bulto',
+          estado: 'en_origen',
+          items: Array.isArray(b.items) ? b.items : [],
+        })
+        .select()
+        .single()
+      if (errB) throw errB
+      bultosCreados.push(nuevo)
     }
 
     // Marcar orden como preparada (misma lógica que PUT /preparado)
@@ -1464,6 +1553,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
       ...ordenPreparada,
       canastos_creados: canastosCreados,
       pallets_creados: palletsCreados,
+      bultos_creados: bultosCreados,
       nueva_orden_id,
       nueva_orden_numero,
     })
@@ -1492,15 +1582,15 @@ router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => 
     if (!canasto || canasto.tipo !== 'pallet') {
       return res.status(400).json({ error: 'Solo se pueden verificar pallets' })
     }
-    if (canasto.estado !== 'despachado') {
-      return res.status(400).json({ error: 'El pallet debe estar despachado' })
+    if (canasto.estado !== 'en_destino') {
+      return res.status(400).json({ error: 'El pallet debe estar en destino' })
     }
 
     const bultosOrigen = canasto.cantidad_bultos_origen || 0
     const bultosDestino = parseInt(cantidad_bultos_destino)
     const coincide = bultosOrigen === bultosDestino
 
-    const nuevoEstado = coincide ? 'aprobado' : 'verificacion_manual'
+    const nuevoEstado = coincide ? 'controlado' : 'con_diferencia'
 
     const { data, error } = await supabase
       .from('traspaso_canastos')
@@ -1517,6 +1607,138 @@ router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => 
 
     if (error) throw error
     res.json({ ...data, bultos_coinciden: coincide })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Recibir canasto/pallet en destino (en_transito → en_destino)
+// ═══════════════════════════════════════════════════════════════
+
+router.put('/canastos/:id/recibir-en-destino', verificarAuth, async (req, res) => {
+  try {
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto) {
+      return res.status(404).json({ error: 'Canasto no encontrado' })
+    }
+
+    // Ya está en destino o más avanzado
+    if (['en_destino', 'controlado', 'con_diferencia'].includes(canasto.estado)) {
+      return res.json({ ya_recibido: true, canasto })
+    }
+
+    if (canasto.estado !== 'en_transito') {
+      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar en tránsito para recibir en destino` })
+    }
+
+    const { data, error } = await supabase
+      .from('traspaso_canastos')
+      .update({
+        estado: 'en_destino',
+        recibido_destino_por: req.usuario?.id,
+        recibido_destino_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json({ ya_recibido: false, canasto: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Registro de canastos — CRUD + generación de códigos CAN-XXXX
+// ═══════════════════════════════════════════════════════════════
+
+const siguienteCodigoCanasto = async () => {
+  const { data } = await supabase
+    .from('canastos_registro')
+    .select('codigo')
+    .order('codigo', { ascending: false })
+    .limit(1)
+
+  if (!data || data.length === 0) return 'CAN-0001'
+  const ultimo = data[0].codigo // CAN-0042
+  const num = parseInt(ultimo.replace('CAN-', ''), 10) || 0
+  return `CAN-${String(num + 1).padStart(4, '0')}`
+}
+
+// Listar todos los canastos registrados
+router.get('/canastos-registro', verificarAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('canastos_registro')
+      .select('*')
+      .order('codigo', { ascending: true })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Siguiente código disponible
+router.get('/canastos-registro/siguiente-codigo', verificarAuth, async (req, res) => {
+  try {
+    const codigo = await siguienteCodigoCanasto()
+    res.json({ codigo })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Crear N canastos (batch)
+router.post('/canastos-registro', verificarAuth, async (req, res) => {
+  try {
+    const cantidad = Math.min(Math.max(parseInt(req.body.cantidad) || 1, 1), 100)
+    const base = await siguienteCodigoCanasto()
+    const baseNum = parseInt(base.replace('CAN-', ''), 10)
+
+    const registros = []
+    for (let i = 0; i < cantidad; i++) {
+      registros.push({ codigo: `CAN-${String(baseNum + i).padStart(4, '0')}` })
+    }
+
+    const { data, error } = await supabase
+      .from('canastos_registro')
+      .insert(registros)
+      .select()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Cambiar estado activo/baja
+router.put('/canastos-registro/:id', verificarAuth, async (req, res) => {
+  try {
+    const { estado } = req.body
+    if (!['activo', 'baja'].includes(estado)) {
+      return res.status(400).json({ error: 'Estado inválido' })
+    }
+
+    const { data, error } = await supabase
+      .from('canastos_registro')
+      .update({ estado })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
