@@ -26,10 +26,10 @@ const ESTADO_LABEL = {
 
 const CANASTO_BADGE = {
   en_preparacion: 'bg-amber-100 text-amber-600',
-  cerrado: 'bg-blue-100 text-blue-600',
-  despachado: 'bg-purple-100 text-purple-600',
-  aprobado: 'bg-green-100 text-green-600',
-  verificacion_manual: 'bg-yellow-100 text-yellow-700',
+  en_origen: 'bg-blue-100 text-blue-600',
+  en_transito: 'bg-purple-100 text-purple-600',
+  en_destino: 'bg-cyan-100 text-cyan-600',
+  controlado: 'bg-green-100 text-green-600',
   con_diferencia: 'bg-red-100 text-red-600',
 }
 
@@ -186,7 +186,7 @@ const OrdenDetalle = () => {
                 className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                 Ir a Preparación
               </Link>
-              <button onClick={() => ejecutarAccion('preparado', '¿Marcar como preparado? Todos los canastos deben estar cerrados.')}
+              <button onClick={() => ejecutarAccion('preparado', '¿Marcar como preparado? Todos los canastos deben estar listos.')}
                 disabled={accionando}
                 className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                 Marcar Preparado
