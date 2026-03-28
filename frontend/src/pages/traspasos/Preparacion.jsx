@@ -95,7 +95,13 @@ const Preparacion = () => {
   const [contenedorExpandido, setContenedorExpandido] = useState(null)
   const [canastoEditando, _setCanastoEditando] = useState(null)
   const canastoEditandoRef = useRef(null)
-  const setCanastoEditando = (v) => { canastoEditandoRef.current = typeof v === 'function' ? v(canastoEditandoRef.current) : v; _setCanastoEditando(v) }
+  const setCanastoEditando = (v) => {
+    const val = typeof v === 'function' ? v(canastoEditandoRef.current) : v
+    canastoEditandoRef.current = val
+    _setCanastoEditando(val)
+    // Al cerrar modal, re-enfocar input de scan
+    if (!val) setTimeout(() => scanRef.current?.focus(), 150)
+  }
 
   // Modal de artículos pendientes al cerrar
   const [modalPendientes, setModalPendientes] = useState(null)
