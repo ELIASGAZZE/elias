@@ -704,15 +704,30 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
         .eq('id_centum', idCentum)
     }
 
-    // Actualizar contacto envío comprobantes en Centum (email/celular)
-    // Nota: Centum no soporta PUT/PATCH en /Clientes, solo se puede actualizar el contacto de envío
+    // Actualizar datos principales en Centum (razón social, CUIT, condición IVA, etc.)
     let warningCentum = null
+    try {
+      await actualizarClienteEnCentum(idCentum, {
+        razon_social: razon_social?.trim(),
+        cuit: cuit?.trim(),
+        condicion_iva,
+        telefono: telefono?.trim(),
+        direccion: direccion?.trim(),
+        localidad: localidad?.trim(),
+        codigo_postal: codigo_postal?.trim(),
+      })
+    } catch (err) {
+      console.error('Error actualizando cliente en Centum:', err.message)
+      warningCentum = err.message
+    }
+
+    // Actualizar contacto envío comprobantes en Centum (email/celular)
     if (email || celular) {
       try {
         await agregarContactoEnvioCentum(idCentum, { email: email?.trim(), celular: celular?.trim() })
       } catch (err) {
         console.error('Error actualizando contacto envío en Centum:', err.message)
-        warningCentum = err.message
+        if (!warningCentum) warningCentum = err.message
       }
     }
 
@@ -1007,6 +1022,24 @@ router.put('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('Error al editar dirección:', err)
     res.status(500).json({ error: 'Error al editar dirección' })
+  }
+})
+
+// DELETE /api/clientes/:id/direcciones/:dirId
+// Eliminar dirección de entrega
+router.delete('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('direcciones_entrega')
+      .delete()
+      .eq('id', req.params.dirId)
+      .eq('cliente_id', req.params.id)
+
+    if (error) throw error
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Error al eliminar dirección:', err)
+    res.status(500).json({ error: 'Error al eliminar dirección' })
   }
 })
 
