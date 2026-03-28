@@ -210,7 +210,6 @@ const Preparacion = () => {
   const handleScanDetalleRef = useRef(null)
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
-  const scanBufferRef = useRef('')
 
   // Listener global de keydown para capturar scanner sin input focuseado
   useEffect(() => {
