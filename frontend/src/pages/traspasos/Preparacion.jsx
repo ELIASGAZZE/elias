@@ -815,6 +815,17 @@ const Preparacion = () => {
 
   // Handler de escaneo en fase detalle (artículo específico)
   const handleScanDetalle = (codigo) => {
+    // Si hay pieza esperando confirmación de scan para eliminar
+    const eliminando = piezaEliminandoRef.current
+    if (eliminando?.esperandoScan) {
+      if (eliminando.esperandoScan === codigo) {
+        ejecutarEliminarPieza(eliminando.pieza)
+      } else {
+        mostrarFeedback('Canasto incorrecto', false)
+      }
+      return
+    }
+
     const itemActual = itemDetalle
     if (!itemActual) return
 
