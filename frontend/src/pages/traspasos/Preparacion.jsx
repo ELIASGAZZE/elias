@@ -320,6 +320,7 @@ const Preparacion = () => {
         setFase('picking')
         setItemDetalle(null)
         setMostrarPiezas(false)
+        setTimeout(() => scanRef.current?.focus(), 300)
       }, 1200)
       return () => clearTimeout(timer)
     }
@@ -1052,7 +1053,7 @@ const Preparacion = () => {
     return (
       <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
         <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => { setFase('picking'); setItemDetalle(null); setMostrarPiezas(false) }}
+          <button onClick={() => { setFase('picking'); setItemDetalle(null); setMostrarPiezas(false); setTimeout(() => scanRef.current?.focus(), 300) }}
             className="p-2 rounded-lg active:bg-sky-700">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -1282,7 +1283,7 @@ const Preparacion = () => {
     return (
       <div className="min-h-screen bg-gray-100 pb-24">
         <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2">
-          <button onClick={() => setFase('picking')} className="p-2 rounded-lg active:bg-sky-700">
+          <button onClick={() => { setFase('picking'); setTimeout(() => scanRef.current?.focus(), 300) }} className="p-2 rounded-lg active:bg-sky-700">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
