@@ -14,16 +14,15 @@ const Recepcion = () => {
   const [diferencias, setDiferencias] = useState([])
   const [conteoCiego, setConteoCiego] = useState({}) // { canastoId: { articulo_id: cantidad } }
   const [bultosPallet, setBultosPallet] = useState({}) // { canastoId: cantidad }
+  const [recibiendoId, setRecibiendoId] = useState(null)
 
   const cargar = () => {
     api.get(`/api/traspasos/ordenes/${id}`)
       .then(r => {
         setOrden(r.data)
         if (r.data.estado !== 'despachado' && r.data.estado !== 'recibido' && r.data.estado !== 'con_diferencia') {
-          if (r.data.estado !== 'despachado') {
-            alert('Esta orden no está lista para recepción')
-            navigate(`/traspasos/ordenes/${id}`)
-          }
+          alert('Esta orden no está lista para recepción')
+          navigate(`/traspasos/ordenes/${id}`)
         }
       })
       .catch(err => console.error(err))
@@ -31,6 +30,30 @@ const Recepcion = () => {
   }
 
   useEffect(() => { cargar() }, [id])
+
+  const recibirEnDestino = async (canastoId) => {
+    setRecibiendoId(canastoId)
+    try {
+      await api.put(`/api/traspasos/canastos/${canastoId}/recibir-en-destino`)
+      cargar()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al recibir en destino')
+    } finally {
+      setRecibiendoId(null)
+    }
+  }
+
+  const recibirTodosEnDestino = async () => {
+    const enTransito = (orden?.canastos || []).filter(c => c.estado === 'en_transito')
+    for (const c of enTransito) {
+      try {
+        await api.put(`/api/traspasos/canastos/${c.id}/recibir-en-destino`)
+      } catch (err) {
+        console.error(`Error recibiendo canasto ${c.id}:`, err)
+      }
+    }
+    cargar()
+  }
 
   const pesarCanasto = async (canastoId) => {
     const peso = pesosDestino[canastoId]
@@ -41,7 +64,7 @@ const Recepcion = () => {
         peso_destino: parseFloat(peso),
       })
       if (!r.data.dentro_tolerancia) {
-        alert('Peso fuera de tolerancia. Se requiere verificación manual.')
+        alert('Peso fuera de tolerancia. Se registró como diferencia.')
       }
       cargar()
     } catch (err) {
@@ -58,7 +81,7 @@ const Recepcion = () => {
         cantidad_bultos_destino: parseInt(bultos),
       })
       if (!r.data.bultos_coinciden) {
-        alert('La cantidad de bultos no coincide. Se requiere verificación manual.')
+        alert('La cantidad de bultos no coincide. Se registró como diferencia.')
       }
       cargar()
     } catch (err) {
@@ -68,7 +91,6 @@ const Recepcion = () => {
 
   const iniciarVerificacion = (canasto) => {
     setVerificando(canasto.id)
-    // Si el canasto tiene items propios, usar esos. Si no (canastos sin items), usar items de la orden
     const items = (canasto.items && canasto.items.length > 0) ? canasto.items : (orden.items || [])
     setDiferencias(items.map(i => ({
       articulo_id: i.articulo_id,
@@ -145,8 +167,9 @@ const Recepcion = () => {
   if (!orden) return null
 
   const canastos = orden.canastos || []
-  const estadosFinales = ['aprobado', 'con_diferencia']
+  const estadosFinales = ['controlado', 'con_diferencia']
   const todosVerificados = canastos.length > 0 && canastos.every(c => estadosFinales.includes(c.estado))
+  const hayEnTransito = canastos.some(c => c.estado === 'en_transito')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -157,22 +180,30 @@ const Recepcion = () => {
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-700">
           {orden.sucursal_origen_nombre} → {orden.sucursal_destino_nombre}
           <div className="text-xs mt-1 text-emerald-500">
-            Pesá cada canasto e ingresá el peso. Si está fuera de tolerancia, verificá artículo por artículo.
+            Primero recibí cada bulto, luego pesá los canastos y verificá pallets y bultos.
           </div>
         </div>
+
+        {/* Recibir todos en destino */}
+        {hayEnTransito && (
+          <button onClick={recibirTodosEnDestino}
+            className="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2.5 rounded-xl text-sm font-medium transition-colors">
+            Recibir todos en destino ({canastos.filter(c => c.estado === 'en_transito').length} bultos)
+          </button>
+        )}
 
         {/* Canastos */}
         {canastos.map(canasto => {
           const esBulto = canasto.tipo === 'bulto'
           const esPallet = canasto.tipo === 'pallet'
-          const esDespachado = canasto.estado === 'despachado'
-          const esVerificacionManual = canasto.estado === 'verificacion_manual'
-          const esAprobado = canasto.estado === 'aprobado'
+          const esEnTransito = canasto.estado === 'en_transito'
+          const esEnDestino = canasto.estado === 'en_destino'
+          const esControlado = canasto.estado === 'controlado'
           const esDiferencia = canasto.estado === 'con_diferencia'
 
           return (
             <div key={canasto.id} className={`bg-white rounded-xl border p-4 ${
-              esAprobado ? 'border-green-300' : esDiferencia ? 'border-red-300' : esVerificacionManual ? 'border-yellow-300' : 'border-gray-200'
+              esControlado ? 'border-green-300' : esDiferencia ? 'border-red-300' : esEnDestino ? 'border-cyan-300' : esEnTransito ? 'border-purple-300' : 'border-gray-200'
             }`}>
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -182,12 +213,17 @@ const Recepcion = () => {
                   {esBulto && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Bulto</span>}
                   {esPallet && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">Pallet</span>}
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    esAprobado ? 'bg-green-100 text-green-600' :
+                    esControlado ? 'bg-green-100 text-green-600' :
                     esDiferencia ? 'bg-red-100 text-red-600' :
-                    esVerificacionManual ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-purple-100 text-purple-600'
+                    esEnDestino ? 'bg-cyan-100 text-cyan-600' :
+                    esEnTransito ? 'bg-purple-100 text-purple-600' :
+                    'bg-gray-100 text-gray-500'
                   }`}>
-                    {canasto.estado.replace(/_/g, ' ')}
+                    {canasto.estado === 'en_transito' ? 'En tránsito' :
+                     canasto.estado === 'en_destino' ? 'En destino' :
+                     canasto.estado === 'controlado' ? 'Controlado' :
+                     canasto.estado === 'con_diferencia' ? 'Con diferencia' :
+                     canasto.estado.replace(/_/g, ' ')}
                   </span>
                 </div>
                 {!esBulto && !esPallet && (
@@ -202,8 +238,17 @@ const Recepcion = () => {
                 )}
               </div>
 
-              {/* Pesaje (solo canastos normales despachados, no pallets ni bultos) */}
-              {esDespachado && !esBulto && !esPallet && (
+              {/* Recibir en destino (canastos en tránsito) */}
+              {esEnTransito && (
+                <button onClick={() => recibirEnDestino(canasto.id)}
+                  disabled={recibiendoId === canasto.id}
+                  className="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                  {recibiendoId === canasto.id ? 'Recibiendo...' : 'Recibir en destino'}
+                </button>
+              )}
+
+              {/* Pesaje (solo canastos normales en destino, no pallets ni bultos) */}
+              {esEnDestino && !esBulto && !esPallet && (
                 <div className="flex gap-2 items-center">
                   <input
                     type="number"
@@ -221,8 +266,8 @@ const Recepcion = () => {
                 </div>
               )}
 
-              {/* Verificación pallet (solo pallets despachados) */}
-              {esDespachado && esPallet && (
+              {/* Verificación pallet (solo pallets en destino) */}
+              {esEnDestino && esPallet && (
                 <div className="flex gap-2 items-center">
                   <input
                     type="number"
@@ -240,8 +285,8 @@ const Recepcion = () => {
                 </div>
               )}
 
-              {/* Conteo ciego (solo bultos despachados) */}
-              {esDespachado && esBulto && (
+              {/* Conteo ciego (solo bultos en destino) */}
+              {esEnDestino && esBulto && (
                 <div className="space-y-2 border-t border-gray-100 pt-2 mt-1">
                   <div className="bg-orange-50 rounded-lg p-2 text-xs text-orange-700">
                     Conteo ciego: ingresá la cantidad recibida de cada artículo sin ver lo enviado.
@@ -281,19 +326,33 @@ const Recepcion = () => {
                 </div>
               )}
 
-              {/* Verificación manual */}
-              {esVerificacionManual && verificando !== canasto.id && (
+              {/* Diferencia - opción de verificación manual */}
+              {esDiferencia && verificando !== canasto.id && (
                 <div className="space-y-2">
-                  <div className="bg-yellow-50 rounded-lg p-2 text-xs text-yellow-700">
+                  <div className="bg-red-50 rounded-lg p-2 text-xs text-red-700">
                     {esPallet
                       ? `Cantidad de bultos no coincide (recibidos: ${canasto.cantidad_bultos_destino}). Verificá los artículos de la orden.`
-                      : `Peso fuera de tolerancia (origen: ${canasto.peso_origen} kg, destino: ${canasto.peso_destino} kg, diferencia: ${Math.round(Math.abs(parseFloat(canasto.peso_destino) - parseFloat(canasto.peso_origen)) * 1000)}g). Verificá artículo por artículo.`
+                      : esBulto && canasto.diferencias
+                      ? 'Se encontraron diferencias en el conteo ciego.'
+                      : `Peso fuera de tolerancia (origen: ${canasto.peso_origen} kg, destino: ${canasto.peso_destino} kg, diferencia: ${Math.round(Math.abs(parseFloat(canasto.peso_destino || 0) - parseFloat(canasto.peso_origen || 0)) * 1000)}g). Verificá artículo por artículo.`
                     }
                   </div>
                   <button onClick={() => iniciarVerificacion(canasto)}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                    Iniciar Verificación Manual
+                    className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                    Verificar manualmente
                   </button>
+
+                  {canasto.diferencias && (
+                    <div className="bg-red-50 rounded-lg p-2 text-xs text-red-600 mt-1">
+                      <div className="font-medium mb-1">Diferencias reportadas:</div>
+                      {canasto.diferencias.filter(d => d.cantidad_esperada !== d.cantidad_real).map((d, idx) => (
+                        <div key={idx}>
+                          {d.nombre}: esperado {d.cantidad_esperada}, real {d.cantidad_real}
+                          {d.nota && ` — ${d.nota}`}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -339,35 +398,23 @@ const Recepcion = () => {
                 </div>
               )}
 
-              {/* Estado final */}
-              {esAprobado && (
+              {/* Estado final — Controlado */}
+              {esControlado && (
                 <div className="bg-green-50 rounded-lg p-2 text-xs text-green-600 flex items-center gap-1">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                   {esPallet
-                    ? `Aprobado — ${canasto.cantidad_bultos_destino} bultos verificados`
+                    ? `Controlado — ${canasto.cantidad_bultos_destino} bultos verificados`
                     : esBulto
-                    ? 'Aprobado — Conteo verificado'
+                    ? 'Controlado — Conteo verificado'
                     : (() => {
                         const difG = canasto.peso_destino && canasto.peso_origen
                           ? Math.round(Math.abs(parseFloat(canasto.peso_destino) - parseFloat(canasto.peso_origen)) * 1000)
                           : 0
-                        return `Aprobado — ${canasto.peso_destino} kg (diferencia: ${difG}g)`
+                        return `Controlado — ${canasto.peso_destino} kg (diferencia: ${difG}g)`
                       })()
                   }
-                </div>
-              )}
-
-              {esDiferencia && canasto.diferencias && (
-                <div className="bg-red-50 rounded-lg p-2 text-xs text-red-600">
-                  <div className="font-medium mb-1">Diferencias reportadas:</div>
-                  {canasto.diferencias.filter(d => d.cantidad_esperada !== d.cantidad_real).map((d, idx) => (
-                    <div key={idx}>
-                      {d.nombre}: esperado {d.cantidad_esperada}, real {d.cantidad_real}
-                      {d.nota && ` — ${d.nota}`}
-                    </div>
-                  ))}
                 </div>
               )}
             </div>

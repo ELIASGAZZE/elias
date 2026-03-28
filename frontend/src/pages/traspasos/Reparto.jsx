@@ -28,20 +28,20 @@ const Reparto = () => {
       const { canasto, orden } = r.data
       const esPallet = canasto.tipo === 'pallet'
 
-      if (canasto.estado === 'despachado') {
+      if (canasto.estado === 'en_transito') {
         setFeedback({
           tipo: 'duplicado',
-          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} "${esPallet ? (canasto.numero_pallet || valor) : valor}" ya fue despachado`,
+          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} "${esPallet ? (canasto.numero_pallet || valor) : valor}" ya está en tránsito`,
         })
         setPrecinto('')
         setBuscando(false)
         return
       }
 
-      if (canasto.estado !== 'cerrado') {
+      if (canasto.estado !== 'en_origen') {
         setFeedback({
           tipo: 'error',
-          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} en estado "${canasto.estado}", debe estar cerrado para despachar`,
+          mensaje: `${esPallet ? 'Pallet' : 'Canasto'} en estado "${canasto.estado}", debe estar en origen para despachar`,
         })
         setPrecinto('')
         setBuscando(false)
