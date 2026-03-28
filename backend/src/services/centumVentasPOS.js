@@ -697,14 +697,17 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
  */
 async function retrySyncVentasCentum() {
   const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  // Ignorar ventas de los últimos 5 minutos para evitar race condition con el sync inicial
+  const hace5min = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-  // Buscar ventas pendientes (no sincronizadas, con caja asignada, de las últimas 24h)
+  // Buscar ventas pendientes (no sincronizadas, con caja asignada, creadas hace más de 5 min)
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
     .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
+    .lte('created_at', hace5min)
     .order('created_at', { ascending: true })
     .limit(20)
 
