@@ -136,6 +136,7 @@ const VentasHome = () => {
         if (fechaHasta) params.append('fecha_hasta', fechaHasta)
       }
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
+      if (filtroCentum === 'sin_cae') params.append('sin_cae', '1')
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
       if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
@@ -180,6 +181,7 @@ const VentasHome = () => {
     if (filtroSucursales.length > 0 && !filtroSucursales.includes(v.sucursal_id)) return false
     // filtroEmpleado se aplica en el backend
     if (filtroCentum === 'sin_centum' && (v.centum_sync || v.centum_comprobante)) return false
+    if (filtroCentum === 'sin_cae' && v.numero_cae) return false
     return true
   })
 
@@ -366,6 +368,16 @@ const VentasHome = () => {
             }`}
           >
             Sin Centum
+          </button>
+          <button
+            onClick={() => setFiltroCentum(filtroCentum === 'sin_cae' ? '' : 'sin_cae')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filtroCentum === 'sin_cae'
+                ? 'bg-orange-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Sin CAE
           </button>
         </div>
 
@@ -583,8 +595,12 @@ const VentasHome = () => {
                           <button
                             onClick={(e) => reenviarCentum(e, v.id)}
                             disabled={reenviando === v.id}
-                            className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded hover:bg-red-100 disabled:opacity-50 transition-colors"
-                            title={v.centum_error || 'No sincronizada con Centum'}
+                            className={`text-xs px-1.5 py-0.5 rounded disabled:opacity-50 transition-colors ${
+                              v.centum_error
+                                ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                                : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                            }`}
+                            title={v.centum_error || 'Aguardando sync automático'}
                           >
                             {reenviando === v.id ? 'Enviando...' : v.centum_error ? 'Reintentar Centum' : 'Enviar a Centum'}
                           </button>
@@ -594,9 +610,15 @@ const VentasHome = () => {
                         {v.nombre_cliente || 'Consumidor Final'}
                       </p>
                       {!v.centum_sync && !v.centum_comprobante && (
-                        <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error || 'Sin error registrado — el envío a Centum no se completó'}>
-                          {v.centum_error ? `Error: ${v.centum_error}` : 'Sin sincronizar — error desconocido'}
-                        </p>
+                        v.centum_error ? (
+                          <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error}>
+                            Error: {v.centum_error}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-yellow-600 truncate mt-0.5" title="La venta será enviada a Centum automáticamente en el próximo ciclo">
+                            Aguardando sync a Centum...
+                          </p>
+                        )
                       )}
                       {mediosUsados.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">

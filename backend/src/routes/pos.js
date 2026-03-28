@@ -757,6 +757,10 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       if (req.query.sin_centum === '1') {
         query = query.eq('centum_sync', false)
       }
+      // Filtro "Sin CAE": ventas sin número de CAE
+      if (req.query.sin_cae === '1') {
+        query = query.is('numero_cae', null)
+      }
       // Filtro empleados: solo ventas de empleados o solo no-empleados
       if (req.query.filtro_empleado === 'empleados') {
         query = query.ilike('nombre_cliente', 'Empleado:%')
@@ -852,6 +856,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
         if (req.query.fecha) qResumen = qResumen.gte('created_at', `${req.query.fecha}T00:00:00-03:00`)
         if (req.query.fecha_hasta) qResumen = qResumen.lte('created_at', `${req.query.fecha_hasta}T23:59:59-03:00`)
         if (req.query.sin_centum === '1') qResumen = qResumen.eq('centum_sync', false)
+        if (req.query.sin_cae === '1') qResumen = qResumen.is('numero_cae', null)
         if (req.query.filtro_empleado === 'empleados') qResumen = qResumen.ilike('nombre_cliente', 'Empleado:%')
         else if (req.query.filtro_empleado === 'no_empleados') qResumen = qResumen.not('nombre_cliente', 'ilike', 'Empleado:%')
         const buscar = req.query.buscar?.trim()
