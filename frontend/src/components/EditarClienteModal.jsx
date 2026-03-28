@@ -19,6 +19,9 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
   const [error, setError] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [clienteId, setClienteId] = useState(null)
+  const [cuitOriginal, setCuitOriginal] = useState(cliente?.cuit || '')
+  const [consultandoAfip, setConsultandoAfip] = useState(false)
+  const [datosAfip, setDatosAfip] = useState(null)
 
   // Cargar datos completos + direcciones
   useEffect(() => {
@@ -32,6 +35,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
         const cli = (clienteRes.data.clientes || []).find(c => c.id_centum === cliente.id_centum)
         if (cli) {
           setClienteId(cli.id)
+          setCuitOriginal(cli.cuit || '')
           setForm({
             razon_social: cli.razon_social || '',
             cuit: cli.cuit || '',
@@ -51,6 +55,51 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
       .catch(() => {})
       .finally(() => setCargando(false))
   }, [cliente])
+
+  // Consultar AFIP cuando cambia el CUIT (debounce 600ms)
+  useEffect(() => {
+    const cuitLimpio = form.cuit.replace(/\D/g, '')
+    // Solo consultar si cambió respecto al original y tiene largo válido
+    if (cuitLimpio === cuitOriginal.replace(/\D/g, '') || cuitLimpio.length < 7) {
+      setDatosAfip(null)
+      return
+    }
+
+    const timeout = setTimeout(async () => {
+      setConsultandoAfip(true)
+      setDatosAfip(null)
+      try {
+        const { data } = await api.get('/api/clientes/buscar-afip', { params: { cuit: cuitLimpio } })
+        if (data.encontrado && data.datos) {
+          setDatosAfip(data.datos)
+        } else {
+          setDatosAfip('no_encontrado')
+        }
+      } catch {
+        setDatosAfip('error')
+      } finally {
+        setConsultandoAfip(false)
+      }
+    }, 600)
+
+    return () => clearTimeout(timeout)
+  }, [form.cuit, cuitOriginal])
+
+  const aplicarDatosAfip = () => {
+    if (!datosAfip || datosAfip === 'no_encontrado' || datosAfip === 'error') return
+    const esCuit = datosAfip.cuit?.replace(/\D/g, '').length === 11
+    setForm(prev => ({
+      ...prev,
+      razon_social: datosAfip.razon_social || prev.razon_social,
+      ...(esCuit ? {
+        cuit: datosAfip.cuit || prev.cuit,
+        condicion_iva: datosAfip.condicion_iva || prev.condicion_iva,
+      } : {}),
+      ...(datosAfip.domicilio ? { direccion: datosAfip.domicilio } : {}),
+      ...(datosAfip.localidad ? { localidad: datosAfip.localidad } : {}),
+    }))
+    setDatosAfip(null)
+  }
 
   const actualizar = (campo, valor) => {
     setForm(prev => ({ ...prev, [campo]: valor }))
@@ -177,6 +226,35 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
               {error && (
                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                   {error}
+                </div>
+              )}
+
+              {consultandoAfip && (
+                <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                  Consultando ARCA...
+                </div>
+              )}
+
+              {datosAfip && datosAfip !== 'no_encontrado' && datosAfip !== 'error' && (
+                <div className="text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center justify-between">
+                  <div className="text-xs text-green-700">
+                    <span className="font-medium">{datosAfip.razon_social}</span>
+                    {datosAfip.condicion_iva && <span> · {datosAfip.condicion_iva}</span>}
+                    {datosAfip.estado && <span> · {datosAfip.estado}</span>}
+                  </div>
+                  <button
+                    onClick={aplicarDatosAfip}
+                    className="text-xs font-semibold text-green-700 bg-green-200 hover:bg-green-300 px-2 py-1 rounded transition-colors flex-shrink-0 ml-2"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              )}
+
+              {datosAfip === 'no_encontrado' && !consultandoAfip && (
+                <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                  No se encontraron datos en ARCA para este CUIT/DNI
                 </div>
               )}
 

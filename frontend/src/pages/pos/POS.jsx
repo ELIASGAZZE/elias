@@ -1337,6 +1337,7 @@ const POS = () => {
   const [seleccionandoCliente, setSeleccionandoCliente] = useState(false)
   const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
   const [mostrarEditarCliente, setMostrarEditarCliente] = useState(false)
+  const [toastMsg, setToastMsg] = useState(null)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF', grupo_descuento_id: null, grupo_descuento_nombre: null, grupo_descuento_porcentaje: 0 }
   const [descuentosGrupoRubros, setDescuentosGrupoRubros] = useState({}) // { rubroNombre: porcentaje }
@@ -3896,6 +3897,8 @@ const POS = () => {
                       onGuardado={(cli) => {
                         setCliente(prev => ({ ...prev, ...cli }))
                         setMostrarEditarCliente(false)
+                        setToastMsg('Cliente actualizado')
+                        setTimeout(() => setToastMsg(null), 3000)
                       }}
                     />
                   )}
@@ -6918,6 +6921,13 @@ const POS = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg animate-fade-in">
+          {toastMsg}
         </div>
       )}
     </div>
