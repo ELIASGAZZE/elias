@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import api from '../services/api'
 
+// Extraer nombre de provincia si viene como JSON
+function parseProvincia(val) {
+  if (!val) return ''
+  if (typeof val === 'object') return val.Nombre || ''
+  if (typeof val === 'string' && val.startsWith('{')) {
+    try { return JSON.parse(val).Nombre || '' } catch { return '' }
+  }
+  return val
+}
+
 const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
   const [form, setForm] = useState({
     razon_social: cliente?.razon_social || '',
@@ -19,7 +29,6 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
   const [error, setError] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [clienteId, setClienteId] = useState(null)
-  const [cuitOriginal, setCuitOriginal] = useState(cliente?.cuit || '')
   const [consultandoAfip, setConsultandoAfip] = useState(false)
   const [datosAfip, setDatosAfip] = useState(null)
 
@@ -35,7 +44,6 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
         const cli = (clienteRes.data.clientes || []).find(c => c.id_centum === cliente.id_centum)
         if (cli) {
           setClienteId(cli.id)
-          setCuitOriginal(cli.cuit || '')
           setForm({
             razon_social: cli.razon_social || '',
             cuit: cli.cuit || '',
@@ -43,7 +51,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
             direccion: cli.direccion || '',
             localidad: cli.localidad || '',
             codigo_postal: cli.codigo_postal || '',
-            provincia: cli.provincia || '',
+            provincia: parseProvincia(cli.provincia),
             celular: cli.celular || cli.telefono || '',
             email: cli.email || '',
           })
@@ -56,49 +64,39 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
       .finally(() => setCargando(false))
   }, [cliente])
 
-  // Consultar AFIP cuando cambia el CUIT (debounce 600ms)
-  useEffect(() => {
+  const buscarAfip = async () => {
     const cuitLimpio = form.cuit.replace(/\D/g, '')
-    // Solo consultar si cambió respecto al original y tiene largo válido
-    if (cuitLimpio === cuitOriginal.replace(/\D/g, '') || cuitLimpio.length < 7) {
-      setDatosAfip(null)
-      return
-    }
+    if (cuitLimpio.length < 7) return
 
-    const timeout = setTimeout(async () => {
-      setConsultandoAfip(true)
-      setDatosAfip(null)
-      try {
-        const { data } = await api.get('/api/clientes/buscar-afip', { params: { cuit: cuitLimpio } })
-        if (data.encontrado && data.datos) {
-          setDatosAfip(data.datos)
-        } else {
-          setDatosAfip('no_encontrado')
-        }
-      } catch {
-        setDatosAfip('error')
-      } finally {
-        setConsultandoAfip(false)
-      }
-    }, 600)
-
-    return () => clearTimeout(timeout)
-  }, [form.cuit, cuitOriginal])
-
-  const aplicarDatosAfip = () => {
-    if (!datosAfip || datosAfip === 'no_encontrado' || datosAfip === 'error') return
-    const esCuit = datosAfip.cuit?.replace(/\D/g, '').length === 11
-    setForm(prev => ({
-      ...prev,
-      razon_social: datosAfip.razon_social || prev.razon_social,
-      ...(esCuit ? {
-        cuit: datosAfip.cuit || prev.cuit,
-        condicion_iva: datosAfip.condicion_iva || prev.condicion_iva,
-      } : {}),
-      ...(datosAfip.domicilio ? { direccion: datosAfip.domicilio } : {}),
-      ...(datosAfip.localidad ? { localidad: datosAfip.localidad } : {}),
-    }))
+    setConsultandoAfip(true)
     setDatosAfip(null)
+    try {
+      const { data } = await api.get('/api/clientes/buscar-afip', { params: { cuit: cuitLimpio } })
+      if (data.encontrado && data.datos) {
+        const d = data.datos
+        setDatosAfip(d)
+        // Aplicar automáticamente los datos encontrados
+        const esCuit = cuitLimpio.length === 11
+        setForm(prev => ({
+          ...prev,
+          razon_social: d.razon_social || prev.razon_social,
+          // Solo precargar CUIT y condición IVA si ingresó un CUIT (11 dígitos)
+          // Si ingresó un DNI, dejar los valores actuales
+          ...(esCuit ? {
+            cuit: d.cuit || prev.cuit,
+            condicion_iva: d.condicion_iva || prev.condicion_iva,
+          } : {}),
+          ...(d.domicilio ? { direccion: d.domicilio } : {}),
+          ...(d.localidad ? { localidad: d.localidad } : {}),
+        }))
+      } else {
+        setDatosAfip('no_encontrado')
+      }
+    } catch {
+      setDatosAfip('error')
+    } finally {
+      setConsultandoAfip(false)
+    }
   }
 
   const actualizar = (campo, valor) => {
@@ -110,7 +108,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
   }
 
   const agregarDireccion = () => {
-    setDirecciones(prev => [...prev, { direccion: '', localidad: '', referencia: '', _nuevo: true }])
+    setDirecciones(prev => [{ direccion: '', localidad: '', referencia: '', _nuevo: true }, ...prev])
   }
 
   const quitarDireccion = (idx) => {
@@ -229,26 +227,10 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                 </div>
               )}
 
-              {consultandoAfip && (
-                <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
-                  Consultando ARCA...
-                </div>
-              )}
-
-              {datosAfip && datosAfip !== 'no_encontrado' && datosAfip !== 'error' && (
-                <div className="text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center justify-between">
-                  <div className="text-xs text-green-700">
-                    <span className="font-medium">{datosAfip.razon_social}</span>
-                    {datosAfip.condicion_iva && <span> · {datosAfip.condicion_iva}</span>}
-                    {datosAfip.estado && <span> · {datosAfip.estado}</span>}
-                  </div>
-                  <button
-                    onClick={aplicarDatosAfip}
-                    className="text-xs font-semibold text-green-700 bg-green-200 hover:bg-green-300 px-2 py-1 rounded transition-colors flex-shrink-0 ml-2"
-                  >
-                    Aplicar
-                  </button>
+              {datosAfip && datosAfip !== 'no_encontrado' && datosAfip !== 'error' && !consultandoAfip && (
+                <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                  Datos prellenados desde ARCA
+                  {datosAfip.estado && <span> - Estado: {datosAfip.estado}</span>}
                 </div>
               )}
 
@@ -258,34 +240,51 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                 </div>
               )}
 
+              {datosAfip === 'error' && !consultandoAfip && (
+                <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  No se pudo consultar ARCA
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-medium text-gray-500 mb-1 block">Razón Social *</label>
                 <input type="text" value={form.razon_social} onChange={e => actualizar('razon_social', e.target.value)} onFocus={selectAll} className={inputClass} />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-medium text-gray-500 mb-1 block">
-                    CUIT / DNI {(form.condicion_iva === 'RI' || form.condicion_iva === 'MT') && <span className="text-red-500">* (CUIT 11 díg.)</span>}
-                  </label>
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">
+                  CUIT / DNI {esCuitRequerido && <span className="text-red-500">* (CUIT 11 díg.)</span>}
+                </label>
+                <div className="flex gap-2">
                   <input
                     type="text"
                     value={form.cuit}
-                    onChange={e => actualizar('cuit', e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    onChange={e => { actualizar('cuit', e.target.value.replace(/\D/g, '').slice(0, 11)); setDatosAfip(null) }}
                     onFocus={selectAll}
                     inputMode="numeric"
                     className={cuitInputClass}
                   />
+                  <button
+                    type="button"
+                    onClick={buscarAfip}
+                    disabled={consultandoAfip || form.cuit.replace(/\D/g, '').length < 7}
+                    className="flex-shrink-0 text-xs font-medium px-3 py-2 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                  >
+                    {consultandoAfip ? (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                    ) : 'Buscar ARCA'}
+                  </button>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-500 mb-1 block">Condición IVA</label>
-                  <select value={form.condicion_iva} onChange={e => actualizar('condicion_iva', e.target.value)} className={inputClass}>
-                    <option value="CF">Consumidor Final</option>
-                    <option value="RI">Responsable Inscripto</option>
-                    <option value="MT">Monotributista</option>
-                    <option value="EX">IVA Exento</option>
-                  </select>
-                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Condición IVA</label>
+                <select value={form.condicion_iva} onChange={e => actualizar('condicion_iva', e.target.value)} className={inputClass}>
+                  <option value="CF">Consumidor Final</option>
+                  <option value="RI">Responsable Inscripto</option>
+                  <option value="MT">Monotributista</option>
+                  <option value="EX">IVA Exento</option>
+                </select>
               </div>
 
               <div>
@@ -293,20 +292,19 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                 <input type="text" value={form.direccion} onChange={e => actualizar('direccion', e.target.value)} onFocus={selectAll} placeholder="Calle y número" className={inputClass} />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-xs font-medium text-gray-500 mb-1 block">Localidad</label>
                   <input type="text" value={form.localidad} onChange={e => actualizar('localidad', e.target.value)} onFocus={selectAll} className={inputClass} />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-gray-500 mb-1 block">Código postal</label>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">C.P.</label>
                   <input type="text" value={form.codigo_postal} onChange={e => actualizar('codigo_postal', e.target.value)} onFocus={selectAll} className={inputClass} />
                 </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Provincia</label>
-                <input type="text" value={form.provincia} onChange={e => actualizar('provincia', e.target.value)} onFocus={selectAll} className={inputClass} />
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">Provincia</label>
+                  <input type="text" value={form.provincia} onChange={e => actualizar('provincia', e.target.value)} onFocus={selectAll} className={inputClass} />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -333,7 +331,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                 )}
                 <div className="space-y-2">
                   {direcciones.map((dir, idx) => (
-                    <div key={dir.id || `new-${idx}`} className="bg-gray-50 rounded-lg p-3 space-y-2 relative">
+                    <div key={dir.id || `new-${idx}`} className={`rounded-lg p-3 space-y-2 relative ${dir._nuevo ? 'bg-violet-50 border border-violet-200' : 'bg-gray-50'}`}>
                       <button
                         type="button"
                         onClick={() => quitarDireccion(idx)}
@@ -350,6 +348,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                         onFocus={selectAll}
                         placeholder="Dirección *"
                         className={inputClass}
+                        autoFocus={dir._nuevo}
                       />
                       <div className="flex gap-2">
                         <input
