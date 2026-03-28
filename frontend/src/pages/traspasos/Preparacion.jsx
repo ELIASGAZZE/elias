@@ -1731,6 +1731,38 @@ const Preparacion = () => {
                   <div className="text-4xl mb-3">📷</div>
                   <div className="text-sm font-medium text-gray-700">Escaneá el precinto del canasto</div>
                   <div className="text-xs text-gray-400 mt-1">Escaneá <span className="font-semibold">{cont.precinto}</span> para verificar y editar</div>
+                  {/* Input oculto para capturar escaneo dentro del modal */}
+                  <input
+                    autoFocus
+                    inputMode="none"
+                    className="opacity-0 absolute w-0 h-0"
+                    value={scanInput}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setScanInput(val)
+                      scanBufferRef.current = val
+                      clearTimeout(scanTimeoutRef.current)
+                      scanTimeoutRef.current = setTimeout(() => {
+                        const codigo = scanBufferRef.current.trim()
+                        scanBufferRef.current = ''
+                        setScanInput('')
+                        if (codigo) handleScanCodigoRef.current?.(codigo)
+                      }, 200)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        clearTimeout(scanTimeoutRef.current)
+                        const codigo = scanBufferRef.current.trim()
+                        scanBufferRef.current = ''
+                        setScanInput('')
+                        if (codigo) handleScanCodigoRef.current?.(codigo)
+                      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                        scanBufferRef.current += e.key
+                        setScanInput(scanBufferRef.current)
+                      }
+                    }}
+                  />
                 </div>
               ) : (
                 <div className="overflow-y-auto flex-1 p-4 space-y-2">
