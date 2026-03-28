@@ -725,7 +725,22 @@ const Preparacion = () => {
   // === HANDLER PRINCIPAL DE ESCANEO ===
   const handleScanCodigo = (codigo) => {
 
-    // 0. Si hay pieza esperando confirmación de scan
+    // 0a. Si hay contenedor esperando confirmación de eliminación
+    const elimCont = confirmarElimContRef.current
+    if (elimCont) {
+      if (elimCont.tipo === 'canasto' && elimCont.codigoEsperado === codigo) {
+        ejecutarEliminarContenedor()
+        return
+      } else if (elimCont.tipo === 'bulto' && elimCont.codigos?.includes(codigo)) {
+        ejecutarEliminarContenedor()
+        return
+      } else {
+        mostrarFeedback('Código incorrecto', false)
+        return
+      }
+    }
+
+    // 0b. Si hay pieza esperando confirmación de scan
     const eliminando = piezaEliminandoRef.current
     if (eliminando?.esperandoScan && codigo.startsWith('CAN-')) {
       if (eliminando.esperandoScan === codigo) {
@@ -1068,18 +1083,42 @@ const Preparacion = () => {
     mostrarFeedback('Artículo eliminado', true)
   }
 
-  const eliminarContenedor = (idx) => {
+  const [confirmarElimCont, _setConfirmarElimCont] = useState(null) // { idx, tipo, precinto, nombre, codigoEsperado }
+  const confirmarElimContRef = useRef(null)
+  const setConfirmarElimCont = (v) => { const val = typeof v === 'function' ? v(confirmarElimContRef.current) : v; confirmarElimContRef.current = val; _setConfirmarElimCont(val); if (!val) setTimeout(() => scanRef.current?.focus(), 150) }
+
+  const pedirEliminarContenedor = (idx) => {
     const c = contenedores[idx]
     if (!c) return
+    if (c.tipo === 'canasto') {
+      setConfirmarElimCont({ idx, tipo: 'canasto', precinto: c.precinto, codigoEsperado: c.precinto })
+    } else {
+      // Bulto: pedir escanear el código del primer artículo
+      const primerItem = c.items[0]
+      const cat = todosArticulos.find(a => String(a.id) === String(primerItem?.articulo_id))
+      const codigoEsperado = cat?.codigo || primerItem?.codigo
+      const codigos = [codigoEsperado]
+      if (cat?.codigosBarras) {
+        for (const b of cat.codigosBarras) {
+          codigos.push(typeof b === 'object' ? b.codigo : b)
+        }
+      }
+      setConfirmarElimCont({ idx, tipo: 'bulto', nombre: c.nombre, codigoEsperado, codigos })
+    }
+  }
+
+  const ejecutarEliminarContenedor = () => {
+    const { idx } = confirmarElimContRef.current
     setContenedorExpandido(null)
     const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
     setContenedores(nuevosContenedores)
-    // Recalcular progreso desde contenedores reales
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
-      setTimeout(() => persistirItems(itemsSinc), 0)
+      persistirItems(itemsSinc)
       return { ...prev, items: itemsSinc }
     })
+    setConfirmarElimCont(null)
+    mostrarFeedback('Contenedor eliminado', true)
   }
 
   // Pesaje manual (para pesables en detalle)
@@ -2038,7 +2077,7 @@ const Preparacion = () => {
                   <svg className={`w-4 h-4 text-gray-400 transition-transform ${contenedorExpandido === idx ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
-                  <button onClick={(e) => { e.stopPropagation(); eliminarContenedor(idx) }} className="text-red-400 p-1">
+                  <button onClick={(e) => { e.stopPropagation(); pedirEliminarContenedor(idx) }} className="text-red-400 p-1">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -2114,6 +2153,61 @@ const Preparacion = () => {
           </div>
         ))}
       </div>
+
+      {/* Modal confirmar eliminación de contenedor */}
+      {confirmarElimCont && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setConfirmarElimCont(null)}>
+          <div className="bg-white rounded-2xl w-[90%] max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="text-3xl mb-2">{confirmarElimCont.tipo === 'canasto' ? '🧺' : '📋'}</div>
+              <h3 className="text-base font-semibold text-gray-800">
+                {confirmarElimCont.tipo === 'canasto'
+                  ? `¿Eliminar canasto ${confirmarElimCont.precinto}?`
+                  : `¿Eliminar bulto ${confirmarElimCont.nombre}?`
+                }
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {confirmarElimCont.tipo === 'canasto'
+                  ? `Escaneá ${confirmarElimCont.precinto} para confirmar`
+                  : 'Escaneá el artículo del bulto para confirmar'
+                }
+              </p>
+              <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                value={scanInput}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setScanInput(val)
+                  scanBufferRef.current = val
+                  clearTimeout(scanTimeoutRef.current)
+                  scanTimeoutRef.current = setTimeout(() => {
+                    const codigo = scanBufferRef.current.trim()
+                    scanBufferRef.current = ''
+                    setScanInput('')
+                    if (codigo) handleScanCodigoRef.current?.(codigo)
+                  }, 200)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    clearTimeout(scanTimeoutRef.current)
+                    const codigo = scanBufferRef.current.trim()
+                    scanBufferRef.current = ''
+                    setScanInput('')
+                    if (codigo) handleScanCodigoRef.current?.(codigo)
+                  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                    scanBufferRef.current += e.key
+                    setScanInput(scanBufferRef.current)
+                  }
+                }}
+              />
+              <button onClick={() => setConfirmarElimCont(null)}
+                className="mt-4 w-full py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal cerrar canasto (pedir peso) */}
       {modalCerrarCanasto && (
