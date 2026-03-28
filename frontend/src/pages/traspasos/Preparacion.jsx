@@ -807,6 +807,8 @@ const Preparacion = () => {
       }
     }
     setModalCerrarCanasto(null)
+    // Re-enfocar el input de scan después de cerrar el modal
+    setTimeout(() => scanRef.current?.focus(), 150)
   }
 
   // Eliminar contenedor
