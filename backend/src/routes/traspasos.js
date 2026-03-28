@@ -40,6 +40,39 @@ router.post('/articulos-enriquecer', verificarAuth, async (req, res) => {
   }
 })
 
+// Actualizar peso min/max de un artículo pesable (auto-ajuste desde preparación)
+router.put('/articulos/:id/pesos', verificarAuth, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { peso } = req.body
+    if (!peso || peso <= 0) return res.status(400).json({ error: 'Peso inválido' })
+
+    // Buscar artículo por id_centum
+    const { data: art } = await supabase
+      .from('articulos')
+      .select('id, peso_minimo, peso_maximo, es_pesable')
+      .eq('id_centum', id)
+      .single()
+
+    if (!art) return res.status(404).json({ error: 'Artículo no encontrado' })
+    if (!art.es_pesable) return res.status(400).json({ error: 'No es pesable' })
+
+    const updates = {}
+    const pesoMin = art.peso_minimo ? parseFloat(art.peso_minimo) : null
+    const pesoMax = art.peso_maximo ? parseFloat(art.peso_maximo) : null
+
+    if (pesoMin === null || peso < pesoMin) updates.peso_minimo = peso
+    if (pesoMax === null || peso > pesoMax) updates.peso_maximo = peso
+
+    if (Object.keys(updates).length === 0) return res.json({ updated: false })
+
+    await supabase.from('articulos').update(updates).eq('id', art.id)
+    res.json({ updated: true, peso_minimo: updates.peso_minimo ?? pesoMin, peso_maximo: updates.peso_maximo ?? pesoMax })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ═══════════════════════════════════════════════════════════════
 // Stock por sucursal (para mostrar en picker de artículos)
 // ═══════════════════════════════════════════════════════════════

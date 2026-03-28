@@ -640,8 +640,32 @@ const Preparacion = () => {
     setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
   }
 
+  // Actualizar peso min/max del artículo si el peso escaneado expande el rango
+  const actualizarPesoMinMax = (articuloId, peso) => {
+    if (!peso || peso <= 0) return
+    const cat = todosArticulos.find(a => String(a.id) === String(articuloId))
+    if (!cat || !cat.esPesable) return
+    const min = cat.pesoMinimo
+    const max = cat.pesoMaximo
+    const expandeMin = min === null || peso < min
+    const expandeMax = max === null || peso > max
+    if (!expandeMin && !expandeMax) return
+    // Actualizar catálogo local inmediatamente
+    setTodosArticulos(prev => prev.map(a => {
+      if (String(a.id) !== String(articuloId)) return a
+      return {
+        ...a,
+        pesoMinimo: expandeMin ? peso : a.pesoMinimo,
+        pesoMaximo: expandeMax ? peso : a.pesoMaximo,
+      }
+    }))
+    // Persistir en servidor
+    api.put(`/api/traspasos/articulos/${articuloId}/pesos`, { peso }).catch(() => {})
+  }
+
   // Actualizar progreso en orden.items (para persistencia y progress circles)
   const actualizarProgresoOrden = (articuloId, cantAgregar, balanza) => {
+    if (balanza) actualizarPesoMinMax(articuloId, balanza.pesoKg)
     let nuevosItems
     setOrden(prev => {
       nuevosItems = (prev.items || []).map(i => {
@@ -1069,6 +1093,8 @@ const Preparacion = () => {
     const nuevosPesos = Array.from({ length: cantidad }, () => promedio)
     const balanzaFake = { pesoKg: pesoTotal }
 
+    actualizarPesoMinMax(itemDetalle.articulo_id, promedio)
+
     if (canastoActivo) {
       // Agregar como items individuales al canasto
       for (let i = 0; i < cantidad; i++) {
@@ -1400,7 +1426,12 @@ const Preparacion = () => {
             <CirculoProgreso actual={pickPiezas} total={pedidoPiezas} size={46} />
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-semibold text-gray-800 leading-tight truncate">{itemDetalle.nombre}</h2>
-              <div className="text-xs text-gray-400">{itemDetalle.codigo}</div>
+              <div className="text-xs text-gray-400">
+                {itemDetalle.codigo}
+                {itemDetalle.es_pesable && (itemDetalle.pesoMinimo || itemDetalle.pesoMaximo) && (
+                  <span className="ml-1 text-gray-500">· {itemDetalle.pesoMinimo || '—'}kg – {itemDetalle.pesoMaximo || '—'}kg</span>
+                )}
+              </div>
               <div className={`text-base font-bold ${completo ? 'text-emerald-600' : 'text-gray-800'}`}>
                 {pickPiezas} / {pedidoPiezas}
                 <span className="text-xs font-normal text-gray-500 ml-1">{itemDetalle.es_pesable ? 'piezas' : 'unidades'}</span>
