@@ -206,13 +206,20 @@ const Preparacion = () => {
 
   // Captura global de escaneo — no requiere focus en input, no abre teclado
   const scanBufferRef = useRef('')
-  const scanTimerRef = useRef(null)
-  useEffect(() => {
-    if (fase !== 'picking' && fase !== 'detalle') return
-    if (modalCerrarCanasto || alertaPeso || modalPendientes || modalPallet) return
+  const handleScanCodigoRef = useRef(handleScanCodigo)
+  const handleScanDetalleRef = useRef(handleScanDetalle)
+  const faseRef = useRef(fase)
+  const itemDetalleRef = useRef(itemDetalle)
+  useEffect(() => { handleScanCodigoRef.current = handleScanCodigo }, [handleScanCodigo])
+  useEffect(() => { handleScanDetalleRef.current = handleScanDetalle }, [handleScanDetalle])
+  useEffect(() => { faseRef.current = fase }, [fase])
+  useEffect(() => { itemDetalleRef.current = itemDetalle }, [itemDetalle])
 
+  useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ignorar si hay un modal con input activo (ej: peso canasto)
+      const f = faseRef.current
+      if (f !== 'picking' && f !== 'detalle') return
+      // Ignorar si hay un input/textarea con foco
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 
       if (e.key === 'Enter') {
@@ -221,12 +228,10 @@ const Preparacion = () => {
         scanBufferRef.current = ''
         setScanInput('')
         if (codigo) {
-          // Simular el handleScan
-          setScanInput('')
-          if (fase === 'detalle' && itemDetalle) {
-            handleScanDetalle(codigo)
+          if (f === 'detalle' && itemDetalleRef.current) {
+            handleScanDetalleRef.current(codigo)
           } else {
-            handleScanCodigo(codigo)
+            handleScanCodigoRef.current(codigo)
           }
         }
         return
@@ -237,17 +242,12 @@ const Preparacion = () => {
         e.preventDefault()
         scanBufferRef.current += e.key
         setScanInput(scanBufferRef.current)
-        // Reset timer — si no llega Enter en 100ms, limpiar (typing manual)
-        clearTimeout(scanTimerRef.current)
-        scanTimerRef.current = setTimeout(() => {
-          // No limpiar — dejar que el usuario pueda escribir lento también
-        }, 5000)
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [fase, itemDetalle, modalCerrarCanasto, alertaPeso, modalPendientes, modalPallet, canastoActivo, contenedores, orden])
+  }, []) // Se monta una sola vez, usa refs para estado actual
 
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
