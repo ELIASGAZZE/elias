@@ -688,6 +688,12 @@ const Preparacion = () => {
 
     // 1. Detectar canasto por prefijo CAN-
     if (codigo.startsWith('CAN-')) {
+      // Prioridad: si hay modal de edición esperando scan, verificar primero
+      if (canastoEditando?.esperandoScan === codigo) {
+        setCanastoEditando({ idx: canastoEditando.idx, confirmado: true })
+        mostrarFeedback(`🧺 Canasto ${codigo} verificado`, true)
+        return
+      }
       if (canastoActivo) {
         if (canastoActivo.precinto === codigo) {
           // Mismo canasto → solo cerrar (no reabrir)
@@ -700,12 +706,6 @@ const Preparacion = () => {
       }
       const idxCerrado = contenedores.findIndex(c => c.precinto === codigo)
       if (idxCerrado !== -1) {
-        // Si está en modo verificación de edición, confirmar y abrir editor
-        if (canastoEditando?.esperandoScan === codigo) {
-          setCanastoEditando({ idx: canastoEditando.idx, confirmado: true })
-          mostrarFeedback(`🧺 Canasto ${codigo} verificado`, true)
-          return
-        }
         // Reabrir canasto cerrado como activo para agregar más artículos
         const cerrado = contenedores[idxCerrado]
         setContenedores(prev => prev.filter((_, i) => i !== idxCerrado))
