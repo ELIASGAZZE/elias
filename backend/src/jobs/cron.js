@@ -3,7 +3,7 @@ const cron = require('node-cron')
 const https = require('https')
 const { sincronizarERP, sincronizarStock, sincronizarStockMultiSucursal, sincronizarImagenesPresencia } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
-const { retrySyncVentasCentum, retrySyncCAE } = require('../services/centumVentasPOS')
+const { retrySyncVentasCentum, retrySyncCAE, retryEmailsPendientes } = require('../services/centumVentasPOS')
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 
@@ -127,6 +127,20 @@ function iniciarCronJobs() {
     }
   })
 
+  // Retry emails pendientes: cada 10 minutos (offset 7 min, para no chocar con CAE)
+  cron.schedule('7-57/10 * * * *', async () => {
+    await withLock('retryEmails', async () => {
+      try {
+        const resultado = await retryEmailsPendientes()
+        if (resultado.pendientes > 0) {
+          console.log(`[RetryEmails] ${resultado.enviados}/${resultado.pendientes} emails enviados (${resultado.sinEmail} sin email cliente, ${resultado.fallidos} fallidos)`)
+        }
+      } catch (err) {
+        console.error('[RetryEmails] Error:', err.message)
+      }
+    })
+  })
+
   // Análisis batch nocturno: todos los días a las 08:00 UTC (05:00 Argentina)
   // Analiza los cierres del día anterior
   cron.schedule('0 8 * * *', async () => {
@@ -182,6 +196,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
   console.log('[CRON] Retry ventas pendientes Centum: cada 1 minuto (cola secuencial)')
   console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
+  console.log('[CRON] Retry emails pendientes: cada 10 minutos (offset 7)')
   console.log('[CRON] Stock multi-sucursal: cada 30 minutos')
   console.log('[CRON] Presencia imágenes: 06:10 UTC diariamente')
   console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')

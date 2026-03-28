@@ -1127,4 +1127,42 @@ async function retrySyncCAE() {
   return { revisadas: necesitanCAE.length, conCAE, omitidas }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico }
+/**
+ * Cron: reintenta enviar emails para ventas que ya tienen CAE pero email_enviado = false.
+ * Cubre el caso donde el email falló silenciosamente al momento de obtener el CAE.
+ */
+async function retryEmailsPendientes() {
+  const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  const { data: ventas, error } = await supabase.from('ventas_pos')
+    .select('id, numero_venta, numero_cae, id_cliente_centum, pagos, centum_comprobante')
+    .eq('email_enviado', false)
+    .eq('centum_sync', true)
+    .not('numero_cae', 'is', null)
+    .gt('id_cliente_centum', 0)
+    .gte('created_at', hace48h)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  if (error || !ventas || ventas.length === 0) return { pendientes: 0, enviados: 0, sinEmail: 0, fallidos: 0 }
+
+  let enviados = 0, sinEmail = 0, fallidos = 0
+  for (const v of ventas) {
+    try {
+      await enviarComprobanteAutomatico(v.id, v.numero_cae, null)
+      // Verificar si realmente se envió (puede haber sido saltado por falta de email del cliente)
+      const { data: check } = await supabase.from('ventas_pos').select('email_enviado').eq('id', v.id).single()
+      if (check?.email_enviado) {
+        enviados++
+      } else {
+        sinEmail++
+      }
+    } catch (err) {
+      fallidos++
+      console.warn(`[RetryEmails] Error venta ${v.numero_venta}:`, err.message)
+    }
+  }
+
+  return { pendientes: ventas.length, enviados, sinEmail, fallidos }
+}
+
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico, retryEmailsPendientes }
