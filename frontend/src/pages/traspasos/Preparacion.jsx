@@ -1344,16 +1344,16 @@ const Preparacion = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-36">
-      {/* Input oculto para captura de escaneo en dispositivos móviles */}
+      {/* Input para captura de escaneo — visible en barra inferior, sin teclado */}
       {!tecladoVisible && (
         <input
           ref={hiddenInputRef}
           type="text"
-          inputMode="none"
           autoComplete="off"
+          enterKeyHint="go"
           onInput={handleHiddenInput}
           onKeyDown={handleHiddenKeyDown}
-          style={{ position: 'fixed', top: -100, left: -100, width: 1, height: 1, opacity: 0, zIndex: -1 }}
+          style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0 }}
         />
       )}
       {/* Banner */}
