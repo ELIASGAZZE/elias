@@ -173,9 +173,6 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
     setDirecciones(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const [warningCentum, setWarningCentum] = useState(null)
-  const [clienteGuardado, setClienteGuardado] = useState(null)
-
   const guardarCliente = async () => {
     if (!form.razon_social.trim()) {
       setError('La razón social es requerida')
@@ -188,7 +185,6 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
 
     setGuardando(true)
     setError(null)
-    setWarningCentum(null)
     try {
       const direccionesValidas = direcciones.filter(d => d.direccion.trim())
       const { data } = await api.post('/api/clientes', {
@@ -200,14 +196,7 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
         direcciones_entrega: direccionesValidas,
       })
 
-      if (data.warning_centum) {
-        // Cliente creado local pero falló Centum — guardar referencia y mostrar warning
-        setClienteGuardado(data)
-        setWarningCentum(data.warning_centum)
-        setGuardando(false)
-        return
-      }
-
+      // Siempre seleccionar el cliente y cerrar, aunque falle Centum
       onCreado?.(data)
       onClose()
     } catch (err) {
@@ -251,19 +240,6 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
           {error && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
               {error}
-            </div>
-          )}
-
-          {warningCentum && (
-            <div className="text-sm bg-amber-50 border border-amber-300 rounded-lg px-3 py-3 space-y-2">
-              <p className="text-amber-800 font-medium">Cliente guardado localmente</p>
-              <p className="text-amber-700">{warningCentum}</p>
-              <button
-                onClick={() => { onCreado?.(clienteGuardado); onClose() }}
-                className="w-full py-2 rounded-lg text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors"
-              >
-                Continuar con la venta
-              </button>
             </div>
           )}
 
