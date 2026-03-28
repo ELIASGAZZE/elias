@@ -1625,20 +1625,14 @@ const Preparacion = () => {
 
       {/* Modal cerrar canasto (pedir peso) */}
       {modalCerrarCanasto && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setModalCerrarCanasto(null)}>
-          <div className="bg-white rounded-t-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setModalCerrarCanasto(null)}>
+          <div className="bg-white rounded-2xl p-5 space-y-4 w-[90%] max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-semibold text-gray-800">
               Cerrar canasto {canastoActivo?.precinto}
             </h3>
             <p className="text-sm text-gray-500">
               {canastoActivo?.items.length || 0} artículos · Ingresá el peso del canasto
             </p>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg) *</label>
-              <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                value={pesoCanasto} onChange={e => setPesoCanasto(e.target.value)} autoFocus
-                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
-            </div>
             <button onClick={handleCerrarCanasto}
               disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
               className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
@@ -1646,6 +1640,12 @@ const Preparacion = () => {
               }`}>
               Cerrar canasto
             </button>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg) *</label>
+              <input type="number" inputMode="decimal" min="0.001" step="0.001"
+                value={pesoCanasto} onChange={e => setPesoCanasto(e.target.value)} autoFocus
+                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
+            </div>
           </div>
         </div>
       )}
