@@ -204,46 +204,48 @@ const Preparacion = () => {
       .catch(() => {})
   }, [orden?.id])
 
-  // Captura global de escaneo — no requiere focus en input, no abre teclado
+  // Input oculto para captura de escaneo — inputMode="none" no abre teclado
   const scanBufferRef = useRef('')
+  const hiddenInputRef = useRef(null)
   const handleScanCodigoRef = useRef(null)
   const handleScanDetalleRef = useRef(null)
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
 
+  // Mantener foco en input oculto
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      const f = faseRef.current
-      if (f !== 'picking' && f !== 'detalle') return
-      // Ignorar si hay un input/textarea con foco
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        const codigo = scanBufferRef.current.trim()
-        scanBufferRef.current = ''
-        setScanInput('')
-        if (codigo) {
-          if (f === 'detalle' && itemDetalleRef.current) {
-            handleScanDetalleRef.current(codigo)
-          } else {
-            handleScanCodigoRef.current(codigo)
-          }
-        }
-        return
-      }
-
-      // Solo caracteres imprimibles (1 char)
-      if (e.key.length === 1) {
-        e.preventDefault()
-        scanBufferRef.current += e.key
-        setScanInput(scanBufferRef.current)
+    if (fase !== 'picking' && fase !== 'detalle') return
+    const mantenerFoco = () => {
+      if (!tecladoVisible && hiddenInputRef.current && document.activeElement !== hiddenInputRef.current) {
+        hiddenInputRef.current.focus()
       }
     }
+    mantenerFoco()
+    document.addEventListener('click', mantenerFoco)
+    const interval = setInterval(mantenerFoco, 500)
+    return () => {
+      document.removeEventListener('click', mantenerFoco)
+      clearInterval(interval)
+    }
+  }, [fase, tecladoVisible])
 
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, []) // Se monta una sola vez, usa refs para estado actual
+  const handleHiddenInput = (e) => {
+    setScanInput(e.target.value)
+  }
+  const handleHiddenKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const codigo = e.target.value.trim()
+      e.target.value = ''
+      setScanInput('')
+      if (!codigo) return
+      if (faseRef.current === 'detalle' && itemDetalleRef.current) {
+        handleScanDetalleRef.current?.(codigo)
+      } else {
+        handleScanCodigoRef.current?.(codigo)
+      }
+    }
+  }
 
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
@@ -1342,6 +1344,18 @@ const Preparacion = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-36">
+      {/* Input oculto para captura de escaneo en dispositivos móviles */}
+      {!tecladoVisible && (
+        <input
+          ref={hiddenInputRef}
+          type="text"
+          inputMode="none"
+          autoComplete="off"
+          onInput={handleHiddenInput}
+          onKeyDown={handleHiddenKeyDown}
+          style={{ position: 'fixed', top: -100, left: -100, width: 1, height: 1, opacity: 0, zIndex: -1 }}
+        />
+      )}
       {/* Banner */}
       <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2">
         <button onClick={() => navigate('/preparacion')} className="p-2 rounded-lg active:bg-sky-700">
