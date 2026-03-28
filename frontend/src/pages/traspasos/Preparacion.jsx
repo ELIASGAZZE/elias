@@ -229,14 +229,12 @@ const Preparacion = () => {
     return () => clearInterval(interval)
   }, [fase, tecladoVisible])
 
-  const handleHiddenInput = (e) => {
-    setScanInput(e.target.value)
-  }
+  const scanBufferHiddenRef = useRef('')
   const handleHiddenKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      const codigo = e.target.value.trim()
-      e.target.value = ''
+      const codigo = scanBufferHiddenRef.current.trim()
+      scanBufferHiddenRef.current = ''
       setScanInput('')
       if (!codigo) return
       if (faseRef.current === 'detalle' && itemDetalleRef.current) {
@@ -244,6 +242,10 @@ const Preparacion = () => {
       } else {
         handleScanCodigoRef.current?.(codigo)
       }
+    } else if (e.key.length === 1) {
+      // Caracter imprimible del scanner
+      scanBufferHiddenRef.current += e.key
+      setScanInput(scanBufferHiddenRef.current)
     }
   }
 
@@ -1349,9 +1351,8 @@ const Preparacion = () => {
         <input
           ref={hiddenInputRef}
           type="text"
+          readOnly
           autoComplete="off"
-          enterKeyHint="go"
-          onInput={handleHiddenInput}
           onKeyDown={handleHiddenKeyDown}
           style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0 }}
         />
