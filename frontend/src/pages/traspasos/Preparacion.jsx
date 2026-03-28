@@ -91,6 +91,9 @@ const Preparacion = () => {
   const [pesoManualError, setPesoManualError] = useState(null)
   const [mostrarPiezas, setMostrarPiezas] = useState(false)
 
+  // Contenedor expandido (ver artículos)
+  const [contenedorExpandido, setContenedorExpandido] = useState(null)
+
   // Modal de artículos pendientes al cerrar
   const [modalPendientes, setModalPendientes] = useState(null)
   const [enviandoPendientes, setEnviandoPendientes] = useState(false)
@@ -921,6 +924,7 @@ const Preparacion = () => {
   const eliminarContenedor = (idx) => {
     const c = contenedores[idx]
     if (!c) return
+    setContenedorExpandido(null)
     const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
     setContenedores(nuevosContenedores)
     // Recalcular progreso desde contenedores reales
@@ -1625,22 +1629,48 @@ const Preparacion = () => {
           </div>
           <div className="space-y-1">
             {contenedores.map((c, idx) => (
-              <div key={idx} className={`flex items-center gap-2 rounded-lg p-2 text-xs ${
+              <div key={idx} className={`rounded-lg text-xs ${
                 c.tipo === 'canasto' ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'
               }`}>
-                <span className="text-base">{c.tipo === 'canasto' ? '🧺' : '📋'}</span>
-                <div className="flex-1 min-w-0">
-                  <span className="font-medium text-gray-800">{c.tipo === 'canasto' ? c.precinto : c.nombre}</span>
-                  <span className="text-gray-400 ml-1">
-                    {c.tipo === 'canasto' && `· ${c.peso_origen}kg`}
-                    {` · ${c.items.length} art.`}
-                  </span>
-                </div>
-                <button onClick={() => eliminarContenedor(idx)} className="text-red-400 p-1">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                <div className="flex items-center gap-2 p-2 cursor-pointer" onClick={() => setContenedorExpandido(contenedorExpandido === idx ? null : idx)}>
+                  <span className="text-base">{c.tipo === 'canasto' ? '🧺' : '📋'}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium text-gray-800">{c.tipo === 'canasto' ? c.precinto : c.nombre}</span>
+                    <span className="text-gray-400 ml-1">
+                      {c.tipo === 'canasto' && `· ${c.peso_origen}kg`}
+                      {` · ${c.items.length} art.`}
+                    </span>
+                  </div>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${contenedorExpandido === idx ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
-                </button>
+                  <button onClick={(e) => { e.stopPropagation(); eliminarContenedor(idx) }} className="text-red-400 p-1">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                {contenedorExpandido === idx && (
+                  <div className="px-3 pb-2 pt-0 border-t border-gray-200/60 space-y-1">
+                    {c.items.map((ci, ciIdx) => (
+                      <div key={ciIdx} className="flex items-center gap-2 py-1">
+                        <img src={`${API_BASE}/api/articulos/${ci.articulo_id}/imagen`} alt=""
+                          className="w-8 h-8 rounded object-cover bg-gray-100 flex-shrink-0"
+                          onError={e => { e.target.style.display = 'none' }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium text-gray-700 truncate">{ci.nombre}</div>
+                          <div className="text-[10px] text-gray-400">{ci.codigo}</div>
+                        </div>
+                        <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                          {ci.es_pesable && ci.pesos_escaneados
+                            ? `${ci.pesos_escaneados.length} pza · ${ci.cantidad}kg`
+                            : `x${ci.cantidad}`
+                          }
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
