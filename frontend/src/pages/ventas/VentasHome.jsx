@@ -94,6 +94,17 @@ const VentasHome = () => {
     cargarVentas()
   }, [fecha, fechaHasta, page, filtroCentum, filtroEmpleado, filtroSucursales, filtroClasificacion, facturaDebounced, busquedaDebounced])
 
+  // Auto-refresh cada 15s si hay ventas pendientes de sync
+  useEffect(() => {
+    const hayPendientes = ventas.some(v => !v.centum_sync && !v.centum_comprobante)
+    if (!hayPendientes) return
+    const interval = setInterval(() => {
+      cargarVentasSilencioso()
+      cargarResumenCentum()
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [ventas])
+
   useEffect(() => {
     // Solo mostrar sucursales que tienen cajas POS configuradas
     Promise.all([
