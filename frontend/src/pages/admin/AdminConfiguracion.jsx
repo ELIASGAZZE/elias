@@ -9,6 +9,7 @@ import SeccionClientes from '../../components/admin/SeccionClientes'
 import AdminArticulosAtributos from '../../components/admin/AdminArticulosAtributos'
 import SeccionDelivery from './SeccionDelivery'
 import SeccionGruposDescuento from '../../components/admin/SeccionGruposDescuento'
+import SeccionCanastos from '../../components/admin/SeccionCanastos'
 
 const ChevronIcon = ({ abierta }) => (
   <svg
@@ -80,6 +81,7 @@ const TITULOS_SECCION = {
   'delivery': 'Precios Delivery',
   'bloqueos-pedidos': 'Bloqueos de Pedidos',
   'grupos-descuento': 'Grupos de Descuento',
+  'canastos': 'Canastos Traspasos',
 }
 
 const AdminConfiguracion = () => {
@@ -1407,6 +1409,11 @@ const AdminConfiguracion = () => {
         {/* ===== GRUPOS DE DESCUENTO ===== */}
         {seccion === 'grupos-descuento' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
           <SeccionGruposDescuento />
+        </div>}
+
+        {/* ===== CANASTOS TRASPASOS ===== */}
+        {seccion === 'canastos' && <div className="border border-gray-200 rounded-xl bg-white overflow-hidden p-4">
+          <SeccionCanastos />
         </div>}
 
       </div>

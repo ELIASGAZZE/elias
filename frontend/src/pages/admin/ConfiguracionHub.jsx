@@ -128,6 +128,17 @@ const SECCIONES = [
     ),
   },
   {
+    id: 'canastos',
+    nombre: 'Canastos',
+    descripcion: 'Registro de canastos traspasos',
+    color: 'bg-cyan-600',
+    icono: (
+      <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m16.5 0h-16.5m16.5 0L18 3.75H6L3.75 7.5" />
+      </svg>
+    ),
+  },
+  {
     id: 'grupos-descuento',
     nombre: 'Grupos Descuento',
     descripcion: 'Descuentos por grupo de cliente',
