@@ -697,19 +697,19 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
  */
 async function retrySyncVentasCentum() {
   const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-  // Ignorar ventas de los últimos 5 minutos para evitar race condition con el sync inicial
-  const hace5min = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+  // Grace period de 10 segundos (solo para evitar leer una venta a medio escribir)
+  const hace10s = new Date(Date.now() - 10 * 1000).toISOString()
 
-  // Buscar ventas pendientes (no sincronizadas, con caja asignada, creadas hace más de 5 min)
+  // Buscar ventas pendientes (no sincronizadas, con caja asignada, creadas hace más de 10s)
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
     .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
-    .lte('created_at', hace5min)
+    .lte('created_at', hace10s)
     .order('created_at', { ascending: true })
-    .limit(20)
+    .limit(10)
 
   if (error) {
     console.error('[RetryCentumVentas] Error en query Supabase:', error.message || error)
@@ -954,6 +954,11 @@ async function retrySyncVentasCentum() {
         console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e2.message)
       }
       fallidas++
+    }
+
+    // Pausa de 2 segundos entre ventas para no saturar Centum
+    if (i < pendientes.length - 1) {
+      await new Promise(r => setTimeout(r, 2000))
     }
   }
 

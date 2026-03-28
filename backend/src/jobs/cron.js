@@ -101,16 +101,18 @@ function iniciarCronJobs() {
     })
   })
 
-  // Retry ventas pendientes de Centum: cada 5 minutos (offset 3 min)
-  cron.schedule('3-58/5 * * * *', async () => {
-    try {
-      const resultado = await retrySyncVentasCentum()
-      if (resultado.reintentadas > 0) {
-        console.log(`[RetryCentumVentas] ${resultado.exitosas}/${resultado.reintentadas} ventas sincronizadas a Centum (${resultado.fallidas} fallidas)`)
+  // Retry ventas pendientes de Centum: cada 1 minuto (cola secuencial con lock)
+  cron.schedule('* * * * *', async () => {
+    await withLock('syncVentasCentum', async () => {
+      try {
+        const resultado = await retrySyncVentasCentum()
+        if (resultado.reintentadas > 0) {
+          console.log(`[RetryCentumVentas] ${resultado.exitosas}/${resultado.reintentadas} ventas sincronizadas a Centum (${resultado.fallidas} fallidas)`)
+        }
+      } catch (err) {
+        console.error('[RetryCentumVentas] Error:', err.message)
       }
-    } catch (err) {
-      console.error('[RetryCentumVentas] Error:', err.message)
-    }
+    })
   })
 
   // Retry CAE + envío email automático: cada 5 minutos (offset 4 min)
@@ -178,7 +180,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
-  console.log('[CRON] Retry ventas pendientes Centum: cada 5 minutos (offset 3)')
+  console.log('[CRON] Retry ventas pendientes Centum: cada 1 minuto (cola secuencial)')
   console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
   console.log('[CRON] Stock multi-sucursal: cada 30 minutos')
   console.log('[CRON] Presencia imágenes: 06:10 UTC diariamente')
