@@ -1140,26 +1140,29 @@ const Preparacion = () => {
     if (!itemDetalle) return
     const articuloId = itemDetalle.articulo_id
 
+    let nuevosContenedores, nuevoCanasto
+
     if (pieza.enCanastoActivo) {
-      // Quitar del canasto activo
-      setCanastoActivo(prev => {
-        if (!prev) return prev
-        const updated = prev.items.map(i => {
-          if (i.articulo_id !== articuloId) return i
-          if (pieza.es_pesable && i.pesos_escaneados?.length) {
-            const pidx = i.pesos_escaneados.indexOf(pieza.peso)
-            if (pidx === -1) return i
-            const nuevosPesos = i.pesos_escaneados.filter((_, idx) => idx !== pidx)
-            const nuevaCant = Math.round((i.cantidad - pieza.peso) * 1000) / 1000
-            if (nuevosPesos.length === 0) return null
-            return { ...i, cantidad: nuevaCant, pesos_escaneados: nuevosPesos }
-          } else {
-            if (i.cantidad <= 1) return null
-            return { ...i, cantidad: i.cantidad - 1 }
-          }
-        }).filter(Boolean)
-        return { ...prev, items: updated }
-      })
+      // Quitar del canasto activo — calcular nuevo canasto
+      const prev = canastoActivo
+      if (!prev) return
+      const updated = prev.items.map(i => {
+        if (i.articulo_id !== articuloId) return i
+        if (pieza.es_pesable && i.pesos_escaneados?.length) {
+          const pidx = i.pesos_escaneados.indexOf(pieza.peso)
+          if (pidx === -1) return i
+          const nuevosPesos = i.pesos_escaneados.filter((_, idx) => idx !== pidx)
+          const nuevaCant = Math.round((i.cantidad - pieza.peso) * 1000) / 1000
+          if (nuevosPesos.length === 0) return null
+          return { ...i, cantidad: nuevaCant, pesos_escaneados: nuevosPesos }
+        } else {
+          if (i.cantidad <= 1) return null
+          return { ...i, cantidad: i.cantidad - 1 }
+        }
+      }).filter(Boolean)
+      nuevoCanasto = { ...prev, items: updated }
+      nuevosContenedores = contenedores
+      setCanastoActivo(nuevoCanasto)
     } else {
       // Quitar del contenedor cerrado
       const nuevos = [...contenedores]
@@ -1184,21 +1187,17 @@ const Preparacion = () => {
 
       if (cont.items.length === 0) nuevos.splice(pieza.contenedorIdx, 1)
       else nuevos[pieza.contenedorIdx] = cont
+      nuevosContenedores = nuevos
+      nuevoCanasto = canastoActivo
       setContenedores(nuevos)
     }
 
-    // Recalcular progreso en el siguiente render cuando contenedores/canasto ya se actualizaron
-    setTimeout(() => {
-      setOrden(prev => {
-        // Leer estado fresco de contenedores y canasto desde sus setters
-        let contFresh, canastoFresh
-        setContenedores(c => { contFresh = c; return c })
-        setCanastoActivo(c => { canastoFresh = c; return c })
-        const itemsSinc = sincronizarProgreso(prev.items, contFresh, canastoFresh)
-        persistirItems(itemsSinc)
-        return { ...prev, items: itemsSinc }
-      })
-    }, 50)
+    // Recalcular progreso directo con los datos ya calculados
+    setOrden(prev => {
+      const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, nuevoCanasto)
+      persistirItems(itemsSinc)
+      return { ...prev, items: itemsSinc }
+    })
 
     setPiezaEliminandoSync(null)
     mostrarFeedback('Artículo eliminado', true)
