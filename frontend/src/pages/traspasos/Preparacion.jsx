@@ -212,6 +212,25 @@ const Preparacion = () => {
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
 
+  // Interceptar botón Atrás de Android: si estamos en detalle → volver a picking
+  useEffect(() => {
+    if (fase === 'detalle') {
+      window.history.pushState({ fase: 'detalle' }, '')
+    }
+    const handlePopState = () => {
+      if (faseRef.current === 'detalle') {
+        setFase('picking')
+        setItemDetalle(null)
+        setMostrarPiezas(false)
+        setTimeout(() => scanRef.current?.focus(), 300)
+        // Re-push para no salir del componente si pulsa atrás de nuevo
+        window.history.pushState(null, '')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [fase])
+
   // Listener global de keydown para capturar scanner sin input focuseado
   useEffect(() => {
     if (fase !== 'picking' && fase !== 'detalle') return
