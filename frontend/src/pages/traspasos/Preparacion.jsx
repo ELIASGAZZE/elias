@@ -82,6 +82,8 @@ const Preparacion = () => {
   const [ultimoEscaneado, setUltimoEscaneado] = useState(null)
   const itemRefs = useRef({})
   const [modalEditarCanasto, setModalEditarCanasto] = useState(false)
+  const [tecladoVisible, setTecladoVisible] = useState(false)
+  const inputManualRef = useRef(null)
   const [mostrarPesoManual, setMostrarPesoManual] = useState(false)
   const [pesoManualCantidad, setPesoManualCantidad] = useState('')
   const [pesoManualPeso, setPesoManualPeso] = useState('')
@@ -1123,10 +1125,38 @@ const Preparacion = () => {
 
         {/* Barra inferior */}
         <div className="bg-white border-t border-gray-200 px-3 py-2 space-y-1.5 flex-shrink-0 safe-area-bottom">
-          <div
-            className={`w-full border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center outline-none select-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
-          >
-            {scanInput || 'Escanear código de barras...'}
+          <div className="flex gap-2">
+            {tecladoVisible ? (
+              <input ref={inputManualRef} type="text" value={scanInput}
+                onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const codigo = scanInput.trim()
+                    if (!codigo) return
+                    setScanInput('')
+                    scanBufferRef.current = ''
+                    handleScanDetalle(codigo)
+                    setTecladoVisible(false)
+                  }
+                }}
+                onBlur={() => { if (!scanInput) setTecladoVisible(false) }}
+                placeholder="Escribir código..."
+                autoComplete="off" autoFocus
+                className="flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center focus:border-sky-500 outline-none" />
+            ) : (
+              <div
+                className={`flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center select-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
+              >
+                {scanInput || 'Escanear código de barras...'}
+              </div>
+            )}
+            <button onClick={() => { setTecladoVisible(v => !v); setTimeout(() => inputManualRef.current?.focus(), 100) }}
+              className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-sky-500 bg-sky-50 text-sky-600' : 'border-gray-300 text-gray-400'}`}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
+              </svg>
+            </button>
           </div>
           {itemDetalle.es_pesable && (
             <button onClick={() => { setMostrarPesoManual(true); setPesoManualCantidad(''); setPesoManualPeso('') }}
@@ -1604,13 +1634,44 @@ const Preparacion = () => {
 
       {/* Barra inferior — escaneo + preparar */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 space-y-2 safe-area-bottom">
-        <div
-          ref={scanRef}
-          className={`w-full border-2 rounded-xl px-4 py-3 text-base text-center outline-none select-none ${
-            canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
-          } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
-        >
-          {scanInput || (canastoActivo ? `🧺 Escanear artículo → canasto ${canastoActivo.precinto}` : 'Escanear precinto o artículo...')}
+        <div className="flex gap-2">
+          {tecladoVisible ? (
+            <input ref={inputManualRef} type="text" value={scanInput}
+              onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const codigo = scanInput.trim()
+                  if (!codigo) return
+                  setScanInput('')
+                  scanBufferRef.current = ''
+                  if (fase === 'detalle' && itemDetalle) handleScanDetalle(codigo)
+                  else handleScanCodigo(codigo)
+                  setTecladoVisible(false)
+                }
+              }}
+              onBlur={() => { if (!scanInput) setTecladoVisible(false) }}
+              placeholder="Escribir código..."
+              autoComplete="off" autoFocus
+              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center outline-none ${
+                canastoActivo ? 'border-amber-400 focus:border-amber-500 bg-amber-50' : 'border-sky-300 focus:border-sky-500'
+              }`} />
+          ) : (
+            <div
+              ref={scanRef}
+              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center select-none ${
+                canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
+              } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
+            >
+              {scanInput || (canastoActivo ? `🧺 → canasto ${canastoActivo.precinto}` : 'Escanear...')}
+            </div>
+          )}
+          <button onClick={() => { setTecladoVisible(v => !v); setTimeout(() => inputManualRef.current?.focus(), 100) }}
+            className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-sky-500 bg-sky-50 text-sky-600' : 'border-gray-300 text-gray-400'}`}>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
+            </svg>
+          </button>
         </div>
         <button onClick={marcarPreparado}
           className="w-full bg-emerald-600 active:bg-emerald-700 text-white py-3 rounded-xl text-sm font-semibold">
