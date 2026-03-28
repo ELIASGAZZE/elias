@@ -700,14 +700,18 @@ const Preparacion = () => {
       }
       const idxCerrado = contenedores.findIndex(c => c.precinto === codigo)
       if (idxCerrado !== -1) {
-        // Toggle edición del canasto cerrado
-        if (canastoEditando === idxCerrado) {
-          setCanastoEditando(null)
-          mostrarFeedback(`🧺 Canasto ${codigo} cerrado`, true)
-        } else {
-          setCanastoEditando(idxCerrado)
-          mostrarFeedback(`🧺 Canasto ${codigo} abierto para edición`, true)
+        // Si está en modo verificación de edición, confirmar y abrir editor
+        if (canastoEditando?.esperandoScan === codigo) {
+          setCanastoEditando({ idx: canastoEditando.idx, confirmado: true })
+          mostrarFeedback(`🧺 Canasto ${codigo} verificado`, true)
+          return
         }
+        // Reabrir canasto cerrado como activo para agregar más artículos
+        const cerrado = contenedores[idxCerrado]
+        setContenedores(prev => prev.filter((_, i) => i !== idxCerrado))
+        setCanastoActivo({ precinto: cerrado.precinto, items: cerrado.items || [] })
+        setCanastoEditando(null)
+        mostrarFeedback(`🧺 Canasto ${codigo} reabierto`, true)
         return
       }
       setCanastoActivo({ precinto: codigo, items: [] })
@@ -951,64 +955,54 @@ const Preparacion = () => {
 
   // Eliminar un item individual de un contenedor cerrado
   const eliminarItemDeContenedor = (contIdx, itemLinea) => {
-    setContenedores(prev => {
-      const nuevos = [...prev]
-      const cont = { ...nuevos[contIdx], items: [...nuevos[contIdx].items] }
+    const nuevos = [...contenedores]
+    const cont = { ...nuevos[contIdx], items: [...nuevos[contIdx].items] }
 
-      // Buscar el item agrupado
-      const agIdx = cont.items.findIndex(i => i.articulo_id === itemLinea.articulo_id)
-      if (agIdx === -1) return prev
+    const agIdx = cont.items.findIndex(i => i.articulo_id === itemLinea.articulo_id)
+    if (agIdx === -1) return
 
-      const ag = { ...cont.items[agIdx] }
+    const ag = { ...cont.items[agIdx] }
 
-      if (itemLinea.es_pesable && ag.pesos_escaneados?.length) {
-        // Quitar este peso específico
-        const pesoQuitar = itemLinea.pesos_escaneados[0]
-        const pidx = ag.pesos_escaneados.indexOf(pesoQuitar)
-        if (pidx !== -1) {
-          ag.pesos_escaneados = ag.pesos_escaneados.filter((_, i) => i !== pidx)
-          ag.cantidad = Math.round((ag.cantidad - pesoQuitar) * 1000) / 1000
-        }
-        if (ag.pesos_escaneados.length === 0) {
-          cont.items = cont.items.filter((_, i) => i !== agIdx)
-        } else {
-          cont.items[agIdx] = ag
-        }
+    if (itemLinea.es_pesable && ag.pesos_escaneados?.length) {
+      const pesoQuitar = itemLinea.pesos_escaneados[0]
+      const pidx = ag.pesos_escaneados.indexOf(pesoQuitar)
+      if (pidx !== -1) {
+        ag.pesos_escaneados = ag.pesos_escaneados.filter((_, i) => i !== pidx)
+        ag.cantidad = Math.round((ag.cantidad - pesoQuitar) * 1000) / 1000
+      }
+      if (ag.pesos_escaneados.length === 0) {
+        cont.items = cont.items.filter((_, i) => i !== agIdx)
       } else {
-        ag.cantidad = ag.cantidad - 1
-        if (ag.cantidad <= 0) {
-          cont.items = cont.items.filter((_, i) => i !== agIdx)
-        } else {
-          cont.items[agIdx] = ag
-        }
+        cont.items[agIdx] = ag
       }
-
-      // Si el contenedor queda vacío, eliminarlo
-      if (cont.items.length === 0) {
-        setCanastoEditando(null)
-        const filtrados = nuevos.filter((_, i) => i !== contIdx)
-        // Recalcular progreso
-        setTimeout(() => {
-          setOrden(prevOrd => {
-            const itemsSinc = sincronizarProgreso(prevOrd.items, filtrados, canastoActivo)
-            setTimeout(() => persistirItems(itemsSinc), 0)
-            return { ...prevOrd, items: itemsSinc }
-          })
-        }, 0)
-        return filtrados
+    } else {
+      ag.cantidad = ag.cantidad - 1
+      if (ag.cantidad <= 0) {
+        cont.items = cont.items.filter((_, i) => i !== agIdx)
+      } else {
+        cont.items[agIdx] = ag
       }
+    }
 
+    let nuevosContenedores
+    if (cont.items.length === 0) {
+      nuevosContenedores = nuevos.filter((_, i) => i !== contIdx)
+      setCanastoEditando(null)
+    } else {
       nuevos[contIdx] = cont
-      // Recalcular progreso
-      setTimeout(() => {
-        setOrden(prevOrd => {
-          const itemsSinc = sincronizarProgreso(prevOrd.items, nuevos, canastoActivo)
-          setTimeout(() => persistirItems(itemsSinc), 0)
-          return { ...prevOrd, items: itemsSinc }
-        })
-      }, 0)
-      return nuevos
+      nuevosContenedores = nuevos
+      // Mantener el modal abierto con el mismo índice
+      setCanastoEditando(prev => prev ? { ...prev, idx: contIdx, confirmado: true } : null)
+    }
+
+    setContenedores(nuevosContenedores)
+    // Recalcular progreso sincrónico
+    setOrden(prev => {
+      const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
+      persistirItems(itemsSinc)
+      return { ...prev, items: itemsSinc }
     })
+    mostrarFeedback('Artículo eliminado', true)
   }
 
   const eliminarContenedor = (idx) => {
@@ -1703,17 +1697,19 @@ const Preparacion = () => {
         </div>
       )}
 
-      {/* Modal editar canasto cerrado */}
-      {canastoEditando !== null && contenedores[canastoEditando] && (() => {
-        const cont = contenedores[canastoEditando]
-        const lineas = expandirItemsContenedor(cont.items)
+      {/* Modal editar canasto cerrado — paso 1: pedir scan, paso 2: editar items */}
+      {canastoEditando && (() => {
+        const cont = contenedores[canastoEditando.idx]
+        if (!cont) return null
+        const confirmado = canastoEditando.confirmado
+        const lineas = confirmado ? expandirItemsContenedor(cont.items) : []
         return (
           <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setCanastoEditando(null)}>
             <div className="bg-white rounded-t-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-800">Canasto {cont.precinto}</h3>
-                  <div className="text-xs text-gray-400">{cont.peso_origen}kg · {lineas.length} {lineas.length === 1 ? 'pieza' : 'piezas'}</div>
+                  <div className="text-xs text-gray-400">{cont.peso_origen}kg · {cont.items.reduce((s, i) => s + (i.es_pesable && i.pesos_escaneados ? i.pesos_escaneados.length : (i.cantidad || 0)), 0)} piezas</div>
                 </div>
                 <button onClick={() => setCanastoEditando(null)} className="text-gray-400 p-1">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1721,31 +1717,39 @@ const Preparacion = () => {
                   </svg>
                 </button>
               </div>
-              <div className="overflow-y-auto flex-1 p-4 space-y-2">
-                {lineas.map((linea, idx) => (
-                  <div key={idx} className="flex items-center gap-3 border border-gray-200 rounded-xl p-3">
-                    <img src={`${API_BASE}/api/articulos/${linea.articulo_id}/imagen`} alt=""
-                      className="w-10 h-10 rounded-lg object-cover bg-gray-100 flex-shrink-0"
-                      onError={e => { e.target.style.display = 'none' }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{linea.nombre}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {linea.codigo}
-                        {linea.es_pesable && <span className="ml-1 font-medium text-gray-600">· {linea.cantidad}kg</span>}
+              {!confirmado ? (
+                <div className="p-8 text-center">
+                  <div className="text-4xl mb-3">📷</div>
+                  <div className="text-sm font-medium text-gray-700">Escaneá el precinto del canasto</div>
+                  <div className="text-xs text-gray-400 mt-1">Escaneá <span className="font-semibold">{cont.precinto}</span> para verificar y editar</div>
+                </div>
+              ) : (
+                <div className="overflow-y-auto flex-1 p-4 space-y-2">
+                  {lineas.map((linea, idx) => (
+                    <div key={idx} className="flex items-center gap-3 border border-gray-200 rounded-xl p-3">
+                      <img src={`${API_BASE}/api/articulos/${linea.articulo_id}/imagen`} alt=""
+                        className="w-10 h-10 rounded-lg object-cover bg-gray-100 flex-shrink-0"
+                        onError={e => { e.target.style.display = 'none' }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-800 truncate">{linea.nombre}</div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {linea.codigo}
+                          {linea.es_pesable && <span className="ml-1 font-medium text-gray-600">· {linea.cantidad}kg</span>}
+                        </div>
                       </div>
+                      <button onClick={() => eliminarItemDeContenedor(canastoEditando.idx, linea)}
+                        className="text-red-500 p-2 rounded-lg border border-red-200 active:bg-red-50">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
                     </div>
-                    <button onClick={() => eliminarItemDeContenedor(canastoEditando, linea)}
-                      className="text-red-500 p-2 rounded-lg border border-red-200 active:bg-red-50">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-                {lineas.length === 0 && (
-                  <div className="text-center text-gray-400 py-4">Canasto vacío</div>
-                )}
-              </div>
+                  ))}
+                  {lineas.length === 0 && (
+                    <div className="text-center text-gray-400 py-4">Canasto vacío</div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -1770,7 +1774,13 @@ const Preparacion = () => {
               <div key={idx} className={`rounded-lg text-xs ${
                 c.tipo === 'canasto' ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'
               }`}>
-                <div className="flex items-center gap-2 p-2 cursor-pointer" onClick={() => setContenedorExpandido(contenedorExpandido === idx ? null : idx)}>
+                <div className="flex items-center gap-2 p-2 cursor-pointer" onClick={() => {
+                  if (c.tipo === 'canasto') {
+                    setCanastoEditando({ idx, esperandoScan: c.precinto })
+                  } else {
+                    setContenedorExpandido(contenedorExpandido === idx ? null : idx)
+                  }
+                }}>
                   <span className="text-base">{c.tipo === 'canasto' ? '🧺' : '📋'}</span>
                   <div className="flex-1 min-w-0">
                     <span className="font-medium text-gray-800">{c.tipo === 'canasto' ? c.precinto : c.nombre}</span>
