@@ -242,26 +242,50 @@ const Preparacion = () => {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [fase, tecladoVisible])
 
-  // Handler keydown para divs focusables (misma lógica que el global listener)
-  const handleDivKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
+  // Timeout ref para detectar fin de código escaneado via onChange
+  const scanTimeoutRef = useRef(null)
+
+  // Procesar código escaneado (compartido entre onKeyDown Enter y timeout)
+  const procesarCodigoEscaneado = (codigo) => {
+    if (!codigo) return
+    if (faseRef.current === 'detalle' && itemDetalleRef.current) {
+      handleScanDetalleRef.current?.(codigo)
+    } else {
+      handleScanCodigoRef.current?.(codigo)
+    }
+  }
+
+  // Handler onChange para inputs con inputMode="none" — captura DataWedge via InputConnection
+  const handleScanInputChange = (e) => {
+    const val = e.target.value
+    setScanInput(val)
+    scanBufferRef.current = val
+    // Cada cambio resetea el timeout; cuando paran los chars → código completo
+    clearTimeout(scanTimeoutRef.current)
+    scanTimeoutRef.current = setTimeout(() => {
       const codigo = scanBufferRef.current.trim()
       scanBufferRef.current = ''
       setScanInput('')
-      if (!codigo) return
-      if (faseRef.current === 'detalle' && itemDetalleRef.current) {
-        handleScanDetalleRef.current?.(codigo)
-      } else {
-        handleScanCodigoRef.current?.(codigo)
-      }
+      procesarCodigoEscaneado(codigo)
+    }, 200) // 200ms sin chars = fin del código
+  }
+
+  // Handler onKeyDown para inputs — captura Enter del scanner (keystroke mode)
+  const handleScanInputKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      clearTimeout(scanTimeoutRef.current)
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      procesarCodigoEscaneado(codigo)
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       scanBufferRef.current += e.key
       setScanInput(scanBufferRef.current)
     }
   }
 
-  // Auto-focus el div de scan cuando se cierra el teclado manual
+  // Auto-focus el input de scan cuando se cierra el teclado manual o cambia fase
   useEffect(() => {
     if (tecladoVisible) return
     const timer = setTimeout(() => {
@@ -274,13 +298,11 @@ const Preparacion = () => {
     return () => clearTimeout(timer)
   }, [tecladoVisible, fase, itemDetalle])
 
-  // Focus inicial cuando termina de cargar (div ya en DOM)
+  // Focus inicial cuando termina de cargar
   useEffect(() => {
     if (cargando || tecladoVisible) return
     const timer = setTimeout(() => {
-      if (fase === 'detalle' && itemDetalle) {
-        scanDivDetalleRef.current?.focus()
-      } else if (fase === 'picking') {
+      if (fase === 'picking') {
         scanRef.current?.focus()
       }
     }, 300)
@@ -1189,15 +1211,17 @@ const Preparacion = () => {
                 autoComplete="off" autoFocus
                 className="flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center focus:border-sky-500 outline-none" />
             ) : (
-              <div
-                tabIndex={0}
+              <input
                 ref={scanDivDetalleRef}
-                onKeyDown={handleDivKeyDown}
-                onClick={() => scanDivDetalleRef.current?.focus()}
-                className={`flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
-              >
-                {scanInput || 'Escanear código de barras...'}
-              </div>
+                type="text"
+                inputMode="none"
+                value={scanInput}
+                onChange={handleScanInputChange}
+                onKeyDown={handleScanInputKeyDown}
+                placeholder="Escanear código de barras..."
+                autoComplete="off"
+                className="flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center outline-none caret-transparent"
+              />
             )}
             <button onClick={() => { setTecladoVisible(v => !v); setTimeout(() => inputManualRef.current?.focus(), 100) }}
               className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-sky-500 bg-sky-50 text-sky-600' : 'border-gray-300 text-gray-400'}`}>
@@ -1705,17 +1729,19 @@ const Preparacion = () => {
                 canastoActivo ? 'border-amber-400 focus:border-amber-500 bg-amber-50' : 'border-sky-300 focus:border-sky-500'
               }`} />
           ) : (
-            <div
-              tabIndex={0}
+            <input
               ref={scanRef}
-              onKeyDown={handleDivKeyDown}
-              onClick={() => scanRef.current?.focus()}
-              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${
+              type="text"
+              inputMode="none"
+              value={scanInput}
+              onChange={handleScanInputChange}
+              onKeyDown={handleScanInputKeyDown}
+              placeholder={canastoActivo ? `→ canasto ${canastoActivo.precinto}` : 'Escanear...'}
+              autoComplete="off"
+              className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center outline-none caret-transparent ${
                 canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
-              } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
-            >
-              {scanInput || (canastoActivo ? `🧺 → canasto ${canastoActivo.precinto}` : 'Escanear...')}
-            </div>
+              }`}
+            />
           )}
           <button onClick={() => {
             setTecladoVisible(v => !v)
