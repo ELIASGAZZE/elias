@@ -98,6 +98,8 @@ const Preparacion = () => {
 
   // Ref para el detalle
   const completoAlAbrir = useRef(false)
+  const ordenRef = useRef(orden)
+  useEffect(() => { ordenRef.current = orden }, [orden])
 
   const mostrarFeedback = (msg, ok) => {
     setFeedback({ msg, ok })
@@ -426,6 +428,15 @@ const Preparacion = () => {
   const pickEnPiezas = (item) => pickeado[item.articulo_id]?.piezas || 0
   const pickEnKg = (item) => pickeado[item.articulo_id]?.kg || 0
 
+  // Versión "fresca" que lee del ref (para validaciones en handlers de escaneo rápido)
+  const pickEnPiezasFresh = (articuloId) => {
+    const items = ordenRef.current?.items || []
+    const it = items.find(i => i.articulo_id === articuloId)
+    if (!it) return 0
+    if (it.es_pesable && Array.isArray(it.pesos_escaneados)) return it.pesos_escaneados.length
+    return it.cantidad_preparada || 0
+  }
+
   const getFactorCaja = (item) => {
     if (item.es_pesable) return 0
     const cat = todosArticulos.find(a => String(a.id) === String(item.articulo_id))
@@ -668,6 +679,14 @@ const Preparacion = () => {
 
       const cantAgregar = peso || factor
 
+      // Validar que no se exceda la cantidad pedida
+      const piezasYa = pickEnPiezasFresh(item.articulo_id)
+      const piezasPedidas = cantidadEnPiezas(item)
+      if (piezasYa >= piezasPedidas) {
+        mostrarFeedback(`${item.nombre} ya está completo`, false)
+        return
+      }
+
       setUltimoEscaneado(item.articulo_id)
       setTimeout(() => {
         itemRefs.current[item.articulo_id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -715,7 +734,7 @@ const Preparacion = () => {
     const itemActual = itemDetalle
     if (!itemActual) return
 
-    const piezasYa = pickEnPiezas(itemActual)
+    const piezasYa = pickEnPiezasFresh(itemActual.articulo_id)
     const piezasPedidas = cantidadEnPiezas(itemActual)
     if (piezasYa >= piezasPedidas) {
       mostrarFeedback('Artículo ya completo', false)
