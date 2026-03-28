@@ -3786,8 +3786,12 @@ const POS = () => {
                               celular: data.celular || '',
                               lista_precio_id: data.lista_precio_id || 1,
                             }))
+                            setToastMsg('Datos del cliente actualizados')
+                            setTimeout(() => setToastMsg(null), 3000)
                           } catch (err) {
                             console.error('Error refrescando cliente:', err)
+                            setToastMsg('Error al actualizar cliente')
+                            setTimeout(() => setToastMsg(null), 3000)
                           }
                         }}
                         className="text-gray-400 hover:text-violet-600"
