@@ -206,14 +206,10 @@ const Preparacion = () => {
 
   // Captura global de escaneo — no requiere focus en input, no abre teclado
   const scanBufferRef = useRef('')
-  const handleScanCodigoRef = useRef(handleScanCodigo)
-  const handleScanDetalleRef = useRef(handleScanDetalle)
+  const handleScanCodigoRef = useRef(null)
+  const handleScanDetalleRef = useRef(null)
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
-  useEffect(() => { handleScanCodigoRef.current = handleScanCodigo }, [handleScanCodigo])
-  useEffect(() => { handleScanDetalleRef.current = handleScanDetalle }, [handleScanDetalle])
-  useEffect(() => { faseRef.current = fase }, [fase])
-  useEffect(() => { itemDetalleRef.current = itemDetalle }, [itemDetalle])
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -689,6 +685,12 @@ const Preparacion = () => {
   }
 
   // Confirmar peso fuera de rango
+  // Sync refs para captura global de escaneo
+  handleScanCodigoRef.current = handleScanCodigo
+  handleScanDetalleRef.current = handleScanDetalle
+  faseRef.current = fase
+  itemDetalleRef.current = itemDetalle
+
   const confirmarPesoFueraDeRango = () => {
     if (!alertaPeso) return
     const { balanza, item, factor } = alertaPeso
