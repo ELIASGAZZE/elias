@@ -274,6 +274,19 @@ const Preparacion = () => {
     return () => clearTimeout(timer)
   }, [tecladoVisible, fase, itemDetalle])
 
+  // Focus inicial cuando termina de cargar (div ya en DOM)
+  useEffect(() => {
+    if (cargando || tecladoVisible) return
+    const timer = setTimeout(() => {
+      if (fase === 'detalle' && itemDetalle) {
+        scanDivDetalleRef.current?.focus()
+      } else if (fase === 'picking') {
+        scanRef.current?.focus()
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [cargando])
+
   // Auto-volver al picking cuando artículo se completa
   useEffect(() => {
     if (fase !== 'detalle' || !itemDetalle) return
@@ -1180,6 +1193,7 @@ const Preparacion = () => {
                 tabIndex={0}
                 ref={scanDivDetalleRef}
                 onKeyDown={handleDivKeyDown}
+                onClick={() => scanDivDetalleRef.current?.focus()}
                 className={`flex-1 border-2 border-sky-300 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
               >
                 {scanInput || 'Escanear código de barras...'}
@@ -1695,6 +1709,7 @@ const Preparacion = () => {
               tabIndex={0}
               ref={scanRef}
               onKeyDown={handleDivKeyDown}
+              onClick={() => scanRef.current?.focus()}
               className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center select-none outline-none ${
                 canastoActivo ? 'border-amber-400 bg-amber-50' : 'border-sky-300'
               } ${scanInput ? 'text-gray-800' : 'text-gray-400'}`}
