@@ -212,21 +212,21 @@ const Preparacion = () => {
   const faseRef = useRef(fase)
   const itemDetalleRef = useRef(itemDetalle)
 
-  // Mantener foco en input oculto
+  // Mantener foco en input oculto (con pausa tras cerrar teclado manual)
+  const refocusPausedRef = useRef(false)
   useEffect(() => {
     if (fase !== 'picking' && fase !== 'detalle') return
+    if (tecladoVisible) return
     const mantenerFoco = () => {
-      if (!tecladoVisible && hiddenInputRef.current && document.activeElement !== hiddenInputRef.current) {
+      if (refocusPausedRef.current) return
+      if (hiddenInputRef.current && document.activeElement !== hiddenInputRef.current) {
         hiddenInputRef.current.focus()
       }
     }
+    // Foco inicial inmediato
     mantenerFoco()
-    document.addEventListener('click', mantenerFoco)
-    const interval = setInterval(mantenerFoco, 500)
-    return () => {
-      document.removeEventListener('click', mantenerFoco)
-      clearInterval(interval)
-    }
+    const interval = setInterval(mantenerFoco, 1000)
+    return () => clearInterval(interval)
   }, [fase, tecladoVisible])
 
   const handleHiddenInput = (e) => {
@@ -1652,7 +1652,7 @@ const Preparacion = () => {
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 space-y-2 safe-area-bottom">
         <div className="flex gap-2">
           {tecladoVisible ? (
-            <input ref={inputManualRef} type="text" value={scanInput}
+            <input ref={inputManualRef} type="text" inputMode="numeric" value={scanInput}
               onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -1666,7 +1666,6 @@ const Preparacion = () => {
                   setTecladoVisible(false)
                 }
               }}
-              onBlur={() => { if (!scanInput) setTecladoVisible(false) }}
               placeholder="Escribir código..."
               autoComplete="off" autoFocus
               className={`flex-1 border-2 rounded-xl px-4 py-3 text-base text-center outline-none ${
@@ -1682,7 +1681,17 @@ const Preparacion = () => {
               {scanInput || (canastoActivo ? `🧺 → canasto ${canastoActivo.precinto}` : 'Escanear...')}
             </div>
           )}
-          <button onClick={() => { setTecladoVisible(v => !v); setTimeout(() => inputManualRef.current?.focus(), 100) }}
+          <button onClick={() => {
+            setTecladoVisible(v => {
+              if (v) {
+                // Cerrando teclado — pausar refocus
+                refocusPausedRef.current = true
+                setTimeout(() => { refocusPausedRef.current = false }, 1500)
+              }
+              return !v
+            })
+            setTimeout(() => inputManualRef.current?.focus(), 100)
+          }}
             className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-sky-500 bg-sky-50 text-sky-600' : 'border-gray-300 text-gray-400'}`}>
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
