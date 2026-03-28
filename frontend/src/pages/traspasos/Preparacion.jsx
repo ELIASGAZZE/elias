@@ -93,7 +93,9 @@ const Preparacion = () => {
 
   // Contenedor expandido (ver artículos) y canasto en edición
   const [contenedorExpandido, setContenedorExpandido] = useState(null)
-  const [canastoEditando, setCanastoEditando] = useState(null) // índice en contenedores[]
+  const [canastoEditando, _setCanastoEditando] = useState(null)
+  const canastoEditandoRef = useRef(null)
+  const setCanastoEditando = (v) => { canastoEditandoRef.current = typeof v === 'function' ? v(canastoEditandoRef.current) : v; _setCanastoEditando(v) }
 
   // Modal de artículos pendientes al cerrar
   const [modalPendientes, setModalPendientes] = useState(null)
@@ -689,8 +691,9 @@ const Preparacion = () => {
     // 1. Detectar canasto por prefijo CAN-
     if (codigo.startsWith('CAN-')) {
       // Prioridad: si hay modal de edición esperando scan, verificar primero
-      if (canastoEditando?.esperandoScan === codigo) {
-        setCanastoEditando({ idx: canastoEditando.idx, confirmado: true })
+      const editando = canastoEditandoRef.current
+      if (editando?.esperandoScan === codigo) {
+        setCanastoEditando({ idx: editando.idx, confirmado: true })
         mostrarFeedback(`🧺 Canasto ${codigo} verificado`, true, 'info')
         return
       }
