@@ -1083,23 +1083,43 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
 async function retrySyncCAE() {
   const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { data: ventas, error } = await supabase.from('ventas_pos')
-    .select('id, numero_venta, id_venta_centum')
+    .select('id, numero_venta, id_venta_centum, centum_comprobante, pagos, id_cliente_centum')
     .eq('centum_sync', true)
     .not('id_venta_centum', 'is', null)
     .is('numero_cae', null)
     .gte('created_at', hace7d)
     .order('created_at', { ascending: false })
-    .limit(30)
+    .limit(50)
 
-  if (error || !ventas || ventas.length === 0) return { revisadas: 0, conCAE: 0 }
+  if (error || !ventas || ventas.length === 0) return { revisadas: 0, conCAE: 0, omitidas: 0 }
+
+  // Filtrar: solo ventas EMPRESA (factura electrónica) necesitan CAE
+  // Factura A (RI/MT) → siempre EMPRESA → siempre necesita CAE
+  // Factura B (CF) + solo efectivo → PRUEBA → nunca tiene CAE
+  // Factura B (CF) + pago electrónico → EMPRESA → necesita CAE
+  const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+  const necesitanCAE = ventas.filter(v => {
+    const comp = v.centum_comprobante || ''
+    const esFacturaA = comp.startsWith('A ')
+    if (esFacturaA) return true
+    // Factura B: solo necesita CAE si tiene pago electrónico (división EMPRESA)
+    const pagos = Array.isArray(v.pagos) ? v.pagos : []
+    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+    return !soloEfectivo // tiene pago electrónico → EMPRESA → necesita CAE
+  })
+
+  const omitidas = ventas.length - necesitanCAE.length
+  if (omitidas > 0) {
+    console.log(`[RetryCAE] Omitidas ${omitidas} ventas PRUEBA (factura manual, sin CAE esperado)`)
+  }
 
   let conCAE = 0
-  for (const v of ventas) {
+  for (const v of necesitanCAE) {
     const cae = await fetchAndSaveCAE(v.id, v.id_venta_centum)
     if (cae) conCAE++
   }
 
-  return { revisadas: ventas.length, conCAE }
+  return { revisadas: necesitanCAE.length, conCAE, omitidas }
 }
 
 module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico }
