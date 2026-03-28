@@ -694,6 +694,18 @@ const Preparacion = () => {
   // === HANDLER PRINCIPAL DE ESCANEO ===
   const handleScanCodigo = (codigo) => {
 
+    // 0. Si hay pieza esperando confirmación de scan
+    const eliminando = piezaEliminandoRef.current
+    if (eliminando?.esperandoScan && codigo.startsWith('CAN-')) {
+      if (eliminando.esperandoScan === codigo) {
+        ejecutarEliminarPieza(eliminando.pieza)
+        return
+      } else {
+        mostrarFeedback('Canasto incorrecto', false)
+        return
+      }
+    }
+
     // 1. Detectar canasto por prefijo CAN-
     if (codigo.startsWith('CAN-')) {
       // Prioridad: si hay modal de edición esperando scan, verificar primero
@@ -1071,24 +1083,125 @@ const Preparacion = () => {
   }
 
   // Eliminar pieza individual (detalle pesable)
-  const eliminarPieza = (indicePieza) => {
+  // Buscar en qué contenedor/canasto está cada pieza de un artículo
+  const buscarPiezasEnContenedores = (articuloId) => {
+    const piezas = []
+    // Contenedores cerrados
+    for (let ci = 0; ci < contenedores.length; ci++) {
+      const cont = contenedores[ci]
+      for (const item of (cont.items || [])) {
+        if (item.articulo_id !== articuloId) continue
+        if (item.es_pesable && item.pesos_escaneados?.length) {
+          for (const peso of item.pesos_escaneados) {
+            piezas.push({ contenedorIdx: ci, contenedorNombre: cont.precinto || cont.nombre, tipo: cont.tipo, peso, es_pesable: true })
+          }
+        } else {
+          for (let u = 0; u < (item.cantidad || 0); u++) {
+            piezas.push({ contenedorIdx: ci, contenedorNombre: cont.precinto || cont.nombre, tipo: cont.tipo, peso: null, es_pesable: false })
+          }
+        }
+      }
+    }
+    // Canasto activo
+    if (canastoActivo) {
+      for (const item of (canastoActivo.items || [])) {
+        if (item.articulo_id !== articuloId) continue
+        if (item.es_pesable && item.pesos_escaneados?.length) {
+          for (const peso of item.pesos_escaneados) {
+            piezas.push({ contenedorIdx: -1, contenedorNombre: canastoActivo.precinto, tipo: 'canasto', peso, es_pesable: true, enCanastoActivo: true })
+          }
+        } else {
+          for (let u = 0; u < (item.cantidad || 0); u++) {
+            piezas.push({ contenedorIdx: -1, contenedorNombre: canastoActivo.precinto, tipo: 'canasto', peso: null, es_pesable: false, enCanastoActivo: true })
+          }
+        }
+      }
+    }
+    return piezas
+  }
+
+  const [piezaEliminando, setPiezaEliminando] = useState(null) // { pieza, esperandoScan }
+  const piezaEliminandoRef = useRef(null)
+  const setPiezaEliminandoSync = (v) => { const val = typeof v === 'function' ? v(piezaEliminandoRef.current) : v; piezaEliminandoRef.current = val; setPiezaEliminando(val) }
+
+  // Confirmar eliminación de pieza escaneando canasto
+  const confirmarEliminarPieza = (pieza) => {
+    if (pieza.enCanastoActivo || pieza.tipo === 'bulto') {
+      // Canasto activo o bulto: eliminar directo sin pedir scan
+      ejecutarEliminarPieza(pieza)
+      return
+    }
+    // Canasto cerrado: pedir confirmación por scan
+    const precinto = contenedores[pieza.contenedorIdx]?.precinto
+    setPiezaEliminandoSync({ pieza, esperandoScan: precinto })
+  }
+
+  const ejecutarEliminarPieza = (pieza) => {
     if (!itemDetalle) return
-    const item = (orden.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
-    if (!item) return
+    const articuloId = itemDetalle.articulo_id
 
-    const pesos = [...(item.pesos_escaneados || [])]
-    const pesoEliminado = pesos[indicePieza] || 0
-    pesos.splice(indicePieza, 1)
-    const nuevaCantidad = Math.round((item.cantidad_preparada - pesoEliminado) * 1000) / 1000
+    if (pieza.enCanastoActivo) {
+      // Quitar del canasto activo
+      setCanastoActivo(prev => {
+        if (!prev) return prev
+        const updated = prev.items.map(i => {
+          if (i.articulo_id !== articuloId) return i
+          if (pieza.es_pesable && i.pesos_escaneados?.length) {
+            const pidx = i.pesos_escaneados.indexOf(pieza.peso)
+            if (pidx === -1) return i
+            const nuevosPesos = i.pesos_escaneados.filter((_, idx) => idx !== pidx)
+            const nuevaCant = Math.round((i.cantidad - pieza.peso) * 1000) / 1000
+            if (nuevosPesos.length === 0) return null
+            return { ...i, cantidad: nuevaCant, pesos_escaneados: nuevosPesos }
+          } else {
+            if (i.cantidad <= 1) return null
+            return { ...i, cantidad: i.cantidad - 1 }
+          }
+        }).filter(Boolean)
+        return { ...prev, items: updated }
+      })
+    } else {
+      // Quitar del contenedor cerrado
+      const nuevos = [...contenedores]
+      const cont = { ...nuevos[pieza.contenedorIdx], items: [...nuevos[pieza.contenedorIdx].items] }
+      const agIdx = cont.items.findIndex(i => i.articulo_id === articuloId)
+      if (agIdx === -1) return
+      const ag = { ...cont.items[agIdx] }
 
-    const nuevosItems = (orden.items || []).map(i => {
-      if (i.articulo_id !== itemDetalle.articulo_id) return i
-      return { ...i, cantidad_preparada: Math.max(0, nuevaCantidad), pesos_escaneados: pesos }
-    })
-    setOrden(prev => ({ ...prev, items: nuevosItems }))
-    mostrarFeedback(`Pieza eliminada (${pesoEliminado}kg)`, true)
-    if (pesos.length === 0) setMostrarPiezas(false)
-    persistirItems(nuevosItems)
+      if (pieza.es_pesable && ag.pesos_escaneados?.length) {
+        const pidx = ag.pesos_escaneados.indexOf(pieza.peso)
+        if (pidx !== -1) {
+          ag.pesos_escaneados = ag.pesos_escaneados.filter((_, i) => i !== pidx)
+          ag.cantidad = Math.round((ag.cantidad - pieza.peso) * 1000) / 1000
+        }
+        if (ag.pesos_escaneados.length === 0) cont.items = cont.items.filter((_, i) => i !== agIdx)
+        else cont.items[agIdx] = ag
+      } else {
+        ag.cantidad = ag.cantidad - 1
+        if (ag.cantidad <= 0) cont.items = cont.items.filter((_, i) => i !== agIdx)
+        else cont.items[agIdx] = ag
+      }
+
+      if (cont.items.length === 0) nuevos.splice(pieza.contenedorIdx, 1)
+      else nuevos[pieza.contenedorIdx] = cont
+      setContenedores(nuevos)
+    }
+
+    // Recalcular progreso en el siguiente render cuando contenedores/canasto ya se actualizaron
+    setTimeout(() => {
+      setOrden(prev => {
+        // Leer estado fresco de contenedores y canasto desde sus setters
+        let contFresh, canastoFresh
+        setContenedores(c => { contFresh = c; return c })
+        setCanastoActivo(c => { canastoFresh = c; return c })
+        const itemsSinc = sincronizarProgreso(prev.items, contFresh, canastoFresh)
+        persistirItems(itemsSinc)
+        return { ...prev, items: itemsSinc }
+      })
+    }, 50)
+
+    setPiezaEliminandoSync(null)
+    mostrarFeedback('Artículo eliminado', true)
   }
 
   // === FINALIZACIÓN ===
@@ -1283,37 +1396,75 @@ const Preparacion = () => {
 
         {/* Piezas validadas */}
         {mostrarPiezas && (() => {
-          const item = (orden.items || []).find(i => i.articulo_id === itemDetalle.articulo_id)
-          if (!item) return null
-          const pesos = item.pesos_escaneados || []
-          let piezas = pesos.length > 0
-            ? pesos.map((p, i) => ({ peso: p, idx: i }))
-            : item.cantidad_preparada > 0
-            ? Array.from({ length: item.cantidad_preparada }, (_, i) => ({ peso: null, idx: i }))
-            : []
+          const piezas = buscarPiezasEnContenedores(itemDetalle.articulo_id)
+          if (piezas.length === 0) return null
 
           return (
-            <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => setMostrarPiezas(false)}>
+            <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null) }}>
               <div className="bg-white rounded-t-2xl max-h-[75vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
                   <h3 className="text-base font-semibold text-gray-800">Piezas validadas</h3>
-                  <button onClick={() => setMostrarPiezas(false)} className="p-2 rounded-lg active:bg-gray-100">
+                  <button onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null) }} className="p-2 rounded-lg active:bg-gray-100">
                     <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
                 </div>
+                {/* Confirmación de scan para eliminar */}
+                {piezaEliminando?.esperandoScan && (
+                  <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 text-center">
+                    <div className="text-sm font-medium text-amber-800">Escaneá <span className="font-bold">{piezaEliminando.esperandoScan}</span> para confirmar</div>
+                    <button onClick={() => setPiezaEliminandoSync(null)} className="text-xs text-amber-600 mt-1 underline">Cancelar</button>
+                    <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                      value={scanInput}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setScanInput(val)
+                        scanBufferRef.current = val
+                        clearTimeout(scanTimeoutRef.current)
+                        scanTimeoutRef.current = setTimeout(() => {
+                          const codigo = scanBufferRef.current.trim()
+                          scanBufferRef.current = ''
+                          setScanInput('')
+                          if (codigo) handleScanCodigoRef.current?.(codigo)
+                        }, 200)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          clearTimeout(scanTimeoutRef.current)
+                          const codigo = scanBufferRef.current.trim()
+                          scanBufferRef.current = ''
+                          setScanInput('')
+                          if (codigo) handleScanCodigoRef.current?.(codigo)
+                        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                          scanBufferRef.current += e.key
+                          setScanInput(scanBufferRef.current)
+                        }
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
-                  {piezas.map(pieza => (
-                    <div key={pieza.idx} className="flex items-center justify-between px-4 py-3">
+                  {piezas.map((pieza, idx) => (
+                    <div key={idx} className={`flex items-center justify-between px-4 py-3 ${
+                      piezaEliminando?.pieza === pieza ? 'bg-red-50' : ''
+                    }`}>
                       <div className="flex items-center gap-3">
-                        <span className="bg-sky-100 text-sky-700 text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center">{pieza.idx + 1}</span>
-                        <span className="text-base font-medium text-gray-800">
-                          {pieza.peso != null ? `${pieza.peso} kg` : `Unidad ${pieza.idx + 1}`}
-                        </span>
+                        <span className="bg-sky-100 text-sky-700 text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center">{idx + 1}</span>
+                        <div>
+                          <span className="text-base font-medium text-gray-800">
+                            {pieza.es_pesable ? `${pieza.peso} kg` : `Unidad ${idx + 1}`}
+                          </span>
+                          <div className="text-xs text-gray-400">
+                            {pieza.tipo === 'canasto' ? '🧺' : '📋'} {pieza.contenedorNombre}
+                            {pieza.enCanastoActivo && <span className="text-amber-600 ml-1">(abierto)</span>}
+                          </div>
+                        </div>
                       </div>
-                      <button onClick={() => eliminarPieza(pieza.idx)}
-                        className="text-red-400 active:text-red-600 p-1">
+                      <button onClick={() => confirmarEliminarPieza(pieza)}
+                        disabled={!!piezaEliminando}
+                        className="text-red-400 active:text-red-600 p-1 disabled:opacity-30">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
