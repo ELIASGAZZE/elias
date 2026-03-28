@@ -975,7 +975,7 @@ const Preparacion = () => {
       tipo: 'canasto',
       precinto: canastoActivo.precinto,
       items: canastoActivo.items,
-      peso_origen: parseFloat(peso),
+      peso_origen: peso ? parseFloat(peso) : null,
     }
     const nuevosContenedores = [...contenedores, canastoCerrado]
     setContenedores(nuevosContenedores)
@@ -987,19 +987,14 @@ const Preparacion = () => {
       setTimeout(() => persistirItems(itemsSinc), 0)
       return { ...prev, items: itemsSinc }
     })
-    mostrarFeedback(`🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)`, true, 'info')
+    const msg = peso ? `🧺 Canasto ${canastoCerrado.precinto} cerrado (${peso}kg)` : `🧺 Canasto ${canastoCerrado.precinto} cerrado (sin pesar)`
+    mostrarFeedback(msg, true, 'info')
   }
 
-  const handleCerrarCanasto = () => {
-    const peso = parseFloat(pesoCanasto)
-    if (!peso || peso <= 0) return alert('Ingresá un peso válido')
-    cerrarCanastoActivo(pesoCanasto)
-
-    // Si venimos de querer abrir otro canasto, abrirlo ahora
+  const abrirSiguienteCanasto = () => {
     if (modalCerrarCanasto?.precinto) {
       const nuevoPrecinto = modalCerrarCanasto.precinto
       if (!contenedores.some(c => c.precinto === nuevoPrecinto)) {
-        // Se setea en el siguiente tick porque cerrarCanastoActivo limpia el activo
         setTimeout(() => {
           setCanastoActivo({ precinto: nuevoPrecinto, items: [] })
           mostrarFeedback(`🧺 Canasto ${nuevoPrecinto} abierto`, true, 'info')
@@ -1007,8 +1002,49 @@ const Preparacion = () => {
       }
     }
     setModalCerrarCanasto(null)
-    // Re-enfocar el input de scan después de cerrar el modal
     setTimeout(() => scanRef.current?.focus(), 150)
+  }
+
+  const handleCerrarCanastoConPeso = () => {
+    const peso = parseFloat(pesoCanasto)
+    if (!peso || peso <= 0) return alert('Ingresá un peso válido')
+    cerrarCanastoActivo(pesoCanasto)
+    abrirSiguienteCanasto()
+  }
+
+  const handleCerrarCanastoSinPeso = () => {
+    cerrarCanastoActivo(null)
+    abrirSiguienteCanasto()
+  }
+
+  // Estado para pesar canastos pendientes al finalizar
+  const [pesandoCanastoIdx, setPesandoCanastoIdx] = useState(null)
+  const [pesandoCanastoPeso, setPesandoCanastoPeso] = useState('')
+
+  const canastosSinPeso = useMemo(() => {
+    return contenedores
+      .map((c, idx) => ({ ...c, idx }))
+      .filter(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
+  }, [contenedores])
+
+  const confirmarPesoCanasto = () => {
+    const peso = parseFloat(pesandoCanastoPeso)
+    if (!peso || peso <= 0) return alert('Ingresá un peso válido')
+    const idx = pesandoCanastoIdx
+    setContenedores(prev => {
+      const updated = prev.map((c, i) => i === idx ? { ...c, peso_origen: peso } : c)
+      // Buscar siguiente canasto sin peso
+      const siguiente = updated.findIndex(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
+      if (siguiente !== -1) {
+        setTimeout(() => { setPesandoCanastoIdx(siguiente); setPesandoCanastoPeso('') }, 50)
+      } else {
+        setTimeout(() => marcarPreparado(), 50)
+      }
+      return updated
+    })
+    setPesandoCanastoIdx(null)
+    setPesandoCanastoPeso('')
+    mostrarFeedback('Peso registrado', true, 'info')
   }
 
   // Eliminar contenedor
@@ -1301,6 +1337,14 @@ const Preparacion = () => {
     // Si hay canasto abierto, cerrarlo primero
     if (canastoActivo) {
       setModalCerrarCanasto({ precinto: null })
+      return
+    }
+
+    // Si hay canastos sin pesar, pedir el peso del primero
+    const sinPeso = contenedores.findIndex(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
+    if (sinPeso !== -1) {
+      setPesandoCanastoIdx(sinPeso)
+      setPesandoCanastoPeso('')
       return
     }
 
@@ -1737,7 +1781,7 @@ const Preparacion = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="font-mono font-medium text-sm text-gray-800">{c.precinto}</span>
-                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen} kg · {c.items.length} art.</span>
+                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen != null ? `${c.peso_origen} kg` : 'Sin pesar'} · {c.items.length} art.</span>
                     </div>
                   </div>
                   {c.items.length > 0 && (
@@ -1962,7 +2006,7 @@ const Preparacion = () => {
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-800">Canasto {cont.precinto}</h3>
-                  <div className="text-xs text-gray-400">{cont.peso_origen}kg · {cont.items.reduce((s, i) => s + (i.es_pesable && i.pesos_escaneados ? i.pesos_escaneados.length : (i.cantidad || 0)), 0)} piezas</div>
+                  <div className="text-xs text-gray-400">{cont.peso_origen != null ? `${cont.peso_origen}kg` : 'Sin pesar'} · {cont.items.reduce((s, i) => s + (i.es_pesable && i.pesos_escaneados ? i.pesos_escaneados.length : (i.cantidad || 0)), 0)} piezas</div>
                 </div>
                 <button onClick={() => setCanastoEditando(null)} className="text-gray-400 p-1">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2070,7 +2114,7 @@ const Preparacion = () => {
                   <div className="flex-1 min-w-0">
                     <span className="font-medium text-gray-800">{c.tipo === 'canasto' ? c.precinto : c.nombre}</span>
                     <span className="text-gray-400 ml-1">
-                      {c.tipo === 'canasto' && `· ${c.peso_origen}kg`}
+                      {c.tipo === 'canasto' && (c.peso_origen != null ? ` · ${c.peso_origen}kg` : ' · Sin pesar')}
                       {` · ${c.items.length} art.`}
                     </span>
                   </div>
@@ -2209,7 +2253,7 @@ const Preparacion = () => {
         </div>
       )}
 
-      {/* Modal cerrar canasto (pedir peso) */}
+      {/* Modal cerrar canasto (pesar ahora o después) */}
       {modalCerrarCanasto && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setModalCerrarCanasto(null)}>
           <div className="bg-white rounded-2xl p-5 space-y-4 w-[90%] max-w-sm" onClick={e => e.stopPropagation()}>
@@ -2217,21 +2261,52 @@ const Preparacion = () => {
               Cerrar canasto {canastoActivo?.precinto}
             </h3>
             <p className="text-sm text-gray-500">
-              {canastoActivo?.items.length || 0} artículos · Ingresá el peso del canasto
+              {canastoActivo?.items.length || 0} artículos
             </p>
-            <button onClick={handleCerrarCanasto}
-              disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
-              className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
-                pesoCanasto && parseFloat(pesoCanasto) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
-              }`}>
-              Cerrar canasto
-            </button>
             <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg) *</label>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg)</label>
               <input type="number" inputMode="decimal" min="0.001" step="0.001"
                 value={pesoCanasto} onChange={e => setPesoCanasto(e.target.value)} autoFocus
                 className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
             </div>
+            <button onClick={handleCerrarCanastoConPeso}
+              disabled={!pesoCanasto || parseFloat(pesoCanasto) <= 0}
+              className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
+                pesoCanasto && parseFloat(pesoCanasto) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
+              }`}>
+              Pesar ahora
+            </button>
+            <button onClick={handleCerrarCanastoSinPeso}
+              className="w-full py-3 rounded-xl text-sm font-medium border border-gray-300 text-gray-600 active:bg-gray-50">
+              Pesar después
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal pesar canasto pendiente (al finalizar) */}
+      {pesandoCanastoIdx !== null && contenedores[pesandoCanastoIdx] && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12">
+          <div className="bg-white rounded-2xl p-5 space-y-4 w-[90%] max-w-sm">
+            <h3 className="text-base font-semibold text-gray-800">
+              Pesar canasto {contenedores[pesandoCanastoIdx].precinto}
+            </h3>
+            <p className="text-sm text-gray-500">
+              {contenedores[pesandoCanastoIdx].items.length} artículos · Pendiente de pesar
+            </p>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Peso (kg) *</label>
+              <input type="number" inputMode="decimal" min="0.001" step="0.001"
+                value={pesandoCanastoPeso} onChange={e => setPesandoCanastoPeso(e.target.value)} autoFocus
+                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
+            </div>
+            <button onClick={confirmarPesoCanasto}
+              disabled={!pesandoCanastoPeso || parseFloat(pesandoCanastoPeso) <= 0}
+              className={`w-full py-3.5 rounded-xl text-sm font-semibold ${
+                pesandoCanastoPeso && parseFloat(pesandoCanastoPeso) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
+              }`}>
+              Confirmar peso
+            </button>
           </div>
         </div>
       )}
