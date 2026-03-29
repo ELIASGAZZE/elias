@@ -2628,7 +2628,7 @@ const Preparacion = () => {
                       <span className="text-amber-600 font-medium ml-2 whitespace-nowrap">
                         {p.es_pesable && p.faltante_piezas != null
                           ? `${p.faltante_piezas} pza${p.faltante_piezas !== 1 ? 's' : ''}`
-                          : `-${p.cantidad_faltante}`
+                          : p.cantidad_faltante
                         }
                       </span>
                     </div>
