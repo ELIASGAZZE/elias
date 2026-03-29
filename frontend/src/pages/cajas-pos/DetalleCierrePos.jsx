@@ -110,7 +110,7 @@ const DetalleCierrePos = () => {
             .catch(() => {})
         )
 
-        if (usuario?.rol !== 'operario' && !cierreData._blind) {
+        if (usuario?.rol !== 'operario') {
           promises.push(
             api.get(`/api/cierres-pos/${id}/verificacion`)
               .then(res => setVerificacion(res.data))
@@ -182,7 +182,7 @@ const DetalleCierrePos = () => {
   }
 
   const estadoCfg = ESTADOS[cierre.estado] || { label: cierre.estado, color: 'bg-gray-100 text-gray-700' }
-  const esBlind = cierre._blind
+  const esBlind = false // blind mode removed
 
   // Collect all unique forma_cobro_ids from cierre and verificacion medios_pago
   const buildMediosPagoMap = (medios) => {
@@ -305,18 +305,25 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Modo ciego para gestor */}
-        {esBlind && (
+        {/* Banner verificar para gestor/admin */}
+        {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center space-y-3">
             <p className="text-sm text-yellow-800">
-              Debes realizar tu conteo independiente antes de ver los montos del cajero.
+              Este cierre está pendiente de verificación.
             </p>
-            <Link
-              to={`/cajas-pos/verificar/${cierre.id}`}
+            <button
+              onClick={async () => {
+                try {
+                  await api.post(`/api/cierres-pos/${cierre.id}/verificar`)
+                  setCierre(prev => ({ ...prev, estado: 'pendiente_agente' }))
+                } catch (err) {
+                  alert(err.response?.data?.error || 'Error al verificar')
+                }
+              }}
               className="inline-block bg-teal-600 hover:bg-teal-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm transition-colors"
             >
-              Verificar cierre
-            </Link>
+              Marcar como verificado
+            </button>
           </div>
         )}
 
@@ -1099,13 +1106,20 @@ const DetalleCierrePos = () => {
             </Link>
           )}
 
-          {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && !esBlind && (
-            <Link
-              to={`/cajas-pos/verificar/${cierre.id}`}
+          {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && (
+            <button
+              onClick={async () => {
+                try {
+                  await api.post(`/api/cierres-pos/${cierre.id}/verificar`)
+                  setCierre(prev => ({ ...prev, estado: 'pendiente_agente' }))
+                } catch (err) {
+                  alert(err.response?.data?.error || 'Error al verificar')
+                }
+              }}
               className="flex-1 bg-teal-600 hover:bg-teal-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
             >
-              Verificar cierre
-            </Link>
+              Marcar como verificado
+            </button>
           )}
         </div>
 

@@ -140,9 +140,6 @@ const CajasPosHome = () => {
     if (cierre.estado === 'abierta' && esAdmin) {
       return `/cajas-pos/cierre/${cierre.id}/cerrar`
     }
-    if (esGestor && cierre.estado === 'pendiente_gestor') {
-      return `/cajas-pos/verificar/${cierre.id}`
-    }
     return `/cajas-pos/cierre/${cierre.id}`
   }
 
