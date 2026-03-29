@@ -1391,11 +1391,16 @@ const Preparacion = () => {
   // === FINALIZACIÓN ===
   const calcularPendientes = () => {
     return itemsEnriquecidos
-      .map(item => ({
-        ...item,
-        cantidad_preparada_real: item.cantidad_preparada || 0,
-        cantidad_faltante: Math.round(((item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0)) * 1000) / 1000,
-      }))
+      .map(item => {
+        const faltanteKg = Math.round(((item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0)) * 1000) / 1000
+        if (item.es_pesable) {
+          const piezasPedidas = cantidadEnPiezas(item)
+          const piezasPrep = pickEnPiezas(item)
+          const faltantePiezas = piezasPedidas - piezasPrep
+          return { ...item, cantidad_preparada_real: item.cantidad_preparada || 0, cantidad_faltante: faltanteKg, faltante_piezas: faltantePiezas }
+        }
+        return { ...item, cantidad_preparada_real: item.cantidad_preparada || 0, cantidad_faltante: faltanteKg }
+      })
       .filter(item => item.cantidad_faltante > 0)
   }
 
@@ -2620,7 +2625,12 @@ const Preparacion = () => {
                   {modalPendientes.pendientes.map(p => (
                     <div key={p.articulo_id} className="flex justify-between py-2 border-b border-gray-100 text-sm">
                       <span className="text-gray-800 truncate">{p.nombre}</span>
-                      <span className="text-amber-600 font-medium ml-2">-{p.cantidad_faltante}</span>
+                      <span className="text-amber-600 font-medium ml-2 whitespace-nowrap">
+                        {p.es_pesable && p.faltante_piezas != null
+                          ? `${p.faltante_piezas} pza${p.faltante_piezas !== 1 ? 's' : ''}`
+                          : `-${p.cantidad_faltante}`
+                        }
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -2641,7 +2651,7 @@ const Preparacion = () => {
                 <div className="overflow-y-auto flex-1 px-5 py-3 space-y-4">
                   {modalPendientes.pendientes.map(p => (
                     <div key={p.articulo_id} className="border border-gray-200 rounded-xl p-3 space-y-2">
-                      <div className="text-sm font-medium text-gray-800">{p.nombre} <span className="text-xs text-gray-400">· Faltan {p.cantidad_faltante}</span></div>
+                      <div className="text-sm font-medium text-gray-800">{p.nombre} <span className="text-xs text-gray-400">· Faltan {p.es_pesable && p.faltante_piezas != null ? `${p.faltante_piezas} pza${p.faltante_piezas !== 1 ? 's' : ''}` : p.cantidad_faltante}</span></div>
                       <div className="grid grid-cols-2 gap-2">
                         {MOTIVOS_FALTANTE.map(m => (
                           <button key={m.value}
