@@ -2334,6 +2334,9 @@ const Preparacion = () => {
                   : `¿Eliminar bulto ${confirmarElimCont.nombre}?`
                 }
               </h3>
+              {confirmarElimCont.tipo === 'bulto' && confirmarElimCont.codigoEsperado && (
+                <p className="text-xs text-gray-400 mt-0.5 font-mono">{confirmarElimCont.codigoEsperado}</p>
+              )}
               <p className="text-sm text-gray-500 mt-1">
                 {confirmarElimCont.tipo === 'canasto'
                   ? `Escaneá ${confirmarElimCont.precinto} para confirmar`
@@ -2375,7 +2378,7 @@ const Preparacion = () => {
                 </button>
                 <button onClick={(e) => {
                   const inp = e.target.closest('.text-center').querySelector('input')
-                  if (inp) { inp.setAttribute('inputMode', 'text'); inp.focus(); inp.click() }
+                  if (inp) { inp.setAttribute('inputMode', 'numeric'); inp.focus(); inp.click() }
                 }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
@@ -2398,6 +2401,9 @@ const Preparacion = () => {
               <h3 className="text-base font-semibold text-gray-800">
                 {`¿Agregar ${confirmarMoverACan.nombre} al canasto ${canastoActivo?.precinto}?`}
               </h3>
+              {confirmarMoverACan.codigoEsperado && (
+                <p className="text-xs text-gray-400 mt-0.5 font-mono">{confirmarMoverACan.codigoEsperado}</p>
+              )}
               <p className="text-sm text-gray-500 mt-1">
                 Escaneá el artículo para confirmar
               </p>
@@ -2436,7 +2442,7 @@ const Preparacion = () => {
                 </button>
                 <button onClick={(e) => {
                   const inp = e.target.closest('.text-center').querySelector('input')
-                  if (inp) { inp.setAttribute('inputMode', 'text'); inp.focus(); inp.click() }
+                  if (inp) { inp.setAttribute('inputMode', 'numeric'); inp.focus(); inp.click() }
                 }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
