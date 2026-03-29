@@ -2621,7 +2621,7 @@ const POS = () => {
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
-    setPedidoEnProceso({ id: pedido.id, numero: pedido.numero, esPagado, totalPagado })
+    setPedidoEnProceso({ id: pedido.id, numero: pedido.numero, esPagado, totalPagado, ventaAnticipadaId: pedido.venta_anticipada_id || null })
     setVistaActiva('venta')
   }
 
@@ -2664,6 +2664,7 @@ const POS = () => {
       direccionesCliente: [],
       turno_entrega: pedido.turno_entrega || '',
       sucursal_id: pedido.sucursal_id || '',
+      ventaAnticipadaId: pedido.venta_anticipada_id || null,
     }
     setPedidoEnProceso(pedidoData)
     // Cargar campos extras del pedido
@@ -2807,6 +2808,14 @@ const POS = () => {
 
     setGuardandoPedido(true)
     try {
+      // Si ya existe venta anticipada creada al cobrar, solo marcar entregado
+      if (pedidoEnProceso.ventaAnticipadaId) {
+        await marcarPedidoEntregado(pedidoEnProceso.id)
+        limpiarVenta()
+        return
+      }
+
+      // Fallback legacy: crear venta al entregar (pedidos viejos sin venta_anticipada_id)
       const items = carrito.map(i => ({
         id_articulo: i.articulo.id,
         codigo: i.articulo.codigo,
@@ -2878,6 +2887,8 @@ const POS = () => {
           await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
             total_pagado: pedido.total,
             observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
+            pagos_anticipado: datosPago?.pagos || [],
+            caja_cobro_id: terminalConfig?.caja_id || null,
           })
           setPedidosRefreshKey(k => k + 1)
         } catch (err) {
@@ -3251,10 +3262,12 @@ const POS = () => {
         payload.sucursal_id = sucursal.id
       }
       if (pagado) {
-        // Guardar info de pago en observaciones (la venta se genera al entregar)
+        // Guardar info de pago en observaciones + enviar pagos reales para crear venta en caja
         if (datosPago?.pagos) {
           const resumenPago = datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ')
           payload.observaciones = `PAGO ANTICIPADO: ${resumenPago}`
+          payload.pagos_anticipado = datosPago.pagos
+          payload.caja_cobro_id = terminalConfig?.caja_id || null
         } else {
           payload.observaciones = 'PAGO ANTICIPADO'
         }

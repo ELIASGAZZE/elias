@@ -1508,7 +1508,7 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
 router.post('/pedidos', verificarAuth, async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido, cajero_nombre } = req.body
+    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido, cajero_nombre, pagos_anticipado, caja_cobro_id } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
@@ -1588,7 +1588,92 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
 
     if (error) throw error
 
-    res.status(201).json({ pedido: data, mensaje: 'Pedido registrado correctamente' })
+    // Si hay pagos anticipados reales, crear venta_pos en la caja del cobrador
+    let ventaAnticipada = null
+    if (data && pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0 && (parseFloat(total_pagado) || 0) > 0) {
+      try {
+        // Obtener sucursal de la caja del cobrador
+        let sucursalCaja = null
+        if (caja_cobro_id) {
+          const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_cobro_id).single()
+          sucursalCaja = cajaInfo?.sucursal_id || null
+        }
+
+        const { data: venta, error: errVenta } = await supabase
+          .from('ventas_pos')
+          .insert({
+            cajero_id: req.perfil.id,
+            sucursal_id: sucursalCaja || req.perfil.sucursal_id || null,
+            caja_id: caja_cobro_id || null,
+            id_cliente_centum: id_cliente_centum ?? 0,
+            nombre_cliente: nombre_cliente || 'Consumidor Final',
+            subtotal: total || 0,
+            descuento_total: 0,
+            total: total || 0,
+            monto_pagado: parseFloat(total_pagado) || 0,
+            vuelto: 0,
+            items: JSON.stringify(items),
+            pagos: pagos_anticipado,
+            pedido_pos_id: data.id,
+          })
+          .select()
+          .single()
+
+        if (!errVenta && venta) {
+          ventaAnticipada = venta
+          // Vincular venta al pedido
+          await supabase.from('pedidos_pos').update({ venta_anticipada_id: venta.id }).eq('id', data.id)
+          data.venta_anticipada_id = venta.id
+
+          // Registrar en Centum ERP (async)
+          if (caja_cobro_id) {
+            const { data: cajaData } = await supabase.from('cajas').select('*, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)').eq('id', caja_cobro_id).single()
+            if (cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
+              ;(async () => {
+                try {
+                  await supabase.from('ventas_pos').update({
+                    centum_intentos: 1,
+                    centum_ultimo_intento: new Date().toISOString(),
+                  }).eq('id', venta.id)
+                  const resultado = await registrarVentaPOSEnCentum(venta, {
+                    sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
+                    puntoVenta: cajaData.punto_venta_centum,
+                    centum_operador_empresa: cajaData.sucursales.centum_operador_empresa,
+                    centum_operador_prueba: cajaData.sucursales.centum_operador_prueba,
+                  })
+                  if (resultado) {
+                    const numDoc = resultado.NumeroDocumento
+                    const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
+                    await supabase.from('ventas_pos').update({
+                      id_venta_centum: resultado.IdVenta || null,
+                      centum_comprobante: comprobante,
+                      centum_sync: true,
+                      centum_error: null,
+                      numero_cae: resultado.CAE || null,
+                    }).eq('id', venta.id)
+                    fetchAndSaveCAE(venta.id, resultado.IdVenta)
+                  }
+                } catch (err) {
+                  console.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
+                  try {
+                    await supabase.from('ventas_pos').update({
+                      centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
+                      centum_ultimo_intento: new Date().toISOString(),
+                    }).eq('id', venta.id)
+                  } catch (e) {}
+                }
+              })()
+            }
+          }
+        } else if (errVenta) {
+          console.error('[POS] Error creando venta anticipada:', errVenta.message)
+        }
+      } catch (errAnticipado) {
+        console.error('[POS] Error en flujo venta anticipada:', errAnticipado.message)
+      }
+    }
+
+    res.status(201).json({ pedido: data, ventaAnticipada, mensaje: 'Pedido registrado correctamente' })
   } catch (err) {
     console.error('[POS] Error al crear pedido:', err.message)
     res.status(500).json({ error: 'Error al crear pedido: ' + err.message })
@@ -1806,7 +1891,30 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
       const esAnticipado = obs.includes('PAGO ANTICIPADO')
       const formaPago = esAnticipado ? 'anticipado' : 'efectivo'
 
-      // Crear venta_pos para cada pedido
+      // Si es anticipado y ya tiene venta creada, reutilizarla
+      let venta = null
+      if (esAnticipado && pedido.venta_anticipada_id) {
+        const { data: ventaExistente } = await supabase
+          .from('ventas_pos')
+          .select('*')
+          .eq('id', pedido.venta_anticipada_id)
+          .single()
+        if (ventaExistente) {
+          venta = ventaExistente
+          ventasCreadas.push(venta)
+          guiaPedidos.push({
+            guia_id: guia.id,
+            pedido_pos_id: pedido.id,
+            venta_pos_id: venta.id,
+            forma_pago: formaPago,
+            monto: parseFloat(venta.total) || 0,
+            estado_entrega: 'pendiente',
+          })
+          continue
+        }
+      }
+
+      // Crear venta_pos para cada pedido (legacy o no anticipado)
       const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
       const pedidoTotal = parseFloat(pedido.total) || 0
 
@@ -1839,7 +1947,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
         pedido_pos_id: pedido.id,
       }
 
-      const { data: venta, error: errVenta } = await supabase
+      const { data: ventaNueva, error: errVenta } = await supabase
         .from('ventas_pos')
         .insert(insertVenta)
         .select()
@@ -1849,6 +1957,8 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
         console.error(`[Guía Delivery] Error creando venta para pedido ${pedido.id}:`, errVenta.message)
         continue
       }
+
+      venta = ventaNueva
 
       ventasCreadas.push(venta)
 
@@ -2301,11 +2411,11 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
 // PUT /api/pos/pedidos/:id/pago — registrar pago en caja de un pedido pendiente
 router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
   try {
-    const { total_pagado, observaciones } = req.body
+    const { total_pagado, observaciones, pagos_anticipado, caja_cobro_id } = req.body
 
     const { data: pedido } = await supabase
       .from('pedidos_pos')
-      .select('id, estado, total, total_pagado')
+      .select('id, estado, total, total_pagado, id_cliente_centum, nombre_cliente, items, venta_anticipada_id')
       .eq('id', req.params.id)
       .single()
 
@@ -2321,18 +2431,104 @@ router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: `El monto excede el total del pedido. Total: $${totalPedido.toFixed(2)}, ya pagado: $${(parseFloat(pedido.total_pagado) || 0).toFixed(2)}` })
     }
 
+    const updateData = {
+      total_pagado: nuevoTotalPagado,
+      observaciones: observaciones || pedido.observaciones || 'PAGO ANTICIPADO',
+    }
+
+    // Crear venta anticipada si hay pagos reales y no existe ya una
+    let ventaAnticipada = null
+    if (!pedido.venta_anticipada_id && pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0 && (parseFloat(total_pagado) || 0) > 0) {
+      try {
+        let sucursalCaja = null
+        if (caja_cobro_id) {
+          const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_cobro_id).single()
+          sucursalCaja = cajaInfo?.sucursal_id || null
+        }
+
+        const itemsPedido = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
+
+        const { data: venta, error: errVenta } = await supabase
+          .from('ventas_pos')
+          .insert({
+            cajero_id: req.perfil.id,
+            sucursal_id: sucursalCaja || req.perfil.sucursal_id || null,
+            caja_id: caja_cobro_id || null,
+            id_cliente_centum: pedido.id_cliente_centum ?? 0,
+            nombre_cliente: pedido.nombre_cliente || 'Consumidor Final',
+            subtotal: totalPedido,
+            descuento_total: 0,
+            total: totalPedido,
+            monto_pagado: parseFloat(total_pagado) || 0,
+            vuelto: 0,
+            items: typeof pedido.items === 'string' ? pedido.items : JSON.stringify(pedido.items),
+            pagos: pagos_anticipado,
+            pedido_pos_id: pedido.id,
+          })
+          .select()
+          .single()
+
+        if (!errVenta && venta) {
+          ventaAnticipada = venta
+          updateData.venta_anticipada_id = venta.id
+
+          // Registrar en Centum ERP (async)
+          if (caja_cobro_id) {
+            const { data: cajaData } = await supabase.from('cajas').select('*, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)').eq('id', caja_cobro_id).single()
+            if (cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
+              ;(async () => {
+                try {
+                  await supabase.from('ventas_pos').update({
+                    centum_intentos: 1,
+                    centum_ultimo_intento: new Date().toISOString(),
+                  }).eq('id', venta.id)
+                  const resultado = await registrarVentaPOSEnCentum(venta, {
+                    sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
+                    puntoVenta: cajaData.punto_venta_centum,
+                    centum_operador_empresa: cajaData.sucursales.centum_operador_empresa,
+                    centum_operador_prueba: cajaData.sucursales.centum_operador_prueba,
+                  })
+                  if (resultado) {
+                    const numDoc = resultado.NumeroDocumento
+                    const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
+                    await supabase.from('ventas_pos').update({
+                      id_venta_centum: resultado.IdVenta || null,
+                      centum_comprobante: comprobante,
+                      centum_sync: true,
+                      centum_error: null,
+                      numero_cae: resultado.CAE || null,
+                    }).eq('id', venta.id)
+                    fetchAndSaveCAE(venta.id, resultado.IdVenta)
+                  }
+                } catch (err) {
+                  console.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
+                  try {
+                    await supabase.from('ventas_pos').update({
+                      centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
+                      centum_ultimo_intento: new Date().toISOString(),
+                    }).eq('id', venta.id)
+                  } catch (e) {}
+                }
+              })()
+            }
+          }
+        } else if (errVenta) {
+          console.error('[POS] Error creando venta anticipada en cobro:', errVenta.message)
+        }
+      } catch (errAnticipado) {
+        console.error('[POS] Error en flujo venta anticipada cobro:', errAnticipado.message)
+      }
+    }
+
     const { data, error } = await supabase
       .from('pedidos_pos')
-      .update({
-        total_pagado: nuevoTotalPagado,
-        observaciones: observaciones || pedido.observaciones || 'PAGO ANTICIPADO',
-      })
+      .update(updateData)
       .eq('id', req.params.id)
       .select()
       .single()
 
     if (error) throw error
-    res.json(data)
+    res.json({ ...data, ventaAnticipada })
   } catch (err) {
     console.error('Error registrando pago de pedido:', err)
     res.status(500).json({ error: 'Error al registrar pago: ' + err.message })
