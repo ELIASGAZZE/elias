@@ -931,6 +931,24 @@ async function retrySyncVentasCentum() {
   for (let i = 0; i < ventasReady.length; i++) {
     const venta = ventasReady[i]
     const intentos = venta.centum_intentos || 0
+
+    // ============ ATOMIC CLAIM: lock a nivel de base de datos ============
+    // Previene que múltiples instancias (ej: durante deploy Render) procesen la misma venta.
+    // UPDATE condicional: solo reclama si nadie la reclamó en los últimos 60 segundos.
+    const ahoraClaim = new Date().toISOString()
+    const hace60s = new Date(Date.now() - 60000).toISOString()
+    const { data: claimed, error: claimErr } = await supabase
+      .from('ventas_pos')
+      .update({ centum_ultimo_intento: ahoraClaim })
+      .eq('id', venta.id)
+      .eq('centum_sync', false)
+      .or(`centum_ultimo_intento.is.null,centum_ultimo_intento.lt.${hace60s}`)
+      .select('id')
+    if (claimErr || !claimed || claimed.length === 0) {
+      console.log(`[RetryCentumVentas] Venta ${venta.id} ya reclamada por otra instancia, saltando`)
+      continue
+    }
+
     console.log(`[RetryCentumVentas] Procesando ${i+1}/${ventasReady.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, intentos=${intentos}, cliente: ${venta.nombre_cliente || 'CF'})`)
     try {
       // Obtener config de caja/sucursal

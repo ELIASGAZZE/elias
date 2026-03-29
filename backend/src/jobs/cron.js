@@ -22,7 +22,15 @@ async function withLock(name, fn) {
   }
 }
 
-function iniciarCronJobs() {
+async function iniciarCronJobs() {
+  // ============ STARTUP DELAY: prevenir race condition durante deploys ============
+  // Render puede correr instancia vieja y nueva simultáneamente durante ~30-60s.
+  // Este delay asegura que la instancia vieja termine antes de que la nueva arranque crons.
+  const STARTUP_DELAY_MS = 45000 // 45 segundos
+  console.log(`[CRON] Esperando ${STARTUP_DELAY_MS/1000}s antes de iniciar crons (anti-race deploy)...`)
+  await new Promise(r => setTimeout(r, STARTUP_DELAY_MS))
+  console.log('[CRON] Delay completado, iniciando cron jobs...')
+
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
   cron.schedule('0 6 * * *', async () => {
     const inicio = new Date().toISOString()
