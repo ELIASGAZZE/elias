@@ -3531,7 +3531,7 @@ const POS = () => {
       {/* === TAB GIFT CARDS === */}
       {vistaActiva === 'giftcards' && (
         <div className="flex-1 overflow-hidden">
-          <GiftCardsPOS embebido />
+          <GiftCardsPOS embebido terminalConfig={terminalConfig} cierreActivo={cierreActivo} />
         </div>
       )}
 

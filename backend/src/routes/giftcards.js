@@ -7,7 +7,7 @@ const { verificarAuth, soloAdmin } = require('../middleware/auth')
 // POST /api/gift-cards/activar — Cajero escanea barcode + elige monto
 router.post('/activar', verificarAuth, async (req, res) => {
   try {
-    const { codigo, monto, comprador_nombre, pagos } = req.body
+    const { codigo, monto, comprador_nombre, pagos, caja_id, sucursal_id, cierre_id } = req.body
 
     if (!codigo || !codigo.trim()) return res.status(400).json({ error: 'Código es requerido' })
     if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' })
@@ -30,6 +30,9 @@ router.post('/activar', verificarAuth, async (req, res) => {
       comprador_nombre: comprador_nombre || null,
       created_by: req.perfil.id,
     }
+    if (caja_id) insertData.caja_id = caja_id
+    if (sucursal_id) insertData.sucursal_id = sucursal_id
+    if (cierre_id) insertData.cierre_id = cierre_id
     if (pagos && Array.isArray(pagos)) insertData.pagos = pagos
 
     const { data: giftCard, error } = await supabase
@@ -108,22 +111,24 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
       }
     }
 
-    // Obtener nombre de caja si existe caja_id en la venta
+    // Obtener nombre de caja — primero desde gift_card directa, sino desde la venta
     let caja_nombre = null
-    if (venta_activacion) {
-      const { data: ventaFull } = await supabase
-        .from('ventas_pos')
-        .select('caja_id')
-        .eq('id', venta_activacion.id)
-        .single()
-      if (ventaFull?.caja_id) {
-        const { data: caja } = await supabase
-          .from('cajas')
-          .select('nombre')
-          .eq('id', ventaFull.caja_id)
-          .single()
-        if (caja) caja_nombre = caja.nombre
+    let sucursal_nombre = null
+    const cajaId = giftCard.caja_id || (venta_activacion ? (await supabase.from('ventas_pos').select('caja_id').eq('id', venta_activacion.id).single()).data?.caja_id : null)
+    if (cajaId) {
+      const { data: caja } = await supabase.from('cajas').select('nombre, sucursal_id').eq('id', cajaId).single()
+      if (caja) {
+        caja_nombre = caja.nombre
+        if (!venta_activacion?.sucursal_nombre && caja.sucursal_id) {
+          const { data: suc } = await supabase.from('sucursales').select('nombre').eq('id', caja.sucursal_id).single()
+          if (suc) sucursal_nombre = suc.nombre
+        }
       }
+    }
+    // Sucursal desde gift_card directa si no se obtuvo de la caja
+    if (!sucursal_nombre && giftCard.sucursal_id) {
+      const { data: suc } = await supabase.from('sucursales').select('nombre').eq('id', giftCard.sucursal_id).single()
+      if (suc) sucursal_nombre = suc.nombre
     }
 
     const { data: movimientos } = await supabase
@@ -146,7 +151,7 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
     }))
 
     res.json({
-      gift_card: { ...giftCard, cajero_nombre, venta_activacion, caja_nombre },
+      gift_card: { ...giftCard, cajero_nombre, venta_activacion, caja_nombre, sucursal_nombre: venta_activacion?.sucursal_nombre || sucursal_nombre },
       movimientos: movEnriquecidos,
     })
   } catch (err) {

@@ -22,7 +22,7 @@ const BADGE_COLORS = {
   anulada: 'bg-red-100 text-red-700',
 }
 
-export default function GiftCardsPOS({ embebido }) {
+export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo }) {
   const { usuario } = useAuth()
   const esAdmin = usuario?.rol === 'admin'
 
@@ -112,6 +112,9 @@ export default function GiftCardsPOS({ embebido }) {
       await api.post('/api/gift-cards/activar', {
         ...datosPendientes,
         pagos: datosPago.pagos,
+        caja_id: terminalConfig?.caja_id || null,
+        sucursal_id: terminalConfig?.sucursal_id || null,
+        cierre_id: cierreActivo?.id || null,
       })
       setMsgActivar({ tipo: 'ok', texto: `Gift card ${datosPendientes.codigo} activada por ${formatPrecio(datosPendientes.monto)}` })
       setCodigo('')
@@ -416,7 +419,7 @@ export default function GiftCardsPOS({ embebido }) {
                   </div>
                 )}
               </div>
-              {(cardSeleccionada.venta_activacion || cardSeleccionada.caja_nombre || (Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0)) && (
+              {(cardSeleccionada.venta_activacion || cardSeleccionada.caja_nombre || cardSeleccionada.sucursal_nombre || (Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0)) && (
                 <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 space-y-1.5">
                   <span className="text-xs font-semibold text-violet-700 uppercase">Datos de activación</span>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-1">
@@ -432,10 +435,10 @@ export default function GiftCardsPOS({ embebido }) {
                         <span className="block text-sm text-gray-700">{cardSeleccionada.caja_nombre}</span>
                       </div>
                     )}
-                    {cardSeleccionada.venta_activacion?.sucursal_nombre && (
+                    {cardSeleccionada.sucursal_nombre && (
                       <div>
                         <span className="text-[10px] text-gray-500">Sucursal</span>
-                        <span className="block text-sm text-gray-700">{cardSeleccionada.venta_activacion.sucursal_nombre}</span>
+                        <span className="block text-sm text-gray-700">{cardSeleccionada.sucursal_nombre}</span>
                       </div>
                     )}
                     {Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0 && (
