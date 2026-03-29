@@ -109,6 +109,7 @@ const Preparacion = () => {
   const faltantesRef = useRef(null)
 
   // Ref para el detalle
+  const scrollPosRef = useRef(0)
   const completoAlAbrir = useRef(false)
   const ordenRef = useRef(orden)
   useEffect(() => { ordenRef.current = orden }, [orden])
@@ -250,7 +251,7 @@ const Preparacion = () => {
         setFase('picking')
         setItemDetalle(null)
         setMostrarPiezas(false)
-        setTimeout(() => scanRef.current?.focus(), 300)
+        setTimeout(() => { scanRef.current?.focus(); window.scrollTo(0, scrollPosRef.current) }, 50)
         // Re-push para no salir del componente si pulsa atrás de nuevo
         window.history.pushState(null, '')
       }
@@ -375,7 +376,7 @@ const Preparacion = () => {
         setFase('picking')
         setItemDetalle(null)
         setMostrarPiezas(false)
-        setTimeout(() => scanRef.current?.focus(), 300)
+        setTimeout(() => { scanRef.current?.focus(); window.scrollTo(0, scrollPosRef.current) }, 50)
       }, 1200)
       return () => clearTimeout(timer)
     }
@@ -1551,7 +1552,7 @@ const Preparacion = () => {
     return (
       <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
         <div className="bg-sky-600 text-white px-2 py-2 flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => { setFase('picking'); setItemDetalle(null); setMostrarPiezas(false); setTimeout(() => scanRef.current?.focus(), 300) }}
+          <button onClick={() => { setFase('picking'); setItemDetalle(null); setMostrarPiezas(false); setTimeout(() => { scanRef.current?.focus(); window.scrollTo(0, scrollPosRef.current) }, 50) }}
             className="p-2 rounded-lg active:bg-sky-700">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -2254,7 +2255,7 @@ const Preparacion = () => {
                 return (
                   <button key={idx}
                     ref={el => { itemRefs.current[item.articulo_id] = el }}
-                    onClick={() => { completoAlAbrir.current = piezasPick >= piezasPedidas; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
+                    onClick={() => { scrollPosRef.current = window.scrollY; completoAlAbrir.current = piezasPick >= piezasPedidas; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
                     className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
                       ultimoEscaneado === item.articulo_id
                         ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
@@ -2300,7 +2301,7 @@ const Preparacion = () => {
                 return (
                   <button key={idx}
                     ref={el => { itemRefs.current[item.articulo_id] = el }}
-                    onClick={() => { completoAlAbrir.current = true; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
+                    onClick={() => { scrollPosRef.current = window.scrollY; completoAlAbrir.current = true; setItemDetalle(item); setFase('detalle'); setMostrarPiezas(false) }}
                     className={`w-full text-left rounded-xl border overflow-hidden flex items-center gap-3 p-3 active:bg-gray-50 transition-colors duration-700 ${
                       ultimoEscaneado === item.articulo_id
                         ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300'
