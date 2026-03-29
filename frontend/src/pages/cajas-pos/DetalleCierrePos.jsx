@@ -268,25 +268,6 @@ const DetalleCierrePos = () => {
         </div>
 
         {/* Diferencias de apertura */}
-        {cierre.tipo !== 'delivery' && cierre.diferencias_apertura && Object.keys(cierre.diferencias_apertura).length > 0 && (
-          <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-2">
-            <h3 className="text-sm font-semibold text-red-700">Diferencias en apertura vs cierre anterior</h3>
-            <p className="text-xs text-red-600">El cambio inicial no coincide con lo dejado en el cierre anterior.</p>
-            <div className="space-y-1">
-              {Object.entries(cierre.diferencias_apertura).map(([denom, diff]) => (
-                <div key={denom} className="flex justify-between text-sm">
-                  <span className="text-red-700">
-                    ${Number(denom).toLocaleString('es-AR')} ({diff.tipo === 'billete' ? 'billete' : 'moneda'})
-                  </span>
-                  <span className="text-red-800 font-medium">
-                    Anterior: {diff.anterior} → Actual: {diff.actual}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Si esta abierta, botones cerrar + nuevo retiro */}
         {cierre.estado === 'abierta' && (usuario?.rol === 'operario' || esAdmin) && (
           <div className="flex gap-3">
