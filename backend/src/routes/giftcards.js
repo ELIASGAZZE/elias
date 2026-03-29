@@ -47,6 +47,7 @@ router.post('/activar', verificarAuth, async (req, res) => {
     let ventaId = null
     const ventaInsert = {
       cajero_id: req.perfil.id,
+      id_cliente_centum: 0,
       sucursal_id: sucursal_id || req.perfil.sucursal_id || null,
       caja_id: caja_id || null,
       nombre_cliente: comprador_nombre || null,
@@ -59,12 +60,13 @@ router.post('/activar', verificarAuth, async (req, res) => {
       pagos: pagos || [],
     }
 
-    const { data: venta } = await supabase
+    const { data: venta, error: ventaErr } = await supabase
       .from('ventas_pos')
       .insert(ventaInsert)
       .select('id, numero_venta')
       .single()
 
+    if (ventaErr) console.error('[GiftCards] Error al crear venta_pos:', ventaErr.message)
     if (venta) ventaId = venta.id
 
     // Insertar movimiento de activación con venta_pos_id
