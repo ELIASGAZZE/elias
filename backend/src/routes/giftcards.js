@@ -7,7 +7,7 @@ const { verificarAuth, soloAdmin } = require('../middleware/auth')
 // POST /api/gift-cards/activar — Cajero escanea barcode + elige monto
 router.post('/activar', verificarAuth, async (req, res) => {
   try {
-    const { codigo, monto, comprador_nombre, pagos, caja_id, sucursal_id, cierre_id } = req.body
+    const { codigo, monto, comprador_nombre, pagos, caja_id, sucursal_id, cierre_id, cajero_nombre } = req.body
 
     if (!codigo || !codigo.trim()) return res.status(400).json({ error: 'Código es requerido' })
     if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' })
@@ -34,6 +34,7 @@ router.post('/activar', verificarAuth, async (req, res) => {
     if (sucursal_id) insertData.sucursal_id = sucursal_id
     if (cierre_id) insertData.cierre_id = cierre_id
     if (pagos && Array.isArray(pagos)) insertData.pagos = pagos
+    if (cajero_nombre) insertData.cajero_nombre = cajero_nombre
 
     const { data: giftCard, error } = await supabase
       .from('gift_cards')
@@ -99,15 +100,16 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
     if (error) throw error
     if (!giftCard) return res.status(404).json({ error: 'Gift card no encontrada' })
 
-    // Obtener nombre del cajero que activó
-    let cajero_nombre = null
-    if (giftCard.created_by) {
-      const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('nombre')
-        .eq('id', giftCard.created_by)
+    // Obtener nombre del cajero (empleado real) que activó
+    let cajero_nombre = giftCard.cajero_nombre || null
+    // Si no tiene cajero_nombre guardado, intentar obtenerlo del cierre
+    if (!cajero_nombre && giftCard.cierre_id) {
+      const { data: cierre } = await supabase
+        .from('cierres_pos')
+        .select('empleado_id, empleado:empleados!empleado_id(nombre)')
+        .eq('id', giftCard.cierre_id)
         .single()
-      if (perfil) cajero_nombre = perfil.nombre
+      if (cierre?.empleado?.nombre) cajero_nombre = cierre.empleado.nombre
     }
 
     // Obtener venta de activación (primer movimiento con motivo Activación)
