@@ -1039,7 +1039,7 @@ const Preparacion = () => {
       const siguiente = updated.findIndex(c => c.tipo === 'canasto' && (c.peso_origen === null || c.peso_origen === undefined))
       if (siguiente !== -1) {
         setTimeout(() => { setPesandoCanastoIdx(siguiente); setPesandoCanastoPeso('') }, 50)
-      } else {
+      } else if (faseRef.current !== 'finalizar') {
         setTimeout(() => marcarPreparado(), 50)
       }
       return updated
@@ -1826,7 +1826,8 @@ const Preparacion = () => {
   if (fase === 'finalizar') {
     const canastos = contenedores.filter(c => c.tipo === 'canasto')
     const bultos = contenedores.filter(c => c.tipo === 'bulto')
-    const puedeConfirmar = (canastos.length > 0 || bultos.length > 0 || palletsPrep.length > 0) && !enviando
+    const canastosSinPesar = canastos.filter(c => !c.peso_origen)
+    const puedeConfirmar = (canastos.length > 0 || bultos.length > 0 || palletsPrep.length > 0) && !enviando && canastosSinPesar.length === 0
 
     return (
       <div className="min-h-screen bg-gray-100 pb-24">
@@ -1847,13 +1848,21 @@ const Preparacion = () => {
           {canastos.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
               <h3 className="text-sm font-semibold text-gray-700">🧺 Canastos ({canastos.length})</h3>
-              {canastos.map((c, idx) => (
-                <div key={idx} className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              {canastos.map((c, idx) => {
+                const realIdx = contenedores.findIndex(ct => ct === c)
+                return (
+                <div key={idx} className={`rounded-lg p-3 border ${c.peso_origen ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-300'}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="font-mono font-medium text-sm text-gray-800">{c.precinto}</span>
-                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen ? `${c.peso_origen} kg` : 'Sin pesar'} · {c.items.length} art.</span>
+                      <span className="text-xs text-gray-500 ml-2">{c.peso_origen ? `${c.peso_origen} kg` : <span className="text-red-500 font-medium">Sin pesar</span>} · {c.items.length} art.</span>
                     </div>
+                    {!c.peso_origen && (
+                      <button onClick={() => { setPesandoCanastoIdx(realIdx); setPesandoCanastoPeso('') }}
+                        className="text-xs bg-red-500 text-white px-3 py-1.5 rounded-lg font-medium">
+                        Pesar
+                      </button>
+                    )}
                   </div>
                   {c.items.length > 0 && (
                     <div className="mt-1.5 space-y-0.5">
@@ -1868,7 +1877,8 @@ const Preparacion = () => {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
