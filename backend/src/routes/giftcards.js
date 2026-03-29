@@ -43,17 +43,42 @@ router.post('/activar', verificarAuth, async (req, res) => {
 
     if (error) throw error
 
-    // Insertar movimiento de activación
+    // Crear ventas_pos para tener numero_venta y trazabilidad
+    let ventaId = null
+    const ventaInsert = {
+      cajero_id: req.perfil.id,
+      sucursal_id: sucursal_id || req.perfil.sucursal_id || null,
+      caja_id: caja_id || null,
+      nombre_cliente: comprador_nombre || null,
+      subtotal: monto,
+      descuento_total: 0,
+      total: monto,
+      monto_pagado: monto,
+      vuelto: 0,
+      items: JSON.stringify([{ nombre: `Gift Card ${codigo.trim()}`, cantidad: 1, precio_unitario: monto, precio_final: monto, es_gift_card: true }]),
+      pagos: pagos || [],
+    }
+
+    const { data: venta } = await supabase
+      .from('ventas_pos')
+      .insert(ventaInsert)
+      .select('id, numero_venta')
+      .single()
+
+    if (venta) ventaId = venta.id
+
+    // Insertar movimiento de activación con venta_pos_id
     await supabase
       .from('movimientos_gift_card')
       .insert({
         gift_card_id: giftCard.id,
         monto: monto,
         motivo: 'Activación',
+        venta_pos_id: ventaId,
         created_by: req.perfil.id,
       })
 
-    res.status(201).json({ gift_card: giftCard, mensaje: 'Gift card activada correctamente' })
+    res.status(201).json({ gift_card: giftCard, numero_venta: venta?.numero_venta, mensaje: 'Gift card activada correctamente' })
   } catch (err) {
     console.error('[GiftCards] Error al activar:', err.message)
     res.status(500).json({ error: 'Error al activar gift card: ' + err.message })
