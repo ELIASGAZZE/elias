@@ -718,6 +718,18 @@ const Preparacion = () => {
   // === HANDLER PRINCIPAL DE ESCANEO ===
   const handleScanCodigo = (codigo) => {
 
+    // 0a-pre. Si hay contenedor esperando confirmación de mover a canasto
+    const moverCan = confirmarMoverACanRef.current
+    if (moverCan) {
+      if (moverCan.codigos?.includes(codigo)) {
+        ejecutarMoverACanasto()
+        return
+      } else {
+        mostrarFeedback('Código incorrecto', false)
+        return
+      }
+    }
+
     // 0a. Si hay contenedor esperando confirmación de eliminación
     const elimCont = confirmarElimContRef.current
     if (elimCont) {
@@ -1112,6 +1124,10 @@ const Preparacion = () => {
   const confirmarElimContRef = useRef(null)
   const setConfirmarElimCont = (v) => { const val = typeof v === 'function' ? v(confirmarElimContRef.current) : v; confirmarElimContRef.current = val; _setConfirmarElimCont(val); if (!val) setTimeout(() => scanRef.current?.focus(), 150) }
 
+  const [confirmarMoverACan, _setConfirmarMoverACan] = useState(null) // { idx, nombre, codigoEsperado, codigos }
+  const confirmarMoverACanRef = useRef(null)
+  const setConfirmarMoverACan = (v) => { const val = typeof v === 'function' ? v(confirmarMoverACanRef.current) : v; confirmarMoverACanRef.current = val; _setConfirmarMoverACan(val); if (!val) setTimeout(() => scanRef.current?.focus(), 150) }
+
   const pedirEliminarContenedor = (idx) => {
     const c = contenedores[idx]
     if (!c) return
@@ -1144,6 +1160,64 @@ const Preparacion = () => {
     })
     setConfirmarElimCont(null)
     mostrarFeedback('Contenedor eliminado', true)
+  }
+
+  const pedirMoverACanasto = (idx) => {
+    const c = contenedores[idx]
+    if (!c || c.tipo !== 'bulto' || !canastoActivo) return
+    const primerItem = c.items[0]
+    const cat = todosArticulos.find(a => String(a.id) === String(primerItem?.articulo_id))
+    const codigoEsperado = cat?.codigo || primerItem?.codigo
+    const codigos = [codigoEsperado]
+    if (cat?.codigosBarras) {
+      for (const b of cat.codigosBarras) {
+        codigos.push(typeof b === 'object' ? b.codigo : b)
+      }
+    }
+    setConfirmarMoverACan({ idx, nombre: c.nombre, codigoEsperado, codigos })
+  }
+
+  const ejecutarMoverACanasto = () => {
+    const { idx } = confirmarMoverACanRef.current
+    const c = contenedores[idx]
+    if (!c || !canastoActivo) return
+    // Merge items del contenedor al canasto activo
+    setCanastoActivo(prev => {
+      let updated = { ...prev, items: [...prev.items] }
+      for (const ci of c.items) {
+        const existente = updated.items.find(i => i.articulo_id === ci.articulo_id)
+        if (existente) {
+          updated = {
+            ...updated,
+            items: updated.items.map(i =>
+              i.articulo_id === ci.articulo_id
+                ? {
+                    ...i,
+                    cantidad: Math.round(((i.cantidad || 0) + (ci.cantidad || 0)) * 1000) / 1000,
+                    pesos_escaneados: ci.pesos_escaneados
+                      ? [...(i.pesos_escaneados || []), ...ci.pesos_escaneados]
+                      : i.pesos_escaneados,
+                  }
+                : i
+            ),
+          }
+        } else {
+          updated = { ...updated, items: [...updated.items, { ...ci }] }
+        }
+      }
+      return updated
+    })
+    // Eliminar contenedor
+    setContenedorExpandido(null)
+    const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
+    setContenedores(nuevosContenedores)
+    setOrden(prev => {
+      const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
+      persistirItems(itemsSinc)
+      return { ...prev, items: itemsSinc }
+    })
+    setConfirmarMoverACan(null)
+    mostrarFeedback('Contenedor agregado al canasto', true)
   }
 
   // Pesaje manual (para pesables en detalle)
@@ -2120,6 +2194,13 @@ const Preparacion = () => {
                   <svg className={`w-4 h-4 text-gray-400 transition-transform ${contenedorExpandido === idx ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
+                  {canastoActivo && c.tipo === 'bulto' && (
+                    <button onClick={(e) => { e.stopPropagation(); pedirMoverACanasto(idx) }} className="text-blue-500 p-1" title="Agregar al canasto">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
+                      </svg>
+                    </button>
+                  )}
                   <button onClick={(e) => { e.stopPropagation(); pedirEliminarContenedor(idx) }} className="text-red-400 p-1">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -2286,6 +2367,55 @@ const Preparacion = () => {
                 }}
               />
               <button onClick={() => setConfirmarElimCont(null)}
+                className="mt-4 w-full py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar mover contenedor a canasto */}
+      {confirmarMoverACan && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setConfirmarMoverACan(null)}>
+          <div className="bg-white rounded-2xl w-[90%] max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="text-3xl mb-2">🧺</div>
+              <h3 className="text-base font-semibold text-gray-800">
+                {`¿Agregar ${confirmarMoverACan.nombre} al canasto ${canastoActivo?.precinto}?`}
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Escaneá el artículo para confirmar
+              </p>
+              <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                value={scanInput}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setScanInput(val)
+                  scanBufferRef.current = val
+                  clearTimeout(scanTimeoutRef.current)
+                  scanTimeoutRef.current = setTimeout(() => {
+                    const codigo = scanBufferRef.current.trim()
+                    scanBufferRef.current = ''
+                    setScanInput('')
+                    if (codigo) handleScanCodigoRef.current?.(codigo)
+                  }, 200)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    clearTimeout(scanTimeoutRef.current)
+                    const codigo = scanBufferRef.current.trim()
+                    scanBufferRef.current = ''
+                    setScanInput('')
+                    if (codigo) handleScanCodigoRef.current?.(codigo)
+                  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                    scanBufferRef.current += e.key
+                    setScanInput(scanBufferRef.current)
+                  }
+                }}
+              />
+              <button onClick={() => setConfirmarMoverACan(null)}
                 className="mt-4 w-full py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
                 Cancelar
               </button>
