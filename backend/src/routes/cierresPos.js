@@ -494,25 +494,27 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'Este cierre ya fue verificado y no se puede editar' })
     }
 
-    // Validar código de empleado: debe coincidir con quien cerró
+    // Validar código de empleado: debe coincidir con quien cerró (admins exentos)
     const { codigo_empleado } = req.body
-    if (!codigo_empleado) {
-      return res.status(400).json({ error: 'Ingresá el código del empleado que cerró la caja' })
-    }
+    if (req.perfil.rol !== 'admin') {
+      if (!codigo_empleado) {
+        return res.status(400).json({ error: 'Ingresá el código del empleado que cerró la caja' })
+      }
 
-    const { data: emp, error: empError } = await supabase
-      .from('empleados')
-      .select('id')
-      .eq('codigo', codigo_empleado)
-      .eq('activo', true)
-      .single()
+      const { data: emp, error: empError } = await supabase
+        .from('empleados')
+        .select('id')
+        .eq('codigo', codigo_empleado)
+        .eq('activo', true)
+        .single()
 
-    if (empError || !emp) {
-      return res.status(404).json({ error: 'Empleado no encontrado o inactivo' })
-    }
+      if (empError || !emp) {
+        return res.status(404).json({ error: 'Empleado no encontrado o inactivo' })
+      }
 
-    if (emp.id !== cierre.cerrado_por_empleado_id) {
-      return res.status(403).json({ error: 'El código no corresponde al empleado que cerró esta caja' })
+      if (emp.id !== cierre.cerrado_por_empleado_id) {
+        return res.status(403).json({ error: 'El código no corresponde al empleado que cerró esta caja' })
+      }
     }
 
     const {

@@ -5,6 +5,7 @@ import ModalRetiroPos from './ModalRetiroPos'
 import ModalGastoPos from './ModalGastoPos'
 import api from '../../services/api'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
+import { useAuth } from '../../context/AuthContext'
 
 const formatMonto = (monto) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(monto || 0)
@@ -52,6 +53,7 @@ const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange })
 )
 
 const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
+  const { esAdmin } = useAuth()
   const [cierre, setCierre] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
@@ -197,7 +199,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   }
 
   const cerrarCaja = async () => {
-    if (!empleadoResuelto) {
+    if (!esAdmin && !empleadoResuelto) {
       setError('Ingresa un codigo de empleado valido')
       return
     }
@@ -498,7 +500,8 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                 </div>
               </div>
 
-              {/* Codigo empleado */}
+              {/* Codigo empleado (admins exentos) */}
+              {!esAdmin && (
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <label className="text-sm font-medium text-gray-700 mb-2 block">Codigo de empleado que cierra</label>
                 <input
@@ -518,6 +521,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                 {empleadoResuelto && <p className="text-xs text-green-600 mt-1">{empleadoResuelto.nombre}</p>}
                 {errorEmpleado && <p className="text-xs text-red-600 mt-1">{errorEmpleado}</p>}
               </div>
+              )}
 
               {error && (
                 <p className="text-sm text-red-600 bg-red-50 p-3 rounded-xl">{error}</p>
