@@ -351,9 +351,10 @@ export default function GiftCardsPOS({ embebido }) {
                       <span className="block text-sm text-gray-500">{formatPrecio(parseFloat(gc.monto_inicial))}</span>
                     </div>
                   </div>
-                  {gc.comprador_nombre && (
-                    <div className="mt-2 text-xs text-gray-400 truncate">{gc.comprador_nombre}</div>
-                  )}
+                  <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
+                    <span className="truncate">{gc.comprador_nombre || ''}</span>
+                    <span className="flex-shrink-0 ml-2">{gc.created_at ? new Date(gc.created_at).toLocaleDateString('es-AR') : ''}</span>
+                  </div>
                 </button>
               ))}
             </div>
