@@ -124,17 +124,23 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
     if (movActivacion?.venta_pos_id) {
       const { data: venta } = await supabase
         .from('ventas_pos')
-        .select('id, numero_venta, cajero_nombre, sucursal_id, created_at')
+        .select('id, numero_venta, cajero_id, sucursal_id, created_at')
         .eq('id', movActivacion.venta_pos_id)
         .single()
       if (venta) {
+        // Obtener nombre de cajero de la venta
+        let ventaCajeroNombre = null
+        if (venta.cajero_id) {
+          const { data: p } = await supabase.from('perfiles').select('nombre').eq('id', venta.cajero_id).single()
+          if (p) ventaCajeroNombre = p.nombre
+        }
         // Obtener nombre de sucursal
         const { data: suc } = await supabase
           .from('sucursales')
           .select('nombre')
           .eq('id', venta.sucursal_id)
           .single()
-        venta_activacion = { ...venta, sucursal_nombre: suc?.nombre || null }
+        venta_activacion = { ...venta, cajero_nombre: ventaCajeroNombre, sucursal_nombre: suc?.nombre || null }
       }
     }
 
