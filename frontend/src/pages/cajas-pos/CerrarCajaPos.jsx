@@ -256,6 +256,10 @@ const CerrarCajaPos = () => {
       setError('Ingresa un codigo de empleado valido')
       return
     }
+    if (cambioQueQueda > totalEfectivo) {
+      setError('El cambio que queda no puede superar el efectivo contado')
+      return
+    }
     setEnviando(true)
     setError('')
     try {

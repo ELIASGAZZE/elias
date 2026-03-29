@@ -841,7 +841,7 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
 })
 
 // GET /api/cierres-pos/:id/eliminaciones — artículos eliminados del ticket durante el turno
-router.get('/:id/eliminaciones', verificarAuth, async (req, res) => {
+router.get('/:id/eliminaciones', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('pos_eliminaciones_log')
@@ -858,7 +858,7 @@ router.get('/:id/eliminaciones', verificarAuth, async (req, res) => {
 })
 
 // GET /api/cierres-pos/:id/cancelaciones — tickets cancelados durante el turno
-router.get('/:id/cancelaciones', verificarAuth, async (req, res) => {
+router.get('/:id/cancelaciones', verificarAuth, soloAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos_canceladas')

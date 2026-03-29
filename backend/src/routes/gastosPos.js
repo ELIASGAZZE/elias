@@ -14,7 +14,7 @@ router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => 
 
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres_pos')
-      .select('id, cajero_id, estado')
+      .select('id, cajero_id, estado, caja_id')
       .eq('id', req.params.cierreId)
       .single()
 
@@ -26,8 +26,15 @@ router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => 
       return res.status(400).json({ error: 'Solo se pueden crear gastos con la caja abierta o en edición' })
     }
 
-    if (rol === 'operario' && cierre.estado === 'abierta' && cierre.cajero_id !== req.perfil.id) {
-      return res.status(403).json({ error: 'Solo podés crear gastos en tu propia caja' })
+    // Validar sucursal para operarios
+    if (rol === 'operario') {
+      if (cierre.estado === 'abierta' && cierre.cajero_id !== req.perfil.id) {
+        return res.status(403).json({ error: 'Solo podés crear gastos en tu propia caja' })
+      }
+      const { data: caja } = await supabase.from('cajas').select('sucursal_id').eq('id', cierre.caja_id).single()
+      if (caja && caja.sucursal_id !== req.perfil.sucursal_id) {
+        return res.status(403).json({ error: 'No tenés acceso a esta sucursal' })
+      }
     }
 
     const { descripcion, importe } = req.body
@@ -112,11 +119,6 @@ router.put('/gastos-pos/:id/controlar', verificarAuth, soloGestorOAdmin, async (
 
     if (errorGasto || !gasto) {
       return res.status(404).json({ error: 'Gasto no encontrado' })
-    }
-
-    // Gestor ≠ cajero del cierre
-    if (gasto.cierre?.cajero_id === req.perfil.id) {
-      return res.status(403).json({ error: 'No podés controlar gastos de tu propia caja' })
     }
 
     // Gestor: misma sucursal

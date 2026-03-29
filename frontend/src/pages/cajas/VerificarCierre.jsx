@@ -243,6 +243,26 @@ const VerificarCierre = () => {
             </div>
           </div>
 
+          {/* Monedas */}
+          {denomMonedas.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
+              <div className="space-y-1.5">
+                {denomMonedas.map(d => (
+                  <ContadorDenominacion
+                    key={`m-${d.id}`}
+                    valor={d.valor}
+                    cantidad={monedas[d.valor] || 0}
+                    onChange={(val) => setMonedas(prev => ({ ...prev, [d.valor]: val }))}
+                  />
+                ))}
+              </div>
+              <div className="text-right mt-2">
+                <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalMonedas)}</span>
+              </div>
+            </div>
+          )}
+
           {/* Col 2: Otros medios + Observaciones */}
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Otros medios de pago</h3>

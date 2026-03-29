@@ -69,7 +69,7 @@ const CerrarCaja = () => {
 
   // API-driven denominations and payment methods
   const [denomBilletes, setDenomBilletes] = useState([])
-  const [denomMonedas] = useState([])
+  const [denomMonedas, setDenomMonedas] = useState([])
   const [formasCobro, setFormasCobro] = useState([])
 
   // Efectivo
@@ -117,6 +117,9 @@ const CerrarCaja = () => {
         const denomActivas = (denomRes.data || []).filter(d => d.activo)
         setDenomBilletes(
           denomActivas.filter(d => d.tipo === 'billete').sort((a, b) => a.orden - b.orden)
+        )
+        setDenomMonedas(
+          denomActivas.filter(d => d.tipo === 'moneda').sort((a, b) => a.orden - b.orden)
         )
         // Filter active formas de cobro, sorted by orden
         const formasActivas = (formasRes.data || [])
@@ -181,7 +184,12 @@ const CerrarCaja = () => {
     [denomBilletes, billetes]
   )
 
-  const totalEfectivo = totalBilletes
+  const totalMonedas = useMemo(
+    () => denomMonedas.reduce((sum, d) => sum + d.valor * (monedas[d.valor] || 0), 0),
+    [denomMonedas, monedas]
+  )
+
+  const totalEfectivo = totalBilletes + totalMonedas
 
   const cambioQueQueda = useMemo(
     () => denomBilletes.reduce((sum, d) => sum + d.valor * (cambioBilletes[d.valor] || 0), 0),
@@ -227,6 +235,10 @@ const CerrarCaja = () => {
   const cerrarCaja = async () => {
     if (!empleadoResuelto) {
       setError('Ingresá un código de empleado válido')
+      return
+    }
+    if (cambioQueQueda > totalEfectivo) {
+      setError('El cambio que queda no puede superar el efectivo contado')
       return
     }
     setEnviando(true)
@@ -360,6 +372,26 @@ const CerrarCaja = () => {
             <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalBilletes)}</span>
           </div>
         </div>
+
+        {/* Monedas */}
+        {denomMonedas.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-2">Monedas</h3>
+            <div className="space-y-1.5">
+              {denomMonedas.map(d => (
+                <ContadorDenominacion
+                  key={`m-${d.id}`}
+                  valor={d.valor}
+                  cantidad={monedas[d.valor] || 0}
+                  onChange={(val) => setMonedas(prev => ({ ...prev, [d.valor]: val }))}
+                />
+              ))}
+            </div>
+            <div className="text-right mt-2">
+              <span className="text-sm font-medium text-gray-600">Subtotal: {formatMonto(totalMonedas)}</span>
+            </div>
+          </div>
+        )}
 
         {/* Otros medios de pago + Observaciones */}
         <div className="space-y-3 mb-6">

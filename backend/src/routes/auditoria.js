@@ -11,6 +11,13 @@ router.post('/cancelacion', verificarAuth, async (req, res) => {
     const { motivo, items, subtotal, total, cliente_nombre, caja_id, sucursal_id, cierre_id } = req.body
     if (!motivo) return res.status(400).json({ error: 'Motivo requerido' })
 
+    // Validar que cierre_id exista si se provee
+    let cierreIdValido = null
+    if (cierre_id) {
+      const { data: cierre } = await supabase.from('cierres_pos').select('id').eq('id', cierre_id).single()
+      if (cierre) cierreIdValido = cierre.id
+    }
+
     const { error } = await supabase.from('ventas_pos_canceladas').insert({
       cajero_id: req.usuario.id,
       cajero_nombre: req.perfil?.nombre || 'Desconocido',
@@ -21,7 +28,7 @@ router.post('/cancelacion', verificarAuth, async (req, res) => {
       subtotal: subtotal || 0,
       total: total || 0,
       cliente_nombre: cliente_nombre || null,
-      cierre_id: cierre_id || null,
+      cierre_id: cierreIdValido,
     })
 
     if (error) {

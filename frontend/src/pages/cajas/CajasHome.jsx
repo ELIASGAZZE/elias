@@ -678,7 +678,7 @@ const CajasHome = () => {
           cierreId={retiroCierre.id}
           cierre={retiroCierre}
           onClose={() => setRetiroCierre(null)}
-          onRetiroCreado={() => {}}
+          onRetiroCreado={() => cargarDatos()}
         />
       )}
 
@@ -688,7 +688,7 @@ const CajasHome = () => {
           cierreId={gastoCierre.id}
           cierre={gastoCierre}
           onClose={() => setGastoCierre(null)}
-          onGastoCreado={() => {}}
+          onGastoCreado={() => cargarDatos()}
         />
       )}
     </div>
