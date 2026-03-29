@@ -1122,11 +1122,14 @@ const Preparacion = () => {
 
   const [confirmarElimCont, _setConfirmarElimCont] = useState(null) // { idx, tipo, precinto, nombre, codigoEsperado }
   const confirmarElimContRef = useRef(null)
-  const setConfirmarElimCont = (v) => { const val = typeof v === 'function' ? v(confirmarElimContRef.current) : v; confirmarElimContRef.current = val; _setConfirmarElimCont(val); if (!val) setTimeout(() => scanRef.current?.focus(), 150) }
+  const setConfirmarElimCont = (v) => { const val = typeof v === 'function' ? v(confirmarElimContRef.current) : v; confirmarElimContRef.current = val; _setConfirmarElimCont(val); if (!val) { setTecladoManualModal(false); setTimeout(() => scanRef.current?.focus(), 150) } }
 
   const [confirmarMoverACan, _setConfirmarMoverACan] = useState(null) // { idx, nombre, codigoEsperado, codigos }
   const confirmarMoverACanRef = useRef(null)
-  const setConfirmarMoverACan = (v) => { const val = typeof v === 'function' ? v(confirmarMoverACanRef.current) : v; confirmarMoverACanRef.current = val; _setConfirmarMoverACan(val); if (!val) setTimeout(() => scanRef.current?.focus(), 150) }
+  const setConfirmarMoverACan = (v) => { const val = typeof v === 'function' ? v(confirmarMoverACanRef.current) : v; confirmarMoverACanRef.current = val; _setConfirmarMoverACan(val); if (!val) { setTecladoManualModal(false); setTimeout(() => scanRef.current?.focus(), 150) } }
+
+  const [tecladoManualModal, setTecladoManualModal] = useState(false)
+  const [codigoManualModal, setCodigoManualModal] = useState('')
 
   const pedirEliminarContenedor = (idx) => {
     const c = contenedores[idx]
@@ -2343,47 +2346,70 @@ const Preparacion = () => {
                   : 'Escaneá el artículo del bulto para confirmar'
                 }
               </p>
-              <input ref={el => { if (el) el._modalInput = true }} autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
-                value={scanInput}
-                onChange={(e) => {
-                  const val = e.target.value
-                  setScanInput(val)
-                  scanBufferRef.current = val
-                  clearTimeout(scanTimeoutRef.current)
-                  scanTimeoutRef.current = setTimeout(() => {
-                    const codigo = scanBufferRef.current.trim()
-                    scanBufferRef.current = ''
-                    setScanInput('')
-                    if (codigo) handleScanCodigoRef.current?.(codigo)
-                  }, 200)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
+              {!tecladoManualModal && (
+                <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                  value={scanInput}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setScanInput(val)
+                    scanBufferRef.current = val
                     clearTimeout(scanTimeoutRef.current)
-                    const codigo = scanBufferRef.current.trim()
-                    scanBufferRef.current = ''
-                    setScanInput('')
-                    if (codigo) handleScanCodigoRef.current?.(codigo)
-                  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                    scanBufferRef.current += e.key
-                    setScanInput(scanBufferRef.current)
-                  }
-                }}
-              />
+                    scanTimeoutRef.current = setTimeout(() => {
+                      const codigo = scanBufferRef.current.trim()
+                      scanBufferRef.current = ''
+                      setScanInput('')
+                      if (codigo) handleScanCodigoRef.current?.(codigo)
+                    }, 200)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      clearTimeout(scanTimeoutRef.current)
+                      const codigo = scanBufferRef.current.trim()
+                      scanBufferRef.current = ''
+                      setScanInput('')
+                      if (codigo) handleScanCodigoRef.current?.(codigo)
+                    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                      scanBufferRef.current += e.key
+                      setScanInput(scanBufferRef.current)
+                    }
+                  }}
+                />
+              )}
+              {tecladoManualModal && (
+                <div className="flex gap-2 mt-3">
+                  <input autoFocus inputMode="numeric" className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-center text-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-red-300"
+                    value={codigoManualModal} placeholder="Código"
+                    onChange={(e) => setCodigoManualModal(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const codigo = codigoManualModal.trim()
+                        if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                      }
+                    }}
+                  />
+                  <button onClick={() => {
+                    const codigo = codigoManualModal.trim()
+                    if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                  }} className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-medium active:bg-red-600">
+                    OK
+                  </button>
+                </div>
+              )}
               <div className="flex gap-2 mt-4">
                 <button onClick={() => setConfirmarElimCont(null)}
                   className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
                   Cancelar
                 </button>
-                <button onClick={(e) => {
-                  const inp = e.target.closest('.text-center').querySelector('input')
-                  if (inp) { inp.setAttribute('inputMode', 'numeric'); inp.focus(); inp.click() }
-                }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                  </svg>
-                </button>
+                {!tecladoManualModal && (
+                  <button onClick={() => { setTecladoManualModal(true); setCodigoManualModal('') }}
+                    className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2407,47 +2433,70 @@ const Preparacion = () => {
               <p className="text-sm text-gray-500 mt-1">
                 Escaneá el artículo para confirmar
               </p>
-              <input ref={el => { if (el) el._modalInput = true }} autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
-                value={scanInput}
-                onChange={(e) => {
-                  const val = e.target.value
-                  setScanInput(val)
-                  scanBufferRef.current = val
-                  clearTimeout(scanTimeoutRef.current)
-                  scanTimeoutRef.current = setTimeout(() => {
-                    const codigo = scanBufferRef.current.trim()
-                    scanBufferRef.current = ''
-                    setScanInput('')
-                    if (codigo) handleScanCodigoRef.current?.(codigo)
-                  }, 200)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
+              {!tecladoManualModal && (
+                <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                  value={scanInput}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setScanInput(val)
+                    scanBufferRef.current = val
                     clearTimeout(scanTimeoutRef.current)
-                    const codigo = scanBufferRef.current.trim()
-                    scanBufferRef.current = ''
-                    setScanInput('')
-                    if (codigo) handleScanCodigoRef.current?.(codigo)
-                  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                    scanBufferRef.current += e.key
-                    setScanInput(scanBufferRef.current)
-                  }
-                }}
-              />
+                    scanTimeoutRef.current = setTimeout(() => {
+                      const codigo = scanBufferRef.current.trim()
+                      scanBufferRef.current = ''
+                      setScanInput('')
+                      if (codigo) handleScanCodigoRef.current?.(codigo)
+                    }, 200)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      clearTimeout(scanTimeoutRef.current)
+                      const codigo = scanBufferRef.current.trim()
+                      scanBufferRef.current = ''
+                      setScanInput('')
+                      if (codigo) handleScanCodigoRef.current?.(codigo)
+                    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                      scanBufferRef.current += e.key
+                      setScanInput(scanBufferRef.current)
+                    }
+                  }}
+                />
+              )}
+              {tecladoManualModal && (
+                <div className="flex gap-2 mt-3">
+                  <input autoFocus inputMode="numeric" className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-center text-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    value={codigoManualModal} placeholder="Código"
+                    onChange={(e) => setCodigoManualModal(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const codigo = codigoManualModal.trim()
+                        if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                      }
+                    }}
+                  />
+                  <button onClick={() => {
+                    const codigo = codigoManualModal.trim()
+                    if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                  }} className="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-medium active:bg-amber-600">
+                    OK
+                  </button>
+                </div>
+              )}
               <div className="flex gap-2 mt-4">
                 <button onClick={() => setConfirmarMoverACan(null)}
                   className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
                   Cancelar
                 </button>
-                <button onClick={(e) => {
-                  const inp = e.target.closest('.text-center').querySelector('input')
-                  if (inp) { inp.setAttribute('inputMode', 'numeric'); inp.focus(); inp.click() }
-                }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                  </svg>
-                </button>
+                {!tecladoManualModal && (
+                  <button onClick={() => { setTecladoManualModal(true); setCodigoManualModal('') }}
+                    className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
           </div>
