@@ -305,27 +305,6 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Banner verificar para gestor/admin */}
-        {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center space-y-3">
-            <p className="text-sm text-yellow-800">
-              Este cierre está pendiente de verificación.
-            </p>
-            <button
-              onClick={async () => {
-                try {
-                  await api.post(`/api/cierres-pos/${cierre.id}/verificar`)
-                  setCierre(prev => ({ ...prev, estado: 'pendiente_agente' }))
-                } catch (err) {
-                  alert(err.response?.data?.error || 'Error al verificar')
-                }
-              }}
-              className="inline-block bg-teal-600 hover:bg-teal-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm transition-colors"
-            >
-              Marcar como verificado
-            </button>
-          </div>
-        )}
 
         {/* Seccion 2: Comparativos de cambio — dos tablas lado a lado (no aplica a delivery) */}
         {!esBlind && cierre.estado !== 'abierta' && cierre.tipo !== 'delivery' && (
