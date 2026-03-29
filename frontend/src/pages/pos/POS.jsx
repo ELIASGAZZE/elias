@@ -6021,7 +6021,22 @@ const POS = () => {
           cliente={cliente}
           promosAplicadas={promosAplicadas}
           onConfirmar={handleVentaExitosa}
-          onCerrar={() => setMostrarCobrar(false)}
+          onCerrar={() => {
+            // Log cobro cancelado (F11 → Escape)
+            if (carrito.length > 0) {
+              api.post('/api/auditoria/cancelacion', {
+                motivo: 'Cobro cancelado',
+                items: carrito.map(i => ({ articulo_id: i.articulo.id, codigo: i.articulo.codigo, nombre: i.articulo.nombre, cantidad: i.cantidad, precio: i.precioOverride ?? i.articulo.precio })),
+                subtotal,
+                total,
+                cliente_nombre: cliente?.nombre || null,
+                caja_id: terminalConfig?.caja_id || null,
+                sucursal_id: terminalConfig?.sucursal_id || null,
+                cierre_id: cierreActivo?.id || null,
+              }).catch(err => console.error('Error registrando cobro cancelado:', err))
+            }
+            setMostrarCobrar(false)
+          }}
           isOnline={isOnline}
           onVentaOffline={actualizarPendientes}
           pedidoPosId={pedidoEnProceso?.id || null}

@@ -73,6 +73,8 @@ const DetalleCierrePos = () => {
   const [retiros, setRetiros] = useState([])
   const [gastos, setGastos] = useState([])
   const [cambiosPrecio, setCambiosPrecio] = useState([])
+  const [cancelaciones, setCancelaciones] = useState([])
+  const [eliminaciones, setEliminaciones] = useState([])
   const [controlandoGasto, setControlandoGasto] = useState(null)
   const [retiroEmpleadoExpandido, setRetiroEmpleadoExpandido] = useState(null)
   const [cuponesExpanded, setCuponesExpanded] = useState(false)
@@ -127,11 +129,21 @@ const DetalleCierrePos = () => {
           )
         }
 
-        // Cambios de precio (solo admin)
+        // Cambios de precio, cancelaciones y eliminaciones (solo admin)
         if (esAdmin) {
           promises.push(
             api.get(`/api/cierres-pos/${id}/cambios-precio`)
               .then(res => setCambiosPrecio(res.data || []))
+              .catch(() => {})
+          )
+          promises.push(
+            api.get(`/api/cierres-pos/${id}/cancelaciones`)
+              .then(res => setCancelaciones(res.data || []))
+              .catch(() => {})
+          )
+          promises.push(
+            api.get(`/api/cierres-pos/${id}/eliminaciones`)
+              .then(res => setEliminaciones(res.data || []))
               .catch(() => {})
           )
         }
@@ -754,87 +766,6 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Retiros mercadería empleados */}
-        {esAdmin && posVentas?.retiro_empleados?.cantidad > 0 && (
-          <div className="bg-white border border-orange-200 rounded-xl p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-orange-800">
-              Retiros mercadería empleados ({posVentas.retiro_empleados.cantidad})
-            </h3>
-            <div className="space-y-2">
-              {posVentas.retiro_empleados.detalle.map(re => {
-                const expandido = retiroEmpleadoExpandido === re.id
-                return (
-                  <div key={re.id} className="border border-orange-100 rounded-lg overflow-hidden">
-                    <button
-                      onClick={() => setRetiroEmpleadoExpandido(expandido ? null : re.id)}
-                      className="w-full flex items-center justify-between p-3 hover:bg-orange-50 transition-colors text-left"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-medium text-gray-800">{re.empleado_nombre}</span>
-                        <span className="text-xs text-gray-400">
-                          {re.numero_venta ? `Venta #${re.numero_venta}` : ''} · {new Date(re.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-orange-700">{formatMonto(re.total)}</span>
-                        <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandido ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </div>
-                    </button>
-                    {expandido && re.items?.length > 0 && (() => {
-                      return (
-                        <div className="border-t border-orange-100 p-3 bg-orange-50/50">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-gray-500 border-b border-orange-100">
-                                <th className="text-left py-1 font-medium">Artículo</th>
-                                <th className="text-right py-1 font-medium w-16">Cant.</th>
-                                <th className="text-right py-1 font-medium w-24">Precio</th>
-                                <th className="text-right py-1 font-medium w-24">Subtotal</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {re.items.map((item, idx) => {
-                                const precioFinal = parseFloat(item.precio_final || item.precio_unitario || 0)
-                                const precioOriginal = parseFloat(item.precio_original || precioFinal)
-                                const cantidad = parseFloat(item.cantidad || 1)
-                                const descPct = item.descuento_pct || (precioOriginal > precioFinal ? Math.round((1 - precioFinal / precioOriginal) * 100) : 0)
-                                return (
-                                  <tr key={idx} className="border-b border-orange-50">
-                                    <td className="py-1.5 text-gray-700">
-                                      <div>
-                                        <span className="font-medium">{item.nombre}</span>
-                                        {item.codigo && <span className="text-gray-400 ml-1">({item.codigo})</span>}
-                                      </div>
-                                      {descPct > 0 && (
-                                        <div className="text-orange-600 text-[10px]">
-                                          Desc. empleado -{descPct}% (orig. {formatMonto(precioOriginal)})
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="text-right text-gray-600">{cantidad}</td>
-                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal)}</td>
-                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal * cantidad)}</td>
-                                  </tr>
-                                )
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                )
-              })}
-            </div>
-            <div className="border-t border-orange-200 pt-2 flex justify-between text-sm font-medium">
-              <span className="text-orange-800">Total retiros empleados</span>
-              <span className="text-orange-700">{formatMonto(posVentas.retiro_empleados.total)}</span>
-            </div>
-          </div>
-        )}
-
         {/* Cupones Mercado Pago */}
         {esAdmin && posVentas?.cupones_mp?.cantidad > 0 && (() => {
           const mp = posVentas.cupones_mp
@@ -925,6 +856,87 @@ const DetalleCierrePos = () => {
             </div>
           )
         })()}
+
+        {/* Retiros mercadería empleados */}
+        {esAdmin && posVentas?.retiro_empleados?.cantidad > 0 && (
+          <div className="bg-white border border-orange-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-orange-800">
+              Retiros mercadería empleados ({posVentas.retiro_empleados.cantidad})
+            </h3>
+            <div className="space-y-2">
+              {posVentas.retiro_empleados.detalle.map(re => {
+                const expandido = retiroEmpleadoExpandido === re.id
+                return (
+                  <div key={re.id} className="border border-orange-100 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setRetiroEmpleadoExpandido(expandido ? null : re.id)}
+                      className="w-full flex items-center justify-between p-3 hover:bg-orange-50 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-gray-800">{re.empleado_nombre}</span>
+                        <span className="text-xs text-gray-400">
+                          {re.numero_venta ? `Venta #${re.numero_venta}` : ''} · {new Date(re.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-orange-700">{formatMonto(re.total)}</span>
+                        <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandido ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </button>
+                    {expandido && re.items?.length > 0 && (() => {
+                      return (
+                        <div className="border-t border-orange-100 p-3 bg-orange-50/50">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-gray-500 border-b border-orange-100">
+                                <th className="text-left py-1 font-medium">Artículo</th>
+                                <th className="text-right py-1 font-medium w-16">Cant.</th>
+                                <th className="text-right py-1 font-medium w-24">Precio</th>
+                                <th className="text-right py-1 font-medium w-24">Subtotal</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {re.items.map((item, idx) => {
+                                const precioFinal = parseFloat(item.precio_final || item.precio_unitario || 0)
+                                const precioOriginal = parseFloat(item.precio_original || precioFinal)
+                                const cantidad = parseFloat(item.cantidad || 1)
+                                const descPct = item.descuento_pct || (precioOriginal > precioFinal ? Math.round((1 - precioFinal / precioOriginal) * 100) : 0)
+                                return (
+                                  <tr key={idx} className="border-b border-orange-50">
+                                    <td className="py-1.5 text-gray-700">
+                                      <div>
+                                        <span className="font-medium">{item.nombre}</span>
+                                        {item.codigo && <span className="text-gray-400 ml-1">({item.codigo})</span>}
+                                      </div>
+                                      {descPct > 0 && (
+                                        <div className="text-orange-600 text-[10px]">
+                                          Desc. empleado -{descPct}% (orig. {formatMonto(precioOriginal)})
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="text-right text-gray-600">{cantidad}</td>
+                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal)}</td>
+                                    <td className="text-right text-gray-700 font-medium">{formatMonto(precioFinal * cantidad)}</td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="border-t border-orange-200 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-orange-800">Total retiros empleados</span>
+              <span className="text-orange-700">{formatMonto(posVentas.retiro_empleados.total)}</span>
+            </div>
+          </div>
+        )}
 
         {/* Gastos durante el turno */}
         {gastos.length > 0 && (
@@ -1045,6 +1057,185 @@ const DetalleCierrePos = () => {
             </div>
           </div>
         )}
+
+        {/* Tickets cancelados y cobros cancelados (solo admin) */}
+        {esAdmin && cancelaciones.length > 0 && (() => {
+          const cobrosCancelados = cancelaciones.filter(c => c.motivo === 'Cobro cancelado')
+          const ticketsCancelados = cancelaciones.filter(c => c.motivo !== 'Cobro cancelado')
+          const totalCobros = cobrosCancelados.reduce((s, c) => s + parseFloat(c.total || 0), 0)
+          const totalTickets = ticketsCancelados.reduce((s, c) => s + parseFloat(c.total || 0), 0)
+
+          const renderCancelacion = (canc) => (
+            <div key={canc.id} className="border border-red-100 rounded-lg p-2.5 bg-white/60">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-medium text-gray-700 truncate">{canc.cajero_nombre}</span>
+                  {canc.cliente_nombre && <span className="text-[10px] text-gray-400 truncate">· {canc.cliente_nombre}</span>}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs font-bold text-red-700">{formatMonto(canc.total)}</span>
+                  <span className="text-xs text-gray-400">{formatHora(canc.created_at)}</span>
+                </div>
+              </div>
+              {Array.isArray(canc.items) && canc.items.length > 0 && (
+                <div className="space-y-0.5">
+                  {canc.items.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="truncate flex-1 min-w-0 text-gray-600">
+                        {item.nombre || item.articulo_nombre || 'Artículo'}
+                        {parseFloat(item.cantidad || 1) !== 1 && ` × ${item.cantidad}`}
+                      </span>
+                      <span className="flex-shrink-0 ml-2 text-gray-700">
+                        {formatMonto(parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+
+          return (
+            <>
+              {/* Cobros cancelados (F11 → Escape) */}
+              {cobrosCancelados.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-red-800 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                    Cobros cancelados ({cobrosCancelados.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div className="bg-white border border-red-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Cobros abortados</span>
+                      <span className="font-bold text-red-700">{cobrosCancelados.length}</span>
+                    </div>
+                    <div className="bg-white border border-red-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Importe total</span>
+                      <span className="font-bold text-red-600">{formatMonto(totalCobros)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {cobrosCancelados.map(renderCancelacion)}
+                  </div>
+                </div>
+              )}
+
+              {/* Tickets cancelados (F9) */}
+              {ticketsCancelados.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-red-800 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    Tickets cancelados ({ticketsCancelados.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div className="bg-white border border-red-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Total tickets</span>
+                      <span className="font-bold text-red-700">{ticketsCancelados.length}</span>
+                    </div>
+                    <div className="bg-white border border-red-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Pérdida teórica</span>
+                      <span className="font-bold text-red-600">{formatMonto(totalTickets)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {ticketsCancelados.map(renderCancelacion)}
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
+
+        {/* Artículos eliminados de tickets (solo admin) */}
+        {esAdmin && eliminaciones.length > 0 && (() => {
+          // Flatten all items with metadata
+          const allItems = eliminaciones.flatMap(e =>
+            (Array.isArray(e.items) ? e.items : []).map(item => ({
+              ...item,
+              usuario: e.usuario_nombre,
+              fecha: e.fecha || e.created_at,
+              elimId: e.id,
+            }))
+          )
+          const totalImporte = allItems.reduce((s, i) => s + parseFloat(i.precio || i.precio_unitario || 0) * parseFloat(i.cantidad || 1), 0)
+
+          // Group by user + time proximity (2 min)
+          const grupos = []
+          const sorted = [...allItems].sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+          for (const item of sorted) {
+            const t = new Date(item.fecha).getTime()
+            const last = grupos[grupos.length - 1]
+            if (last && last.usuario === item.usuario && t - last.lastTime < 120000) {
+              last.items.push(item)
+              last.lastTime = t
+              last.total += parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1)
+            } else {
+              grupos.push({
+                usuario: item.usuario,
+                firstTime: t,
+                lastTime: t,
+                items: [item],
+                total: parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1),
+              })
+            }
+          }
+
+          return (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Artículos eliminados de tickets ({allItems.length})
+              </h3>
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div className="bg-white border border-amber-200 rounded-lg p-2">
+                  <span className="text-xs text-gray-500 block">Total registros</span>
+                  <span className="font-bold text-amber-700">{allItems.length}</span>
+                </div>
+                <div className="bg-white border border-amber-200 rounded-lg p-2">
+                  <span className="text-xs text-gray-500 block">Importe eliminado</span>
+                  <span className="font-bold text-amber-600">{formatMonto(totalImporte)}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {grupos.map((g, gIdx) => (
+                  <div key={gIdx} className="border border-amber-100 rounded-lg p-2.5 bg-white/60">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-medium text-gray-700">{g.usuario}</span>
+                        {g.items.length >= 3 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">Posible ticket cancelado</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{formatHora(new Date(g.firstTime).toISOString())}</span>
+                    </div>
+                    {g.items.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                        <span className="truncate flex-1 min-w-0 text-gray-600">
+                          {item.nombre || item.articulo_nombre || 'Artículo'}
+                          {parseFloat(item.cantidad || 1) !== 1 && ` × ${item.cantidad}`}
+                        </span>
+                        <span className="flex-shrink-0 ml-2 text-gray-700">
+                          {formatMonto(parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1))}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex justify-end mt-1 pt-1 border-t border-amber-100">
+                      <span className="text-xs font-bold text-amber-700">
+                        {g.items.length >= 3 ? 'Venta posible: ' : ''}{formatMonto(g.total)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Botones de accion */}
         <div className="flex gap-3">
