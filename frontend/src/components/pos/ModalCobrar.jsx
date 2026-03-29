@@ -198,9 +198,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         setMpPaymentId(payId)
         try {
           const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
-          const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
-            : pd.payment_type_id === 'debit_card' ? 'Débito'
-            : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
+          const tipoPago = pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
           setPagos(prev => [...prev, {
             tipo: tipoPago,
             monto: montoACobrar,
@@ -393,9 +391,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               setMpPaymentId(payId)
               try {
                 const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
-                const tipoPago = pd.payment_type_id === 'account_money' ? 'QR MP'
-                  : pd.payment_type_id === 'credit_card' ? 'Crédito'
-                  : pd.payment_type_id === 'debit_card' ? 'Débito' : 'QR MP'
+                const tipoPago = pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
                 setPagos(prev => [...prev, {
                   tipo: tipoPago,
                   monto: montoACobrar,
@@ -441,9 +437,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           setMpPaymentId(payId)
           try {
             const { data: pd } = await api.get(`/api/mp-point/payment/${payId}`)
-            const tipoPago = pd.payment_type_id === 'credit_card' ? 'Crédito'
-              : pd.payment_type_id === 'debit_card' ? 'Débito'
-              : pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
+            const tipoPago = pd.payment_type_id === 'account_money' ? 'QR MP' : 'Posnet MP'
             setPagos(prev => [...prev, {
               tipo: tipoPago,
               monto: monto,

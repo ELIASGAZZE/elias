@@ -111,7 +111,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
               problema++
             } else if (p.tipo === 'QR MP') {
               qr++
-            } else if (['Crédito', 'Débito', 'Posnet MP'].includes(p.tipo)) {
+            } else if (p.tipo === 'Posnet MP') {
               posnet++
             }
           })
