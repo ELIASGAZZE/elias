@@ -404,10 +404,51 @@ export default function GiftCardsPOS({ embebido }) {
                   <span className="block text-sm text-gray-700">{cardSeleccionada.comprador_nombre}</span>
                 </div>
               )}
-              <div>
-                <span className="text-xs text-gray-500">Creada</span>
-                <span className="block text-sm text-gray-700">{new Date(cardSeleccionada.created_at).toLocaleString('es-AR')}</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="text-xs text-gray-500">Creada</span>
+                  <span className="block text-sm text-gray-700">{new Date(cardSeleccionada.created_at).toLocaleString('es-AR')}</span>
+                </div>
+                {cardSeleccionada.cajero_nombre && (
+                  <div>
+                    <span className="text-xs text-gray-500">Cajero</span>
+                    <span className="block text-sm text-gray-700">{cardSeleccionada.cajero_nombre}</span>
+                  </div>
+                )}
               </div>
+              {(cardSeleccionada.venta_activacion || cardSeleccionada.caja_nombre || (Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0)) && (
+                <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 space-y-1.5">
+                  <span className="text-xs font-semibold text-violet-700 uppercase">Datos de activación</span>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    {cardSeleccionada.venta_activacion?.numero_venta && (
+                      <div>
+                        <span className="text-[10px] text-gray-500">Nro. venta</span>
+                        <span className="block text-sm font-medium text-gray-800">#{cardSeleccionada.venta_activacion.numero_venta}</span>
+                      </div>
+                    )}
+                    {cardSeleccionada.caja_nombre && (
+                      <div>
+                        <span className="text-[10px] text-gray-500">Caja</span>
+                        <span className="block text-sm text-gray-700">{cardSeleccionada.caja_nombre}</span>
+                      </div>
+                    )}
+                    {cardSeleccionada.venta_activacion?.sucursal_nombre && (
+                      <div>
+                        <span className="text-[10px] text-gray-500">Sucursal</span>
+                        <span className="block text-sm text-gray-700">{cardSeleccionada.venta_activacion.sucursal_nombre}</span>
+                      </div>
+                    )}
+                    {Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0 && (
+                      <div>
+                        <span className="text-[10px] text-gray-500">Forma de cobro</span>
+                        <span className="block text-sm text-gray-700">
+                          {cardSeleccionada.pagos.map(p => p.tipo || p.nombre).join(', ')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Movimientos */}
@@ -422,10 +463,16 @@ export default function GiftCardsPOS({ embebido }) {
                   {movimientos.map(m => (
                     <div key={m.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
                       <div>
-                        <span className="block text-sm font-medium text-gray-700">{m.motivo}</span>
-                        <span className="block text-xs text-gray-400">{new Date(m.created_at).toLocaleString('es-AR')}</span>
+                        <span className="block text-sm font-medium text-gray-700">
+                          {m.motivo}
+                          {m.numero_venta ? <span className="text-gray-400 font-normal"> · Venta #{m.numero_venta}</span> : ''}
+                        </span>
+                        <span className="block text-xs text-gray-400">
+                          {new Date(m.created_at).toLocaleString('es-AR')}
+                          {m.venta_cajero ? ` · ${m.venta_cajero}` : ''}
+                        </span>
                       </div>
-                      <span className={`text-sm font-bold ${parseFloat(m.monto) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <span className={`text-sm font-bold flex-shrink-0 ml-2 ${parseFloat(m.monto) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                         {parseFloat(m.monto) >= 0 ? '+' : ''}{formatPrecio(parseFloat(m.monto))}
                       </span>
                     </div>

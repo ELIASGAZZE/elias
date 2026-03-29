@@ -69,13 +69,86 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
     if (error) throw error
     if (!giftCard) return res.status(404).json({ error: 'Gift card no encontrada' })
 
+    // Obtener nombre del cajero que activó
+    let cajero_nombre = null
+    if (giftCard.created_by) {
+      const { data: perfil } = await supabase
+        .from('perfiles')
+        .select('nombre')
+        .eq('id', giftCard.created_by)
+        .single()
+      if (perfil) cajero_nombre = perfil.nombre
+    }
+
+    // Obtener venta de activación (primer movimiento con motivo Activación)
+    let venta_activacion = null
+    const { data: movActivacion } = await supabase
+      .from('movimientos_gift_card')
+      .select('venta_pos_id')
+      .eq('gift_card_id', giftCard.id)
+      .eq('motivo', 'Activación')
+      .not('venta_pos_id', 'is', null)
+      .limit(1)
+      .maybeSingle()
+
+    if (movActivacion?.venta_pos_id) {
+      const { data: venta } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, cajero_nombre, sucursal_id, created_at')
+        .eq('id', movActivacion.venta_pos_id)
+        .single()
+      if (venta) {
+        // Obtener nombre de sucursal
+        const { data: suc } = await supabase
+          .from('sucursales')
+          .select('nombre')
+          .eq('id', venta.sucursal_id)
+          .single()
+        venta_activacion = { ...venta, sucursal_nombre: suc?.nombre || null }
+      }
+    }
+
+    // Obtener nombre de caja si existe caja_id en la venta
+    let caja_nombre = null
+    if (venta_activacion) {
+      const { data: ventaFull } = await supabase
+        .from('ventas_pos')
+        .select('caja_id')
+        .eq('id', venta_activacion.id)
+        .single()
+      if (ventaFull?.caja_id) {
+        const { data: caja } = await supabase
+          .from('cajas')
+          .select('nombre')
+          .eq('id', ventaFull.caja_id)
+          .single()
+        if (caja) caja_nombre = caja.nombre
+      }
+    }
+
     const { data: movimientos } = await supabase
       .from('movimientos_gift_card')
       .select('*')
       .eq('gift_card_id', giftCard.id)
       .order('created_at', { ascending: false })
 
-    res.json({ gift_card: giftCard, movimientos: movimientos || [] })
+    // Enriquecer movimientos con número de venta
+    const movEnriquecidos = await Promise.all((movimientos || []).map(async (m) => {
+      if (m.venta_pos_id) {
+        const { data: v } = await supabase
+          .from('ventas_pos')
+          .select('numero_venta, cajero_nombre')
+          .eq('id', m.venta_pos_id)
+          .single()
+        return { ...m, numero_venta: v?.numero_venta, venta_cajero: v?.cajero_nombre }
+      }
+      return m
+    }))
+
+    res.json({
+      gift_card: { ...giftCard, cajero_nombre, venta_activacion, caja_nombre },
+      movimientos: movEnriquecidos,
+    })
   } catch (err) {
     console.error('[GiftCards] Error al consultar:', err.message)
     res.status(500).json({ error: 'Error al consultar gift card' })
