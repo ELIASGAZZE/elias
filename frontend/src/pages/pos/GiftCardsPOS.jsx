@@ -412,12 +412,6 @@ export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo })
                   <span className="text-xs text-gray-500">Creada</span>
                   <span className="block text-sm text-gray-700">{new Date(cardSeleccionada.created_at).toLocaleString('es-AR')}</span>
                 </div>
-                {cardSeleccionada.cajero_nombre && (
-                  <div>
-                    <span className="text-xs text-gray-500">Cajero</span>
-                    <span className="block text-sm text-gray-700">{cardSeleccionada.cajero_nombre}</span>
-                  </div>
-                )}
               </div>
               {(cardSeleccionada.venta_activacion || cardSeleccionada.caja_nombre || cardSeleccionada.sucursal_nombre || (Array.isArray(cardSeleccionada.pagos) && cardSeleccionada.pagos.length > 0)) && (
                 <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 space-y-1.5">
