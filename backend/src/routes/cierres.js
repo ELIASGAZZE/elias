@@ -1099,10 +1099,6 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
       return res.status(400).json({ error: 'Este cierre no está pendiente de verificación' })
     }
 
-    if (cierre.cajero_id === req.perfil.id) {
-      return res.status(403).json({ error: 'No podés verificar tu propio cierre' })
-    }
-
     // Gestor: verificar misma sucursal (via caja)
     if (req.perfil.rol === 'gestor' && cierre.caja?.sucursal_id !== req.perfil.sucursal_id) {
       return res.status(403).json({ error: 'No tenés acceso a esta sucursal' })
