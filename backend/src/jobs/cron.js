@@ -101,8 +101,9 @@ function iniciarCronJobs() {
     })
   })
 
-  // Retry ventas pendientes de Centum: cada 1 minuto (cola secuencial con lock)
-  cron.schedule('* * * * *', async () => {
+  // Retry ventas pendientes de Centum: cada 3 minutos (cola secuencial con lock)
+  // Frecuencia baja intencional: prioridad seguridad > velocidad (anti-duplicación)
+  cron.schedule('*/3 * * * *', async () => {
     await withLock('syncVentasCentum', async () => {
       try {
         const resultado = await retrySyncVentasCentum()
@@ -194,7 +195,7 @@ function iniciarCronJobs() {
   console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
   console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
   console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
-  console.log('[CRON] Retry ventas pendientes Centum: cada 1 minuto (cola secuencial)')
+  console.log('[CRON] Retry ventas pendientes Centum: cada 3 minutos (cola secuencial, anti-duplicación)')
   console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
   console.log('[CRON] Retry emails pendientes: cada 10 minutos (offset 7)')
   console.log('[CRON] Stock multi-sucursal: cada 30 minutos')

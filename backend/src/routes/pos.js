@@ -5,7 +5,7 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
 const { getVentasCentumByFecha, getResumenVentasCentumBI } = require('../config/centum')
-const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
+const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // GET /api/pos/articulos
@@ -1852,10 +1852,16 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
 
       ventasCreadas.push(venta)
 
-      // Registrar en Centum ERP (async)
+      // Registrar en Centum ERP (async) — con pre-write de intentos para anti-duplicación
       if (venta && cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
         ;(async () => {
           try {
+            // Pre-write: registrar intento ANTES del POST (si crashea después, el cron verificará en BI)
+            await supabase.from('ventas_pos').update({
+              centum_intentos: 1,
+              centum_ultimo_intento: new Date().toISOString(),
+            }).eq('id', venta.id)
+
             const resultado = await registrarVentaPOSEnCentum(venta, {
               sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
               puntoVenta: cajaData.punto_venta_centum,
@@ -1878,7 +1884,11 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
           } catch (err) {
             console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
             try {
-              await supabase.from('ventas_pos').update({ centum_error: err.message }).eq('id', venta.id)
+              // Marcar UNVERIFIED — el cron verificará en BI antes de reintentar
+              await supabase.from('ventas_pos').update({
+                centum_error: `UNVERIFIED|delivery: ${(err.message || '').slice(0, 150)}`,
+                centum_ultimo_intento: new Date().toISOString(),
+              }).eq('id', venta.id)
             } catch (e) {
               console.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message)
             }
@@ -3084,7 +3094,10 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             id_venta_centum: centumNC.IdVenta || null,
             centum_comprobante: comprobanteNC,
             centum_sync: true,
+            centum_error: null,
             numero_cae: centumNC.CAE || null,
+            centum_intentos: 1,
+            centum_ultimo_intento: new Date().toISOString(),
           }).eq('id', notaCredito.id)
           centumNCOk = true
           console.log(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
@@ -3092,12 +3105,20 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
         } catch (centumErr) {
           console.error('[POS] Error NC Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
-            centum_error: centumErr.message,
+            centum_error: `UNVERIFIED|NC corrección: ${(centumErr.message || '').slice(0, 150)}`,
+            centum_intentos: 1,
+            centum_ultimo_intento: new Date().toISOString(),
           }).eq('id', notaCredito.id)
         }
 
         // 2. Nueva FCV al cliente correcto
         try {
+          // Pre-write: registrar intento antes del POST
+          await supabase.from('ventas_pos').update({
+            centum_intentos: 1,
+            centum_ultimo_intento: new Date().toISOString(),
+          }).eq('id', nuevaVenta.id)
+
           let condicionIvaNuevo = 'CF'
           if (id_cliente_centum) {
             const { data: cli } = await supabase
@@ -3124,6 +3145,7 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             total: parseFloat(venta.total) || 0,
             condicionIva: condicionIvaNuevo,
             operadorMovilUser: operadorMovilUserNuevo,
+            ventaPosId: nuevaVenta.id,
           })
 
           const numDocFCV = centumFCV.NumeroDocumento
@@ -3134,6 +3156,7 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             id_venta_centum: centumFCV.IdVenta || null,
             centum_comprobante: comprobanteFCV,
             centum_sync: true,
+            centum_error: null,
             numero_cae: centumFCV.CAE || null,
           }).eq('id', nuevaVenta.id)
           centumFCVOk = true
@@ -3142,7 +3165,8 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
         } catch (centumErr) {
           console.error('[POS] Error FCV Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
-            centum_error: centumErr.message,
+            centum_error: `UNVERIFIED|corrección cliente: ${(centumErr.message || '').slice(0, 150)}`,
+            centum_ultimo_intento: new Date().toISOString(),
           }).eq('id', nuevaVenta.id)
         }
       }
@@ -3413,10 +3437,10 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
   try {
     const ventaId = req.params.id
 
-    // Obtener la venta
+    // Obtener la venta (incluye columnas anti-duplicación)
     const { data: venta, error } = await supabase
       .from('ventas_pos')
-      .select('*')
+      .select('*, centum_intentos, centum_ultimo_intento')
       .eq('id', ventaId)
       .single()
 
@@ -3479,30 +3503,40 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
       ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (centumOperadorEmpresa || null)
 
-    // --- Idempotencia: verificar si la venta ya existe en Centum antes de crear otra ---
+    // --- Anti-duplicación: verificar en BI antes de crear ---
     if (venta.tipo !== 'nota_credito') {
-      const existente = await buscarVentaExistenteEnCentum(ventaId, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
-      if (existente) {
-        console.log(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${existente.IdVenta}). Vinculando sin crear duplicado.`)
-        const numDoc = existente.NumeroDocumento
+      const check = await verificarEnBI(ventaId, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+
+      if (check.found) {
+        console.log(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${check.data.IdVenta}). Vinculando sin crear duplicado.`)
+        const numDoc = check.data.NumeroDocumento
         const comprobante = numDoc
           ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
           : null
         await supabase
           .from('ventas_pos')
           .update({
-            id_venta_centum: existente.IdVenta || null,
+            id_venta_centum: check.data.IdVenta || null,
             centum_comprobante: comprobante,
             centum_sync: true,
             centum_error: null,
-            numero_cae: existente.CAE || null,
+            numero_cae: check.data.CAE || null,
           })
           .eq('id', ventaId)
-        console.log(`[Centum POS] Reenvío venta ${ventaId} vinculada a existente: IdVenta=${existente.IdVenta}, Comprobante=${comprobante}`)
-        const cae = await fetchAndSaveCAE(ventaId, existente.IdVenta)
-        return res.json({ ok: true, comprobante, idVentaCentum: existente.IdVenta, cae, reutilizada: true })
+        const cae = await fetchAndSaveCAE(ventaId, check.data.IdVenta)
+        return res.json({ ok: true, comprobante, idVentaCentum: check.data.IdVenta, cae, reutilizada: true })
+      }
+
+      if (check.biDown) {
+        return res.status(503).json({ error: `Centum BI no disponible. No se puede verificar si la venta ya existe. Reintente en unos minutos. (${check.error})` })
       }
     }
+
+    // Pre-write: incrementar intentos antes del POST
+    await supabase.from('ventas_pos').update({
+      centum_intentos: (venta.centum_intentos || 0) + 1,
+      centum_ultimo_intento: new Date().toISOString(),
+    }).eq('id', ventaId)
 
     let resultado
     if (venta.tipo === 'nota_credito') {
@@ -3627,9 +3661,13 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
     console.error(`[Centum POS] Error reenvío venta ${req.params.id}:`, err.message)
 
     try {
+      // Marcar como UNVERIFIED — el cron verificará en BI antes de reintentar
       await supabase
         .from('ventas_pos')
-        .update({ centum_error: err.message })
+        .update({
+          centum_error: `UNVERIFIED|reenvío manual: ${(err.message || '').slice(0, 150)}`,
+          centum_ultimo_intento: new Date().toISOString(),
+        })
         .eq('id', req.params.id)
     } catch (_) { /* ignorar error al guardar */ }
 

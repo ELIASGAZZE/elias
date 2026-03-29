@@ -275,6 +275,14 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             id_cliente_centum: null,
           }
 
+          // Pre-write: registrar intento antes del POST
+          if (ventaPosId) {
+            await supabase.from('ventas_pos').update({
+              centum_intentos: 1,
+              centum_ultimo_intento: new Date().toISOString(),
+            }).eq('id', ventaPosId)
+          }
+
           const resultado = await registrarVentaPOSEnCentum(ventaLocal, {
             sucursalFisicaId,
             puntoVenta,
@@ -311,7 +319,10 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           console.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
           if (ventaPosId) {
             try {
-              await supabase.from('ventas_pos').update({ centum_error: centumErr.message }).eq('id', ventaPosId)
+              await supabase.from('ventas_pos').update({
+                centum_error: `UNVERIFIED|empleado: ${(centumErr.message || '').slice(0, 150)}`,
+                centum_ultimo_intento: new Date().toISOString(),
+              }).eq('id', ventaPosId)
             } catch (e) {
               console.error(`[CuentaCorrienteEmpleados] No se pudo guardar centum_error para venta ${ventaPosId}:`, e.message)
             }

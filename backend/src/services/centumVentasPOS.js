@@ -11,6 +11,17 @@ const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 // Fallback: operador de env var (para backwards compat)
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
+// ============ ANTI-DUPLICACIÓN: constantes ============
+const MAX_INTENTOS = 3
+const COOLDOWN_MS = {
+  1: 10 * 60 * 1000,  // Después del 1er intento: 10 min
+  2: 30 * 60 * 1000,  // Después del 2do intento: 30 min
+}
+// Prefijos para centum_error que codifican el estado
+const PREFIX_UNVERIFIED = 'UNVERIFIED|'
+const PREFIX_DEFINITIVE = 'DEFINITIVE|'
+const PREFIX_MAX_RETRIES = 'MAX_RETRIES|'
+
 // Redondear cantidad para evitar errores de punto flotante (ej 3.001 → 3)
 // Redondea a 3 decimales, y si queda a menos de 0.005 de un entero, redondea al entero
 function redondearCantidad(cant) {
@@ -619,14 +630,49 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
   if (!ventaPosId || !total || total <= 0) return null
 
   try {
-    // Buscar en Centum BI (SQL Server) si ya existe una venta con mismo total, sucursal y PV reciente
-    // Esto detecta duplicados cuando el POST a Centum creó la venta pero la respuesta falló
+    // Buscar en Centum BI (SQL Server) si ya existe una venta que coincida
+    // Prioridad 1: buscar por ObservacionInterna (UUID exacto de la venta POS)
+    // Prioridad 2: buscar por total aproximado + sucursal + fecha
     const { getPool } = require('../config/centum')
     const sql = require('mssql')
     const db = await getPool()
 
-    // Buscar ventas de hoy con mismo total y sucursal, que NO estén ya vinculadas a una venta POS
     const hoy = new Date().toISOString().split('T')[0]
+
+    // Intento 1: Buscar por ObservacionInterna (match exacto por UUID — el más confiable)
+    try {
+      const obsResult = await db.request()
+        .input('obs', sql.VarChar, `POS:${ventaPosId}`)
+        .input('fecha', sql.VarChar, hoy)
+        .query(`
+          SELECT TOP 1 VentaID, NumeroDocumento, Total, FechaCreacion
+          FROM Ventas_VIEW
+          WHERE ObservacionInterna = @obs
+            AND FechaDocumento >= @fecha
+            AND Anulado = 0
+        `)
+      if (obsResult.recordset.length > 0) {
+        const row = obsResult.recordset[0]
+        console.log(`[Centum POS] Venta encontrada por ObservacionInterna POS:${ventaPosId} → VentaID=${row.VentaID}`)
+        const numDocStr = (row.NumeroDocumento || '').trim()
+        const numDocMatch = numDocStr.match(/^([A-Z])(\d+)-(\d+)$/)
+        return {
+          IdVenta: row.VentaID,
+          NumeroDocumento: numDocMatch ? {
+            LetraDocumento: numDocMatch[1],
+            PuntoVenta: parseInt(numDocMatch[2]),
+            Numero: parseInt(numDocMatch[3]),
+          } : null,
+          Total: row.Total,
+          CAE: null,
+        }
+      }
+    } catch (obsErr) {
+      // Si Ventas_VIEW no tiene ObservacionInterna, el query falla silenciosamente
+      console.log(`[Centum POS] ObservacionInterna no disponible en BI: ${obsErr.message?.slice(0, 100)}`)
+    }
+
+    // Intento 2: Buscar por total + sucursal + fecha (fallback)
     const result = await db.request()
       .input('fecha', sql.VarChar, hoy)
       .input('total', sql.Decimal(18, 2), total)
@@ -686,24 +732,128 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
       CAE: null, // Se obtiene después con fetchAndSaveCAE
     }
   } catch (err) {
-    console.warn(`[Centum POS] Error al buscar venta existente en BI: ${err.message}`)
+    // Distinguir errores de conexión (BI caído) de errores de datos
+    const msg = (err.message || '').toLowerCase()
+    const esConexion = msg.includes('connect') || msg.includes('timeout') || msg.includes('econnrefused')
+      || msg.includes('econnreset') || msg.includes('socket') || msg.includes('network')
+      || msg.includes('failed to connect') || msg.includes('pool')
+    if (esConexion) {
+      console.error(`[Centum POS] BI CAÍDO al buscar venta existente: ${err.message}`)
+      throw err // Propagar — el caller NO debe crear la venta si BI está caído
+    }
+    console.warn(`[Centum POS] Error no-conexión al buscar venta existente en BI: ${err.message}`)
     return null
   }
 }
 
 /**
- * Retry automático: busca ventas con centum_sync=false de las últimas 24h y las reenvía.
- * Diseñado para correr desde un cron job.
+ * Busca una venta existente en Centum vía API REST (POST /Ventas/FiltrosVenta/).
+ * Canal alternativo a BI — consulta directo al servidor Centum (sin replicación).
+ * Busca por ObservacionesInternas que contenga "POS:{uuid}".
+ * @returns {Object|null} Venta encontrada o null
+ */
+async function buscarVentaExistenteEnCentumAPI(ventaPosId, sucursalFisicaId) {
+  if (!ventaPosId) return null
+  const url = `${BASE_URL}/Ventas/FiltrosVenta/?numeroPagina=1&cantidadItemsPorPagina=50`
+  const hoy = new Date().toISOString().split('T')[0]
+  const inicio = Date.now()
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        fechaDocumentoDesde: hoy,
+        fechaDocumentoHasta: hoy,
+        idSucursal: sucursalFisicaId,
+      }),
+    })
+  } catch (err) {
+    console.warn(`[Centum API Check] Error de conexión: ${err.message}`)
+    throw new Error('API Centum no disponible: ' + err.message)
+  }
+
+  if (!response.ok) {
+    const texto = await response.text().catch(() => '')
+    console.warn(`[Centum API Check] HTTP ${response.status}: ${texto.slice(0, 200)}`)
+    throw new Error(`API Centum error ${response.status}`)
+  }
+
+  const data = await response.json()
+  const ventas = data?.Ventas?.Items || []
+
+  registrarLlamada({
+    servicio: 'centum_ventas_api_check', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: 200, duracion_ms: Date.now() - inicio,
+    items_procesados: ventas.length, origen: 'anti-dup',
+  })
+
+  // Buscar por ObservacionesInternas que contenga nuestro UUID
+  const target = `POS:${ventaPosId}`
+  const encontrada = ventas.find(v =>
+    (v.ObservacionesInternas || '').includes(target) ||
+    (v.ObservacionInterna || '').includes(target)
+  )
+
+  if (!encontrada) {
+    console.log(`[Centum API Check] No encontrada venta con ${target} entre ${ventas.length} del día (sucursal ${sucursalFisicaId})`)
+    return null
+  }
+
+  console.log(`[Centum API Check] ENCONTRADA venta POS:${ventaPosId} → IdVenta=${encontrada.IdVenta}`)
+  return {
+    IdVenta: encontrada.IdVenta,
+    NumeroDocumento: encontrada.NumeroDocumento || null,
+    Total: encontrada.Total || 0,
+    CAE: encontrada.CAE || null,
+  }
+}
+
+/**
+ * Verificación anti-duplicación en 2 canales: BI (SQL Server) + API REST.
+ * Estrategia: BI primero (rápido), API como fallback si BI falla.
+ * Distingue 3 resultados:
+ *   { found: true, data }          → ya existe, vincular
+ *   { found: false }               → no encontrada en ningún canal, seguro crear
+ *   { biDown: true, error }        → ambos canales fallaron, NO crear
+ */
+async function verificarEnBI(ventaPosId, sucursalFisicaId, puntoVenta, total) {
+  // Canal 1: BI (SQL Server) — rápido, pero tiene delay de replicación
+  try {
+    const existente = await buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoVenta, total)
+    if (existente) return { found: true, data: existente }
+    return { found: false }
+  } catch (biErr) {
+    console.warn(`[AntiDup] BI caído (${biErr.message}), intentando vía API REST...`)
+
+    // Canal 2: API REST — directo a Centum, sin replicación
+    try {
+      const existenteAPI = await buscarVentaExistenteEnCentumAPI(ventaPosId, sucursalFisicaId)
+      if (existenteAPI) return { found: true, data: existenteAPI }
+      return { found: false }
+    } catch (apiErr) {
+      console.error(`[AntiDup] Ambos canales caídos — BI: ${biErr.message}, API: ${apiErr.message}`)
+      return { biDown: true, error: `BI: ${biErr.message} | API: ${apiErr.message}` }
+    }
+  }
+}
+
+/**
+ * Retry automático con máquina de estados anti-duplicación.
+ * Principio: después de CUALQUIER POST, SIEMPRE verificar en BI antes de reintentar.
+ * Si BI no está disponible, NO reintentar — esperar.
  */
 async function retrySyncVentasCentum() {
   const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
   // Grace period de 10 segundos (solo para evitar leer una venta a medio escribir)
   const hace10s = new Date(Date.now() - 10 * 1000).toISOString()
 
-  // Buscar ventas pendientes (no sincronizadas, con caja asignada, creadas hace más de 10s)
+  // Buscar ventas pendientes (no sincronizadas, con caja asignada)
+  // Incluye centum_intentos y centum_ultimo_intento para la máquina de estados
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
@@ -718,14 +868,70 @@ async function retrySyncVentasCentum() {
   if (!pendientes?.length) {
     return { reintentadas: 0, exitosas: 0, fallidas: 0 }
   }
-  console.log(`[RetryCentumVentas] Encontradas ${pendientes.length} ventas pendientes`)
+
+  // ============ MÁQUINA DE ESTADOS: filtrar por cooldown y max reintentos ============
+  const ahoraMs = Date.now()
+  let enCooldown = 0
+  let enMaxRetries = 0
+  const ventasReady = pendientes.filter(v => {
+    const intentos = v.centum_intentos || 0
+
+    // MAX_RETRIES: ya agotó intentos → no reintentar
+    if (intentos >= MAX_INTENTOS) {
+      // Marcar si no tiene el prefijo aún (puede pasar si se agregó la columna después)
+      if (!v.centum_error || !v.centum_error.startsWith(PREFIX_MAX_RETRIES)) {
+        supabase.from('ventas_pos').update({
+          centum_error: `${PREFIX_MAX_RETRIES}${intentos} intentos agotados. Verificar manualmente.`
+        }).eq('id', v.id).then(() => {})
+      }
+      enMaxRetries++
+      return false
+    }
+
+    // COOLDOWN: si tiene intentos previos, respetar cooldown según nro de intento
+    if (intentos > 0 && v.centum_ultimo_intento) {
+      const tsUltimo = new Date(v.centum_ultimo_intento).getTime()
+      const cooldownRequerido = COOLDOWN_MS[intentos] || COOLDOWN_MS[2] // 2+ usa 30 min
+      const transcurrido = ahoraMs - tsUltimo
+      if (transcurrido < cooldownRequerido) {
+        const restante = Math.round((cooldownRequerido - transcurrido) / 1000)
+        console.log(`[RetryCentumVentas] Venta ${v.id} en cooldown (intento ${intentos}, faltan ${restante}s)`)
+        enCooldown++
+        return false
+      }
+    }
+
+    // Compatibilidad: migrar formato viejo 500_NOVERIFY| al nuevo sistema
+    if (intentos === 0 && v.centum_error && v.centum_error.startsWith('500_NOVERIFY|')) {
+      const ts = parseInt(v.centum_error.split('|')[1], 10)
+      if (!isNaN(ts)) {
+        // Migrar: poner intentos=1 y usar el timestamp del error como ultimo intento
+        supabase.from('ventas_pos').update({
+          centum_intentos: 1,
+          centum_ultimo_intento: new Date(ts).toISOString(),
+          centum_error: `${PREFIX_UNVERIFIED}migrado de 500_NOVERIFY`
+        }).eq('id', v.id).then(() => {})
+        enCooldown++
+        return false // Se procesará en el próximo ciclo con el nuevo formato
+      }
+    }
+
+    return true
+  })
+
+  console.log(`[RetryCentumVentas] ${pendientes.length} pendientes: ${ventasReady.length} listas, ${enCooldown} en cooldown, ${enMaxRetries} max reintentos`)
+
+  if (!ventasReady.length) {
+    return { reintentadas: 0, exitosas: 0, fallidas: 0, enCooldown, enMaxRetries }
+  }
 
   let exitosas = 0
   let fallidas = 0
 
-  for (let i = 0; i < pendientes.length; i++) {
-    const venta = pendientes[i]
-    console.log(`[RetryCentumVentas] Procesando ${i+1}/${pendientes.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, cliente: ${venta.nombre_cliente || 'CF'})`)
+  for (let i = 0; i < ventasReady.length; i++) {
+    const venta = ventasReady[i]
+    const intentos = venta.centum_intentos || 0
+    console.log(`[RetryCentumVentas] Procesando ${i+1}/${ventasReady.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, intentos=${intentos}, cliente: ${venta.nombre_cliente || 'CF'})`)
     try {
       // Obtener config de caja/sucursal
       const { data: cajaData } = await supabase
@@ -737,7 +943,9 @@ async function retrySyncVentasCentum() {
       const puntoVenta = cajaData?.punto_venta_centum
       const sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
       if (!puntoVenta || !sucursalFisicaId) {
-        await supabase.from('ventas_pos').update({ centum_error: 'Retry: sin config Centum en caja/sucursal' }).eq('id', venta.id)
+        await supabase.from('ventas_pos').update({
+          centum_error: `${PREFIX_DEFINITIVE}sin config Centum en caja/sucursal`
+        }).eq('id', venta.id)
         fallidas++
         continue
       }
@@ -856,44 +1064,81 @@ async function retrySyncVentasCentum() {
           })
         }
       } else {
-        // Idempotencia: verificar si ya existe en Centum antes de crear
-        const existente = await buscarVentaExistenteEnCentum(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
-        if (existente) {
-          console.log(`[RetryCentumVentas] Venta ${venta.id} ya existe en Centum (IdVenta=${existente.IdVenta}), vinculando sin crear duplicado`)
-          const numDocEx = existente.NumeroDocumento
-          const comprobanteEx = numDocEx
-            ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
-            : null
-          await supabase.from('ventas_pos').update({
-            id_venta_centum: existente.IdVenta || null,
-            centum_comprobante: comprobanteEx,
-            centum_sync: true,
-            centum_error: null,
-            numero_cae: existente.CAE || null,
-          }).eq('id', venta.id)
-          const cae = await fetchAndSaveCAE(venta.id, existente.IdVenta)
-          exitosas++
-          continue
+        // ============ VERIFICACIÓN OBLIGATORIA EN BI (si hay intentos previos) ============
+        if (intentos > 0) {
+          const check = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+
+          if (check.found) {
+            // Ya existe en Centum → vincular sin crear duplicado
+            console.log(`[RetryCentumVentas] Venta ${venta.id} ENCONTRADA en BI (intento ${intentos}): IdVenta=${check.data.IdVenta}`)
+            const numDocEx = check.data.NumeroDocumento
+            const comprobanteEx = numDocEx
+              ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
+              : null
+            await supabase.from('ventas_pos').update({
+              id_venta_centum: check.data.IdVenta || null,
+              centum_comprobante: comprobanteEx,
+              centum_sync: true,
+              centum_error: null,
+              numero_cae: check.data.CAE || null,
+            }).eq('id', venta.id)
+            fetchAndSaveCAE(venta.id, check.data.IdVenta)
+            exitosas++
+            continue
+          }
+
+          if (check.biDown) {
+            // BI caído → NO reintentar, esperar al próximo ciclo
+            console.warn(`[RetryCentumVentas] Venta ${venta.id}: BI CAÍDO, abortando reintento (${check.error})`)
+            // No modificar intentos ni error — simplemente esperar
+            fallidas++
+            continue
+          }
+
+          // check.found === false → no existe en BI, seguro reintentar
+          console.log(`[RetryCentumVentas] Venta ${venta.id}: verificada en BI, NO encontrada → seguro reintentar (intento ${intentos + 1})`)
         }
 
-        resultado = await crearVentaPOS({
-          idCliente: venta.id_cliente_centum || 2,
-          sucursalFisicaId, idDivisionEmpresa, puntoVenta,
-          items, pagos, total: parseFloat(venta.total) || 0,
-          condicionIva, operadorMovilUser,
-          ventaPosId: venta.id,
-        })
+        // ============ PRE-WRITE: registrar intento ANTES del POST ============
+        const nuevoIntentos = intentos + 1
+        await supabase.from('ventas_pos').update({
+          centum_intentos: nuevoIntentos,
+          centum_ultimo_intento: new Date().toISOString(),
+        }).eq('id', venta.id)
+
+        // ============ POST a Centum ============
+        try {
+          resultado = await crearVentaPOS({
+            idCliente: venta.id_cliente_centum || 2,
+            sucursalFisicaId, idDivisionEmpresa, puntoVenta,
+            items, pagos, total: parseFloat(venta.total) || 0,
+            condicionIva, operadorMovilUser,
+            ventaPosId: venta.id,
+          })
+        } catch (postErr) {
+          // CUALQUIER error post-POST → marcar UNVERIFIED
+          // No distinguimos 500 de timeout — SIEMPRE verificar en BI antes de reintentar
+          console.warn(`[RetryCentumVentas] Venta ${venta.id}: POST falló (intento ${nuevoIntentos}): ${postErr.message}`)
+          await supabase.from('ventas_pos').update({
+            id_venta_centum: null,
+            centum_comprobante: null,
+            centum_sync: false,
+            centum_error: `${PREFIX_UNVERIFIED}intento ${nuevoIntentos}: ${(postErr.message || '').slice(0, 150)}`,
+            numero_cae: null,
+          }).eq('id', venta.id)
+          fallidas++
+          continue
+        }
       }
 
-      // Comprobante provisorio del POST (puede ser incorrecto para NCs)
+      // ============ POST exitoso → verificar con GET para confirmar ============
       let numDoc = resultado?.NumeroDocumento
       let comprobante = numDoc
         ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
         : null
 
-      // GET real de Centum para obtener comprobante y CAE correctos
       let caeReal = resultado?.CAE || null
-      let ventaConfirmada = !resultado?._creadoConWarning // si no hubo warning, está confirmada
+      let ventaConfirmada = !resultado?._creadoConWarning
       if (resultado?.IdVenta) {
         try {
           const centumReal = await obtenerVentaCentum(resultado.IdVenta)
@@ -902,11 +1147,10 @@ async function retrySyncVentasCentum() {
             comprobante = `${numDocReal.LetraDocumento || ''} PV${numDocReal.PuntoVenta}-${numDocReal.Numero}`
           }
           if (centumReal?.CAE) caeReal = centumReal.CAE
-          ventaConfirmada = true // GET exitoso = la venta existe en Centum
+          ventaConfirmada = true
         } catch (e) {
           console.warn(`[RetryCentumVentas] No se pudo verificar venta ${venta.id} en Centum:`, e.message)
           if (resultado?._creadoConWarning) {
-            // HTTP 500 al crear + no se puede verificar = NO se creó
             ventaConfirmada = false
             comprobante = null
           }
@@ -921,26 +1165,27 @@ async function retrySyncVentasCentum() {
           centum_error: null,
           numero_cae: caeReal,
         }
-        // Guardar alerta si hubo discrepancia de total
         if (resultado?._discrepanciaTotal) {
           updateData.centum_error = `ALERTA: Total POS=$${resultado._totalPOS} vs Centum=$${resultado._totalCentum}`
         }
         await supabase.from('ventas_pos').update(updateData).eq('id', venta.id)
       } else {
-        // No se confirmó en Centum — limpiar datos falsos
+        // No confirmada → UNVERIFIED (se verificará en BI en el próximo ciclo)
+        const nuevoIntentos = (venta.centum_intentos || 0) + (venta.tipo !== 'nota_credito' ? 0 : 1)
         await supabase.from('ventas_pos').update({
           id_venta_centum: null,
           centum_comprobante: null,
           centum_sync: false,
-          centum_error: 'Centum devolvió 500 y la venta no se pudo verificar',
+          centum_error: `${PREFIX_UNVERIFIED}POST OK pero GET falló`,
+          centum_intentos: nuevoIntentos || (venta.centum_intentos || 0),
+          centum_ultimo_intento: new Date().toISOString(),
           numero_cae: null,
         }).eq('id', venta.id)
-        console.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada, marcada como no sincronizada`)
+        console.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada → UNVERIFIED`)
       }
 
       console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
-      // Obtener CAE en background (si no se obtuvo arriba)
-      if (!caeReal) fetchAndSaveCAE(venta.id, resultado?.IdVenta)
+      if (!caeReal && resultado?.IdVenta) fetchAndSaveCAE(venta.id, resultado.IdVenta)
       exitosas++
     } catch (err) {
       console.error(`[RetryCentumVentas] Error venta ${venta.id} (#${venta.numero_venta}):`, err.message)
@@ -957,17 +1202,17 @@ async function retrySyncVentasCentum() {
     }
 
     // Pausa de 2 segundos entre ventas para no saturar Centum
-    if (i < pendientes.length - 1) {
+    if (i < ventasReady.length - 1) {
       await new Promise(r => setTimeout(r, 2000))
     }
   }
 
   registrarLlamada({
     servicio: 'centum_ventas_retry', endpoint: `retry batch`, metodo: 'BATCH',
-    estado: 'ok', duracion_ms: 0, items_procesados: pendientes.length,
-    error_mensaje: `exitosas: ${exitosas}, fallidas: ${fallidas}`, origen: 'cron',
+    estado: 'ok', duracion_ms: 0, items_procesados: ventasReady.length,
+    error_mensaje: `exitosas: ${exitosas}, fallidas: ${fallidas}, cooldown: ${enCooldown}, maxRetries: ${enMaxRetries}`, origen: 'cron',
   })
-  return { reintentadas: pendientes.length, exitosas, fallidas }
+  return { reintentadas: ventasReady.length, exitosas, fallidas, enCooldown, enMaxRetries }
 }
 
 /**
@@ -1165,4 +1410,4 @@ async function retryEmailsPendientes() {
   return { pendientes: ventas.length, enviados, sinEmail, fallidos }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico, retryEmailsPendientes }
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico, retryEmailsPendientes }
