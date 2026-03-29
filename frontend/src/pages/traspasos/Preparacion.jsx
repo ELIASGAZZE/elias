@@ -2323,9 +2323,11 @@ const Preparacion = () => {
       {/* Modal confirmar eliminación de contenedor */}
       {confirmarElimCont && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setConfirmarElimCont(null)}>
-          <div className="bg-white rounded-2xl w-[90%] max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="text-center">
-              <div className="text-3xl mb-2">{confirmarElimCont.tipo === 'canasto' ? '🧺' : '📋'}</div>
+          <div className="bg-white rounded-2xl w-[90%] max-w-sm shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-red-500 py-3">
+              <div className="text-3xl text-center">{confirmarElimCont.tipo === 'canasto' ? '🧺' : '📋'}</div>
+            </div>
+            <div className="text-center p-5">
               <h3 className="text-base font-semibold text-gray-800">
                 {confirmarElimCont.tipo === 'canasto'
                   ? `¿Eliminar canasto ${confirmarElimCont.precinto}?`
@@ -2338,7 +2340,7 @@ const Preparacion = () => {
                   : 'Escaneá el artículo del bulto para confirmar'
                 }
               </p>
-              <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+              <input ref={el => { if (el) el._modalInput = true }} autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
                 value={scanInput}
                 onChange={(e) => {
                   const val = e.target.value
@@ -2366,10 +2368,20 @@ const Preparacion = () => {
                   }
                 }}
               />
-              <button onClick={() => setConfirmarElimCont(null)}
-                className="mt-4 w-full py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
-                Cancelar
-              </button>
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setConfirmarElimCont(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
+                  Cancelar
+                </button>
+                <button onClick={(e) => {
+                  const inp = e.target.closest('.text-center').querySelector('input')
+                  if (inp) { inp.setAttribute('inputMode', 'text'); inp.focus(); inp.click() }
+                }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2378,16 +2390,18 @@ const Preparacion = () => {
       {/* Modal confirmar mover contenedor a canasto */}
       {confirmarMoverACan && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-12" onClick={() => setConfirmarMoverACan(null)}>
-          <div className="bg-white rounded-2xl w-[90%] max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="text-center">
-              <div className="text-3xl mb-2">🧺</div>
+          <div className="bg-white rounded-2xl w-[90%] max-w-sm shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-amber-400 py-3">
+              <div className="text-3xl text-center">🧺</div>
+            </div>
+            <div className="text-center p-5">
               <h3 className="text-base font-semibold text-gray-800">
                 {`¿Agregar ${confirmarMoverACan.nombre} al canasto ${canastoActivo?.precinto}?`}
               </h3>
               <p className="text-sm text-gray-500 mt-1">
                 Escaneá el artículo para confirmar
               </p>
-              <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+              <input ref={el => { if (el) el._modalInput = true }} autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
                 value={scanInput}
                 onChange={(e) => {
                   const val = e.target.value
@@ -2415,10 +2429,20 @@ const Preparacion = () => {
                   }
                 }}
               />
-              <button onClick={() => setConfirmarMoverACan(null)}
-                className="mt-4 w-full py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
-                Cancelar
-              </button>
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setConfirmarMoverACan(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
+                  Cancelar
+                </button>
+                <button onClick={(e) => {
+                  const inp = e.target.closest('.text-center').querySelector('input')
+                  if (inp) { inp.setAttribute('inputMode', 'text'); inp.focus(); inp.click() }
+                }} className="py-2.5 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
