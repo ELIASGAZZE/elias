@@ -1163,6 +1163,47 @@ router.get('/bultos', verificarAuth, async (req, res) => {
 })
 
 // Buscar canasto/pallet por precinto (sin despachar) — para confirmar antes de cargar
+// Verificar si un canasto está en uso en otra orden activa
+router.get('/canastos/verificar-precinto/:precinto', verificarAuth, async (req, res) => {
+  try {
+    const precinto = req.params.precinto.trim()
+    if (!precinto) return res.json({ en_uso: false })
+
+    // Buscar canastos con este precinto en estados activos (no recibido/cancelado)
+    const excluirOrden = req.query.excluir_orden
+    let query = supabase
+      .from('traspaso_canastos')
+      .select('id, precinto, estado, orden_traspaso_id')
+      .eq('precinto', precinto)
+      .in('estado', ['en_origen', 'en_transito'])
+    if (excluirOrden) query = query.neq('orden_traspaso_id', excluirOrden)
+    const { data, error } = await query.limit(1)
+
+    if (error) throw error
+
+    if (data && data.length > 0) {
+      const canasto = data[0]
+      // Traer número de orden
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('numero')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+
+      return res.json({
+        en_uso: true,
+        estado: canasto.estado,
+        orden_numero: orden?.numero || null,
+        orden_id: canasto.orden_traspaso_id,
+      })
+    }
+
+    res.json({ en_uso: false })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res) => {
   try {
     const precinto = req.params.precinto.trim()
@@ -1171,7 +1212,7 @@ router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res
     const { data: canasto, error } = await supabase
       .from('traspaso_canastos')
       .select('*, orden_traspaso_id')
-      .eq('precinto', precinto)
+      .ilike('precinto', precinto)
       .order('created_at', { ascending: false })
       .limit(1)
       .single()
@@ -1180,16 +1221,32 @@ router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res
       return res.status(404).json({ error: `No se encontró canasto/pallet con precinto "${precinto}"` })
     }
 
-    // Traer datos de la orden con sucursales
+    // Traer datos de la orden
     const { data: orden } = await supabase
       .from('ordenes_traspaso')
-      .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id, sucursal_origen_nombre, sucursal_destino_nombre')
+      .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id')
       .eq('id', canasto.orden_traspaso_id)
       .single()
 
+    // Enriquecer con nombres de sucursal
+    let ordenEnriquecida = orden
+    if (orden) {
+      const { data: sucs } = await supabase
+        .from('sucursales')
+        .select('id, nombre')
+        .in('id', [orden.sucursal_origen_id, orden.sucursal_destino_id].filter(Boolean))
+      const sucMap = {}
+      for (const s of (sucs || [])) sucMap[s.id] = s.nombre
+      ordenEnriquecida = {
+        ...orden,
+        sucursal_origen_nombre: sucMap[orden.sucursal_origen_id] || 'Desconocida',
+        sucursal_destino_nombre: sucMap[orden.sucursal_destino_id] || 'Desconocida',
+      }
+    }
+
     res.json({
       canasto,
-      orden,
+      orden: ordenEnriquecida,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -1462,9 +1519,17 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
       palletsCreados.push({ ...nuevo, items_descripcion: p.items_descripcion })
     }
 
-    // Crear bultos
+    // Crear bultos y vincular a pallets
     const bultosCreados = []
     const bultoTimestamp = Date.now()
+    // Mapear qué bulto (por índice) va a qué pallet
+    const bultoToPallet = {}
+    for (let pi = 0; pi < palletsArr.length; pi++) {
+      const indices = palletsArr[pi].bulto_indices || []
+      for (const bIdx of indices) {
+        bultoToPallet[bIdx] = palletsCreados[pi]?.id || null
+      }
+    }
     for (let i = 0; i < bultosArr.length; i++) {
       const b = bultosArr[i]
       const precintoBulto = `BULTO-${bultoTimestamp}-${i + 1}`
@@ -1477,6 +1542,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           nombre: b.nombre || 'Bulto',
           estado: 'en_origen',
           items: Array.isArray(b.items) ? b.items : [],
+          ...(bultoToPallet[i] ? { pallet_id: bultoToPallet[i] } : {}),
         })
         .select()
         .single()

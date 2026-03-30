@@ -61,8 +61,8 @@ const Preparacion = () => {
   // Pallets (se mantiene)
   const [palletsPrep, setPalletsPrep] = useState([])
   const [modalPallet, setModalPallet] = useState(false)
-  const [palletBultos, setPalletBultos] = useState('')
   const [palletDesc, setPalletDesc] = useState('')
+  const [palletBultosSeleccionados, setPalletBultosSeleccionados] = useState([]) // índices de bultos seleccionados en modal
 
   const [enviando, setEnviando] = useState(false)
   const [observacion, setObservacion] = useState('')
@@ -717,7 +717,7 @@ const Preparacion = () => {
   }
 
   // === HANDLER PRINCIPAL DE ESCANEO ===
-  const handleScanCodigo = (codigo) => {
+  const handleScanCodigo = async (codigo) => {
 
     // 0a-pre. Si hay contenedor esperando confirmación de mover a canasto
     const moverCan = confirmarMoverACanRef.current
@@ -788,6 +788,14 @@ const Preparacion = () => {
         mostrarFeedback(`🧺 Canasto ${codigo} reabierto`, true, 'info')
         return
       }
+      // Verificar que el canasto no esté en uso en otra orden
+      try {
+        const { data: enUso } = await api.get(`/api/traspasos/canastos/verificar-precinto/${encodeURIComponent(codigo)}?excluir_orden=${id}`)
+        if (enUso?.en_uso) {
+          mostrarFeedback(`🧺 ${codigo} está en uso en ${enUso.orden_numero || 'otra orden'} (${enUso.estado})`, false)
+          return
+        }
+      } catch {}
       setCanastoActivo({ precinto: codigo, items: [] })
       mostrarFeedback(`🧺 Canasto ${codigo} abierto`, true, 'info')
       return
@@ -1454,6 +1462,15 @@ const Preparacion = () => {
       alert('No hay contenedores para confirmar')
       return
     }
+    // Validar que todos los bultos estén asignados a un pallet
+    if (bultos.length > 0) {
+      const asignados = new Set(palletsPrep.flatMap(p => p.bulto_indices || []))
+      const sinPallet = bultos.filter((_, i) => !asignados.has(i))
+      if (sinPallet.length > 0) {
+        alert(`Hay ${sinPallet.length} bulto(s) sin asignar a un pallet. Todos los bultos deben estar dentro de un pallet.`)
+        return
+      }
+    }
     const sinPesoIdx = canastos.findIndex((c, i) => {
       const realIdx = todosContenedores.indexOf(c)
       return !c.peso_origen || c.peso_origen <= 0
@@ -1507,13 +1524,21 @@ const Preparacion = () => {
     }
   }
 
-  // Agregar pallet
+  // Agregar pallet con bultos seleccionados
   const agregarPallet = () => {
-    const bultos = parseInt(palletBultos)
-    if (!bultos || bultos <= 0) return
-    setPalletsPrep(prev => [...prev, { cantidad_bultos: bultos, items_descripcion: palletDesc.trim() }])
-    setPalletBultos('')
+    if (palletBultosSeleccionados.length === 0) return
+    const todosLosBuiltos = contenedores.filter(c => c.tipo === 'bulto')
+    // Obtener los bultos ya asignados a otros pallets
+    const yaAsignados = new Set(palletsPrep.flatMap(p => p.bulto_indices))
+    const bultosDisponibles = todosLosBuiltos.map((b, i) => i).filter(i => !yaAsignados.has(i))
+    const bultosSeleccionadosReales = palletBultosSeleccionados.map(i => bultosDisponibles[i])
+    setPalletsPrep(prev => [...prev, {
+      cantidad_bultos: bultosSeleccionadosReales.length,
+      items_descripcion: palletDesc.trim(),
+      bulto_indices: bultosSeleccionadosReales,
+    }])
     setPalletDesc('')
+    setPalletBultosSeleccionados([])
     setModalPallet(false)
   }
 
@@ -1827,7 +1852,9 @@ const Preparacion = () => {
     const canastos = contenedores.filter(c => c.tipo === 'canasto')
     const bultos = contenedores.filter(c => c.tipo === 'bulto')
     const canastosSinPesar = canastos.filter(c => !c.peso_origen)
-    const puedeConfirmar = (canastos.length > 0 || bultos.length > 0 || palletsPrep.length > 0) && !enviando && canastosSinPesar.length === 0
+    const bultosAsignados = new Set(palletsPrep.flatMap(p => p.bulto_indices || []))
+    const bultosSinPallet = bultos.filter((_, i) => !bultosAsignados.has(i))
+    const puedeConfirmar = (canastos.length > 0 || palletsPrep.length > 0) && !enviando && canastosSinPesar.length === 0 && bultosSinPallet.length === 0
 
     return (
       <div className="min-h-screen bg-gray-100 pb-24">
@@ -1883,43 +1910,73 @@ const Preparacion = () => {
           )}
 
           {/* Bultos */}
-          {bultos.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-gray-700">📋 Bultos ({bultos.length})</h3>
-              {bultos.map((b, idx) => (
-                <div key={idx} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                  <div className="text-sm font-medium text-gray-800">{b.nombre}</div>
+          {bultos.length > 0 && (() => {
+            const asignados = new Set(palletsPrep.flatMap(p => p.bulto_indices || []))
+            const sinAsignar = bultos.filter((_, i) => !asignados.has(i))
+            return (
+            <div className={`bg-white rounded-xl border p-4 space-y-2 ${sinAsignar.length > 0 ? 'border-red-300' : 'border-gray-200'}`}>
+              <h3 className="text-sm font-semibold text-gray-700">
+                📋 Bultos ({bultos.length})
+                {sinAsignar.length > 0 && <span className="text-red-500 ml-2 text-xs font-normal">{sinAsignar.length} sin asignar a pallet</span>}
+              </h3>
+              {bultos.map((b, idx) => {
+                const enPallet = asignados.has(idx)
+                return (
+                <div key={idx} className={`rounded-lg p-3 border ${enPallet ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium text-gray-800">{b.nombre}</div>
+                    {enPallet
+                      ? <span className="text-xs text-orange-600 font-medium">En pallet</span>
+                      : <span className="text-xs text-red-500 font-medium">Sin pallet</span>
+                    }
+                  </div>
                   {b.items.map((item, i) => (
                     <div key={i} className="text-xs text-gray-500">
                       {item.codigo} · {item.es_pesable ? `${item.cantidad} kg` : `${item.cantidad} u`}
                     </div>
                   ))}
                 </div>
-              ))}
+                )
+              })}
             </div>
-          )}
+            )
+          })()}
 
           {/* Pallets */}
           <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-700">📦 Pallets ({palletsPrep.length})</h3>
-              <button onClick={() => { setModalPallet(true); setPalletBultos(''); setPalletDesc('') }}
+              <button onClick={() => { setModalPallet(true); setPalletBultosSeleccionados([]); setPalletDesc('') }}
                 className="text-sm bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg font-medium">
                 + Pallet
               </button>
             </div>
             {palletsPrep.map((p, idx) => (
-              <div key={idx} className="flex items-center gap-2 bg-orange-50 rounded-lg p-3">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-gray-800">{p.cantidad_bultos} bultos</div>
-                  {p.items_descripcion && <div className="text-xs text-gray-500">{p.items_descripcion}</div>}
+              <div key={idx} className="bg-orange-50 rounded-lg p-3 border border-orange-200">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-800">{p.cantidad_bultos} bulto{p.cantidad_bultos !== 1 ? 's' : ''}</div>
+                    {p.items_descripcion && <div className="text-xs text-gray-500">{p.items_descripcion}</div>}
+                  </div>
+                  <button onClick={() => setPalletsPrep(prev => prev.filter((_, i) => i !== idx))}
+                    className="text-red-400 p-1">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
-                <button onClick={() => setPalletsPrep(prev => prev.filter((_, i) => i !== idx))}
-                  className="text-red-400 p-1">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                {(p.bulto_indices || []).length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {p.bulto_indices.map(bIdx => {
+                      const b = bultos[bIdx]
+                      return b ? (
+                        <div key={bIdx} className="text-xs text-gray-600 bg-white rounded px-2 py-1 border border-orange-100">
+                          {b.nombre} — {b.items.map(item => `${item.codigo} ${item.es_pesable ? item.cantidad + 'kg' : item.cantidad + 'u'}`).join(', ')}
+                        </div>
+                      ) : null
+                    })}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1933,35 +1990,84 @@ const Preparacion = () => {
           </div>
         </div>
 
-        {/* Modal pallet */}
-        {modalPallet && (
+        {/* Modal pallet — seleccionar bultos */}
+        {modalPallet && (() => {
+          const yaAsignados = new Set(palletsPrep.flatMap(p => p.bulto_indices || []))
+          const bultosDisponibles = bultos.map((b, i) => ({ ...b, _idx: i })).filter(b => !yaAsignados.has(b._idx))
+          return (
           <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setModalPallet(false)}>
-            <div className="bg-white rounded-t-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-t-2xl p-5 space-y-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-semibold text-gray-800">Nuevo Pallet</h3>
+              {bultosDisponibles.length === 0 ? (
+                <p className="text-sm text-gray-500">Todos los bultos ya están asignados a un pallet.</p>
+              ) : (
+                <>
+                  <div className="text-xs text-gray-500">Seleccioná los bultos para este pallet:</div>
+                  <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
+                    {bultosDisponibles.map((b, dispIdx) => {
+                      const sel = palletBultosSeleccionados.includes(dispIdx)
+                      return (
+                        <button key={dispIdx} onClick={() => setPalletBultosSeleccionados(prev =>
+                          sel ? prev.filter(i => i !== dispIdx) : [...prev, dispIdx]
+                        )}
+                          className={`w-full text-left rounded-xl p-3 border-2 transition-all ${sel ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'}`}
+                        >
+                          <div className="text-sm font-medium text-gray-800">{b.nombre}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {b.items.map(item => `${item.codigo} ${item.es_pesable ? item.cantidad + 'kg' : item.cantidad + 'u'}`).join(', ')}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
               <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Cantidad de bultos *</label>
-                <input type="number" min="1" value={palletBultos} onChange={e => setPalletBultos(e.target.value)} autoFocus
-                  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg text-center focus:border-orange-500 outline-none" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Descripción</label>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">Descripción (opcional)</label>
                 <input type="text" value={palletDesc} onChange={e => setPalletDesc(e.target.value)}
                   className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-sm focus:border-orange-500 outline-none" />
               </div>
-              <button onClick={agregarPallet} disabled={!palletBultos || parseInt(palletBultos) <= 0}
-                className={`w-full py-3.5 rounded-xl text-sm font-semibold ${palletBultos && parseInt(palletBultos) > 0 ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
-                Agregar Pallet
+              <button onClick={agregarPallet} disabled={palletBultosSeleccionados.length === 0}
+                className={`w-full py-3.5 rounded-xl text-sm font-semibold ${palletBultosSeleccionados.length > 0 ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                Agregar Pallet ({palletBultosSeleccionados.length} bulto{palletBultosSeleccionados.length !== 1 ? 's' : ''})
               </button>
             </div>
           </div>
-        )}
+          )
+        })()}
 
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 safe-area-bottom">
           <button onClick={confirmarFinal} disabled={!puedeConfirmar}
             className={`w-full py-3.5 rounded-xl text-sm font-semibold ${puedeConfirmar ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
-            {enviando ? 'Procesando...' : `Confirmar preparación (${canastos.length} canastos, ${bultos.length} bultos)`}
+            {enviando ? 'Procesando...' : `Confirmar preparación (${canastos.length} canastos, ${palletsPrep.length} pallets)`}
           </button>
         </div>
+
+        {/* Modal pesar canasto (dentro de finalizar) */}
+        {pesandoCanastoIdx !== null && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex flex-col justify-end">
+            <div className="bg-white rounded-t-2xl p-5 pb-8 space-y-3" onClick={e => e.stopPropagation()}>
+              <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+              <h3 className="text-base font-semibold text-gray-800 text-center">
+                Pesar canasto {contenedores[pesandoCanastoIdx]?.precinto}
+              </h3>
+              <p className="text-sm text-gray-500 text-center">
+                {contenedores[pesandoCanastoIdx]?.items.length || 0} artículos · Pendiente de peso
+              </p>
+              <input type="number" inputMode="decimal" min="0.001" step="0.001"
+                value={pesandoCanastoPeso} onChange={e => setPesandoCanastoPeso(e.target.value)} autoFocus
+                placeholder="Peso en kg"
+                className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
+              <button onClick={confirmarPesoCanasto}
+                disabled={!pesandoCanastoPeso || parseFloat(pesandoCanastoPeso) <= 0}
+                className={`w-full py-4 rounded-xl text-base font-semibold ${
+                  pesandoCanastoPeso && parseFloat(pesandoCanastoPeso) > 0 ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'
+                }`}>
+                Confirmar peso
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }

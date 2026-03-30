@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
+import { imprimirPallet } from '../../utils/imprimirPallet'
 
 const ESTADO_BADGE = {
   pendiente: 'bg-gray-100 text-gray-600',
@@ -66,6 +67,7 @@ const TraspasosHome = () => {
   const [bultos, setBultos] = useState([])
   const [cargandoBultos, setCargandoBultos] = useState(false)
   const [filtroBultoTipo, setFiltroBultoTipo] = useState('')
+  const [filtroBultoEstado, setFiltroBultoEstado] = useState('')
   const [bultoExpandido, setBultoExpandido] = useState(null)
 
   useEffect(() => {
@@ -92,9 +94,17 @@ const TraspasosHome = () => {
     }
   }, [tab])
 
-  const bultosFiltrados = filtroBultoTipo
-    ? bultos.filter(b => b.tipo === filtroBultoTipo)
-    : bultos
+  // Ocultar bultos que están dentro de un pallet
+  const bultosVisibles = bultos.filter(b => !b.pallet_id)
+  const bultosFiltrados = bultosVisibles
+    .filter(b => !filtroBultoTipo || b.tipo === filtroBultoTipo)
+    .filter(b => !filtroBultoEstado || b.estado === filtroBultoEstado)
+  // Bultos hijos agrupados por pallet_id para mostrar dentro del pallet expandido
+  const bultosHijosPorPallet = {}
+  bultos.filter(b => b.pallet_id).forEach(b => {
+    if (!bultosHijosPorPallet[b.pallet_id]) bultosHijosPorPallet[b.pallet_id] = []
+    bultosHijosPorPallet[b.pallet_id].push(b)
+  })
 
   if (cargando) return (
     <div className="min-h-screen bg-gray-50">
@@ -203,6 +213,9 @@ const TraspasosHome = () => {
                           {new Date(o.created_at).toLocaleDateString('es-AR')}
                           {o.items && <span className="ml-1.5">· {Array.isArray(o.items) ? o.items.length : 0} art.</span>}
                         </div>
+                        {o.notas?.startsWith('Pendientes de ') && (
+                          <div className="text-[11px] text-amber-600 mt-0.5">Proviene de {o.notas.replace('Pendientes de ', '')}</div>
+                        )}
                       </div>
                       <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -237,6 +250,32 @@ const TraspasosHome = () => {
               <span className="text-xs text-gray-400 self-center ml-2">
                 {bultosFiltrados.length} resultado{bultosFiltrados.length !== 1 ? 's' : ''}
               </span>
+            </div>
+
+            {/* Filtros de estado */}
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { key: '', label: 'Todos' },
+                { key: 'en_preparacion', label: 'En preparación' },
+                { key: 'en_origen', label: 'En origen' },
+                { key: 'en_transito', label: 'En tránsito' },
+                { key: 'en_destino', label: 'En destino' },
+                { key: 'controlado', label: 'Controlado' },
+                { key: 'con_diferencia', label: 'Con diferencia' },
+              ].map(f => {
+                const activo = filtroBultoEstado === f.key
+                const badgeStyle = f.key && !activo ? ESTADO_BULTO_BADGE[f.key] : ''
+                return (
+                  <button key={f.key}
+                    onClick={() => setFiltroBultoEstado(f.key)}
+                    className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                      activo
+                        ? 'bg-gray-800 text-white'
+                        : badgeStyle || 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >{f.label}</button>
+                )
+              })}
             </div>
 
             {cargandoBultos ? (
@@ -374,6 +413,30 @@ const TraspasosHome = () => {
                             )}
                           </div>
 
+                          {/* Bultos hijos (dentro de pallet) */}
+                          {b.tipo === 'pallet' && bultosHijosPorPallet[b.id]?.length > 0 && (
+                            <div>
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Bultos ({bultosHijosPorPallet[b.id].length})</h4>
+                              <div className="space-y-1.5">
+                                {bultosHijosPorPallet[b.id].map(hijo => (
+                                  <div key={hijo.id} className="bg-white rounded-lg border border-gray-200 p-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs font-mono font-medium text-gray-700">{hijo.precinto}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${ESTADO_BULTO_BADGE[hijo.estado] || 'bg-gray-100 text-gray-500'}`}>
+                                        {ESTADO_BULTO_LABEL[hijo.estado] || hijo.estado}
+                                      </span>
+                                    </div>
+                                    {(hijo.items || []).map((item, i) => (
+                                      <div key={i} className="text-[11px] text-gray-500 mt-0.5">
+                                        {item.codigo} {item.nombre} — {item.es_pesable ? `${item.cantidad} kg` : `${item.cantidad} u`}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Items del bulto */}
                           {items.length > 0 && (
                             <div>
@@ -393,6 +456,22 @@ const TraspasosHome = () => {
                                 ))}
                               </div>
                             </div>
+                          )}
+
+                          {/* Botón imprimir pallet */}
+                          {b.tipo === 'pallet' && (
+                            <button
+                              onClick={() => imprimirPallet(
+                                { numero_pallet: b.precinto || b.numero_pallet, cantidad_bultos_origen: b.cantidad_bultos_origen, items_descripcion: b.nombre },
+                                { numero: b.orden_numero, sucursal_origen_nombre: b.sucursal_origen, sucursal_destino_nombre: b.sucursal_destino }
+                              )}
+                              className="flex items-center gap-1.5 text-xs text-sky-600 hover:text-sky-800 font-medium"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                              Imprimir etiqueta
+                            </button>
                           )}
 
                           {/* Diferencias */}
