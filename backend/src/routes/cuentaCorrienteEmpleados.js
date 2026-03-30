@@ -461,8 +461,8 @@ router.post('/:empleadoId/pagos', verificarAuth, soloGestorOAdmin, async (req, r
   try {
     const { monto, concepto } = req.body
 
-    if (!monto || parseFloat(monto) <= 0) {
-      return res.status(400).json({ error: 'El monto debe ser mayor a 0' })
+    if (!monto || parseFloat(monto) === 0) {
+      return res.status(400).json({ error: 'El monto no puede ser 0' })
     }
 
     const { data, error } = await supabase
