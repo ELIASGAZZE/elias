@@ -425,12 +425,20 @@ async function retrySyncCentum() {
 // Mapping de condición IVA para Centum
 const CONDICION_IVA_MAP = {
   CF: {
-    CondicionIVA: { IdCondicionIVA: 1892, Codigo: 'CF', Nombre: 'Consumidor Final' },
-    CondicionVenta: { IdCondicionVenta: 14, Codigo: '1', Nombre: 'CONTADO CONSUMIDOR FINAL / SIN PRONTO PAGO' },
+    CondicionIVA: { IdCondicionIVA: 1892 },
+    CondicionVenta: { IdCondicionVenta: 14 },
   },
   RI: {
-    CondicionIVA: { IdCondicionIVA: 1895, Codigo: 'RI', Nombre: 'Responsable Inscripto' },
-    CondicionVenta: { IdCondicionVenta: 1, Codigo: '3', Nombre: 'CONTADO C/ PRONTO PAGO' },
+    CondicionIVA: { IdCondicionIVA: 1895 },
+    CondicionVenta: { IdCondicionVenta: 1 },
+  },
+  MT: {
+    CondicionIVA: { IdCondicionIVA: 1894 },
+    CondicionVenta: { IdCondicionVenta: 1 },
+  },
+  EX: {
+    CondicionIVA: { IdCondicionIVA: 1893 },
+    CondicionVenta: { IdCondicionVenta: 14 },
   },
 }
 
