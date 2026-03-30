@@ -178,14 +178,27 @@ const ControlArticulosModal = ({ canasto, orden, onClose, onRequiereControl }) =
     setPiezasManualInput('1')
   }
 
-  const handleFoto = (e) => {
+  const comprimirImagen = (file, maxWidth = 1200, quality = 0.7) => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let w = img.width, h = img.height
+        if (w > maxWidth) { h = (maxWidth / w) * h; w = maxWidth }
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      }
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
+  const handleFoto = async (e) => {
     const files = Array.from(e.target.files || [])
     for (const file of files) {
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        setFotos(prev => [...prev, { data: ev.target.result, name: file.name, ts: Date.now() }])
-      }
-      reader.readAsDataURL(file)
+      const data = await comprimirImagen(file)
+      setFotos(prev => [...prev, { data, name: file.name, ts: Date.now() }])
     }
     if (fotoInputRef.current) fotoInputRef.current.value = ''
   }
