@@ -23,7 +23,12 @@ function calcularPrecioConDescuentosBase(articulo) {
   return precio
 }
 
-const redondearCentena = (monto) => Math.round(monto / 100) * 100
+const redondearCentena = (monto) => {
+  if (monto <= 0) return 0
+  // Montos chicos (< $100): redondear a decena para no perder el monto
+  if (monto < 100) return Math.ceil(monto / 10) * 10
+  return Math.round(monto / 100) * 100
+}
 
 // Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
@@ -44,8 +49,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [gcResultado, setGcResultado] = useState(null) // { gift_card, error }
   const [giftCardsAplicadas, setGiftCardsAplicadas] = useState([]) // [{ codigo, monto, saldo }]
 
-  // Saldo a favor del cliente
+  // Saldo a favor del cliente (opt-in: el cajero decide si aplicarlo)
   const saldoDisponible = parseFloat(saldoProp) || 0
+  const [usarSaldo, setUsarSaldo] = useState(false)
 
   // Mercado Pago Point
   const [mpEstado, setMpEstado] = useState(null) // null | 'creando' | 'esperando' | 'procesando' | 'aprobado' | 'error' | 'cancelado'
@@ -148,7 +154,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   // Saldo aplicado: min(saldoDisponible, total después de descuentos forma pago)
   const totalConDescFormaPago = Math.round((total - totalDescuentoPagos) * 100) / 100
-  const saldoAplicado = saldoDisponible > 0 ? Math.min(saldoDisponible, totalConDescFormaPago) : 0
+  const saldoAplicado = (usarSaldo && saldoDisponible > 0) ? Math.min(saldoDisponible, totalConDescFormaPago) : 0
   const totalEfectivo = Math.round((totalConDescFormaPago - saldoAplicado) * 100) / 100
 
   // Promo de efectivo (para mostrar "resta en efectivo" con descuento)
@@ -636,9 +642,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (soloPago) {
       const pagosPayload = [
         ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
-        ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
       ]
-      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado + saldoAplicado, vuelto: vuelto > 0 ? vuelto : 0 })
+      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado, vuelto: vuelto > 0 ? vuelto : 0 })
       setGuardando(false)
       return
     }
@@ -690,11 +695,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         detalle: descuentosPorForma,
       } : null,
       total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
-      monto_pagado: totalPagado + saldoAplicado,
+      monto_pagado: totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
       pagos: [
         ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
-        ...(saldoAplicado > 0 ? [{ tipo: 'Saldo', monto: saldoAplicado, detalle: null }] : []),
       ],
     }
     if (descuentoGrupoCliente > 0) {
@@ -1001,6 +1005,24 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Saldo a favor del cliente */}
+        {saldoDisponible > 0 && !modoDelivery && (
+          <div>
+            <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Saldo a favor</h3>
+            <button
+              onClick={() => setUsarSaldo(prev => !prev)}
+              className={`w-full flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-sm transition-all ${
+                usarSaldo
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  : 'bg-slate-600 hover:bg-slate-500 text-white/70'
+              }`}
+            >
+              <span>{usarSaldo ? 'Saldo aplicado' : 'Aplicar saldo'}</span>
+              <span className="font-bold">{formatPrecio(usarSaldo ? saldoAplicado : saldoDisponible)}</span>
+            </button>
           </div>
         )}
 

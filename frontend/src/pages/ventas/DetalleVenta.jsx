@@ -526,11 +526,21 @@ const DetalleVenta = () => {
               <span className="text-gray-800">{formatPrecio(venta.total)}</span>
             </div>
 
-            {/* Medios de pago - agrupados */}
+            {/* Saldo aplicado (separado de medios de pago) */}
+            {parseFloat(venta.saldo_aplicado) > 0 && (
+              <div className="flex justify-between text-green-600">
+                <span>Saldo a favor</span>
+                <span>-{formatPrecio(venta.saldo_aplicado)}</span>
+              </div>
+            )}
+
+            {/* Medios de pago - agrupados (filtrar saldo de ventas viejas) */}
             {pagos.length > 0 && (() => {
+              // Filtrar saldo del array de pagos (backwards compat con ventas anteriores)
+              const pagosReales = pagos.filter(p => (p.tipo || p.medio || '').toLowerCase() !== 'saldo')
               // Agrupar: efectivo por denominación, otros por tipo
               const grupos = {}
-              pagos.forEach(p => {
+              pagosReales.forEach(p => {
                 const tipo = p.tipo || p.medio || 'efectivo'
                 const tipoKey = tipo.toLowerCase()
                 const esEfectivo = tipoKey === 'efectivo'
@@ -546,6 +556,8 @@ const DetalleVenta = () => {
               const efectivoItems = agrupados.filter(g => g.tipo === 'efectivo').sort((a, b) => b.denominacion - a.denominacion)
               const otrosItems = agrupados.filter(g => g.tipo !== 'efectivo')
               const totalEfectivo = efectivoItems.reduce((s, g) => s + g.monto, 0)
+              // Total real pagado (sin saldo)
+              const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
 
               return (
                 <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
@@ -568,17 +580,26 @@ const DetalleVenta = () => {
                       <span>{formatPrecio(g.monto)}</span>
                     </div>
                   ))}
+                  {totalPagadoReal > parseFloat(venta.total) && (
+                    <>
+                      <div className="flex justify-between text-gray-500 border-t border-gray-100 pt-1">
+                        <span>Pagado</span>
+                        <span>{formatPrecio(totalPagadoReal)}</span>
+                      </div>
+                      {totalPagadoReal - parseFloat(venta.total) > 0.01 && (
+                        <div className="flex justify-between text-gray-500">
+                          <span>Vuelto</span>
+                          <span>{formatPrecio(totalPagadoReal - parseFloat(venta.total))}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )
             })()}
 
-            {parseFloat(venta.monto_pagado) > parseFloat(venta.total) && (
-              <div className="flex justify-between text-gray-500 border-t border-gray-100 pt-2">
-                <span>Pagado</span>
-                <span>{formatPrecio(venta.monto_pagado)}</span>
-              </div>
-            )}
-            {parseFloat(venta.vuelto) > 0 && (
+            {/* Vuelto para ventas sin pagos detallados */}
+            {pagos.length === 0 && parseFloat(venta.vuelto) > 0 && (
               <div className="flex justify-between text-gray-500">
                 <span>Vuelto</span>
                 <span>{formatPrecio(venta.vuelto)}</span>

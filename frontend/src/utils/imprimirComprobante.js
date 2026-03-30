@@ -313,9 +313,10 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   html += `<div class="row total"><span>TOTAL</span><span>${formatMonto(total)}</span></div>`
   html += '<div class="line-double"></div>'
 
-  // Pagos
+  // Pagos (filtrar saldo — se trackea por separado)
   if (pagos && pagos.length > 0) {
-    const resumen = pagos.reduce((acc, p) => {
+    const pagosReales = pagos.filter(p => (p.tipo || p.medio || '').toLowerCase() !== 'saldo')
+    const resumen = pagosReales.reduce((acc, p) => {
       const label = p.tipo || p.medio || 'Otro'
       acc[label] = (acc[label] || 0) + p.monto
       return acc
@@ -323,9 +324,12 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
     Object.entries(resumen).forEach(([tipo, monto]) => {
       html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
-  }
-
-  if (vuelto > 0) {
+    const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
+    if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
+      html += '<div class="line"></div>'
+      html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(totalPagadoReal - total)}</span></div>`
+    }
+  } else if (vuelto > 0) {
     html += '<div class="line"></div>'
     html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(vuelto)}</span></div>`
   }
@@ -415,7 +419,8 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
   html += '<div class="line-double"></div>'
 
   if (pagos && pagos.length > 0) {
-    const resumen = pagos.reduce((acc, p) => {
+    const pagosReales = pagos.filter(p => (p.tipo || p.medio || '').toLowerCase() !== 'saldo')
+    const resumen = pagosReales.reduce((acc, p) => {
       const label = p.tipo || p.medio || 'Otro'
       acc[label] = (acc[label] || 0) + p.monto
       return acc
@@ -423,9 +428,12 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
     Object.entries(resumen).forEach(([tipo, monto]) => {
       html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
-  }
-
-  if (vuelto > 0) {
+    const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
+    if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
+      html += '<div class="line"></div>'
+      html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(totalPagadoReal - total)}</span></div>`
+    }
+  } else if (vuelto > 0) {
     html += '<div class="line"></div>'
     html += `<div class="row total"><span>VUELTO</span><span>${formatMonto(vuelto)}</span></div>`
   }
@@ -566,7 +574,8 @@ export async function imprimirComprobanteA4(venta, caeData) {
     </tr>`
   })
 
-  const formaPago = pagos.map(p => MEDIOS_LABELS_A4[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean).join(', ') || 'Cuenta Corriente'
+  const pagosRealesA4 = pagos.filter(p => (p.tipo || p.medio || '').toLowerCase() !== 'saldo')
+  const formaPago = pagosRealesA4.map(p => MEDIOS_LABELS_A4[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean).join(', ') || 'Cuenta Corriente'
 
   const cae = caeData?.cae || null
   const caeVto = caeData?.cae_vencimiento || null
