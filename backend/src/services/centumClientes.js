@@ -534,10 +534,10 @@ async function crearClienteEnCentum(cliente, condicion_iva = 'CF', direccionEntr
  */
 async function actualizarClienteEnCentum(idCliente, datos) {
   const accessToken = generateAccessToken(API_KEY)
-  const url = `${BASE_URL}/Clientes/${idCliente}`
+  const url = `${BASE_URL}/Clientes/Actualizar`
   const inicio = Date.now()
 
-  const body = {}
+  const body = { IdCliente: idCliente }
   if (datos.razon_social) body.RazonSocial = datos.razon_social
   if (datos.cuit !== undefined) body.CUIT = datos.cuit || ''
   if (datos.direccion !== undefined) body.Direccion = datos.direccion || ''
@@ -553,7 +553,7 @@ async function actualizarClienteEnCentum(idCliente, datos) {
   let response
   try {
     response = await fetch(url, {
-      method: 'PUT',
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
@@ -563,7 +563,7 @@ async function actualizarClienteEnCentum(idCliente, datos) {
     })
   } catch (err) {
     registrarLlamada({
-      servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+      servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
       estado: 'error', duracion_ms: Date.now() - inicio,
       error_mensaje: err.message, origen: 'manual',
     })
@@ -573,7 +573,7 @@ async function actualizarClienteEnCentum(idCliente, datos) {
   if (!response.ok) {
     const texto = await response.text()
     registrarLlamada({
-      servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+      servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
       estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
       error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'manual',
     })
@@ -582,7 +582,7 @@ async function actualizarClienteEnCentum(idCliente, datos) {
 
   const data = await response.json().catch(() => ({}))
   registrarLlamada({
-    servicio: 'centum_clientes', endpoint: url, metodo: 'PUT',
+    servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
     estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
     items_procesados: 1, origen: 'manual',
   })
