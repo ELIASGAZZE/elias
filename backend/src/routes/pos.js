@@ -4146,12 +4146,8 @@ router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
     const { generarComprobanteHTML } = require('../services/comprobanteHTML')
     const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
 
-    const puppeteer = require('puppeteer')
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-    const page = await browser.newPage()
-    await page.setContent(comprobanteHTML, { waitUntil: 'networkidle0' })
-    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } })
-    await browser.close()
+    const { generarPDF } = require('../services/pdfGenerator')
+    const pdfBuffer = await generarPDF(comprobanteHTML)
 
     const esNC = venta.tipo === 'nota_credito'
     const tipoDoc = esNC ? 'Nota_de_Credito' : 'Comprobante'
@@ -4159,7 +4155,7 @@ router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
 
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `inline; filename="${tipoDoc}_${numDoc}.pdf"`)
-    res.send(Buffer.from(pdfBuffer))
+    res.send(pdfBuffer)
   } catch (err) {
     console.error('[PDF] Error generando comprobante:', err.message)
     res.status(500).json({ error: 'Error generando comprobante' })

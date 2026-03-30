@@ -12,6 +12,7 @@
     "@afipsdk/afip.js": "^1.2.3",
     "@anthropic-ai/sdk": "^0.78.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@sparticuz/chromium": "^143.0.4",
     "@supabase/supabase-js": "^2.39.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
@@ -28,6 +29,7 @@
     "pdfkit": "^0.17.2",
     "pg": "^8.18.0",
     "puppeteer": "^24.39.1",
+    "puppeteer-core": "^24.40.0",
     "qrcode": "^1.5.4",
     "web-push": "^3.6.7",
     "xml2js": "^0.6.2"
