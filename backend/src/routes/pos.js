@@ -6,7 +6,19 @@ const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/au
 const { sincronizarERP } = require('../services/syncERP')
 const { getVentasCentumByFecha, getResumenVentasCentumBI } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
+const crypto = require('crypto')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
+
+// Token HMAC para links de descarga de comprobantes (no requiere auth)
+const COMPROBANTE_SECRET = process.env.COMPROBANTE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'comprobante-secret'
+function generarTokenDescarga(ventaId) {
+  return crypto.createHmac('sha256', COMPROBANTE_SECRET).update(String(ventaId)).digest('hex').slice(0, 32)
+}
+function generarLinkDescarga(ventaId) {
+  const token = generarTokenDescarga(ventaId)
+  const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+  return `${backendUrl}/api/pos/ventas/${ventaId}/comprobante.pdf?token=${token}`
+}
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
@@ -1367,41 +1379,32 @@ router.post('/ventas/:id/enviar-email', verificarAuth, async (req, res) => {
       return res.status(400).json({ error: 'Solo se pueden enviar por email comprobantes que tengan CAE' })
     }
 
-    // Generar HTML del comprobante y convertir a PDF
-    const { generarComprobanteHTML } = require('../services/comprobanteHTML')
-    const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
-
-    // Generar PDF con Puppeteer
-    const puppeteer = require('puppeteer')
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-    const page = await browser.newPage()
-    await page.setContent(comprobanteHTML, { waitUntil: 'networkidle0' })
-    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } })
-    await browser.close()
-
-    // Determinar tipo y número para el asunto
+    // Generar link de descarga
     const esNC = venta.tipo === 'nota_credito'
     const tipoDoc = esNC ? 'Nota de Crédito' : 'Comprobante'
     const numDoc = venta.centum_comprobante || `#${venta.numero_venta || ''}`
-    const pdfFilename = `${tipoDoc.replace(/ /g, '_')}_${numDoc.replace(/\s+/g, '_')}.pdf`
+    const linkPDF = generarLinkDescarga(req.params.id)
 
-    // Enviar email con PDF adjunto
+    // Enviar email con link de descarga
     const { enviarEmail } = require('../services/email')
     await enviarEmail({
       to: email.trim(),
       subject: `${tipoDoc} ${numDoc} - Almacen Zaatar`,
       html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
         <p>Estimado/a <strong>${escapeHtml(venta.nombre_cliente || 'Cliente')}</strong>,</p>
-        <p>Adjuntamos su comprobante de ${esNC ? 'nota de crédito' : 'compra'} en formato PDF.</p>
+        <p>Su ${esNC ? 'nota de crédito' : 'comprobante de compra'} está disponible para descargar.</p>
         <p style="color:#555;font-size:13px">Número: <strong>${escapeHtml(numDoc)}</strong><br>
         Fecha: ${new Date(venta.created_at).toLocaleDateString('es-AR')}<br>
         Total: <strong>$${parseFloat(venta.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong></p>
+        <div style="text-align:center;margin:25px 0">
+          <a href="${linkPDF}" style="background:#7c3aed;color:#fff;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Descargar ${tipoDoc} PDF</a>
+        </div>
+        <p style="font-size:11px;color:#999;text-align:center">Si el botón no funciona, copiá y pegá este link en tu navegador:<br>
+        <a href="${linkPDF}" style="color:#7c3aed;word-break:break-all">${linkPDF}</a></p>
         <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
         <p style="font-size:11px;color:#999">Comercial Padano SRL - Brasil 313, Rosario<br>
         Este email fue enviado desde un sistema automatizado. No responder a esta dirección.</p>
       </div>`,
-      pdfBuffer: Buffer.from(pdfBuffer),
-      pdfFilename,
     })
 
     // Marcar email enviado en la venta
@@ -4094,5 +4097,73 @@ async function handleEmailBatch(req, res) {
     res.status(500).json({ error: err.message })
   }
 }
+
+// GET /api/pos/ventas/:id/comprobante.pdf — descarga pública de comprobante (con token HMAC)
+router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
+  try {
+    const { token } = req.query
+    const ventaId = req.params.id
+    const tokenEsperado = generarTokenDescarga(ventaId)
+    if (!token || token !== tokenEsperado) {
+      return res.status(403).json({ error: 'Token inválido' })
+    }
+
+    const { data: venta, error: ventaErr } = await supabase.from('ventas_pos').select('*').eq('id', ventaId).single()
+    if (ventaErr || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
+
+    // Obtener datos del cliente y CAE
+    let caeData = { cae: null, cae_vencimiento: null, esFacturaA: false, cliente: null }
+    if (venta.id_cliente_centum && venta.id_cliente_centum > 0) {
+      const { data: cli } = await supabase.from('clientes')
+        .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo')
+        .eq('id_centum', venta.id_cliente_centum).single()
+      if (cli) {
+        const condIva = venta.condicion_iva || cli.condicion_iva || 'CF'
+        caeData.esFacturaA = condIva === 'RI' || condIva === 'MT'
+        caeData.cliente = cli
+      }
+    }
+
+    // Obtener CAE
+    if (venta.cae) {
+      caeData.cae = venta.cae
+      caeData.cae_vencimiento = venta.cae_vencimiento
+    } else if (venta.id_venta_centum) {
+      try {
+        const centumData = await obtenerVentaCentum(venta.id_venta_centum)
+        caeData.cae = centumData.CAE || null
+        caeData.cae_vencimiento = centumData.FechaVencimientoCAE || null
+      } catch (err) {
+        console.error('[PDF] Error obteniendo CAE:', err.message)
+      }
+    }
+
+    if (!caeData.cae) {
+      return res.status(400).json({ error: 'Este comprobante aún no tiene CAE' })
+    }
+
+    // Generar HTML y PDF
+    const { generarComprobanteHTML } = require('../services/comprobanteHTML')
+    const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
+
+    const puppeteer = require('puppeteer')
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
+    const page = await browser.newPage()
+    await page.setContent(comprobanteHTML, { waitUntil: 'networkidle0' })
+    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } })
+    await browser.close()
+
+    const esNC = venta.tipo === 'nota_credito'
+    const tipoDoc = esNC ? 'Nota_de_Credito' : 'Comprobante'
+    const numDoc = (venta.centum_comprobante || `${venta.numero_venta || ''}`).replace(/\s+/g, '_')
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${tipoDoc}_${numDoc}.pdf"`)
+    res.send(Buffer.from(pdfBuffer))
+  } catch (err) {
+    console.error('[PDF] Error generando comprobante:', err.message)
+    res.status(500).json({ error: 'Error generando comprobante' })
+  }
+})
 
 module.exports = router

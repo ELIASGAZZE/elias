@@ -1303,13 +1303,13 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   const esPrueba = !esFacturaA && soloEfectivo
   if (esPrueba) return
 
-  const caeData = { cae, cae_vencimiento: caeVto, esFacturaA, cliente: cli }
+  // Generar link de descarga con token HMAC
+  const crypto = require('crypto')
+  const COMPROBANTE_SECRET = process.env.COMPROBANTE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'comprobante-secret'
+  const token = crypto.createHmac('sha256', COMPROBANTE_SECRET).update(String(ventaPosId)).digest('hex').slice(0, 32)
+  const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+  const linkPDF = `${backendUrl}/api/pos/ventas/${ventaPosId}/comprobante.pdf?token=${token}`
 
-  // Generar HTML del comprobante (se envía embebido en el email, sin PDF)
-  const { generarComprobanteHTML } = require('./comprobanteHTML')
-  const comprobanteHTML = await generarComprobanteHTML(venta, caeData)
-
-  // Enviar email con el comprobante como HTML
   const esNC = venta.tipo === 'nota_credito'
   const tipoDoc = esNC ? 'Nota de Crédito' : 'Comprobante'
   const numDoc = venta.centum_comprobante || `#${venta.numero_venta || ''}`
@@ -1320,14 +1320,17 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   await enviarEmail({
     to: cli.email.trim(),
     subject: `${tipoDoc} ${numDoc} - Almacen Zaatar`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px">
+    html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
       <p>Estimado/a <strong>${escapeHtml(venta.nombre_cliente || 'Cliente')}</strong>,</p>
-      <p>Le enviamos su ${esNC ? 'nota de crédito' : 'comprobante de compra'}.</p>
+      <p>Su ${esNC ? 'nota de crédito' : 'comprobante de compra'} está disponible para descargar.</p>
       <p style="color:#555;font-size:13px">Número: <strong>${escapeHtml(numDoc)}</strong><br>
       Fecha: ${new Date(venta.created_at).toLocaleDateString('es-AR')}<br>
       Total: <strong>$${parseFloat(venta.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong></p>
-      <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
-      ${comprobanteHTML}
+      <div style="text-align:center;margin:25px 0">
+        <a href="${linkPDF}" style="background:#7c3aed;color:#fff;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Descargar ${tipoDoc} PDF</a>
+      </div>
+      <p style="font-size:11px;color:#999;text-align:center">Si el botón no funciona, copiá y pegá este link en tu navegador:<br>
+      <a href="${linkPDF}" style="color:#7c3aed;word-break:break-all">${linkPDF}</a></p>
       <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
       <p style="font-size:11px;color:#999">Comercial Padano SRL - Brasil 313, Rosario<br>
       Este email fue enviado desde un sistema automatizado. No responder a esta dirección.</p>
