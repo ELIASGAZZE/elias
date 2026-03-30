@@ -56,8 +56,8 @@ const SaldosEmpleados = () => {
   }
 
   async function registrarPago() {
-    if (!montoPago || parseFloat(montoPago) <= 0) {
-      setMensajePago('El monto debe ser mayor a 0')
+    if (!montoPago || parseFloat(montoPago) === 0) {
+      setMensajePago('El monto no puede ser 0')
       return
     }
     setGuardandoPago(true)
@@ -161,7 +161,6 @@ const SaldosEmpleados = () => {
                 <div className="flex gap-2">
                   <input
                     type="number"
-                    min="0"
                     step="100"
                     value={montoPago}
                     onChange={e => setMontoPago(e.target.value)}
