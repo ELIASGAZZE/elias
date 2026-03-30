@@ -135,7 +135,25 @@ router.put('/topes/:empleadoId', verificarAuth, soloAdmin, async (req, res) => {
 // POST /api/cuenta-empleados/ventas — registrar venta a cta cte
 router.post('/ventas', verificarAuth, async (req, res) => {
   try {
-    const { codigo_empleado, items, total, sucursal_id, caja_id } = req.body
+    const { codigo_empleado, items, total, sucursal_id, caja_id, nonce } = req.body
+
+    // Si viene nonce, verificar que no exista ya (previene duplicados por retry)
+    if (nonce) {
+      const { data: existente } = await supabase
+        .from('ventas_empleados')
+        .select('id')
+        .eq('nonce', nonce)
+        .maybeSingle()
+      if (existente) {
+        // Ya se procesó este request — devolver la venta existente sin insertar
+        const { data: ventaExistente } = await supabase
+          .from('ventas_empleados')
+          .select('*')
+          .eq('id', existente.id)
+          .single()
+        return res.json({ ...ventaExistente, duplicado: true })
+      }
+    }
 
     // Validar empleado por código
     const { data: empleado, error: empError } = await supabase
@@ -195,6 +213,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         cajero_id: req.perfil.id,
         items,
         total,
+        ...(nonce ? { nonce } : {}),
       })
       .select('*')
       .single()

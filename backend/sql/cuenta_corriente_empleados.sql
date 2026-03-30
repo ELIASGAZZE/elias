@@ -26,11 +26,13 @@ CREATE TABLE IF NOT EXISTS ventas_empleados (
   items JSONB NOT NULL DEFAULT '[]'::jsonb,
   total NUMERIC NOT NULL DEFAULT 0,
   comprobante_centum TEXT,
+  nonce TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ventas_empleados_empleado ON ventas_empleados(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_ventas_empleados_created ON ventas_empleados(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ventas_empleados_nonce ON ventas_empleados(nonce) WHERE nonce IS NOT NULL;
 
 ALTER TABLE ventas_empleados ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Lectura ventas_empleados" ON ventas_empleados FOR SELECT USING (true);

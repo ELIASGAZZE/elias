@@ -174,12 +174,15 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     submittingRef.current = true
     setGuardando(true)
     try {
+      // Generar nonce único para evitar duplicados por retry del interceptor 401
+      const nonce = crypto.randomUUID()
       const { data } = await api.post('/api/cuenta-empleados/ventas', {
         codigo_empleado: empleadoActivo.codigo,
         items: itemsResumen,
         total: totalFinal,
         sucursal_id: terminalConfig?.sucursal_id || null,
         caja_id: terminalConfig?.caja_id || null,
+        nonce,
       })
 
       imprimirComprobantesEmpleado(data.empleado || empleadoActivo, itemsResumen, totalFinal, cajero?.nombre)
