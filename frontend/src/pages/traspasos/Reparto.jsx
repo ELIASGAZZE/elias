@@ -56,9 +56,10 @@ const Reparto = () => {
       })
       setPrecinto('')
     } catch (err) {
+      console.error('[Reparto] Error buscar-precinto:', err.response?.status, err.response?.data, err.message)
       setFeedback({
         tipo: 'error',
-        mensaje: err.response?.data?.error || 'Error al buscar',
+        mensaje: err.response?.data?.error || `Error al buscar (${err.message})`,
       })
       setPrecinto('')
     } finally {
@@ -143,7 +144,7 @@ const Reparto = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar titulo="Reparto" sinTabs />
+      <Navbar titulo="Reparto v2" sinTabs />
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Input de escaneo */}

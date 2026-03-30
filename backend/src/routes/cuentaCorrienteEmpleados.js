@@ -280,7 +280,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
           const ventaLocal = {
             items: items.map(item => ({
-              id_centum: item.id_centum,
+              id_articulo: item.articulo_id,
               codigo: item.codigo,
               nombre: item.nombre,
               cantidad: item.cantidad,

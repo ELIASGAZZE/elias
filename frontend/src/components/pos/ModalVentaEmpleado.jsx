@@ -113,7 +113,6 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
 
       return {
         articulo_id: art.id,
-        id_centum: art.id_centum,
         codigo: art.codigo,
         nombre: art.nombre,
         rubro: rubroNombre,

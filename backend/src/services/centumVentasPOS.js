@@ -141,6 +141,12 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
   const idValor = MEDIO_A_ID_VALOR[medioPrincipal] || 1
 
+  // Validar que todos los artículos tengan IdArticulo válido
+  const articulosSinId = ventaArticulos.filter(a => !a.IdArticulo || a.IdArticulo === 0)
+  if (articulosSinId.length > 0) {
+    throw new Error(`No se puede crear venta en Centum: ${articulosSinId.length} artículo(s) sin IdArticulo válido: ${articulosSinId.map(a => a.Codigo || a.Nombre || 'sin código').join(', ')}`)
+  }
+
   // Validar que los precios de artículos no sean todos 0
   const preciosTodosZero = ventaArticulos.every(a => a.Precio === 0)
   if (preciosTodosZero) {

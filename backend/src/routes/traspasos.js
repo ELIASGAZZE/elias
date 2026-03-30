@@ -9,6 +9,52 @@ const { ajusteStockNegativo, ajusteStockPositivo } = require('../services/centum
 // Artículos ligero — solo los campos necesarios para preparación
 // ═══════════════════════════════════════════════════════════════
 
+// Buscar artículo por código (para control ciego)
+router.get('/articulo-por-codigo/:codigo', verificarAuth, async (req, res) => {
+  try {
+    const codigo = req.params.codigo.trim()
+    if (!codigo) return res.status(400).json({ error: 'Código requerido' })
+
+    // Buscar por codigo, id_centum, o codigos_barras
+    let articulo = null
+
+    // Por código exacto
+    const { data: porCodigo } = await supabase
+      .from('articulos')
+      .select('id, id_centum, codigo, nombre, rubro, es_pesable, codigos_barras, peso_promedio_pieza, peso_minimo, peso_maximo')
+      .eq('codigo', codigo)
+      .limit(1)
+      .maybeSingle()
+
+    if (porCodigo) articulo = porCodigo
+
+    // Por codigos_barras — formato jsonb: [{codigo:"...",factor:1}] o ["..."]
+    // Supabase ilike castea jsonb a text para comparar
+    if (!articulo) {
+      const { data: porCB } = await supabase
+        .from('articulos')
+        .select('id, id_centum, codigo, nombre, rubro, es_pesable, codigos_barras, peso_promedio_pieza, peso_minimo, peso_maximo')
+        .like('codigos_barras::text', `%${codigo}%`)
+        .limit(1)
+
+      if (porCB && porCB.length > 0) articulo = porCB[0]
+    }
+
+    if (!articulo) return res.status(404).json({ error: 'Artículo no encontrado' })
+
+    res.json({
+      id: articulo.id_centum || articulo.id,
+      codigo: articulo.codigo || '',
+      nombre: articulo.nombre || '',
+      esPesable: articulo.es_pesable || false,
+      codigosBarras: articulo.codigos_barras || [],
+      pesoPromedioPieza: articulo.peso_promedio_pieza ? parseFloat(articulo.peso_promedio_pieza) : null,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.post('/articulos-enriquecer', verificarAuth, async (req, res) => {
   try {
     const { ids } = req.body // array de id_centum (articulo_id en ordenes)
@@ -787,6 +833,318 @@ router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, async (req
   }
 })
 
+// Despachar canasto por escaneo (DEBE ir antes de /canastos/:id para evitar conflicto)
+router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
+  try {
+    const { precinto, canasto_id } = req.body
+    if (!precinto && !canasto_id) return res.status(400).json({ error: 'Precinto o canasto_id requerido' })
+
+    // Buscar canasto por ID (bultos) o por precinto (canastos normales)
+    let canasto, errBuscar
+    if (canasto_id) {
+      const result = await supabase
+        .from('traspaso_canastos')
+        .select('*, orden_traspaso_id')
+        .eq('id', canasto_id)
+        .single()
+      canasto = result.data
+      errBuscar = result.error
+    } else {
+      const result = await supabase
+        .from('traspaso_canastos')
+        .select('*, orden_traspaso_id')
+        .eq('precinto', precinto)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      canasto = result.data
+      errBuscar = result.error
+    }
+
+    if (errBuscar || !canasto) {
+      console.error('[despachar-scan] No encontrado:', { canasto_id, precinto, errBuscar: errBuscar?.message || errBuscar, canasto })
+      return res.status(404).json({ error: canasto_id ? 'Canasto no encontrado' : `Canasto con precinto "${precinto}" no encontrado`, debug: { errBuscar: errBuscar?.message, canasto_id, precinto } })
+    }
+
+    // Si ya está en_transito, devolver sin error
+    if (canasto.estado === 'en_transito') {
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+
+      const { data: hermanos } = await supabase
+        .from('traspaso_canastos')
+        .select('id, estado')
+        .eq('orden_traspaso_id', canasto.orden_traspaso_id)
+
+      const total = (hermanos || []).length
+      const enTransito = (hermanos || []).filter(c => c.estado === 'en_transito').length
+
+      return res.json({
+        ya_escaneado: true,
+        canasto,
+        orden,
+        orden_completada: orden?.estado === 'despachado',
+        canastos_restantes: total - enTransito,
+        total_canastos: total,
+      })
+    }
+
+    // Solo despachar canastos en estado en_origen
+    if (canasto.estado !== 'en_origen') {
+      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar en origen para despachar` })
+    }
+
+    // Pasar canasto a en_transito
+    const { data: canastoActualizado, error: errUpdate } = await supabase
+      .from('traspaso_canastos')
+      .update({ estado: 'en_transito', updated_at: new Date().toISOString() })
+      .eq('id', canasto.id)
+      .select()
+      .single()
+
+    if (errUpdate) throw errUpdate
+
+    // Verificar si TODOS los canastos de la orden están en_transito
+    const { data: todosCanastos } = await supabase
+      .from('traspaso_canastos')
+      .select('id, estado')
+      .eq('orden_traspaso_id', canasto.orden_traspaso_id)
+
+    const total = (todosCanastos || []).length
+    const despachados = (todosCanastos || []).filter(c => c.estado === 'en_transito').length
+    let ordenCompletada = false
+    let ordenData = null
+
+    if (despachados === total) {
+      // Traer orden para ajuste stock
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('*')
+        .eq('id', canasto.orden_traspaso_id)
+        .eq('estado', 'preparado')
+        .single()
+
+      if (orden) {
+        const resultado = await ajusteStockNegativo(
+          orden.sucursal_origen_id,
+          orden.items || [],
+          orden.numero
+        )
+
+        const { data: ordenActualizada } = await supabase
+          .from('ordenes_traspaso')
+          .update({
+            estado: 'despachado',
+            despachado_por: req.usuario?.id,
+            despachado_at: new Date().toISOString(),
+            centum_ajuste_origen_id: resultado.ajusteId,
+            centum_error: resultado.error,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', orden.id)
+          .select()
+          .single()
+
+        ordenCompletada = true
+        ordenData = ordenActualizada
+      }
+    }
+
+    if (!ordenData) {
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+      ordenData = orden
+    }
+
+    res.json({
+      ya_escaneado: false,
+      canasto: canastoActualizado,
+      orden: ordenData,
+      orden_completada: ordenCompletada,
+      canastos_restantes: total - despachados,
+      total_canastos: total,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Recibir canasto por escaneo libre (sin seleccionar orden)
+// ═══════════════════════════════════════════════════════════════
+
+router.put('/canastos/recibir-scan', verificarAuth, async (req, res) => {
+  try {
+    const { canasto_id } = req.body
+    if (!canasto_id) return res.status(400).json({ error: 'canasto_id requerido' })
+
+    // Buscar canasto
+    const { data: canasto, error: errCanasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', canasto_id)
+      .single()
+
+    if (errCanasto || !canasto) {
+      return res.status(404).json({ error: 'Canasto no encontrado' })
+    }
+
+    // Idempotente: si ya está en_destino
+    if (canasto.estado === 'en_destino') {
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+      return res.json({ ya_recibido: true, accion: 'recibido', canasto, orden })
+    }
+
+    // Solo canastos en tránsito se pueden recibir/devolver
+    if (canasto.estado !== 'en_transito') {
+      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar en tránsito` })
+    }
+
+    // Obtener orden para saber origen y destino
+    const { data: orden } = await supabase
+      .from('ordenes_traspaso')
+      .select('id, numero, estado, sucursal_origen_id, sucursal_destino_id')
+      .eq('id', canasto.orden_traspaso_id)
+      .single()
+
+    if (!orden) {
+      return res.status(404).json({ error: 'Orden de traspaso no encontrada' })
+    }
+
+    // Sucursal del usuario
+    const userSucursalId = req.perfil.sucursales?.id || req.perfil.sucursal_id
+    if (!userSucursalId) {
+      return res.status(400).json({ error: 'Tu usuario no tiene sucursal asignada' })
+    }
+
+    let accion, nuevoEstado, updates
+
+    if (userSucursalId === orden.sucursal_destino_id) {
+      // Recibir en destino
+      accion = 'recibido'
+      nuevoEstado = 'en_destino'
+      updates = {
+        estado: nuevoEstado,
+        updated_at: new Date().toISOString(),
+      }
+    } else if (userSucursalId === orden.sucursal_origen_id) {
+      // Devolver a origen
+      accion = 'devuelto'
+      nuevoEstado = 'en_origen'
+      updates = {
+        estado: nuevoEstado,
+        updated_at: new Date().toISOString(),
+      }
+    } else {
+      return res.status(403).json({ error: 'Tu sucursal no es origen ni destino de este traspaso' })
+    }
+
+    const { data: canastoActualizado, error: errUpdate } = await supabase
+      .from('traspaso_canastos')
+      .update(updates)
+      .eq('id', canasto.id)
+      .select()
+      .single()
+
+    if (errUpdate) throw errUpdate
+
+    res.json({ accion, canasto: canastoActualizado, orden })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Canastos en tránsito hacia la sucursal del usuario
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/canastos/en-transito-mi-sucursal', verificarAuth, async (req, res) => {
+  try {
+    const userSucursalId = req.perfil.sucursales?.id || req.perfil.sucursal_id
+    if (!userSucursalId) {
+      return res.json([])
+    }
+
+    // Ordenes cuyo destino es la sucursal del usuario
+    const { data: ordenes } = await supabase
+      .from('ordenes_traspaso')
+      .select('id, numero, sucursal_origen_id, sucursal_destino_id')
+      .eq('sucursal_destino_id', userSucursalId)
+      .in('estado', ['preparado', 'despachado', 'en_transito', 'recibido'])
+
+    if (!ordenes || ordenes.length === 0) return res.json([])
+
+    const ordenIds = ordenes.map(o => o.id)
+    const { data: canastos } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .in('orden_traspaso_id', ordenIds)
+      .eq('estado', 'en_transito')
+      .order('updated_at', { ascending: false })
+
+    // Enriquecer con datos de orden
+    const ordenMap = Object.fromEntries(ordenes.map(o => [o.id, o]))
+    const resultado = (canastos || []).map(c => ({
+      canasto: c,
+      orden: ordenMap[c.orden_traspaso_id] || null,
+    }))
+
+    res.json(resultado)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Canastos con diferencia pendientes de control en mi sucursal
+router.get('/canastos/con-diferencia-mi-sucursal', verificarAuth, async (req, res) => {
+  try {
+    const userSucursalId = req.perfil.sucursales?.id || req.perfil.sucursal_id
+    if (!userSucursalId) return res.json([])
+
+    const { data: ordenes } = await supabase
+      .from('ordenes_traspaso')
+      .select('id, numero, sucursal_origen_id, sucursal_destino_id')
+      .eq('sucursal_destino_id', userSucursalId)
+      .in('estado', ['preparado', 'despachado', 'en_transito', 'recibido'])
+
+    if (!ordenes || ordenes.length === 0) return res.json([])
+
+    const ordenIds = ordenes.map(o => o.id)
+    const { data: canastos } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .in('orden_traspaso_id', ordenIds)
+      .in('estado', ['con_diferencia', 'en_destino'])
+      .order('updated_at', { ascending: false })
+
+    // Filtrar: con_diferencia sin control de artículos, o en_destino con requiere_control_articulos
+    const filtrados = (canastos || []).filter(c =>
+      (c.estado === 'con_diferencia' && !c.control_articulos_at) ||
+      (c.requiere_control_articulos && !c.control_articulos_at)
+    )
+
+    const ordenMap = Object.fromEntries(ordenes.map(o => [o.id, o]))
+    const resultado = filtrados.map(c => ({
+      canasto: c,
+      orden: ordenMap[c.orden_traspaso_id] || null,
+    }))
+
+    res.json(resultado)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
   try {
     const { data: canasto } = await supabase
@@ -977,6 +1335,252 @@ router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
 
     if (error) throw error
     res.json({ ...data, hay_diferencias: hayDiferencias })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Items consolidados para control de artículos (incluye hijos si es pallet)
+router.get('/canastos/:id/items-control', verificarAuth, async (req, res) => {
+  try {
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto) return res.status(404).json({ error: 'Canasto no encontrado' })
+
+    let allItems = []
+
+    if (canasto.tipo === 'pallet') {
+      // Pallet: consolidar items de todos los bultos/canastos hijos
+      const { data: hijos } = await supabase
+        .from('traspaso_canastos')
+        .select('items')
+        .eq('pallet_id', canasto.id)
+
+      for (const hijo of (hijos || [])) {
+        for (const item of (hijo.items || [])) {
+          const existing = allItems.find(i => i.articulo_id === item.articulo_id)
+          if (existing) {
+            existing.cantidad = (existing.cantidad || 0) + (item.cantidad || 0)
+            if (item.pesos_escaneados) {
+              existing.pesos_escaneados = [...(existing.pesos_escaneados || []), ...item.pesos_escaneados]
+            }
+          } else {
+            allItems.push({ ...item })
+          }
+        }
+      }
+    } else {
+      allItems = canasto.items || []
+    }
+
+    res.json({ items: allItems, tipo: canasto.tipo })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Control de artículos individuales (post-diferencia en peso/bultos)
+router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) => {
+  try {
+    const { items_recibidos, fotos } = req.body
+    if (!Array.isArray(items_recibidos) || items_recibidos.length === 0) {
+      return res.status(400).json({ error: 'items_recibidos requeridos' })
+    }
+
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto || !['en_destino', 'con_diferencia'].includes(canasto.estado)) {
+      return res.status(400).json({ error: 'Solo se pueden controlar canastos en destino o con diferencia' })
+    }
+
+    // Obtener tolerancia para pesables
+    const { data: configRow } = await supabase
+      .from('traspaso_config')
+      .select('valor')
+      .eq('clave', 'tolerancia_peso_gramos')
+      .single()
+    const toleranciaKg = parseFloat(configRow?.valor || '500') / 1000
+
+    // Consolidar items (para pallets, obtener de hijos)
+    let itemsCanasto = canasto.items || []
+    if (canasto.tipo === 'pallet') {
+      itemsCanasto = []
+      const { data: hijos } = await supabase
+        .from('traspaso_canastos')
+        .select('items')
+        .eq('pallet_id', canasto.id)
+      for (const hijo of (hijos || [])) {
+        for (const item of (hijo.items || [])) {
+          const existing = itemsCanasto.find(i => i.articulo_id === item.articulo_id)
+          if (existing) {
+            existing.cantidad = (existing.cantidad || 0) + (item.cantidad || 0)
+            if (item.pesos_escaneados) existing.pesos_escaneados = [...(existing.pesos_escaneados || []), ...item.pesos_escaneados]
+          } else {
+            itemsCanasto.push({ ...item })
+          }
+        }
+      }
+    }
+
+    const diferencias_articulos = []
+    let hayDiferencias = false
+
+    // Comparar items recibidos vs preparados
+    const recibidosMap = {}
+    for (const ir of items_recibidos) {
+      recibidosMap[ir.articulo_id] = ir
+    }
+
+    // Items preparados
+    for (const itemOrig of itemsCanasto) {
+      const recibido = recibidosMap[itemOrig.articulo_id]
+      const cantEsperada = itemOrig.es_pesable
+        ? (itemOrig.pesos_escaneados || []).reduce((s, p) => s + p, 0) || itemOrig.cantidad
+        : itemOrig.cantidad
+      const cantRecibida = recibido?.cantidad_recibida || 0
+
+      let tipo = 'ok'
+      if (cantRecibida === 0) {
+        tipo = 'faltante'
+        hayDiferencias = true
+      } else if (itemOrig.es_pesable) {
+        const tol = Math.max(toleranciaKg, cantEsperada * 0.02)
+        if (Math.abs(cantRecibida - cantEsperada) > tol) {
+          tipo = 'diferencia'
+          hayDiferencias = true
+        }
+      } else if (cantRecibida !== cantEsperada) {
+        tipo = 'diferencia'
+        hayDiferencias = true
+      }
+
+      diferencias_articulos.push({
+        articulo_id: itemOrig.articulo_id,
+        nombre: itemOrig.nombre || '',
+        codigo: itemOrig.codigo || '',
+        cantidad_esperada: cantEsperada,
+        cantidad_recibida: cantRecibida,
+        pesos_escaneados_destino: recibido?.pesos_escaneados_destino || [],
+        tipo,
+        es_extra: false,
+      })
+
+      delete recibidosMap[itemOrig.articulo_id]
+    }
+
+    // Extras (no estaban en canasto)
+    for (const [artId, ir] of Object.entries(recibidosMap)) {
+      if (ir.es_extra) {
+        hayDiferencias = true
+        diferencias_articulos.push({
+          articulo_id: artId,
+          nombre: ir.nombre || '',
+          codigo: ir.codigo || '',
+          cantidad_esperada: 0,
+          cantidad_recibida: ir.cantidad_recibida,
+          pesos_escaneados_destino: ir.pesos_escaneados_destino || [],
+          tipo: 'extra',
+          es_extra: true,
+        })
+      }
+    }
+
+    const nuevoEstado = hayDiferencias ? 'con_diferencia' : 'controlado'
+
+    const { data, error } = await supabase
+      .from('traspaso_canastos')
+      .update({
+        diferencias_articulos,
+        control_articulos_at: new Date().toISOString(),
+        control_articulos_fotos: Array.isArray(fotos) ? fotos : null,
+        estado: nuevoEstado,
+        verificado_por: req.usuario?.id,
+        verificado_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json({ hay_diferencias: hayDiferencias, diferencias_articulos, canasto: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Verificar artículo extra: ¿está en la orden? ¿en qué canasto fue preparado?
+router.post('/canastos/:id/verificar-articulo-extra', verificarAuth, async (req, res) => {
+  try {
+    const { articulo_id, codigo } = req.body
+    if (!articulo_id && !codigo) {
+      return res.status(400).json({ error: 'articulo_id o codigo requerido' })
+    }
+
+    const { data: canasto } = await supabase
+      .from('traspaso_canastos')
+      .select('orden_traspaso_id')
+      .eq('id', req.params.id)
+      .single()
+
+    if (!canasto) return res.status(404).json({ error: 'Canasto no encontrado' })
+
+    // Obtener la orden
+    const { data: orden } = await supabase
+      .from('ordenes_traspaso')
+      .select('items')
+      .eq('id', canasto.orden_traspaso_id)
+      .single()
+
+    if (!orden) return res.status(404).json({ error: 'Orden no encontrada' })
+
+    // ¿Está en la orden?
+    const itemsOrden = orden.items || []
+    const en_orden = itemsOrden.some(i =>
+      String(i.articulo_id) === String(articulo_id) ||
+      (codigo && i.codigo === codigo)
+    )
+
+    let canasto_origen = null
+
+    if (en_orden) {
+      // Buscar en qué canasto de esta orden fue preparado
+      const { data: canastos } = await supabase
+        .from('traspaso_canastos')
+        .select('id, precinto, items')
+        .eq('orden_traspaso_id', canasto.orden_traspaso_id)
+        .neq('id', req.params.id)
+
+      for (const c of (canastos || [])) {
+        const cItems = c.items || []
+        const tiene = cItems.some(i =>
+          String(i.articulo_id) === String(articulo_id) ||
+          (codigo && i.codigo === codigo)
+        )
+        if (tiene) {
+          canasto_origen = { id: c.id, precinto: c.precinto }
+          // Marcar ese canasto como requiere control
+          await supabase
+            .from('traspaso_canastos')
+            .update({
+              requiere_control_articulos: true,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', c.id)
+          break
+        }
+      }
+    }
+
+    res.json({ en_orden, canasto_origen })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1247,146 +1851,6 @@ router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res
     res.json({
       canasto,
       orden: ordenEnriquecida,
-    })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
-  try {
-    const { precinto, canasto_id } = req.body
-    if (!precinto && !canasto_id) return res.status(400).json({ error: 'Precinto o canasto_id requerido' })
-
-    // Buscar canasto por ID (bultos) o por precinto (canastos normales)
-    let canasto, errBuscar
-    if (canasto_id) {
-      const result = await supabase
-        .from('traspaso_canastos')
-        .select('*, orden_traspaso_id')
-        .eq('id', canasto_id)
-        .single()
-      canasto = result.data
-      errBuscar = result.error
-    } else {
-      const result = await supabase
-        .from('traspaso_canastos')
-        .select('*, orden_traspaso_id')
-        .eq('precinto', precinto)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
-      canasto = result.data
-      errBuscar = result.error
-    }
-
-    if (errBuscar || !canasto) {
-      return res.status(404).json({ error: canasto_id ? 'Canasto no encontrado' : `Canasto con precinto "${precinto}" no encontrado` })
-    }
-
-    // Si ya está en_transito, devolver sin error
-    if (canasto.estado === 'en_transito') {
-      const { data: orden } = await supabase
-        .from('ordenes_traspaso')
-        .select('id, numero, estado')
-        .eq('id', canasto.orden_traspaso_id)
-        .single()
-
-      const { data: hermanos } = await supabase
-        .from('traspaso_canastos')
-        .select('id, estado')
-        .eq('orden_traspaso_id', canasto.orden_traspaso_id)
-
-      const total = (hermanos || []).length
-      const enTransito = (hermanos || []).filter(c => c.estado === 'en_transito').length
-
-      return res.json({
-        ya_escaneado: true,
-        canasto,
-        orden,
-        orden_completada: orden?.estado === 'despachado',
-        canastos_restantes: total - enTransito,
-        total_canastos: total,
-      })
-    }
-
-    // Solo despachar canastos en estado en_origen
-    if (canasto.estado !== 'en_origen') {
-      return res.status(400).json({ error: `Canasto en estado "${canasto.estado}", debe estar en origen para despachar` })
-    }
-
-    // Pasar canasto a en_transito
-    const { data: canastoActualizado, error: errUpdate } = await supabase
-      .from('traspaso_canastos')
-      .update({ estado: 'en_transito', updated_at: new Date().toISOString() })
-      .eq('id', canasto.id)
-      .select()
-      .single()
-
-    if (errUpdate) throw errUpdate
-
-    // Verificar si TODOS los canastos de la orden están en_transito
-    const { data: todosCanastos } = await supabase
-      .from('traspaso_canastos')
-      .select('id, estado')
-      .eq('orden_traspaso_id', canasto.orden_traspaso_id)
-
-    const total = (todosCanastos || []).length
-    const despachados = (todosCanastos || []).filter(c => c.estado === 'en_transito').length
-    let ordenCompletada = false
-    let ordenData = null
-
-    if (despachados === total) {
-      // Traer orden para ajuste stock
-      const { data: orden } = await supabase
-        .from('ordenes_traspaso')
-        .select('*')
-        .eq('id', canasto.orden_traspaso_id)
-        .eq('estado', 'preparado')
-        .single()
-
-      if (orden) {
-        const resultado = await ajusteStockNegativo(
-          orden.sucursal_origen_id,
-          orden.items || [],
-          orden.numero
-        )
-
-        const { data: ordenActualizada } = await supabase
-          .from('ordenes_traspaso')
-          .update({
-            estado: 'despachado',
-            despachado_por: req.usuario?.id,
-            despachado_at: new Date().toISOString(),
-            centum_ajuste_origen_id: resultado.ajusteId,
-            centum_error: resultado.error,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orden.id)
-          .select()
-          .single()
-
-        ordenCompletada = true
-        ordenData = ordenActualizada
-      }
-    }
-
-    if (!ordenData) {
-      const { data: orden } = await supabase
-        .from('ordenes_traspaso')
-        .select('id, numero, estado')
-        .eq('id', canasto.orden_traspaso_id)
-        .single()
-      ordenData = orden
-    }
-
-    res.json({
-      ya_escaneado: false,
-      canasto: canastoActualizado,
-      orden: ordenData,
-      orden_completada: ordenCompletada,
-      canastos_restantes: total - despachados,
-      total_canastos: total,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -1764,17 +2228,24 @@ router.put('/canastos/:id/recibir-en-destino', verificarAuth, async (req, res) =
 // Registro de canastos — CRUD + generación de códigos CAN-XXXX
 // ═══════════════════════════════════════════════════════════════
 
-const siguienteCodigoCanasto = async () => {
-  const { data } = await supabase
-    .from('canastos_registro')
-    .select('codigo')
-    .order('codigo', { ascending: false })
-    .limit(1)
+const generarCodigoCanasto = () => {
+  // Formato: CAN-XXXX-NNNN (ej: CAN-7K3M-0001)
+  // XXXX = 4 chars alfanuméricos random (sin vocales para evitar palabras)
+  // NNNN = secuencial 4 dígitos
+  const chars = 'BCDFGHJKLMNPQRSTVWXYZ23456789'
+  let seg = ''
+  for (let i = 0; i < 4; i++) seg += chars[Math.floor(Math.random() * chars.length)]
+  return seg
+}
 
-  if (!data || data.length === 0) return 'CAN-0001'
-  const ultimo = data[0].codigo // CAN-0042
-  const num = parseInt(ultimo.replace('CAN-', ''), 10) || 0
-  return `CAN-${String(num + 1).padStart(4, '0')}`
+const siguienteCodigoCanasto = async () => {
+  const { count } = await supabase
+    .from('canastos_registro')
+    .select('*', { count: 'exact', head: true })
+
+  const num = (count || 0) + 1
+  const seg = generarCodigoCanasto()
+  return `CAN-${seg}-${String(num).padStart(4, '0')}`
 }
 
 // Listar todos los canastos registrados
@@ -1806,12 +2277,16 @@ router.get('/canastos-registro/siguiente-codigo', verificarAuth, async (req, res
 router.post('/canastos-registro', verificarAuth, async (req, res) => {
   try {
     const cantidad = Math.min(Math.max(parseInt(req.body.cantidad) || 1, 1), 100)
-    const base = await siguienteCodigoCanasto()
-    const baseNum = parseInt(base.replace('CAN-', ''), 10)
+
+    const { count } = await supabase
+      .from('canastos_registro')
+      .select('*', { count: 'exact', head: true })
 
     const registros = []
     for (let i = 0; i < cantidad; i++) {
-      registros.push({ codigo: `CAN-${String(baseNum + i).padStart(4, '0')}` })
+      const num = (count || 0) + 1 + i
+      const seg = generarCodigoCanasto()
+      registros.push({ codigo: `CAN-${seg}-${String(num).padStart(4, '0')}` })
     }
 
     const { data, error } = await supabase
