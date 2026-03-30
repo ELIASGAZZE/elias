@@ -647,6 +647,16 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       return 'CF'
     }
 
+    const condicionIvaCentum = mapCondicionIVA(r.CondicionIVAClienteID)
+
+    // Obtener condicion_iva local antes de sobreescribir
+    // Si fue editada localmente (distinta de Centum), preservar la local
+    const { data: clienteLocal } = await supabase
+      .from('clientes')
+      .select('condicion_iva')
+      .eq('id_centum', idCentum)
+      .single()
+
     const updates = {
       razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
       cuit: r.CUITCliente?.trim() || null,
@@ -655,7 +665,11 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       codigo_postal: r.CodigoPostalCliente?.trim() || null,
       telefono: r.Telefono1Cliente?.trim() || null,
       codigo_centum: r.CodigoCliente?.trim() || null,
-      condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID),
+    }
+    // Solo actualizar condicion_iva desde Centum si coincide con la local
+    // (si difieren, significa que fue editada localmente y Centum no lo refleja aún)
+    if (!clienteLocal?.condicion_iva || clienteLocal.condicion_iva === condicionIvaCentum) {
+      updates.condicion_iva = condicionIvaCentum
     }
 
     const { data, error } = await supabase
