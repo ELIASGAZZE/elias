@@ -282,6 +282,8 @@ const TabCuentaCorriente = () => {
     try {
       const { data } = await api.get('/api/cuenta-empleados/saldos')
       setEmpleados(data || [])
+      // Actualizar seleccionado con datos frescos
+      setSeleccionado(prev => prev ? (data || []).find(e => e.id === prev.id) || prev : null)
     } catch (err) {
       console.error('Error cargando saldos:', err)
     } finally {
@@ -534,8 +536,8 @@ const TabCuentaCorriente = () => {
                           {mov._tipo === 'pago' && mov.registrado && ` · Por: ${mov.registrado.nombre || mov.registrado.username}`}
                         </p>
                       </div>
-                      <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : 'text-green-600'}`}>
-                        {mov._tipo === 'venta' ? '+' : '-'}{formatPrecio(mov._tipo === 'venta' ? mov.total : mov.monto)}
+                      <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : mov.monto < 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                        {mov._tipo === 'venta' ? '+' : mov.monto < 0 ? '+' : '-'}{formatPrecio(Math.abs(mov._tipo === 'venta' ? mov.total : mov.monto))}
                       </span>
                     </div>
 
