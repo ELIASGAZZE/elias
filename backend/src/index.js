@@ -79,7 +79,7 @@ app.use((req, res, next) => {
 // Parseamos el body de los requests como JSON (excepto /mcp que lo maneja el SDK)
 app.use((req, res, next) => {
   if (req.path === '/mcp') return next()
-  express.json()(req, res, next)
+  express.json({ limit: '10mb' })(req, res, next)
 })
 
 // ── Rutas ─────────────────────────────────────────────────────────────────────
