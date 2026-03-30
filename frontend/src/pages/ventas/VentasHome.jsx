@@ -222,9 +222,9 @@ const VentasHome = () => {
   }
 
   const reenviarTodasCentum = async () => {
-    const pendientes = ventas.filter(v => !v.centum_sync && !v.centum_comprobante)
+    const pendientes = ventas.filter(v => !v.centum_sync && !v.centum_comprobante && v.centum_error)
     if (pendientes.length === 0) return
-    if (!confirm(`¿Reintentar ${pendientes.length} venta(s) en Centum? Esto genera facturas fiscales.`)) return
+    if (!confirm(`¿Reintentar ${pendientes.length} venta(s) con error en Centum? Esto genera facturas fiscales.`)) return
     setReenvioMasivo(true)
     let ok = 0, fail = 0
     for (const v of pendientes) {
@@ -495,7 +495,7 @@ const VentasHome = () => {
         )}
 
         {/* Botón reintentar todas en Centum */}
-        {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante) && (
+        {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante && v.centum_error) && (
           <button
             onClick={reenviarTodasCentum}
             disabled={reenvioMasivo}
@@ -503,7 +503,7 @@ const VentasHome = () => {
           >
             {reenvioMasivo
               ? 'Enviando a Centum...'
-              : `Reintentar Centum (${ventas.filter(v => !v.centum_sync && !v.centum_comprobante).length} pendientes)`
+              : `Reintentar Centum (${ventas.filter(v => !v.centum_sync && !v.centum_comprobante && v.centum_error).length} pendientes)`
             }
           </button>
         )}
