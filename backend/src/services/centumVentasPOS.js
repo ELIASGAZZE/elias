@@ -138,7 +138,9 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  console.log(`[Centum POS] condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, subtotalArticulos=${subtotalArticulos}, importeValor=${importeValor}, items=${ventaArticulos.length}`)
+  // Debug: mostrar precios round-trip para diagnosticar
+  const _rtDebug = ventaArticulos.map(a => `${a.Codigo}:orig=${items.find(i=>(i.codigo||'')==a.Codigo)?.precio_unitario}→rt=${a.Precio}`).join(', ')
+  console.log(`[Centum POS RT] esFacturaA=${esFacturaA}, subtotal=${subtotalArticulos}, importeValor=${importeValor}, precios=[${_rtDebug}]`)
 
   const body = {
     FechaImputacion: fechaHoy,
