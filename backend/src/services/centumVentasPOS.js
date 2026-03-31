@@ -169,7 +169,9 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  console.log(`[Centum POS] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, importeValor=${importeValor}, items=${ventaArticulos.length}, preciosArticulos=[${ventaArticulos.map(a => `${a.Cantidad}x${a.Precio}`).join(',')}]`)
+  // Debug v2: log detallado para diagnosticar CobroNoBalanceaException
+  const _debugSubtotal = ventaArticulos.reduce((s, a) => s + Math.round(a.Precio * (a.Cantidad || 0) * 100) / 100, 0)
+  console.log(`[Centum POS v2] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, totalComparable=${totalComparable}, subtotalArticulos=${subtotalArticulos}, debugSubtotal=${Math.round(_debugSubtotal*100)/100}, importeValor=${importeValor}, items=${ventaArticulos.length}, preciosArticulos=[${ventaArticulos.map(a => `${a.Cantidad}x${a.Precio}=${Math.round(a.Precio*(a.Cantidad||0)*100)/100}`).join(',')}]`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -251,12 +253,17 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     return { _creadoConWarning: true, ...data }
   }
 
+  // Debug info para CobroNoBalanceaException
+  const debugInfo = (texto.includes('CobroNoBalancea'))
+    ? ` [DEBUG v2: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, totalComparable=${totalComparable}, esFacturaA=${esFacturaA}, items=${ventaArticulos.map(a => `${a.Cantidad}x$${a.Precio}=>${Math.round(a.Precio*(a.Cantidad||0)*100)/100}`).join('|')}]`
+    : ''
+
   registrarLlamada({
     servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
     estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
-    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'pos',
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}${debugInfo}`, origen: 'pos',
   })
-  throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 500)}${debugInfo}`)
 }
 
 /**
