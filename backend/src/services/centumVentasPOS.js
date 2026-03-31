@@ -940,35 +940,28 @@ async function retrySyncVentasCentum() {
 
     // ============ ATOMIC CLAIM: lock a nivel de base de datos ============
     // Previene que múltiples instancias (ej: durante deploy Render) procesen la misma venta.
-    // UPDATE condicional: solo reclama si nadie la reclamó en los últimos 60 segundos.
-    // NOTA: se evita .or() con .update().select() porque Supabase evalúa el filtro OR
-    // sobre la fila YA ACTUALIZADA en el RETURNING, y como centum_ultimo_intento
-    // ya no es null ni < hace60s, .select() devuelve vacío aunque el UPDATE sí se ejecutó.
+    // NOTA: Supabase .update().select() evalúa TODOS los filtros sobre la fila YA ACTUALIZADA
+    // (PostgREST re-aplica WHERE al RETURNING). Por eso hacemos UPDATE sin .select() y
+    // verificamos con un SELECT separado usando el timestamp exacto como "claim token".
     const ahoraClaim = new Date().toISOString()
     const hace60s = new Date(Date.now() - 60000).toISOString()
-    let claimOk = false
-    if (!venta.centum_ultimo_intento) {
-      // Caso 1: primer intento (centum_ultimo_intento es null)
-      const { data: claimed, error: claimErr } = await supabase
-        .from('ventas_pos')
-        .update({ centum_ultimo_intento: ahoraClaim })
-        .eq('id', venta.id)
-        .eq('centum_sync', false)
-        .is('centum_ultimo_intento', null)
-        .select('id')
-      claimOk = !claimErr && claimed?.length > 0
-    } else {
-      // Caso 2: reintento (centum_ultimo_intento tiene valor, verificar que sea viejo)
-      const { data: claimed, error: claimErr } = await supabase
-        .from('ventas_pos')
-        .update({ centum_ultimo_intento: ahoraClaim })
-        .eq('id', venta.id)
-        .eq('centum_sync', false)
-        .lt('centum_ultimo_intento', hace60s)
-        .select('id')
-      claimOk = !claimErr && claimed?.length > 0
-    }
-    if (!claimOk) {
+
+    // Paso 1: UPDATE condicional (sin .select para evitar el bug de PostgREST)
+    await supabase
+      .from('ventas_pos')
+      .update({ centum_ultimo_intento: ahoraClaim })
+      .eq('id', venta.id)
+      .eq('centum_sync', false)
+      .or(`centum_ultimo_intento.is.null,centum_ultimo_intento.lt.${hace60s}`)
+
+    // Paso 2: Verificar si NUESTRO claim ganó (nuestro timestamp exacto quedó escrito)
+    const { data: claimed } = await supabase
+      .from('ventas_pos')
+      .select('id')
+      .eq('id', venta.id)
+      .eq('centum_ultimo_intento', ahoraClaim)
+
+    if (!claimed || claimed.length === 0) {
       console.log(`[RetryCentumVentas] Venta ${venta.id} ya reclamada por otra instancia, saltando`)
       continue
     }
