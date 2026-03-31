@@ -115,42 +115,36 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   }
   subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
 
-  // Si hay descuento por forma de pago, ajustar el Precio de cada artículo proporcionalmente
-  // Para Factura A: convertir total POS (con IVA) a neto para comparar con precios netos
-  // Para Factura B: comparar directo (precios ya incluyen IVA)
+  // Si hay descuento por forma de pago (total < subtotal), usar PorcentajeDescuento1
+  // nativo de Centum en vez de ajustar precios (evita CobroNoBalanceaException por redondeo)
   const totalComparable = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
+  let pctDescuentoAplicado = 0
   if (totalComparable < subtotalArticulos && subtotalArticulos > 0) {
-    const factor = totalComparable / subtotalArticulos
+    // Calcular porcentaje de descuento exacto
+    const pctRaw = (1 - totalComparable / subtotalArticulos) * 100
+    // Si está cerca de un valor redondo (5, 10, 15, 20), usar el redondo
+    const redondos = [5, 10, 15, 20, 25, 30]
+    const cercano = redondos.find(r => Math.abs(pctRaw - r) < 0.5)
+    pctDescuentoAplicado = cercano || (Math.round(pctRaw * 100) / 100)
+
+    // Aplicar descuento nativo de Centum (precios originales, Centum calcula internamente)
     ventaArticulos.forEach(art => {
-      art.Precio = Math.round(art.Precio * factor * 100) / 100
+      art.PorcentajeDescuento1 = pctDescuentoAplicado
     })
-    // Recalcular subtotal con redondeo per-item (como hace Centum)
+
+    // Recalcular subtotal como Centum: precio con descuento aplicado, luego × cantidad
     subtotalArticulos = 0
     for (const art of ventaArticulos) {
-      subtotalArticulos += Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
+      const precioDesc = Math.round(art.Precio * (1 - pctDescuentoAplicado / 100) * 100) / 100
+      subtotalArticulos += Math.round(precioDesc * (art.Cantidad || 0) * 100) / 100
     }
     subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
-
-    // Compensar diferencia de redondeo en el último artículo
-    const diff = Math.round((totalComparable - subtotalArticulos) * 100) / 100
-    if (diff !== 0 && ventaArticulos.length > 0) {
-      const ultimo = ventaArticulos[ventaArticulos.length - 1]
-      const cantUltimo = ultimo.Cantidad || 1
-      // Ajustar precio del último artículo para absorber la diferencia
-      ultimo.Precio = Math.round((ultimo.Precio + diff / cantUltimo) * 100) / 100
-      // Recalcular subtotal final
-      subtotalArticulos = 0
-      for (const art of ventaArticulos) {
-        subtotalArticulos += Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
-      }
-      subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
-    }
   }
 
   // Importe para VentaValoresEfectivos:
-  // Centum valida que importe total de ítems ≈ importe total de valores
-  // Para Factura A: Centum suma IVA a los precios netos, así que el importe debe ser neto + IVA = total POS
-  // Para Factura B: el importe es el subtotal de artículos (ya con IVA)
+  // Centum valida que importe total de ítems = importe total de valores
+  // Para Factura A: Centum suma IVA a los precios netos → importe = total POS
+  // Para Factura B: importe = subtotal artículos (con descuento si aplica)
   const importeValor = esFacturaA ? total : subtotalArticulos
 
   // Determinar IdValor según medio de pago principal
@@ -169,9 +163,8 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  // Debug v2: log detallado para diagnosticar CobroNoBalanceaException
-  const _debugSubtotal = ventaArticulos.reduce((s, a) => s + Math.round(a.Precio * (a.Cantidad || 0) * 100) / 100, 0)
-  console.log(`[Centum POS v2] Preparando venta: condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, totalComparable=${totalComparable}, subtotalArticulos=${subtotalArticulos}, debugSubtotal=${Math.round(_debugSubtotal*100)/100}, importeValor=${importeValor}, items=${ventaArticulos.length}, preciosArticulos=[${ventaArticulos.map(a => `${a.Cantidad}x${a.Precio}=${Math.round(a.Precio*(a.Cantidad||0)*100)/100}`).join(',')}]`)
+  // Debug v3: log con descuento nativo
+  console.log(`[Centum POS v3] condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, subtotalArticulos=${subtotalArticulos}, importeValor=${importeValor}, pctDescuento=${pctDescuentoAplicado}, items=${ventaArticulos.length}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -197,8 +190,8 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
-  // Log body completo para debugging CobroNoBalanceaException
-  console.log(`[Centum POS v2] Body enviado:`, JSON.stringify(body))
+  // Log body solo si hay descuento (para debug)
+  if (pctDescuentoAplicado > 0) console.log(`[Centum POS v3] Body con descuento:`, JSON.stringify(body))
 
   let response
   try {
@@ -256,18 +249,15 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     return { _creadoConWarning: true, ...data }
   }
 
-  // Debug info para CobroNoBalanceaException — incluir body completo
+  // Debug info para CobroNoBalanceaException
   const debugInfo = (texto.includes('CobroNoBalancea'))
-    ? ` [DEBUG v2: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, totalComparable=${totalComparable}, esFacturaA=${esFacturaA}]`
-    : ''
-  const bodyDebug = (texto.includes('CobroNoBalancea'))
-    ? ` [BODY: ${JSON.stringify(body).slice(0, 2000)}]`
+    ? ` [DEBUG v3: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, pctDescuento=${pctDescuentoAplicado}, esFacturaA=${esFacturaA}]`
     : ''
 
   registrarLlamada({
     servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
     estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
-    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 300)}${debugInfo}${bodyDebug}`, origen: 'pos',
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 300)}${debugInfo}`, origen: 'pos',
   })
   throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 300)}${debugInfo}`)
 }
