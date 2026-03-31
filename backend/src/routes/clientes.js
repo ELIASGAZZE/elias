@@ -758,7 +758,7 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
 // Editar cliente
 router.put('/:id', verificarAuth, async (req, res) => {
   try {
-    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono, activo, grupo_descuento_id } = req.body
+    const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono, activo, grupo_descuento_id, condicion_iva, email, celular } = req.body
 
     const updates = {}
     if (razon_social !== undefined) updates.razon_social = razon_social.trim()
@@ -770,6 +770,9 @@ router.put('/:id', verificarAuth, async (req, res) => {
     if (telefono !== undefined) updates.telefono = telefono?.trim() || null
     if (activo !== undefined) updates.activo = activo
     if (grupo_descuento_id !== undefined) updates.grupo_descuento_id = grupo_descuento_id || null
+    if (condicion_iva !== undefined) updates.condicion_iva = condicion_iva
+    if (email !== undefined) updates.email = email?.trim() || null
+    if (celular !== undefined) updates.celular = celular?.trim() || null
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No hay campos para actualizar' })
