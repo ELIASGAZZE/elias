@@ -115,6 +115,7 @@ export function imprimirCierre(cierre, retiros, denominaciones, gastos) {
 
   html += '<div class="center titulo">CIERRE DE CAJA</div>'
   html += '<div class="line-double"></div>'
+  if (cierre.numero) html += `<div>Cierre N°: ${escapeHtml(String(cierre.numero))}</div>`
   html += `<div>Planilla: #${escapeHtml(cierre.planilla_id)}</div>`
   if (cierre.caja?.nombre) html += `<div>Caja: ${escapeHtml(cierre.caja.nombre)}</div>`
   if (cierre.caja?.sucursales?.nombre) html += `<div>Sucursal: ${escapeHtml(cierre.caja.sucursales.nombre)}</div>`
