@@ -225,7 +225,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
 
   // Debug info para CobroNoBalanceaException
   const debugInfo = (texto.includes('CobroNoBalancea'))
-    ? ` [RT-SAFE: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, esFacturaA=${esFacturaA}]`
+    ? ` [RT-SAFE: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, esFacturaA=${esFacturaA}, precios=${ventaArticulos.map(a=>`${a.Codigo}:${a.Precio}`).join('|')}]`
     : ''
 
   registrarLlamada({
