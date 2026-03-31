@@ -677,14 +677,8 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
 
     if (errorVentas) throw errorVentas
 
-    // Gift cards activadas en el mismo rango (generan movimiento de caja pero no venta)
-    const { data: giftCardsActivadas } = await supabase
-      .from('gift_cards')
-      .select('id, codigo, monto_inicial, pagos, created_at')
-      .eq('created_by', cierre.cajero_id)
-      .gte('created_at', desde)
-      .lte('created_at', hasta)
-      .not('pagos', 'is', null)
+    // Gift cards activadas ya están incluidas como ventas_pos normales (con caja_id y pagos correctos)
+    // No se consultan por separado
 
     // Separar ventas de empleados (cuenta_corriente) del resto
     const ventasEmpleados = []
@@ -719,20 +713,6 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       if (tieneEfectivo && vuelto > 0 && mediosPago['Efectivo']) {
         mediosPago['Efectivo'].total -= vuelto
       }
-    })
-
-    // Sumar pagos de gift cards activadas al movimiento de caja (lo que realmente se cobró, no el valor nominal)
-    let totalGiftCardsActivadas = 0
-    ;(giftCardsActivadas || []).forEach(gc => {
-      const pagosGC = gc.pagos || []
-      const totalCobradoGC = pagosGC.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-      totalGiftCardsActivadas += totalCobradoGC
-      pagosGC.forEach(p => {
-        const tipo = p.tipo || 'Efectivo'
-        if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
-        mediosPago[tipo].total += parseFloat(p.monto) || 0
-        mediosPago[tipo].cantidad += 1
-      })
     })
 
     // Calculate efectivo from medios
@@ -821,17 +801,8 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       total_efectivo: parseFloat(totalEfectivo.toFixed(2)),
       medios_pago: mediosPagoArray,
       total_general: parseFloat(totalComparativo.toFixed(2)),
-      total_general_todas: parseFloat((totalGeneral + totalGiftCardsActivadas).toFixed(2)),
+      total_general_todas: parseFloat(totalGeneral.toFixed(2)),
       cantidad_ventas: ventasNormales.length,
-      gift_cards_activadas: (giftCardsActivadas || []).length,
-      total_gift_cards_activadas: parseFloat(totalGiftCardsActivadas.toFixed(2)),
-      detalle_gift_cards: (giftCardsActivadas || []).map(gc => ({
-        id: gc.id,
-        codigo: gc.codigo,
-        monto_nominal: parseFloat(gc.monto_inicial) || 0,
-        pagos: gc.pagos || [],
-        created_at: gc.created_at,
-      })),
       detalle_ventas: ventasNormales.map(v => ({
         id: v.id,
         numero_venta: v.numero_venta,
@@ -985,8 +956,8 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
     const desde = cierre.apertura_at
     const hasta = cierre.cierre_at || new Date().toISOString()
 
-    // Fetch ventas, retiros, gastos, gift cards en paralelo (solo efectivo)
-    const [ventasRes, retirosRes, gastosRes, giftCardsRes] = await Promise.all([
+    // Fetch ventas, retiros, gastos en paralelo (solo efectivo)
+    const [ventasRes, retirosRes, gastosRes] = await Promise.all([
       supabase
         .from('ventas_pos')
         .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, created_at')
@@ -1005,13 +976,6 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
         .select('id, descripcion, importe, controlado, created_at')
         .eq('cierre_pos_id', req.params.id)
         .order('created_at', { ascending: true }),
-      supabase
-        .from('gift_cards')
-        .select('id, codigo, monto_inicial, pagos, created_at')
-        .eq('created_by', cierre.cajero_id)
-        .gte('created_at', desde)
-        .lte('created_at', hasta)
-        .not('pagos', 'is', null),
     ])
 
     if (ventasRes.error) throw ventasRes.error
@@ -1043,25 +1007,7 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
       })
     })
 
-    // Gift cards activadas — solo la parte en efectivo
-    ;(giftCardsRes.data || []).forEach(gc => {
-      const pagos = gc.pagos || []
-      const efectivoBruto = pagos
-        .filter(p => (p.tipo || 'Efectivo') === 'Efectivo')
-        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-
-      if (efectivoBruto === 0) return
-
-      movimientos.push({
-        tipo: 'venta',
-        descripcion: `Gift Card ${gc.codigo} (${formatMontoBack(parseFloat(gc.monto_inicial) || 0)})`,
-        detalle: null,
-        monto: efectivoBruto,
-        signo: '+',
-        fecha: gc.created_at,
-        ref_id: gc.id,
-      })
-    })
+    // Gift cards activadas ya están incluidas como ventas_pos normales
 
     // Retiros (negativo)
     ;(retirosRes.data || []).forEach(r => {

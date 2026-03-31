@@ -389,34 +389,18 @@ const DetalleVenta = () => {
           </div>
         )}
 
-        {/* Gift Cards vendidas en esta venta */}
-        {tieneGCVendidas && (
-          <div className="bg-pink-50 rounded-xl border border-pink-200 p-4">
-            <h2 className="text-sm font-semibold text-pink-700 uppercase mb-3">Gift Cards vendidas ({giftCardsVendidas.length})</h2>
-            <div className="divide-y divide-pink-100">
-              {giftCardsVendidas.map((gc, i) => (
-                <div key={i} className="py-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">Gift Card {gc.codigo}</p>
-                    {gc.comprador && <p className="text-xs text-gray-500">Comprador: {gc.comprador}</p>}
-                  </div>
-                  <span className="text-sm font-bold text-pink-700">{formatPrecio(gc.monto_nominal)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 pt-2 border-t border-pink-200 flex justify-between text-xs text-pink-600">
-              <span>Total nominal GC</span>
-              <span className="font-bold">{formatPrecio(giftCardsVendidas.reduce((s, gc) => s + (gc.monto_nominal || 0), 0))}</span>
-            </div>
-            {itemsSinGC.length > 0 && (
-              <p className="text-xs text-pink-500 mt-1">Solo los artículos se enviaron a Centum. Las gift cards no se facturan.</p>
+        {/* Items / Artículos facturados */}
+        <div className={`rounded-xl border p-4 ${tieneGCVendidas ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className={`text-sm font-semibold uppercase ${tieneGCVendidas ? 'text-green-700' : 'text-gray-500'}`}>
+              {tieneGCVendidas ? `Artículos facturados (${items.length})` : `Items (${items.length})`}
+            </h2>
+            {tieneGCVendidas && venta.centum_comprobante && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-300">
+                Enviado a Centum
+              </span>
             )}
           </div>
-        )}
-
-        {/* Items */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">{tieneGCVendidas ? `Artículos facturados (${itemsSinGC.length})` : `Items (${items.length})`}</h2>
           <div className="divide-y divide-gray-100">
             {items.map((item, i) => {
               const precioUnit = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
@@ -463,6 +447,33 @@ const DetalleVenta = () => {
             })}
           </div>
         </div>
+
+        {/* Gift Cards vendidas en esta venta */}
+        {tieneGCVendidas && (
+          <div className="bg-gray-50 rounded-xl border border-gray-300 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-600 uppercase">Gift Cards ({giftCardsVendidas.length})</h2>
+              <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-medium border border-gray-300">
+                No se envía a Centum
+              </span>
+            </div>
+            <div className="divide-y divide-gray-200">
+              {giftCardsVendidas.map((gc, i) => (
+                <div key={i} className="py-2 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Gift Card {gc.codigo}</p>
+                    {gc.comprador && <p className="text-xs text-gray-500">Comprador: {gc.comprador}</p>}
+                  </div>
+                  <span className="text-sm font-bold text-gray-700">{formatPrecio(gc.monto_nominal)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 pt-2 border-t border-gray-300 flex justify-between text-xs text-gray-500">
+              <span>Total nominal GC</span>
+              <span className="font-bold">{formatPrecio(giftCardsVendidas.reduce((s, gc) => s + (gc.monto_nominal || 0), 0))}</span>
+            </div>
+          </div>
+        )}
 
         {/* Promociones aplicadas */}
         {promociones.length > 0 && (

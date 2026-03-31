@@ -2054,6 +2054,7 @@ const POS = () => {
 
   // Agregar al carrito — pesables abren popup para ingresar peso, no pesables suman 1
   const agregarAlCarrito = useCallback((articulo, cantidad = 1) => {
+    if (giftCardsEnVenta.length > 0) return // No mezclar artículos con gift cards
     if (articulo.esPesable) {
       setPopupPesable({ articulo })
       setPopupPesableKg('')
@@ -2559,6 +2560,7 @@ const POS = () => {
   const totalConGiftCards = totalConDescGrupo + totalGiftCardsEnVenta
 
   async function agregarGiftCardAVenta() {
+    if (carrito.length > 0) return // No mezclar gift cards con artículos
     if (!gcCodigo.trim() || !gcMonto || parseFloat(gcMonto) <= 0) return
     if (giftCardsEnVenta.some(g => g.codigo === gcCodigo.trim())) {
       setGcError('Esta gift card ya fue agregada')
@@ -4387,7 +4389,8 @@ const POS = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                {/* Tile Gift Card — siempre primero */}
+                {/* Tile Gift Card — solo visible si no hay artículos en el carrito */}
+                {carrito.length === 0 && (
                 <div
                   onClick={() => setMostrarAgregarGC(true)}
                   className={`relative rounded-xl cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-95 select-none shadow-sm ${
@@ -4407,6 +4410,7 @@ const POS = () => {
                     <span className="text-xs font-semibold text-amber-700">Gift Card</span>
                   </div>
                 </div>
+                )}
 
                 {articulosFavoritos.map(art => {
                   const precioFinal = precioConDescEmpleado(art)

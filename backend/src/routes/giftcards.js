@@ -71,8 +71,11 @@ router.post('/activar', verificarAuth, async (req, res) => {
       .select('id, numero_venta')
       .single()
 
-    if (ventaErr) console.error('[GiftCards] Error al crear venta_pos:', ventaErr.message)
-    if (venta) ventaId = venta.id
+    if (ventaErr) {
+      console.error('[GiftCards] Error al crear venta_pos:', ventaErr.message, ventaErr.details, ventaErr.hint, JSON.stringify(ventaInsert))
+      throw new Error('No se pudo registrar la venta de la gift card: ' + ventaErr.message)
+    }
+    ventaId = venta.id
 
     // Insertar movimiento de activación con venta_pos_id
     await supabase

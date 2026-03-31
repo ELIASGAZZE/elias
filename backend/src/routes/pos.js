@@ -721,6 +721,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             comprador_nombre: gc.comprador_nombre || null,
             pagos: pagosEstaGC,
             created_by: req.perfil.id,
+            caja_id: caja_id || null,
+            sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
           })
           .select()
           .single()

@@ -741,24 +741,8 @@ const DetalleCierrePos = () => {
                       </div>
                     )
                   })}
-                  {/* Gift cards activadas con efectivo */}
-                  {(posVentas.detalle_gift_cards || []).filter(gc =>
-                    (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')
-                  ).map(gc => {
-                    const pagoEfectivoGC = (gc.pagos || []).filter(p => (p.tipo || 'Efectivo') === 'Efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-                    return (
-                      <div key={gc.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0 bg-pink-50">
-                        <span className="w-16 text-pink-600 font-medium">GC</span>
-                        <span className="w-14 text-center text-gray-400">{new Date(gc.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="flex-1 text-right text-gray-500">{formatMonto(gc.monto_nominal)}</span>
-                        <span className="w-24 text-right text-gray-700">{formatMonto(pagoEfectivoGC)}</span>
-                        <span className="w-20 text-right text-gray-400">—</span>
-                        <span className="w-24 text-right font-medium text-pink-700">{formatMonto(pagoEfectivoGC)}</span>
-                      </div>
-                    )
-                  })}
                   <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
-                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo{(posVentas.detalle_gift_cards || []).filter(gc => (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')).length > 0 ? ` + ${(posVentas.detalle_gift_cards || []).filter(gc => (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')).length} gift card(s)` : ''}</span>
+                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo</span>
                     <span className="w-24 text-right text-teal-700">{formatMonto(posVentas.total_efectivo)}</span>
                   </div>
                 </div>

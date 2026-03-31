@@ -588,8 +588,8 @@ const VentasHome = () => {
                           </span>
                         )}
                         {v.gift_cards_vendidas && v.gift_cards_vendidas.length > 0 && (
-                          <span className="text-xs bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded font-medium">
-                            GC x{v.gift_cards_vendidas.length}
+                          <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-medium border border-gray-300">
+                            gift card
                           </span>
                         )}
                         {v.pedido && (
