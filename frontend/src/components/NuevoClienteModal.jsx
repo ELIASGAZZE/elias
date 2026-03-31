@@ -183,6 +183,12 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
       return
     }
 
+    // Si ponen DNI (no 11 dígitos) con RI/MT, forzar a CF
+    const esCuit = form.cuit.replace(/\D/g, '').length === 11
+    const condicionFinal = (!esCuit && (form.condicion_iva === 'RI' || form.condicion_iva === 'MT'))
+      ? 'CF'
+      : form.condicion_iva
+
     setGuardando(true)
     setError(null)
     try {
@@ -190,7 +196,7 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
       const { data } = await api.post('/api/clientes', {
         razon_social: form.razon_social,
         cuit: form.cuit,
-        condicion_iva: form.condicion_iva,
+        condicion_iva: condicionFinal,
         celular: form.celular,
         email: form.email,
         direcciones_entrega: direccionesValidas,
