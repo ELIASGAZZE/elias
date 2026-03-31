@@ -1,6 +1,7 @@
 // Servicio para crear Ventas POS en Centum ERP (sin PedidoVenta previo)
 const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
+const { crearClienteEnCentum } = require('./centumClientes')
 const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
 
@@ -123,12 +124,27 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     ventaArticulos.forEach(art => {
       art.Precio = Math.round(art.Precio * factor * 100) / 100
     })
-    // Recalcular subtotal después del ajuste
+    // Recalcular subtotal con redondeo per-item (como hace Centum)
     subtotalArticulos = 0
     for (const art of ventaArticulos) {
-      subtotalArticulos += art.Precio * (art.Cantidad || 0)
+      subtotalArticulos += Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
     }
     subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+
+    // Compensar diferencia de redondeo en el último artículo
+    const diff = Math.round((totalComparable - subtotalArticulos) * 100) / 100
+    if (diff !== 0 && ventaArticulos.length > 0) {
+      const ultimo = ventaArticulos[ventaArticulos.length - 1]
+      const cantUltimo = ultimo.Cantidad || 1
+      // Ajustar precio del último artículo para absorber la diferencia
+      ultimo.Precio = Math.round((ultimo.Precio + diff / cantUltimo) * 100) / 100
+      // Recalcular subtotal final
+      subtotalArticulos = 0
+      for (const art of ventaArticulos) {
+        subtotalArticulos += Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
+      }
+      subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+    }
   }
 
   // Importe para VentaValoresEfectivos:
@@ -994,23 +1010,48 @@ async function retrySyncVentasCentum() {
         venta.id_cliente_centum = 2
       }
 
-      // Si el cliente no tiene id_centum, intentar resolver desde DB local
+      // Si el cliente no tiene id_centum, intentar resolver desde DB local (o crearlo en Centum)
       if (!esEmpleado && (!venta.id_cliente_centum || venta.id_cliente_centum === 0)) {
         if (venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final') {
           const { data: cliLocal } = await supabase
             .from('clientes')
-            .select('id_centum')
+            .select('*')
             .ilike('razon_social', venta.nombre_cliente)
-            .not('id_centum', 'is', null)
-            .gt('id_centum', 0)
             .limit(1)
             .maybeSingle()
+
           if (cliLocal?.id_centum) {
+            // Ya tiene id_centum, usar directamente
             venta.id_cliente_centum = cliLocal.id_centum
             await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
             console.log(`[Centum Retry] Cliente resuelto: ${venta.nombre_cliente} → id_centum=${cliLocal.id_centum}`)
+          } else if (cliLocal) {
+            // Cliente existe local pero sin id_centum → crearlo en Centum
+            try {
+              const condIva = venta.condicion_iva || cliLocal.condicion_iva || 'CF'
+              const dir = cliLocal.direccion ? { direccion: cliLocal.direccion, localidad: cliLocal.localidad } : null
+              const resultado = await crearClienteEnCentum(cliLocal, condIva, dir)
+              const idCentum = resultado.IdCliente || resultado.Id
+              if (idCentum) {
+                await supabase.from('clientes').update({ id_centum: idCentum }).eq('id', cliLocal.id)
+                venta.id_cliente_centum = idCentum
+                await supabase.from('ventas_pos').update({ id_cliente_centum: idCentum }).eq('id', venta.id)
+                console.log(`[Centum Retry] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
+              } else {
+                throw new Error('Centum no devolvió IdCliente')
+              }
+            } catch (errCli) {
+              await supabase.from('ventas_pos').update({
+                centum_error: `Error creando cliente "${venta.nombre_cliente}" en Centum: ${errCli.message}`
+              }).eq('id', venta.id)
+              fallidas++
+              continue
+            }
           } else {
-            await supabase.from('ventas_pos').update({ centum_error: `Cliente "${venta.nombre_cliente}" aún sin ID Centum` }).eq('id', venta.id)
+            // Cliente no existe ni localmente
+            await supabase.from('ventas_pos').update({
+              centum_error: `Cliente "${venta.nombre_cliente}" no encontrado en DB local`
+            }).eq('id', venta.id)
             fallidas++
             continue
           }
