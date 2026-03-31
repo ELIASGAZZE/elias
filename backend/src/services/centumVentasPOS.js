@@ -111,32 +111,48 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     }
   })
 
-  // Calcular subtotal de artículos (precios tal como se envían a Centum)
-  let subtotalArticulos = 0
-  for (const art of ventaArticulos) {
-    subtotalArticulos += art.Precio * (art.Cantidad || 0)
+  // Calcular subtotal ORIGINAL (siempre con IVA, desde items fuente) para detectar descuentos.
+  // Necesario porque para Factura A los precios en ventaArticulos son neto (sin IVA),
+  // pero total POS es con IVA. El ratio debe calcularse con la misma base.
+  let subtotalOriginal = 0
+  for (const item of items) {
+    const precio = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
+    const cantidad = redondearCantidad(item.cantidad)
+    subtotalOriginal += precio * cantidad
   }
-  subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
+  subtotalOriginal = Math.round(subtotalOriginal * 100) / 100
 
-  // Calcular importeValor como Centum lo hace internamente:
-  // Para Factura B: Centum descompone cada línea en neto + IVA por separado,
-  // lo que puede diferir en centavos de sum(Precio * Cantidad) por redondeo.
-  // Para Factura A: Centum usa los precios neto directamente y suma IVA → importe = total POS.
-  let importeValor
-  if (esFacturaA) {
-    importeValor = total
-  } else {
-    // Simular cálculo interno de Centum: neto_linea + iva_linea por artículo
-    let totalCentum = 0
+  // Si hay descuento (total POS < subtotal original), aplicar descuento proporcional a items.
+  // Centum valida que sum(items) == sum(pagos) exactamente (CobroNoBalanceaException).
+  // El ratio se calcula sobre precios originales (con IVA) porque total POS también incluye IVA.
+  if (total < subtotalOriginal && subtotalOriginal > 0) {
+    const ratio = total / subtotalOriginal
+    console.log(`[Centum POS] Descuento detectado: total=${total}, subtotalOriginal=${subtotalOriginal}, ratio=${ratio.toFixed(6)}`)
     for (const art of ventaArticulos) {
-      const ivaTasa = art.CategoriaImpuestoIVA?.Tasa || 21
+      art.Precio = Math.round(art.Precio * ratio * 100) / 100
+    }
+  }
+
+  // Calcular importeValor simulando el cálculo interno de Centum:
+  // Centum descompone cada línea en neto + IVA por separado.
+  // Siempre calcular desde los items para garantizar que items == pago.
+  let totalCentum = 0
+  for (const art of ventaArticulos) {
+    const ivaTasa = art.CategoriaImpuestoIVA?.Tasa || 21
+    if (esFacturaA) {
+      // Factura A: precio ya es neto, Centum suma IVA
+      const netoLinea = Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
+      const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
+      totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
+    } else {
+      // Factura B: precio es final, Centum descompone a neto+IVA internamente
       const netoUnit = Math.round(art.Precio / (1 + ivaTasa / 100) * 100) / 100
       const netoLinea = Math.round(netoUnit * (art.Cantidad || 0) * 100) / 100
       const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
       totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
     }
-    importeValor = Math.round(totalCentum * 100) / 100
   }
+  const importeValor = Math.round(totalCentum * 100) / 100
 
   // Determinar IdValor según medio de pago principal
   const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
@@ -154,9 +170,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  // Debug: mostrar precios round-trip para diagnosticar
-  const _rtDebug = ventaArticulos.map(a => `${a.Codigo}:orig=${items.find(i=>(i.codigo||'')==a.Codigo)?.precio_unitario}→rt=${a.Precio}`).join(', ')
-  console.log(`[Centum POS RT] esFacturaA=${esFacturaA}, subtotal=${subtotalArticulos}, importeValor=${importeValor}, precios=[${_rtDebug}]`)
+  console.log(`[Centum POS] esFacturaA=${esFacturaA}, subtotalOrig=${subtotalOriginal}, importeValor=${importeValor}, total=${total}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -1066,13 +1080,16 @@ async function retrySyncVentasCentum() {
         }
       }
 
-      // Determinar condición IVA y división
-      let condicionIva = venta.condicion_iva || 'CF'
-      if (!venta.condicion_iva && venta.id_cliente_centum) {
+      // Determinar condición IVA del cliente real (no confiar en venta.condicion_iva,
+      // que puede estar desactualizada o ser incorrecta respecto a Centum)
+      let condicionIva = 'CF'
+      if (!esEmpleado && venta.id_cliente_centum && venta.id_cliente_centum !== 2) {
         const { data: cliente } = await supabase
           .from('clientes').select('condicion_iva')
           .eq('id_centum', venta.id_cliente_centum).maybeSingle()
-        condicionIva = cliente?.condicion_iva || 'CF'
+        condicionIva = cliente?.condicion_iva || venta.condicion_iva || 'CF'
+      } else if (venta.condicion_iva) {
+        condicionIva = venta.condicion_iva
       }
 
       const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
