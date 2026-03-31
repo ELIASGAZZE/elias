@@ -115,36 +115,10 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   }
   subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
 
-  // Si hay descuento por forma de pago (total < subtotal), usar PorcentajeDescuento1
-  // nativo de Centum en vez de ajustar precios (evita CobroNoBalanceaException por redondeo)
-  const totalComparable = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
-  let pctDescuentoAplicado = 0
-  if (totalComparable < subtotalArticulos && subtotalArticulos > 0) {
-    // Calcular porcentaje de descuento exacto
-    const pctRaw = (1 - totalComparable / subtotalArticulos) * 100
-    // Si está cerca de un valor redondo (5, 10, 15, 20), usar el redondo
-    const redondos = [5, 10, 15, 20, 25, 30]
-    const cercano = redondos.find(r => Math.abs(pctRaw - r) < 0.5)
-    pctDescuentoAplicado = cercano || (Math.round(pctRaw * 100) / 100)
-
-    // Aplicar descuento nativo de Centum (precios originales, Centum calcula internamente)
-    ventaArticulos.forEach(art => {
-      art.PorcentajeDescuento1 = pctDescuentoAplicado
-    })
-
-    // Recalcular subtotal como Centum: precio con descuento aplicado, luego × cantidad
-    subtotalArticulos = 0
-    for (const art of ventaArticulos) {
-      const precioDesc = Math.round(art.Precio * (1 - pctDescuentoAplicado / 100) * 100) / 100
-      subtotalArticulos += Math.round(precioDesc * (art.Cantidad || 0) * 100) / 100
-    }
-    subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
-  }
-
-  // Importe para VentaValoresEfectivos:
-  // Centum valida que importe total de ítems = importe total de valores
-  // Para Factura A: Centum suma IVA a los precios netos → importe = total POS
-  // Para Factura B: importe = subtotal artículos (con descuento si aplica)
+  // Descuento forma de pago: NO se envía a Centum.
+  // El descuento se registra solo en POS (fuente de verdad para caja/cobros).
+  // Centum recibe precios originales para stock y trazabilidad.
+  // Razón: Centum valida CobroNoBalancea con redondeo interno impredecible.
   const importeValor = esFacturaA ? total : subtotalArticulos
 
   // Determinar IdValor según medio de pago principal
@@ -163,8 +137,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  // Debug v3: log con descuento nativo
-  console.log(`[Centum POS v3] condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, subtotalArticulos=${subtotalArticulos}, importeValor=${importeValor}, pctDescuento=${pctDescuentoAplicado}, items=${ventaArticulos.length}`)
+  console.log(`[Centum POS] condicionIva=${condicionIva}, esFacturaA=${esFacturaA}, totalPOS=${total}, subtotalArticulos=${subtotalArticulos}, importeValor=${importeValor}, items=${ventaArticulos.length}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -190,8 +163,6 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
-  // Log body solo si hay descuento (para debug)
-  if (pctDescuentoAplicado > 0) console.log(`[Centum POS v3] Body con descuento:`, JSON.stringify(body))
 
   let response
   try {
@@ -251,7 +222,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
 
   // Debug info para CobroNoBalanceaException
   const debugInfo = (texto.includes('CobroNoBalancea'))
-    ? ` [DEBUG v3: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, pctDescuento=${pctDescuentoAplicado}, esFacturaA=${esFacturaA}]`
+    ? ` [DEBUG: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, esFacturaA=${esFacturaA}]`
     : ''
 
   registrarLlamada({
