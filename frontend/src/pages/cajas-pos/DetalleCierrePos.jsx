@@ -551,7 +551,7 @@ const DetalleCierrePos = () => {
                     const neto = pagoEfectivo - vuelto
                     return (
                       <div key={v.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0">
-                        <Link to={`/ventas/${v.id}`} className="w-16 text-blue-600 font-medium hover:underline">#{v.numero_venta || '—'}</Link>
+                        <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className="w-16 text-blue-600 font-medium hover:underline">#{v.numero_venta || '—'}</a>
                         <span className="w-14 text-center text-gray-400">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
                         <span className="flex-1 text-right text-gray-500">{formatMonto(v.total)}</span>
                         <span className="w-24 text-right text-gray-700">{formatMonto(pagoEfectivo)}</span>
@@ -814,7 +814,7 @@ const DetalleCierrePos = () => {
                   {mp.detalle.map((c, idx) => (
                     <div key={idx} className={`flex items-center text-xs py-1.5 ${c.mp_problema ? 'bg-amber-50 rounded px-1 -mx-1' : 'border-b border-blue-50'}`}>
                       <span className="flex-1">
-                        {c.numero_venta && c.venta_id ? <Link to={`/ventas/${c.venta_id}`} className="text-blue-600 font-medium hover:underline">#{c.numero_venta}</Link> : c.numero_venta ? `#${c.numero_venta}` : '—'}
+                        {c.numero_venta && c.venta_id ? <a href={`/ventas/${c.venta_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 font-medium hover:underline">#{c.numero_venta}</a> : c.numero_venta ? `#${c.numero_venta}` : '—'}
                       </span>
                       <span className="w-20 text-center">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.tipo.toLowerCase() === 'qr mp' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
