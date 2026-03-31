@@ -389,11 +389,12 @@ const DetalleVenta = () => {
           </div>
         )}
 
-        {/* Items / Artículos facturados */}
+        {/* Items / Artículos facturados — solo artículos reales (sin gift cards) */}
+        {itemsSinGC.length > 0 && (
         <div className={`rounded-xl border p-4 ${tieneGCVendidas ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className={`text-sm font-semibold uppercase ${tieneGCVendidas ? 'text-green-700' : 'text-gray-500'}`}>
-              {tieneGCVendidas ? `Artículos facturados (${items.length})` : `Items (${items.length})`}
+              {tieneGCVendidas ? `Artículos facturados (${itemsSinGC.length})` : `Items (${itemsSinGC.length})`}
             </h2>
             {tieneGCVendidas && venta.centum_comprobante && (
               <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-300">
@@ -402,7 +403,7 @@ const DetalleVenta = () => {
             )}
           </div>
           <div className="divide-y divide-gray-100">
-            {items.map((item, i) => {
+            {itemsSinGC.map((item, i) => {
               const precioUnit = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
               const cant = parseFloat(item.cantidad || 1)
               const subtotal = precioUnit * cant
@@ -447,6 +448,7 @@ const DetalleVenta = () => {
             })}
           </div>
         </div>
+        )}
 
         {/* Gift Cards vendidas en esta venta */}
         {tieneGCVendidas && (
