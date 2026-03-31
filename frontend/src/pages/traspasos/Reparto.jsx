@@ -3,21 +3,80 @@ import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
 
 const Reparto = () => {
-  const [precinto, setPrecinto] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [confirmacion, setConfirmacion] = useState(null)
   const [buscando, setBuscando] = useState(false)
   const [cargados, setCargados] = useState([]) // historial de la sesión
-  const inputRef = useRef(null)
+  const [scanInput, setScanInput] = useState('')
+  const [tecladoVisible, setTecladoVisible] = useState(false)
 
+  const scanBufferRef = useRef('')
+  const scanTimeoutRef = useRef(null)
+  const scanRef = useRef(null)
+  const inputManualRef = useRef(null)
+
+  // === Procesar código escaneado ===
+  const procesarCodigo = (codigo) => {
+    if (!codigo || buscando || enviando) return
+    buscarPrecinto(codigo)
+    setTimeout(() => scanRef.current?.focus(), 300)
+  }
+
+  // === Global keydown listener ===
   useEffect(() => {
-    if (!confirmacion) inputRef.current?.focus()
-  }, [feedback, confirmacion])
+    if (tecladoVisible || confirmacion) return
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const codigo = scanBufferRef.current.trim()
+        scanBufferRef.current = ''
+        setScanInput('')
+        if (codigo) procesarCodigo(codigo)
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanBufferRef.current += e.key
+        setScanInput(scanBufferRef.current)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [tecladoVisible, confirmacion, buscando, enviando])
 
-  const escanear = async (e) => {
-    e.preventDefault()
-    const valor = precinto.trim()
+  // === onChange para DataWedge (InputConnection) ===
+  const handleScanChange = (e) => {
+    const val = e.target.value
+    setScanInput(val)
+    scanBufferRef.current = val
+    clearTimeout(scanTimeoutRef.current)
+    scanTimeoutRef.current = setTimeout(() => {
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      procesarCodigo(codigo)
+    }, 200)
+  }
+
+  // === onKeyDown para Enter ===
+  const handleScanKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      clearTimeout(scanTimeoutRef.current)
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      procesarCodigo(codigo)
+    }
+  }
+
+  // === Auto-focus ===
+  useEffect(() => {
+    if (tecladoVisible || confirmacion) return
+    const t = setTimeout(() => scanRef.current?.focus(), 100)
+    return () => clearTimeout(t)
+  }, [tecladoVisible, feedback, confirmacion])
+
+  const buscarPrecinto = async (valor) => {
     if (!valor || buscando || enviando) return
 
     setBuscando(true)
@@ -33,7 +92,7 @@ const Reparto = () => {
           tipo: 'duplicado',
           mensaje: `${esPallet ? 'Pallet' : 'Canasto'} "${esPallet ? (canasto.numero_pallet || valor) : valor}" ya está en tránsito`,
         })
-        setPrecinto('')
+
         setBuscando(false)
         return
       }
@@ -43,7 +102,7 @@ const Reparto = () => {
           tipo: 'error',
           mensaje: `${esPallet ? 'Pallet' : 'Canasto'} en estado "${canasto.estado}", debe estar en origen para despachar`,
         })
-        setPrecinto('')
+
         setBuscando(false)
         return
       }
@@ -148,30 +207,66 @@ const Reparto = () => {
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Input de escaneo */}
-        <form onSubmit={escanear} className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Escanear precinto de canasto o pallet
           </label>
           <div className="flex gap-2">
-            <input
-              ref={inputRef}
-              type="text"
-              value={precinto}
-              onChange={e => setPrecinto(e.target.value)}
-              placeholder="Escanear o escribir precinto..."
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
-              autoFocus
-              disabled={buscando || enviando || !!confirmacion}
-            />
+            {!tecladoVisible ? (
+              <input
+                ref={scanRef}
+                type="text"
+                inputMode="none"
+                value={scanInput}
+                onChange={handleScanChange}
+                onKeyDown={handleScanKeyDown}
+                placeholder="Escanear..."
+                autoComplete="off"
+                className="flex-1 border-2 border-purple-300 rounded-xl px-4 py-3 text-base text-center outline-none caret-transparent"
+                autoFocus
+                disabled={buscando || enviando || !!confirmacion}
+              />
+            ) : (
+              <input
+                ref={inputManualRef}
+                type="text"
+                inputMode="numeric"
+                value={scanInput}
+                onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const codigo = scanInput.trim()
+                    if (!codigo) return
+                    setScanInput('')
+                    scanBufferRef.current = ''
+                    procesarCodigo(codigo)
+                    setTecladoVisible(false)
+                  }
+                }}
+                onBlur={() => { if (!scanInput) setTecladoVisible(false) }}
+                placeholder="Escribir código..."
+                autoComplete="off"
+                autoFocus
+                className="flex-1 border-2 border-purple-300 rounded-xl px-4 py-3 text-base text-center outline-none"
+                disabled={buscando || enviando || !!confirmacion}
+              />
+            )}
             <button
-              type="submit"
-              disabled={!precinto.trim() || buscando || enviando || !!confirmacion}
-              className="px-4 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              type="button"
+              onClick={() => {
+                setTecladoVisible(v => !v)
+                setTimeout(() => inputManualRef.current?.focus(), 100)
+              }}
+              className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-purple-500 bg-purple-50 text-purple-600' : 'border-gray-300 text-gray-400'}`}
             >
-              {buscando ? 'Buscando...' : 'Buscar'}
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
+              </svg>
             </button>
           </div>
-        </form>
+          {buscando && <p className="text-xs text-purple-500 mt-2 text-center">Buscando...</p>}
+        </div>
 
         {/* Popup de confirmación */}
         {confirmacion && (

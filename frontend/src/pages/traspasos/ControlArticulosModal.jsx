@@ -25,7 +25,11 @@ const ControlArticulosModal = ({ canasto, orden, onClose, onRequiereControl }) =
   const [fotos, setFotos] = useState([])
   const [items, setItems] = useState([])
   const [cargando, setCargando] = useState(true)
-  const inputRef = useRef(null)
+  const [tecladoVisible, setTecladoVisible] = useState(false)
+  const scanBufferRef = useRef('')
+  const scanTimeoutRef = useRef(null)
+  const scanRef = useRef(null)
+  const inputManualRef = useRef(null)
   const fotoInputRef = useRef(null)
 
   // Cargar items del canasto + catálogo completo de artículos
@@ -55,11 +59,89 @@ const ControlArticulosModal = ({ canasto, orden, onClose, onRequiereControl }) =
     cargar()
   }, [])
 
-  useEffect(() => {
-    if (fase === 'scanning' && !pesoManual) {
-      inputRef.current?.focus()
+  // === Procesar código escaneado ===
+  const procesarCodigoScan = (codigo) => {
+    if (!codigo) return
+    setFeedbackScan(null)
+
+    const resultado = buscarArticuloEnCatalogo(codigo)
+
+    if (!resultado) {
+      setFeedbackScan({ tipo: 'error', mensaje: `Código "${codigo}" no encontrado` })
+      setTimeout(() => scanRef.current?.focus(), 300)
+      return
     }
-  }, [fase, pesoManual, feedbackScan])
+
+    const { articulo, peso, balanza, factor } = resultado
+    const cant = factor || 1
+
+    if (articulo.esPesable && !balanza) {
+      setPesoManual({ articulo_id: String(articulo.id), nombre: articulo.nombre })
+      return
+    }
+
+    if (peso) {
+      agregarRecibido(String(articulo.id), peso, [peso])
+      setFeedbackScan({ tipo: 'ok', mensaje: `${articulo.nombre} +${peso.toFixed(3)}kg` })
+    } else {
+      agregarRecibido(String(articulo.id), cant, null)
+      setFeedbackScan({ tipo: 'ok', mensaje: `${articulo.nombre} +${cant}` })
+    }
+    setTimeout(() => scanRef.current?.focus(), 300)
+  }
+
+  // === Global keydown listener ===
+  useEffect(() => {
+    if (tecladoVisible || pesoManual || enviando || fase !== 'scanning') return
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const codigo = scanBufferRef.current.trim()
+        scanBufferRef.current = ''
+        setScanInput('')
+        if (codigo) procesarCodigoScan(codigo)
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanBufferRef.current += e.key
+        setScanInput(scanBufferRef.current)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [tecladoVisible, pesoManual, enviando, fase, catalogo])
+
+  // === onChange para DataWedge (InputConnection) ===
+  const handleScanChange = (e) => {
+    const val = e.target.value
+    setScanInput(val)
+    scanBufferRef.current = val
+    clearTimeout(scanTimeoutRef.current)
+    scanTimeoutRef.current = setTimeout(() => {
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      procesarCodigoScan(codigo)
+    }, 200)
+  }
+
+  // === onKeyDown para Enter ===
+  const handleScanKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      clearTimeout(scanTimeoutRef.current)
+      const codigo = scanBufferRef.current.trim()
+      scanBufferRef.current = ''
+      setScanInput('')
+      procesarCodigoScan(codigo)
+    }
+  }
+
+  // === Auto-focus ===
+  useEffect(() => {
+    if (tecladoVisible || pesoManual || fase !== 'scanning') return
+    const t = setTimeout(() => scanRef.current?.focus(), 100)
+    return () => clearTimeout(t)
+  }, [tecladoVisible, fase, pesoManual, feedbackScan])
 
   // Mapa de catálogo para búsquedas rápidas
   const catalogoMap = useMemo(() => {
@@ -136,36 +218,6 @@ const ControlArticulosModal = ({ canasto, orden, onClose, onRequiereControl }) =
     })
   }
 
-  const handleScan = (e) => {
-    e.preventDefault()
-    const codigo = scanInput.trim()
-    if (!codigo) return
-    setScanInput('')
-    setFeedbackScan(null)
-
-    const resultado = buscarArticuloEnCatalogo(codigo)
-
-    if (!resultado) {
-      setFeedbackScan({ tipo: 'error', mensaje: `Código "${codigo}" no encontrado` })
-      return
-    }
-
-    const { articulo, peso, balanza, factor } = resultado
-    const cant = factor || 1
-
-    if (articulo.esPesable && !balanza) {
-      setPesoManual({ articulo_id: String(articulo.id), nombre: articulo.nombre })
-      return
-    }
-
-    if (peso) {
-      agregarRecibido(String(articulo.id), peso, [peso])
-      setFeedbackScan({ tipo: 'ok', mensaje: `${articulo.nombre} +${peso.toFixed(3)}kg` })
-    } else {
-      agregarRecibido(String(articulo.id), cant, null)
-      setFeedbackScan({ tipo: 'ok', mensaje: `${articulo.nombre} +${cant}` })
-    }
-  }
 
   const confirmarPesoManual = () => {
     const peso = parseFloat(pesoManualInput)
@@ -345,25 +397,60 @@ const ControlArticulosModal = ({ canasto, orden, onClose, onRequiereControl }) =
         {fase === 'scanning' && !cargando && (
           <div className="flex-1 overflow-auto px-4 py-3 space-y-3">
             {/* Scanner input */}
-            <form onSubmit={handleScan} className="flex gap-2">
-              <input
-                ref={inputRef}
-                type="text"
-                value={scanInput}
-                onChange={e => setScanInput(e.target.value)}
-                placeholder="Escanear artículo..."
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
-                autoFocus
-                disabled={!!pesoManual || enviando}
-              />
+            <div className="flex gap-2">
+              {!tecladoVisible ? (
+                <input
+                  ref={scanRef}
+                  type="text"
+                  inputMode="none"
+                  value={scanInput}
+                  onChange={handleScanChange}
+                  onKeyDown={handleScanKeyDown}
+                  placeholder="Escanear artículo..."
+                  autoComplete="off"
+                  className="flex-1 border-2 border-teal-300 rounded-xl px-4 py-3 text-base text-center outline-none caret-transparent"
+                  autoFocus
+                  disabled={!!pesoManual || enviando}
+                />
+              ) : (
+                <input
+                  ref={inputManualRef}
+                  type="text"
+                  inputMode="numeric"
+                  value={scanInput}
+                  onChange={e => { setScanInput(e.target.value); scanBufferRef.current = e.target.value }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const codigo = scanInput.trim()
+                      if (!codigo) return
+                      setScanInput('')
+                      scanBufferRef.current = ''
+                      procesarCodigoScan(codigo)
+                      setTecladoVisible(false)
+                    }
+                  }}
+                  onBlur={() => { if (!scanInput) setTecladoVisible(false) }}
+                  placeholder="Escribir código..."
+                  autoComplete="off"
+                  autoFocus
+                  className="flex-1 border-2 border-teal-300 rounded-xl px-4 py-3 text-base text-center outline-none"
+                  disabled={!!pesoManual || enviando}
+                />
+              )}
               <button
-                type="submit"
-                disabled={!scanInput.trim() || !!pesoManual || enviando}
-                className="px-4 py-2.5 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                type="button"
+                onClick={() => {
+                  setTecladoVisible(v => !v)
+                  setTimeout(() => inputManualRef.current?.focus(), 100)
+                }}
+                className={`px-3 rounded-xl border-2 ${tecladoVisible ? 'border-teal-500 bg-teal-50 text-teal-600' : 'border-gray-300 text-gray-400'}`}
               >
-                OK
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
+                </svg>
               </button>
-            </form>
+            </div>
 
             {/* Feedback */}
             {feedbackScan && (
