@@ -427,7 +427,14 @@ export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo })
                     {cardSeleccionada.venta_activacion?.numero_venta && (
                       <div>
                         <span className="text-[10px] text-gray-500">Nro. venta</span>
-                        <span className="block text-sm font-medium text-gray-800">#{cardSeleccionada.venta_activacion.numero_venta}</span>
+                        <a
+                          href={`/ventas/${cardSeleccionada.venta_activacion.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block text-sm font-medium text-violet-700 hover:text-violet-900 hover:underline cursor-pointer"
+                        >
+                          #{cardSeleccionada.venta_activacion.numero_venta}
+                        </a>
                       </div>
                     )}
                     {cardSeleccionada.caja_nombre && (
