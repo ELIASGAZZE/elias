@@ -1480,8 +1480,16 @@ router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) =>
     const extrasIds = Object.entries(recibidosMap).filter(([, ir]) => ir.es_extra).map(([id]) => id)
     let extrasMap = {}
     if (extrasIds.length > 0) {
-      const { data: extrasArts } = await supabase.from('articulos').select('id, codigo, nombre').in('id', extrasIds)
-      if (extrasArts) extrasArts.forEach(a => { extrasMap[String(a.id)] = a })
+      const numIds = extrasIds.filter(id => /^\d+$/.test(id)).map(Number)
+      const uuidIds = extrasIds.filter(id => !/^\d+$/.test(id))
+      if (numIds.length > 0) {
+        const { data } = await supabase.from('articulos').select('id, id_centum, codigo, nombre').in('id_centum', numIds)
+        if (data) data.forEach(a => { extrasMap[String(a.id)] = a; extrasMap[String(a.id_centum)] = a })
+      }
+      if (uuidIds.length > 0) {
+        const { data } = await supabase.from('articulos').select('id, id_centum, codigo, nombre').in('id', uuidIds)
+        if (data) data.forEach(a => { extrasMap[String(a.id)] = a; extrasMap[String(a.id_centum)] = a })
+      }
     }
     for (const [artId, ir] of Object.entries(recibidosMap)) {
       if (ir.es_extra) {
@@ -1762,8 +1770,23 @@ router.get('/bultos', verificarAuth, async (req, res) => {
     }
     let artNombreMap = {}
     if (artIdsSinNombre.size > 0) {
-      const { data: artsDB } = await supabase.from('articulos').select('id, codigo, nombre').in('id', [...artIdsSinNombre])
-      if (artsDB) artsDB.forEach(a => { artNombreMap[String(a.id)] = a })
+      // articulo_id puede ser id_centum (número) o UUID — buscar por ambos
+      const ids = [...artIdsSinNombre]
+      const numIds = ids.filter(id => /^\d+$/.test(id)).map(Number)
+      const uuidIds = ids.filter(id => !/^\d+$/.test(id))
+      const results = []
+      if (numIds.length > 0) {
+        const { data } = await supabase.from('articulos').select('id, id_centum, codigo, nombre').in('id_centum', numIds)
+        if (data) results.push(...data)
+      }
+      if (uuidIds.length > 0) {
+        const { data } = await supabase.from('articulos').select('id, id_centum, codigo, nombre').in('id', uuidIds)
+        if (data) results.push(...data)
+      }
+      for (const a of results) {
+        artNombreMap[String(a.id)] = a
+        artNombreMap[String(a.id_centum)] = a
+      }
     }
 
     // Enriquecer con datos de la orden + nombres faltantes
