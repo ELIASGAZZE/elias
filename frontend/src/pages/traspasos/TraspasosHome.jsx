@@ -437,26 +437,96 @@ const TraspasosHome = () => {
                             </div>
                           )}
 
-                          {/* Items del bulto */}
-                          {items.length > 0 && (
-                            <div>
-                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Artículos ({items.length})</h4>
-                              <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-50 max-h-48 overflow-y-auto">
-                                {items.map((item, idx) => (
-                                  <div key={idx} className="flex items-center justify-between px-3 py-1.5 text-xs">
-                                    <div className="min-w-0">
-                                      <span className="text-gray-400 mr-1.5">{item.codigo || ''}</span>
-                                      <span className="text-gray-700">{item.nombre || item.articulo_nombre || 'Artículo'}</span>
-                                    </div>
-                                    <span className="text-gray-600 font-medium ml-2 flex-shrink-0">
-                                      {item.cantidad_preparada ?? item.cantidad ?? '-'}
-                                      {item.es_pesable ? ' kg' : ' u'}
-                                    </span>
+                          {/* Artículos: origen vs destino */}
+                          {(() => {
+                            const controlDestino = Array.isArray(b.diferencias_articulos) ? b.diferencias_articulos : []
+                            const tieneControl = controlDestino.length > 0
+
+                            if (!tieneControl && items.length === 0) return null
+
+                            if (tieneControl) {
+                              return (
+                                <div>
+                                  <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                                    Artículos — Origen vs Destino ({controlDestino.length})
+                                  </h4>
+                                  <div className="bg-white rounded-lg border border-gray-200 max-h-64 overflow-y-auto">
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-gray-50 sticky top-0">
+                                        <tr>
+                                          <th className="text-left px-3 py-1.5 text-gray-400 font-medium">Artículo</th>
+                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-20">Origen</th>
+                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-20">Destino</th>
+                                          <th className="text-center px-2 py-1.5 text-gray-400 font-medium w-20">Estado</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-50">
+                                        {controlDestino.map((d, idx) => {
+                                          const esPesable = (d.pesos_escaneados_destino || []).length > 0 || items.find(i => i.articulo_id === d.articulo_id)?.es_pesable
+                                          const unidad = esPesable ? ' kg' : ' u'
+                                          const fmt = (v) => esPesable ? Number(v).toFixed(3) : v
+                                          const colorTipo = {
+                                            ok: 'bg-green-100 text-green-700',
+                                            diferencia: 'bg-red-100 text-red-700',
+                                            faltante: 'bg-red-100 text-red-700',
+                                            extra: 'bg-amber-100 text-amber-700',
+                                          }
+                                          const labelTipo = { ok: 'OK', diferencia: 'Dif.', faltante: 'Faltante', extra: 'Extra' }
+                                          return (
+                                            <tr key={idx} className={d.tipo !== 'ok' ? 'bg-red-50/30' : ''}>
+                                              <td className="px-3 py-1.5">
+                                                <span className="text-gray-400 mr-1">{d.codigo || ''}</span>
+                                                <span className="text-gray-700">{d.nombre || 'Artículo'}</span>
+                                              </td>
+                                              <td className="text-right px-2 py-1.5 text-gray-600 font-medium font-mono">
+                                                {d.es_extra ? '—' : fmt(d.cantidad_esperada)}{!d.es_extra && unidad}
+                                              </td>
+                                              <td className={`text-right px-2 py-1.5 font-medium font-mono ${
+                                                d.tipo === 'ok' ? 'text-green-600' : d.tipo === 'faltante' ? 'text-red-600' : d.tipo === 'extra' ? 'text-amber-600' : 'text-red-600'
+                                              }`}>
+                                                {d.cantidad_recibida === 0 ? '—' : fmt(d.cantidad_recibida)}{d.cantidad_recibida !== 0 && unidad}
+                                              </td>
+                                              <td className="text-center px-2 py-1.5">
+                                                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${colorTipo[d.tipo] || ''}`}>
+                                                  {labelTipo[d.tipo] || d.tipo}
+                                                </span>
+                                              </td>
+                                            </tr>
+                                          )
+                                        })}
+                                      </tbody>
+                                    </table>
                                   </div>
-                                ))}
+                                  {b.control_articulos_at && (
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                      Controlado: {new Date(b.control_articulos_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  )}
+                                </div>
+                              )
+                            }
+
+                            // Sin control destino: mostrar solo items origen
+                            return (
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Artículos preparados ({items.length})</h4>
+                                <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-50 max-h-48 overflow-y-auto">
+                                  {items.map((item, idx) => (
+                                    <div key={idx} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                                      <div className="min-w-0">
+                                        <span className="text-gray-400 mr-1.5">{item.codigo || ''}</span>
+                                        <span className="text-gray-700">{item.nombre || item.articulo_nombre || 'Artículo'}</span>
+                                      </div>
+                                      <span className="text-gray-600 font-medium ml-2 flex-shrink-0">
+                                        {item.cantidad_preparada ?? item.cantidad ?? '-'}
+                                        {item.es_pesable ? ' kg' : ' u'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            )
+                          })()}
 
                           {/* Botón imprimir pallet */}
                           {b.tipo === 'pallet' && (
