@@ -190,7 +190,7 @@ const VerificarCierrePos = () => {
           observaciones,
         })
       }
-      navigate(`/cajas-pos/cierre/${id}`)
+      navigate('/cajas-pos')
     } catch (err) {
       setError(err.response?.data?.error || 'Error al enviar verificacion')
     } finally {
