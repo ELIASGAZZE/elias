@@ -89,7 +89,10 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     const precioConIva = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
     const ivaTasa = parseFloat(item.iva_tasa || item.iva || item.ivaTasa || 21)
     // Para Factura A: enviar precio neto (sin IVA). Para Factura B: enviar precio final (con IVA)
-    const precio = esFacturaA ? Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100 : precioConIva
+    // Factura B: Centum descompone internamente a neto+IVA. Para evitar CobroNoBalanceaException,
+    // asegurar que el precio sobreviva el round-trip neto→bruto (round(round(P/1.21)*1.21) == P)
+    const neto = Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100
+    const precio = esFacturaA ? neto : Math.round(neto * (1 + ivaTasa / 100) * 100) / 100
 
     return {
       IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
@@ -115,10 +118,8 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   }
   subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
 
-  // Descuento forma de pago: NO se envía a Centum.
-  // El descuento se registra solo en POS (fuente de verdad para caja/cobros).
-  // Centum recibe precios originales para stock y trazabilidad.
-  // Razón: Centum valida CobroNoBalancea con redondeo interno impredecible.
+  // Factura A: importe = total POS (Centum suma IVA a netos)
+  // Factura B: importe = subtotal artículos (precios round-trip safe, coinciden con cálculo interno de Centum)
   const importeValor = esFacturaA ? total : subtotalArticulos
 
   // Determinar IdValor según medio de pago principal
