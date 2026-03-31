@@ -45,6 +45,8 @@ router.post('/activar', verificarAuth, async (req, res) => {
     if (error) throw error
 
     // Crear ventas_pos para tener numero_venta y trazabilidad
+    // El total es lo que realmente se cobró (puede ser menor al nominal por descuento forma pago)
+    const totalRealCobrado = (pagos || []).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) || monto
     let ventaId = null
     const ventaInsert = {
       cajero_id: req.perfil.id,
@@ -54,11 +56,12 @@ router.post('/activar', verificarAuth, async (req, res) => {
       nombre_cliente: comprador_nombre || null,
       subtotal: monto,
       descuento_total: 0,
-      total: monto,
-      monto_pagado: monto,
+      total: totalRealCobrado,
+      monto_pagado: totalRealCobrado,
       vuelto: 0,
       items: JSON.stringify([{ nombre: `Gift Card ${codigo.trim()}`, cantidad: 1, precio_unitario: monto, precio_final: monto, es_gift_card: true }]),
       pagos: pagos || [],
+      gift_cards_vendidas: [{ codigo: codigo.trim(), monto_nominal: monto, comprador: comprador_nombre || null }],
       centum_sync: true, // Gift cards no se sincronizan a Centum
     }
 

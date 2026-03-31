@@ -476,9 +476,63 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       sucursalDeCaja = cajaInfo?.sucursal_id || null
     }
 
-    // Si solo hay gift cards (sin artículos), no crear ventas_pos
+    // Prorratear pagos entre items y gift cards cuando es venta mixta
+    // La proporción se basa en el monto real (total incluye descuentos ya aplicados)
+    const proporcionItems = (tieneGC && total > 0) ? totalItemsSolo / total : 1
+    let pagosItems = pagos || []
+    let pagosGC = pagos || []
+    if (tieneGC && tieneItems) {
+      pagosItems = (pagos || []).map(p => ({
+        ...p,
+        monto: parseFloat((parseFloat(p.monto) * proporcionItems).toFixed(2)),
+      }))
+      const proporcionGC = totalGCActivar / total
+      pagosGC = (pagos || []).map(p => ({
+        ...p,
+        monto: parseFloat((parseFloat(p.monto) * proporcionGC).toFixed(2)),
+      }))
+    }
+
+    // Crear ventas_pos: si hay items va con items+total, si solo GC va como venta de GC
     let data = null
-    if (tieneItems) {
+    if (!tieneItems && tieneGC) {
+      // Solo gift cards desde POS — crear ventas_pos para trazabilidad (no se envía a Centum)
+      const totalRealCobradoGC = pagosGC.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      const gcItems = gift_cards_a_activar.map(gc => ({
+        nombre: `Gift Card ${gc.codigo.trim()}`, cantidad: 1, precio_unitario: gc.monto, precio_final: gc.monto, es_gift_card: true,
+      }))
+      const insertGCOnly = {
+        cajero_id: req.perfil.id,
+        sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
+        caja_id: caja_id || null,
+        id_cliente_centum,
+        nombre_cliente: nombre_cliente || null,
+        subtotal: totalGCActivar,
+        descuento_total: 0,
+        total: totalRealCobradoGC,
+        monto_pagado: totalRealCobradoGC,
+        vuelto: 0,
+        items: JSON.stringify(gcItems),
+        pagos: pagosGC,
+        gift_cards_vendidas: gift_cards_a_activar.map(gc => ({
+          codigo: gc.codigo.trim(), monto_nominal: gc.monto, comprador: gc.comprador_nombre || null,
+        })),
+        centum_sync: true, // No enviar a Centum
+        condicion_iva: condicion_iva || null,
+      }
+      if (created_at_offline) insertGCOnly.created_at = created_at_offline
+
+      const { data: ventaGCData, error: ventaGCErr } = await supabase
+        .from('ventas_pos')
+        .insert(insertGCOnly)
+        .select()
+        .single()
+
+      if (ventaGCErr) throw ventaGCErr
+      data = ventaGCData
+    } else if (tieneItems) {
+      const montoPagadoItems = tieneGC ? pagosItems.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0) : montoPagadoNum
+      const vueltoItems = tieneGC ? 0 : (vuelto || 0) // El vuelto se da una sola vez, va en la parte de items
       const insertData = {
         cajero_id: req.perfil.id,
         sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
@@ -488,15 +542,22 @@ router.post('/ventas', verificarAuth, async (req, res) => {
         subtotal: subtotal || 0,
         descuento_total: descuento_total || 0,
         total: totalItemsSolo,
-        monto_pagado: montoPagadoNum,
-        vuelto: vuelto || 0,
+        monto_pagado: tieneGC ? montoPagadoItems : montoPagadoNum,
+        vuelto: vueltoItems,
         items: JSON.stringify(items),
         promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
-        pagos: pagos || [],
+        pagos: tieneGC ? pagosItems : (pagos || []),
         descuento_forma_pago: descuento_forma_pago || null,
         descuento_grupo_cliente: parseFloat(descuento_grupo_cliente) || 0,
         grupo_descuento_nombre: grupo_descuento_nombre || null,
         condicion_iva: condicion_iva || null,
+      }
+      if (tieneGC) {
+        insertData.gift_cards_vendidas = gift_cards_a_activar.map(gc => ({
+          codigo: gc.codigo.trim(),
+          monto_nominal: gc.monto,
+          comprador: gc.comprador_nombre || null,
+        }))
       }
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
@@ -628,6 +689,9 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
     // Activar gift cards vendidas (NO se incluyen en ventas_pos)
     if (tieneGC) {
+      // Prorratear pagosGC entre las gift cards individuales por su monto nominal
+      const totalGCNominal = gift_cards_a_activar.reduce((sum, gc) => sum + (parseFloat(gc.monto) || 0), 0)
+
       for (const gc of gift_cards_a_activar) {
         // Verificar que no exista ya
         const { data: existente } = await supabase
@@ -640,6 +704,13 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           return res.status(400).json({ error: `La gift card ${gc.codigo} ya existe en el sistema` })
         }
 
+        // Prorratear pagosGC entre las GC individuales proporcionalmente a su monto nominal
+        const proporcionGCIndividual = totalGCNominal > 0 ? (parseFloat(gc.monto) || 0) / totalGCNominal : 1
+        const pagosEstaGC = pagosGC.map(p => ({
+          ...p,
+          monto: parseFloat((parseFloat(p.monto) * proporcionGCIndividual).toFixed(2)),
+        }))
+
         const { data: giftCard } = await supabase
           .from('gift_cards')
           .insert({
@@ -648,7 +719,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             saldo: gc.monto,
             estado: 'activa',
             comprador_nombre: gc.comprador_nombre || null,
-            pagos: pagos || [],
+            pagos: pagosEstaGC,
             created_by: req.perfil.id,
           })
           .select()

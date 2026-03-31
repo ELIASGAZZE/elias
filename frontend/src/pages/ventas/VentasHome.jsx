@@ -587,6 +587,11 @@ const VentasHome = () => {
                             {v.perfiles.nombre}
                           </span>
                         )}
+                        {v.gift_cards_vendidas && v.gift_cards_vendidas.length > 0 && (
+                          <span className="text-xs bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded font-medium">
+                            GC x{v.gift_cards_vendidas.length}
+                          </span>
+                        )}
                         {v.pedido && (
                           <span className="text-xs bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded">
                             Pedido #{v.pedido.numero || '—'}

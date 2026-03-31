@@ -101,6 +101,9 @@ const DetalleVenta = () => {
     : (venta.promociones_aplicadas || [])
   const pagos = venta.pagos || []
   const descFormaPago = venta.descuento_forma_pago
+  const giftCardsVendidas = venta.gift_cards_vendidas || []
+  const itemsSinGC = items.filter(it => !it.es_gift_card)
+  const tieneGCVendidas = giftCardsVendidas.length > 0
 
   // Calcular redondeo de efectivo (centenas)
   const totalEsperado = Math.round(
@@ -386,9 +389,34 @@ const DetalleVenta = () => {
           </div>
         )}
 
+        {/* Gift Cards vendidas en esta venta */}
+        {tieneGCVendidas && (
+          <div className="bg-pink-50 rounded-xl border border-pink-200 p-4">
+            <h2 className="text-sm font-semibold text-pink-700 uppercase mb-3">Gift Cards vendidas ({giftCardsVendidas.length})</h2>
+            <div className="divide-y divide-pink-100">
+              {giftCardsVendidas.map((gc, i) => (
+                <div key={i} className="py-2 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Gift Card {gc.codigo}</p>
+                    {gc.comprador && <p className="text-xs text-gray-500">Comprador: {gc.comprador}</p>}
+                  </div>
+                  <span className="text-sm font-bold text-pink-700">{formatPrecio(gc.monto_nominal)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 pt-2 border-t border-pink-200 flex justify-between text-xs text-pink-600">
+              <span>Total nominal GC</span>
+              <span className="font-bold">{formatPrecio(giftCardsVendidas.reduce((s, gc) => s + (gc.monto_nominal || 0), 0))}</span>
+            </div>
+            {itemsSinGC.length > 0 && (
+              <p className="text-xs text-pink-500 mt-1">Solo los artículos se enviaron a Centum. Las gift cards no se facturan.</p>
+            )}
+          </div>
+        )}
+
         {/* Items */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items ({items.length})</h2>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">{tieneGCVendidas ? `Artículos facturados (${itemsSinGC.length})` : `Items (${items.length})`}</h2>
           <div className="divide-y divide-gray-100">
             {items.map((item, i) => {
               const precioUnit = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)

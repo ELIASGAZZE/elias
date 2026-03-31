@@ -668,7 +668,7 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
     // Query ventas_pos in the time range for this cajero
     const { data: ventas, error: errorVentas } = await supabase
       .from('ventas_pos')
-      .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, created_at')
+      .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at')
       .eq('cajero_id', cierre.cajero_id)
       .eq('caja_id', cierre.caja_id)
       .gte('created_at', desde)
@@ -721,12 +721,13 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       }
     })
 
-    // Sumar pagos de gift cards activadas al movimiento de caja
+    // Sumar pagos de gift cards activadas al movimiento de caja (lo que realmente se cobró, no el valor nominal)
     let totalGiftCardsActivadas = 0
     ;(giftCardsActivadas || []).forEach(gc => {
-      totalGiftCardsActivadas += parseFloat(gc.monto_inicial) || 0
-      const pagos = gc.pagos || []
-      pagos.forEach(p => {
+      const pagosGC = gc.pagos || []
+      const totalCobradoGC = pagosGC.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      totalGiftCardsActivadas += totalCobradoGC
+      pagosGC.forEach(p => {
         const tipo = p.tipo || 'Efectivo'
         if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
         mediosPago[tipo].total += parseFloat(p.monto) || 0
@@ -959,5 +960,189 @@ router.get('/:id/cambios-precio', verificarAuth, async (req, res) => {
     res.status(500).json({ error: 'Error al obtener cambios de precio' })
   }
 })
+
+// GET /api/cierres-pos/:id/movimientos — todos los movimientos cronológicos con saldo acumulado (solo admin)
+router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    // Obtener cierre base
+    const { data: cierre, error: errorCierre } = await supabase
+      .from('cierres_pos')
+      .select('id, cajero_id, caja_id, apertura_at, cierre_at, estado, fondo_fijo, tipo, total_efectivo, cambio_que_queda, efectivo_retirado')
+      .eq('id', req.params.id)
+      .single()
+
+    if (errorCierre || !cierre) {
+      return res.status(404).json({ error: 'Cierre no encontrado' })
+    }
+
+    const desde = cierre.apertura_at
+    const hasta = cierre.cierre_at || new Date().toISOString()
+
+    // Fetch ventas, retiros, gastos, gift cards en paralelo (solo efectivo)
+    const [ventasRes, retirosRes, gastosRes, giftCardsRes] = await Promise.all([
+      supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, created_at')
+        .eq('cajero_id', cierre.cajero_id)
+        .eq('caja_id', cierre.caja_id)
+        .gte('created_at', desde)
+        .lte('created_at', hasta)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('retiros_pos')
+        .select('id, numero, total, observaciones, oculto, empleado:empleados!empleado_id(nombre), created_at')
+        .eq('cierre_pos_id', req.params.id)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('gastos_pos')
+        .select('id, descripcion, importe, controlado, created_at')
+        .eq('cierre_pos_id', req.params.id)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('gift_cards')
+        .select('id, codigo, monto_inicial, pagos, created_at')
+        .eq('created_by', cierre.cajero_id)
+        .gte('created_at', desde)
+        .lte('created_at', hasta)
+        .not('pagos', 'is', null),
+    ])
+
+    if (ventasRes.error) throw ventasRes.error
+
+    const movimientos = []
+
+    // Apertura como primer movimiento
+    movimientos.push({
+      tipo: 'apertura',
+      descripcion: 'Fondo fijo inicial',
+      monto: parseFloat(cierre.fondo_fijo) || 0,
+      signo: '+',
+      fecha: cierre.apertura_at,
+    })
+
+    // Ventas — solo la parte en efectivo
+    ;(ventasRes.data || []).forEach(v => {
+      const pagos = v.pagos || []
+      const vuelto = parseFloat(v.vuelto) || 0
+
+      // Sumar solo pagos en efectivo
+      const efectivoBruto = pagos
+        .filter(p => (p.tipo || 'Efectivo') === 'Efectivo')
+        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      const efectivoNeto = parseFloat((efectivoBruto - vuelto).toFixed(2))
+
+      // Si no hay efectivo en esta venta, no genera movimiento de caja
+      if (efectivoNeto === 0 && efectivoBruto === 0) return
+
+      movimientos.push({
+        tipo: 'venta',
+        descripcion: `Venta #${v.numero_venta}${v.nombre_cliente ? ` — ${v.nombre_cliente}` : ''}`,
+        detalle: vuelto > 0 ? `Efectivo ${formatMontoBack(efectivoBruto)} - Vuelto ${formatMontoBack(vuelto)}` : null,
+        monto: Math.abs(efectivoNeto),
+        signo: efectivoNeto >= 0 ? '+' : '-',
+        fecha: v.created_at,
+        ref_id: v.id,
+      })
+    })
+
+    // Gift cards activadas — solo la parte en efectivo
+    ;(giftCardsRes.data || []).forEach(gc => {
+      const pagos = gc.pagos || []
+      const efectivoBruto = pagos
+        .filter(p => (p.tipo || 'Efectivo') === 'Efectivo')
+        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+
+      if (efectivoBruto === 0) return
+
+      movimientos.push({
+        tipo: 'venta',
+        descripcion: `Gift Card ${gc.codigo} (${formatMontoBack(parseFloat(gc.monto_inicial) || 0)})`,
+        detalle: null,
+        monto: efectivoBruto,
+        signo: '+',
+        fecha: gc.created_at,
+        ref_id: gc.id,
+      })
+    })
+
+    // Retiros (negativo)
+    ;(retirosRes.data || []).forEach(r => {
+      movimientos.push({
+        tipo: 'retiro',
+        descripcion: `Retiro #${r.numero}${r.empleado?.nombre ? ` — ${r.empleado.nombre}` : ''}`,
+        detalle: r.observaciones || null,
+        monto: parseFloat(r.total) || 0,
+        signo: '-',
+        fecha: r.created_at,
+        ref_id: r.id,
+      })
+    })
+
+    // Gastos (negativo)
+    ;(gastosRes.data || []).forEach(g => {
+      movimientos.push({
+        tipo: 'gasto',
+        descripcion: `Gasto: ${g.descripcion}`,
+        detalle: g.controlado ? 'Controlado' : 'Sin controlar',
+        monto: parseFloat(g.importe) || 0,
+        signo: '-',
+        fecha: g.created_at,
+        ref_id: g.id,
+      })
+    })
+
+    // Ordenar cronológicamente
+    movimientos.sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+
+    // Calcular saldo acumulado
+    let saldo = 0
+    for (const mov of movimientos) {
+      if (mov.signo === '+') {
+        saldo += mov.monto
+      } else if (mov.signo === '-') {
+        saldo -= mov.monto
+      }
+      mov.saldo = parseFloat(saldo.toFixed(2))
+    }
+
+    // Movimientos de cierre (al final, después del saldo teórico)
+    if (cierre.cierre_at && cierre.estado !== 'abierta') {
+      const totalEfectivo = parseFloat(cierre.total_efectivo) || 0
+      const cambioQueQueda = parseFloat(cierre.cambio_que_queda) || 0
+      const efectivoRetirado = totalEfectivo - cambioQueQueda
+
+      movimientos.push({
+        tipo: 'cierre',
+        descripcion: 'Efectivo contado por cajero',
+        detalle: `Retirado: ${formatMontoBack(efectivoRetirado)} · Cambio dejado: ${formatMontoBack(cambioQueQueda)}`,
+        monto: totalEfectivo,
+        signo: '=',
+        fecha: cierre.cierre_at,
+        saldo: parseFloat(saldo.toFixed(2)),
+        diferencia: parseFloat((totalEfectivo - saldo).toFixed(2)),
+      })
+    }
+
+    const ventasEfectivo = movimientos.filter(m => m.tipo === 'venta' && m.signo === '+').reduce((s, m) => s + m.monto, 0)
+
+    res.json({
+      movimientos,
+      resumen: {
+        total_ventas_efectivo: parseFloat(ventasEfectivo.toFixed(2)),
+        total_retiros: movimientos.filter(m => m.tipo === 'retiro').reduce((s, m) => s + m.monto, 0),
+        total_gastos: movimientos.filter(m => m.tipo === 'gasto').reduce((s, m) => s + m.monto, 0),
+        saldo_final: parseFloat(saldo.toFixed(2)),
+        fondo_fijo: parseFloat(cierre.fondo_fijo) || 0,
+      },
+    })
+  } catch (err) {
+    console.error('Error al obtener movimientos:', err)
+    res.status(500).json({ error: 'Error al obtener movimientos' })
+  }
+})
+
+function formatMontoBack(n) {
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n)
+}
 
 module.exports = router

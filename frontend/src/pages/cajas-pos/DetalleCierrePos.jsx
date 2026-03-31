@@ -81,6 +81,9 @@ const DetalleCierrePos = () => {
   const [efectivoExpanded, setEfectivoExpanded] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [tabActiva, setTabActiva] = useState('detalle')
+  const [movimientos, setMovimientos] = useState(null)
+  const [movimientosCargando, setMovimientosCargando] = useState(false)
 
   useEffect(() => {
     const cargar = async () => {
@@ -168,6 +171,23 @@ const DetalleCierrePos = () => {
     } finally {
       setControlandoGasto(null)
     }
+  }
+
+  const cargarMovimientos = async () => {
+    setMovimientosCargando(true)
+    try {
+      const { data } = await api.get(`/api/cierres-pos/${id}/movimientos`)
+      setMovimientos(data)
+    } catch (err) {
+      console.error('Error al cargar movimientos:', err)
+    } finally {
+      setMovimientosCargando(false)
+    }
+  }
+
+  const handleTabChange = (tab) => {
+    setTabActiva(tab)
+    if (tab === 'movimientos') cargarMovimientos()
   }
 
   if (cargando) {
@@ -298,6 +318,167 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
+        {/* Tabs — solo admin */}
+        {esAdmin && (
+          <div className="flex border-b border-gray-200 bg-white rounded-t-xl overflow-hidden">
+            <button
+              onClick={() => handleTabChange('detalle')}
+              className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                tabActiva === 'detalle'
+                  ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/50'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Detalle
+            </button>
+            <button
+              onClick={() => handleTabChange('movimientos')}
+              className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                tabActiva === 'movimientos'
+                  ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/50'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Movimientos
+            </button>
+          </div>
+        )}
+
+
+        {/* ─── Tab Movimientos ─── */}
+        {tabActiva === 'movimientos' && esAdmin && (
+          <div className="space-y-4">
+            {movimientosCargando ? (
+              <div className="flex justify-center py-10">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600" />
+              </div>
+            ) : movimientos ? (
+              <>
+                {/* Resumen */}
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Resumen de movimientos</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-teal-50 border border-teal-200 rounded-lg p-2.5 text-center">
+                      <span className="text-[11px] text-gray-500 block">Fondo fijo</span>
+                      <span className="font-bold text-teal-700 text-sm">{formatMonto(movimientos.resumen.fondo_fijo)}</span>
+                    </div>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 text-center">
+                      <span className="text-[11px] text-gray-500 block">Ventas (efectivo)</span>
+                      <span className="font-bold text-green-700 text-sm">{formatMonto(movimientos.resumen.total_ventas_efectivo)}</span>
+                    </div>
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 text-center">
+                      <span className="text-[11px] text-gray-500 block">Retiros</span>
+                      <span className="font-bold text-red-700 text-sm">-{formatMonto(movimientos.resumen.total_retiros)}</span>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-center">
+                      <span className="text-[11px] text-gray-500 block">Gastos</span>
+                      <span className="font-bold text-amber-700 text-sm">-{formatMonto(movimientos.resumen.total_gastos)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between items-center">
+                    <span className="text-sm font-medium text-gray-600">Saldo teórico en caja</span>
+                    <span className={`text-lg font-bold ${movimientos.resumen.saldo_final >= 0 ? 'text-teal-700' : 'text-red-600'}`}>
+                      {formatMonto(movimientos.resumen.saldo_final)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Timeline de movimientos */}
+                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-gray-700">
+                      Todos los movimientos ({movimientos.movimientos.length})
+                    </h3>
+                    <span className="text-xs text-gray-400">Orden cronológico</span>
+                  </div>
+                  {/* Header */}
+                  <div className="hidden sm:flex items-center text-[11px] font-medium text-gray-400 uppercase tracking-wider px-4 py-2 border-b border-gray-100 bg-gray-50/50">
+                    <span className="w-16">Hora</span>
+                    <span className="flex-1 min-w-0">Movimiento</span>
+                    <span className="w-24 text-right">Monto</span>
+                    <span className="w-28 text-right">Saldo</span>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {movimientos.movimientos.map((mov, idx) => {
+                      const TIPO_CONFIG = {
+                        apertura: { icon: '🏦', bg: 'bg-teal-50' },
+                        venta: { icon: '💰', bg: 'bg-green-50' },
+                        retiro: { icon: '📤', bg: 'bg-red-50' },
+                        gasto: { icon: '🧾', bg: 'bg-amber-50' },
+                        cierre: { icon: '🔒', bg: 'bg-indigo-50' },
+                      }
+                      const cfg = TIPO_CONFIG[mov.tipo] || TIPO_CONFIG.gasto
+                      const esCierre = mov.tipo === 'cierre'
+
+                      if (esCierre) {
+                        return (
+                          <div key={idx} className="px-4 py-3 bg-indigo-50/60 border-t-2 border-indigo-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs flex-shrink-0">🔒</span>
+                              <span className="font-semibold text-indigo-800 text-sm">{mov.descripcion}</span>
+                              <span className="text-xs text-gray-400 ml-auto">{formatHora(mov.fecha)}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-3 text-center">
+                              <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                <span className="text-[10px] text-gray-500 block">Saldo teórico</span>
+                                <span className="font-bold text-gray-800">{formatMonto(mov.saldo)}</span>
+                              </div>
+                              <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                <span className="text-[10px] text-gray-500 block">Cajero contó</span>
+                                <span className="font-bold text-indigo-700">{formatMonto(mov.monto)}</span>
+                              </div>
+                              <div className={`bg-white rounded-lg p-2 border ${mov.diferencia === 0 ? 'border-green-200' : 'border-red-200'}`}>
+                                <span className="text-[10px] text-gray-500 block">Diferencia</span>
+                                <span className={`font-bold ${mov.diferencia === 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMonto(mov.diferencia)}</span>
+                              </div>
+                            </div>
+                            {mov.detalle && (
+                              <p className="text-xs text-indigo-600 mt-2 text-center">{mov.detalle}</p>
+                            )}
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div key={idx} className={`flex items-center px-4 py-2.5 text-sm hover:bg-gray-50/50 ${idx === 0 ? 'bg-teal-50/30' : ''}`}>
+                          <span className="w-16 text-xs text-gray-400 flex-shrink-0">
+                            {formatHora(mov.fecha)}
+                          </span>
+                          <div className="flex-1 min-w-0 flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full ${cfg.bg} flex items-center justify-center text-xs flex-shrink-0`}>
+                              {cfg.icon}
+                            </span>
+                            <div className="min-w-0">
+                              <span className="text-gray-800 text-sm truncate block">{mov.descripcion}</span>
+                              {mov.detalle && (
+                                <span className="text-[11px] text-gray-400 truncate block">{mov.detalle}</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className={`w-24 text-right font-medium flex-shrink-0 ${
+                            mov.signo === '+' ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {mov.signo === '-' ? '-' : '+'}{formatMonto(mov.monto)}
+                          </span>
+                          <span className={`w-28 text-right font-bold flex-shrink-0 ${
+                            mov.saldo >= 0 ? 'text-gray-800' : 'text-red-600'
+                          }`}>
+                            {formatMonto(mov.saldo)}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-10 text-sm text-gray-400">No se pudieron cargar los movimientos</div>
+            )}
+          </div>
+        )}
+
+        {/* ─── Tab Detalle (contenido original) ─── */}
+        {tabActiva === 'detalle' && (<>
 
         {/* Seccion 2: Comparativos de cambio — dos tablas lado a lado (no aplica a delivery) */}
         {!esBlind && cierre.estado !== 'abierta' && cierre.tipo !== 'delivery' && (
@@ -1277,6 +1458,8 @@ const DetalleCierrePos = () => {
             </button>
           )}
         </div>
+
+        </>)}
 
         <Link
           to="/cajas-pos"
