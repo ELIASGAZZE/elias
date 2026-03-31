@@ -10,8 +10,21 @@ const Fichaje = () => {
   const [ultimosFichajes, setUltimosFichajes] = useState([])
   const [feedback, setFeedback] = useState(null) // { tipo, nombre, hora, error }
   const [cargando, setCargando] = useState(false)
+  const [sucursal, setSucursal] = useState(null) // { id, nombre }
+  const [tokenError, setTokenError] = useState(null)
   const feedbackTimer = useRef(null)
   const inputRef = useRef(null)
+
+  // Resolver token de sucursal desde URL (?s=TOKEN)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('s')
+    if (!token) return
+
+    axios.get(`${API_URL}/api/sucursales/by-token/${token}`)
+      .then(({ data }) => setSucursal(data))
+      .catch(() => setTokenError('Link de fichaje inválido o expirado'))
+  }, [])
 
   // Reloj
   useEffect(() => {
@@ -19,15 +32,17 @@ const Fichaje = () => {
     return () => clearInterval(timer)
   }, [])
 
-  // Cargar últimos fichajes
+  // Cargar últimos fichajes (filtrados por sucursal si hay, últimos 7 días)
   const cargarUltimos = useCallback(async () => {
     try {
-      const { data } = await axios.get(`${API_URL}/api/fichajes/ultimos?limit=5`)
+      const params = new URLSearchParams({ limit: '50', dias: '7' })
+      if (sucursal?.id) params.set('sucursal_id', sucursal.id)
+      const { data } = await axios.get(`${API_URL}/api/fichajes/ultimos?${params}`)
       setUltimosFichajes(data)
     } catch {
       // silenciar
     }
-  }, [])
+  }, [sucursal])
 
   useEffect(() => {
     cargarUltimos()
@@ -61,7 +76,9 @@ const Fichaje = () => {
 
     setCargando(true)
     try {
-      const { data } = await axios.post(`${API_URL}/api/fichajes/pin`, { pin })
+      const body = { pin }
+      if (sucursal?.id) body.sucursal_id = sucursal.id
+      const { data } = await axios.post(`${API_URL}/api/fichajes/pin`, body)
 
       setFeedback({
         tipo: data.tipo,
@@ -91,11 +108,29 @@ const Fichaje = () => {
     return () => window.removeEventListener('keydown', handler)
   })
 
-  const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
-  const formatFecha = (d) => `${dias[d.getDay()]} ${d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+  const diasSemana = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+  const formatFecha = (d) => `${diasSemana[d.getDay()]} ${d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+
+  // Agrupar fichajes por fecha
+  const fichajesPorDia = ultimosFichajes.reduce((acc, f) => {
+    const fecha = new Date(f.fecha_hora).toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+    if (!acc[fecha]) acc[fecha] = []
+    acc[fecha].push(f)
+    return acc
+  }, {})
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4 select-none">
+    <div className="min-h-screen bg-gray-900 flex select-none">
+
+      {/* Error de token inválido */}
+      {tokenError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="bg-red-600 rounded-3xl p-10 text-center max-w-sm mx-4">
+            <div className="text-6xl mb-4">✕</div>
+            <p className="text-white text-xl font-bold">{tokenError}</p>
+          </div>
+        </div>
+      )}
 
       {/* Feedback overlay */}
       {feedback && (
@@ -123,73 +158,87 @@ const Fichaje = () => {
         </div>
       )}
 
-      {/* Header */}
-      <div className="text-center mb-8">
-        <h1 className="text-gray-400 text-sm font-semibold tracking-widest uppercase mb-2">Control de Horario</h1>
-        <div className="text-white text-6xl font-light tracking-wider tabular-nums">
-          {hora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+      {/* Columna izquierda: Reloj + Teclado */}
+      <div className="flex-1 flex flex-col items-center justify-center p-4">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-gray-400 text-sm font-semibold tracking-widest uppercase mb-2">
+            Control de Horario{sucursal ? ` — ${sucursal.nombre}` : ''}
+          </h1>
+          <div className="text-white text-6xl font-light tracking-wider tabular-nums">
+            {hora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </div>
+          <p className="text-gray-500 mt-1">{formatFecha(hora)}</p>
         </div>
-        <p className="text-gray-500 mt-1">{formatFecha(hora)}</p>
-      </div>
 
-      {/* Código display */}
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-xs mb-6">
-        <p className="text-gray-500 text-xs text-center mb-3 uppercase tracking-wider">Ingresá tu código</p>
-        <div className="text-center text-white text-3xl font-mono tracking-[0.3em] h-10 flex items-center justify-center">
-          {pin || <span className="text-gray-600">--------</span>}
+        {/* Código display */}
+        <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-xs mb-6">
+          <p className="text-gray-500 text-xs text-center mb-3 uppercase tracking-wider">Ingresá tu código</p>
+          <div className="text-center text-white text-3xl font-mono tracking-[0.3em] h-10 flex items-center justify-center">
+            {pin || <span className="text-gray-600">--------</span>}
+          </div>
         </div>
-      </div>
 
-      {/* Teclado numérico */}
-      <div className="grid grid-cols-3 gap-3 w-full max-w-xs mb-8">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+        {/* Teclado numérico */}
+        <div className="grid grid-cols-3 gap-3 w-full max-w-xs">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+            <button
+              key={n}
+              onClick={() => handleDigit(String(n))}
+              className="h-16 rounded-2xl bg-gray-800 text-white text-2xl font-medium hover:bg-gray-700 active:bg-gray-600 transition-colors"
+            >
+              {n}
+            </button>
+          ))}
           <button
-            key={n}
-            onClick={() => handleDigit(String(n))}
+            onClick={handleBackspace}
+            className="h-16 rounded-2xl bg-gray-800 text-gray-400 text-xl hover:bg-gray-700 active:bg-gray-600 transition-colors"
+          >
+            ←
+          </button>
+          <button
+            onClick={() => handleDigit('0')}
             className="h-16 rounded-2xl bg-gray-800 text-white text-2xl font-medium hover:bg-gray-700 active:bg-gray-600 transition-colors"
           >
-            {n}
+            0
           </button>
-        ))}
-        <button
-          onClick={handleBackspace}
-          className="h-16 rounded-2xl bg-gray-800 text-gray-400 text-xl hover:bg-gray-700 active:bg-gray-600 transition-colors"
-        >
-          ←
-        </button>
-        <button
-          onClick={() => handleDigit('0')}
-          className="h-16 rounded-2xl bg-gray-800 text-white text-2xl font-medium hover:bg-gray-700 active:bg-gray-600 transition-colors"
-        >
-          0
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={pin.length < 1 || cargando}
-          className="h-16 rounded-2xl bg-blue-600 text-white text-xl font-bold hover:bg-blue-700 active:bg-blue-800 disabled:opacity-40 transition-colors"
-        >
-          {cargando ? '...' : '✓'}
-        </button>
+          <button
+            onClick={handleSubmit}
+            disabled={pin.length < 1 || cargando}
+            className="h-16 rounded-2xl bg-blue-600 text-white text-xl font-bold hover:bg-blue-700 active:bg-blue-800 disabled:opacity-40 transition-colors"
+          >
+            {cargando ? '...' : '✓'}
+          </button>
+        </div>
       </div>
 
-      {/* Últimos fichajes */}
-      {ultimosFichajes.length > 0 && (
-        <div className="w-full max-w-xs">
-          <p className="text-gray-600 text-xs uppercase tracking-wider mb-2">Últimos fichajes</p>
-          <div className="space-y-1.5">
-            {ultimosFichajes.map(f => (
-              <div key={f.id} className="flex items-center gap-2 text-sm">
-                <span className={`w-1.5 h-1.5 rounded-full ${f.tipo === 'entrada' ? 'bg-green-500' : 'bg-orange-500'}`} />
-                <span className="text-gray-400">{f.empleados?.nombre}</span>
-                <span className="text-gray-600 ml-auto">
-                  {f.tipo === 'entrada' ? 'Entrada' : 'Salida'}{' '}
-                  {new Date(f.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                </span>
+      {/* Columna derecha: Historial de fichajes */}
+      <div className="w-80 bg-gray-800/50 border-l border-gray-700/50 overflow-y-auto p-5">
+        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold mb-4">Registros recientes</p>
+        {Object.keys(fichajesPorDia).length === 0 ? (
+          <p className="text-gray-600 text-sm">Sin registros</p>
+        ) : (
+          <div className="space-y-4">
+            {Object.entries(fichajesPorDia).map(([fecha, fichajes]) => (
+              <div key={fecha}>
+                <p className="text-gray-500 text-[11px] uppercase tracking-wider font-medium mb-1.5">{fecha}</p>
+                <div className="space-y-1">
+                  {fichajes.map(f => (
+                    <div key={f.id} className="flex items-center gap-2 text-sm py-0.5">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${f.tipo === 'entrada' ? 'bg-green-500' : 'bg-orange-500'}`} />
+                      <span className="text-gray-300 truncate">{f.empleados?.nombre}</span>
+                      <span className="text-gray-500 ml-auto flex-shrink-0 text-xs">
+                        {f.tipo === 'entrada' ? 'E' : 'S'}{' '}
+                        {new Date(f.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

@@ -4,6 +4,32 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 
+// GET /api/sucursales/by-token/:token — Público: resolver token de fichaje → sucursal
+router.get('/by-token/:token', async (req, res) => {
+  try {
+    const { token } = req.params
+    if (!token || token.length < 8) {
+      return res.status(400).json({ error: 'Token inválido' })
+    }
+
+    const { data, error } = await supabase
+      .from('sucursales')
+      .select('id, nombre')
+      .eq('token_fichaje', token)
+      .maybeSingle()
+
+    if (error) throw error
+    if (!data) {
+      return res.status(404).json({ error: 'Sucursal no encontrada' })
+    }
+
+    res.json(data)
+  } catch (err) {
+    console.error('Error al resolver token de fichaje:', err)
+    res.status(500).json({ error: 'Error al resolver token' })
+  }
+})
+
 // GET /api/sucursales
 // Admin: lista todas las sucursales
 router.get('/', verificarAuth, async (req, res) => {
@@ -91,6 +117,28 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al editar sucursal:', err)
     res.status(500).json({ error: 'Error al editar sucursal' })
+  }
+})
+
+// POST /api/sucursales/:id/generar-token — Admin: genera token único para link de fichaje
+router.post('/:id/generar-token', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const crypto = require('crypto')
+    const token = crypto.randomBytes(16).toString('hex')
+
+    const { data, error } = await supabase
+      .from('sucursales')
+      .update({ token_fichaje: token })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw error
+    res.json(data)
+  } catch (err) {
+    console.error('Error al generar token de fichaje:', err)
+    res.status(500).json({ error: 'Error al generar token' })
   }
 })
 

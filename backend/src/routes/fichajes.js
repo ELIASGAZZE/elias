@@ -103,17 +103,18 @@ router.get('/estado/:empleadoId', async (req, res) => {
   }
 })
 
-// GET /api/fichajes/ultimos — Últimos fichajes del día (para pantalla kiosk)
+// GET /api/fichajes/ultimos — Últimos fichajes (para pantalla kiosk)
 router.get('/ultimos', async (req, res) => {
   try {
-    const { sucursal_id, limit: lim } = req.query
+    const { sucursal_id, limit: lim, dias } = req.query
     const hoy = new Date()
-    const inicioDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
+    const diasAtras = Math.min(parseInt(dias) || 1, 30)
+    const desde = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - (diasAtras - 1)).toISOString()
 
     let query = supabase
       .from('fichajes')
       .select('id, tipo, fecha_hora, empleados(id, nombre)')
-      .gte('fecha_hora', inicioDelDia)
+      .gte('fecha_hora', desde)
       .order('fecha_hora', { ascending: false })
       .limit(parseInt(lim) || 5)
 

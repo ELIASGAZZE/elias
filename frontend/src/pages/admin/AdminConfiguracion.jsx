@@ -1342,13 +1342,41 @@ const AdminConfiguracion = () => {
                                 {sucursal.centum_operador_prueba && <span className="ml-2">| Prueba: {sucursal.centum_operador_prueba}</span>}
                               </p>
                             )}
+                            {sucursal.token_fichaje && (
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded font-medium">Reloj</span>
+                                <span className="text-[10px] text-gray-400 font-mono truncate max-w-[200px]">
+                                  {window.location.origin}/fichaje?s={sucursal.token_fichaje}
+                                </span>
+                              </div>
+                            )}
                           </div>
-                          <button
-                            onClick={() => iniciarEdicionSucursal(sucursal)}
-                            className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
-                          >
-                            Editar
-                          </button>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                try {
+                                  const { data } = await api.post(`/api/sucursales/${sucursal.id}/generar-token`)
+                                  const link = `${window.location.origin}/fichaje?s=${data.token_fichaje}`
+                                  await navigator.clipboard.writeText(link)
+                                  setMensajeSucursal(`ok:Link copiado al portapapeles`)
+                                  await cargarSucursales()
+                                } catch (err) {
+                                  setMensajeSucursal(err.response?.data?.error || 'Error al generar link')
+                                }
+                              }}
+                              className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg transition-colors"
+                              title={sucursal.token_fichaje ? 'Regenerar y copiar link de fichaje' : 'Generar link de fichaje'}
+                            >
+                              {sucursal.token_fichaje ? '🔗 Copiar' : '🔗 Generar'}
+                            </button>
+                            <button
+                              onClick={() => iniciarEdicionSucursal(sucursal)}
+                              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Editar
+                            </button>
+                          </div>
                         </>
                       )}
                     </div>
