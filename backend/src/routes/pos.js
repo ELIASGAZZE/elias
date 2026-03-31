@@ -598,7 +598,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           const registros = cambiosItems.map(i => ({
             venta_pos_id: data.id,
             cierre_id: cierreId,
-            cajero_id: req.usuario.id,
+            cajero_id: req.perfil.id,
             cajero_nombre: req.perfil?.nombre || 'Desconocido',
             caja_id: caja_id || null,
             sucursal_id: sucursalDeCaja || req.perfil.sucursal_id || null,
@@ -776,11 +776,34 @@ router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyn
       from += PAGE_SIZE
     }
 
-    // Mapear nombre cajero al nivel raíz
-    const ventas = allData.map(v => ({
-      ...v,
-      cajero_nombre: v.perfiles?.nombre || 'Sin nombre',
-    }))
+    // Resolver empleado del cierre activo para cada venta
+    const cajaIdsPromo = [...new Set(allData.map(v => v.caja_id).filter(Boolean))]
+    let cierresMapPromo = {}
+    if (cajaIdsPromo.length > 0) {
+      const { data: cierresPromo } = await supabase
+        .from('cierres_pos')
+        .select('id, caja_id, created_at, cerrado_at, empleado:empleados!empleado_id(nombre)')
+        .in('caja_id', cajaIdsPromo)
+        .gte('created_at', `${desde}T00:00:00`)
+        .order('created_at', { ascending: false })
+      if (cierresPromo) cierresMapPromo = cierresPromo
+    }
+
+    const ventas = allData.map(v => {
+      let empleadoNombre = null
+      if (v.caja_id && cierresMapPromo.length > 0) {
+        const cierre = cierresMapPromo.find(c =>
+          c.caja_id === v.caja_id &&
+          c.created_at <= v.created_at &&
+          (!c.cerrado_at || c.cerrado_at >= v.created_at)
+        )
+        if (cierre?.empleado?.nombre) empleadoNombre = cierre.empleado.nombre
+      }
+      return {
+        ...v,
+        cajero_nombre: empleadoNombre || v.perfiles?.nombre || 'Sin nombre',
+      }
+    })
 
     res.json({ ventas })
   } catch (err) {
@@ -924,6 +947,26 @@ router.get('/ventas', verificarAuth, async (req, res) => {
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
       return { ...v, condicion_iva: condIva, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
     })
+
+    // Resolver empleado del cierre activo para cada venta
+    if (cajaIds.length > 0) {
+      const { data: cierresData } = await supabase
+        .from('cierres_pos')
+        .select('id, caja_id, created_at, cerrado_at, empleado:empleados!empleado_id(nombre)')
+        .in('caja_id', cajaIds)
+        .order('created_at', { ascending: false })
+      if (cierresData && cierresData.length > 0) {
+        ventas = ventas.map(v => {
+          if (!v.caja_id) return v
+          const cierre = cierresData.find(c =>
+            c.caja_id === v.caja_id &&
+            c.created_at <= v.created_at &&
+            (!c.cerrado_at || c.cerrado_at >= v.created_at)
+          )
+          return cierre?.empleado?.nombre ? { ...v, empleado_nombre: cierre.empleado.nombre } : v
+        })
+      }
+    }
 
     // Filtro por clasificación
     if (req.query.clasificacion) {
@@ -1171,6 +1214,22 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
     // No-admin solo puede ver sus propias ventas
     if (req.perfil.rol !== 'admin' && data.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'No tenés permiso para ver esta venta' })
+    }
+
+    // Resolver empleado del cierre activo (más relevante que el usuario logueado)
+    if (data.caja_id && data.created_at) {
+      const { data: cierre } = await supabase
+        .from('cierres_pos')
+        .select('empleado:empleados!empleado_id(id, nombre)')
+        .eq('caja_id', data.caja_id)
+        .lte('created_at', data.created_at)
+        .or('cerrado_at.is.null,cerrado_at.gte.' + data.created_at)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (cierre?.empleado?.nombre) {
+        data.empleado_nombre = cierre.empleado.nombre
+      }
     }
 
     // Gift card: respuesta simplificada (no necesita clasificación Centum)
@@ -3671,8 +3730,8 @@ router.post('/log-eliminacion', verificarAuth, async (req, res) => {
     if (!items || !items.length) return res.status(400).json({ error: 'Items requeridos' })
 
     const { error } = await supabase.from('pos_eliminaciones_log').insert({
-      usuario_id: req.usuario.id,
-      usuario_nombre: usuario_nombre || req.usuario.nombre || 'Desconocido',
+      usuario_id: req.perfil.id,
+      usuario_nombre: usuario_nombre || req.perfil.nombre || 'Desconocido',
       items,
       fecha: new Date().toISOString(),
       cierre_id: cierre_id || null,

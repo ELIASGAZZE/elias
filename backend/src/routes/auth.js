@@ -48,7 +48,7 @@ router.post('/login', async (req, res) => {
       token: data.session.access_token,
       refresh_token: data.session.refresh_token,
       usuario: {
-        id: data.user.id,
+        id: perfil.id,
         username: perfil.username,
         rol: perfil.rol,
         nombre: perfil.nombre,
@@ -103,7 +103,7 @@ router.post('/logout', verificarAuth, async (req, res) => {
 // Devuelve los datos del usuario autenticado
 router.get('/me', verificarAuth, (req, res) => {
   res.json({
-    id: req.usuario.id,
+    id: req.perfil.id,
     username: req.perfil.username,
     rol: req.perfil.rol,
     nombre: req.perfil.nombre,

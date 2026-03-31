@@ -185,10 +185,10 @@ const DetalleVenta = () => {
             <span className="text-gray-500">Cliente</span>
             <span className="text-gray-800 font-medium">{venta.nombre_cliente || 'Consumidor Final'}</span>
 
-            {esAdmin && venta.perfiles?.nombre && (
+            {esAdmin && (venta.empleado_nombre || venta.perfiles?.nombre) && (
               <>
                 <span className="text-gray-500">Cajero</span>
-                <span className="text-gray-800 font-medium">{venta.perfiles.nombre}</span>
+                <span className="text-gray-800 font-medium">{venta.empleado_nombre || venta.perfiles.nombre}</span>
               </>
             )}
 

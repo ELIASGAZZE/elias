@@ -328,7 +328,7 @@ router.post('/ordenes', verificarAuth, soloGestorOAdmin, async (req, res) => {
         sucursal_destino_id,
         items: items || [],
         notas,
-        creado_por: req.usuario?.id,
+        creado_por: req.perfil?.id,
       })
       .select()
       .single()
@@ -438,7 +438,7 @@ router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
       .from('ordenes_traspaso')
       .update({
         estado: 'en_preparacion',
-        preparado_por: req.usuario?.id,
+        preparado_por: req.perfil?.id,
         updated_at: new Date().toISOString(),
       })
       .eq('id', orden.id)
@@ -458,7 +458,7 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
       .from('ordenes_traspaso')
       .update({
         estado: 'en_preparacion',
-        preparado_por: req.usuario?.id,
+        preparado_por: req.perfil?.id,
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
@@ -604,7 +604,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
             sucursal_destino_id: data.sucursal_destino_id,
             items: nuevosItems,
             notas: `Pendientes de ${data.numero}`,
-            creado_por: req.usuario?.id,
+            creado_por: req.perfil?.id,
           })
           .select()
           .single()
@@ -656,7 +656,7 @@ router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, async (req
       .from('ordenes_traspaso')
       .update({
         estado: 'despachado',
-        despachado_por: req.usuario?.id,
+        despachado_por: req.perfil?.id,
         despachado_at: new Date().toISOString(),
         centum_ajuste_origen_id: resultado.ajusteId,
         centum_error: resultado.error,
@@ -716,7 +716,7 @@ router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
       .from('ordenes_traspaso')
       .update({
         estado: hayDiferencias ? 'con_diferencia' : 'recibido',
-        recibido_por: req.usuario?.id,
+        recibido_por: req.perfil?.id,
         recibido_at: new Date().toISOString(),
         centum_ajuste_destino_id: resultado.ajusteId,
         centum_error: resultado.error ? (orden.centum_error ? orden.centum_error + ' | ' + resultado.error : resultado.error) : orden.centum_error,
@@ -938,7 +938,7 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
           .from('ordenes_traspaso')
           .update({
             estado: 'despachado',
-            despachado_por: req.usuario?.id,
+            despachado_por: req.perfil?.id,
             despachado_at: new Date().toISOString(),
             centum_ajuste_origen_id: resultado.ajusteId,
             centum_error: resultado.error,
@@ -1259,7 +1259,7 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
       .update({
         peso_destino: pesoDestino,
         estado: nuevoEstado,
-        verificado_por: req.usuario?.id,
+        verificado_por: req.perfil?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -1325,7 +1325,7 @@ router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
       .update({
         estado: nuevoEstado,
         diferencias: hayDiferencias ? diferencias : null,
-        verificado_por: req.usuario?.id,
+        verificado_por: req.perfil?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -1517,7 +1517,7 @@ router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) =>
         control_articulos_at: new Date().toISOString(),
         control_articulos_fotos: Array.isArray(fotos) ? fotos : null,
         estado: nuevoEstado,
-        verificado_por: req.usuario?.id,
+        verificado_por: req.perfil?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -1623,7 +1623,7 @@ router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
       .update({
         diferencias,
         estado: hayDiferencias ? 'con_diferencia' : 'controlado',
-        verificado_por: req.usuario?.id,
+        verificado_por: req.perfil?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -2164,7 +2164,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           numero, sucursal_origen_id: ordenPreparada.sucursal_origen_id,
           sucursal_destino_id: ordenPreparada.sucursal_destino_id,
           items: nuevosItems, notas: `Pendientes de ${ordenPreparada.numero}`,
-          creado_por: req.usuario?.id,
+          creado_por: req.perfil?.id,
         }).select().single()
         if (nuevaOrden) { nueva_orden_id = nuevaOrden.id; nueva_orden_numero = nuevaOrden.numero }
       }
@@ -2220,7 +2220,7 @@ router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => 
       .update({
         cantidad_bultos_destino: bultosDestino,
         estado: nuevoEstado,
-        verificado_por: req.usuario?.id,
+        verificado_por: req.perfil?.id,
         verificado_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -2264,7 +2264,7 @@ router.put('/canastos/:id/recibir-en-destino', verificarAuth, async (req, res) =
       .from('traspaso_canastos')
       .update({
         estado: 'en_destino',
-        recibido_destino_por: req.usuario?.id,
+        recibido_destino_por: req.perfil?.id,
         recibido_destino_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })

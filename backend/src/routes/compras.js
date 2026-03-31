@@ -326,7 +326,7 @@ router.post('/ordenes', async (req, res) => {
       .insert({
         numero, proveedor_id, items: itemsArr, subtotal: total, total,
         notas, fecha_entrega_esperada, metodo_envio, analisis_ia_id,
-        creado_por: req.usuario?.id,
+        creado_por: req.perfil?.id,
       })
       .select()
       .single()
@@ -347,7 +347,7 @@ router.post('/ordenes', async (req, res) => {
           .insert({
             numero, proveedor_id, items: itemsArr, subtotal: total, total,
             notas, fecha_entrega_esperada, metodo_envio, analisis_ia_id,
-            creado_por: req.usuario?.id,
+            creado_por: req.perfil?.id,
           })
           .select()
           .single()
@@ -476,7 +476,7 @@ router.post('/ajustes', async (req, res) => {
       .from('compras_ajustes')
       .insert({
         orden_compra_id, articulo_id, cantidad_sugerida, cantidad_final,
-        motivo, nota, ajustado_por: req.usuario?.id,
+        motivo, nota, ajustado_por: req.perfil?.id,
       })
       .select()
       .single()
@@ -513,7 +513,7 @@ router.post('/reglas-ia', async (req, res) => {
       .insert({
         regla, categoria: categoria || 'general',
         proveedor_id, articulo_id,
-        creado_por: req.usuario?.id,
+        creado_por: req.perfil?.id,
       })
       .select()
       .single()
@@ -574,7 +574,7 @@ router.post('/consumo-interno', async (req, res) => {
       .insert({
         articulo_id, cantidad, motivo: motivo || 'otro',
         notas, sucursal_id, fecha: fecha || new Date().toISOString().split('T')[0],
-        registrado_por: req.usuario?.id,
+        registrado_por: req.perfil?.id,
       })
       .select()
       .single()
@@ -618,7 +618,7 @@ router.post('/pedidos-extraordinarios', async (req, res) => {
       .from('pedidos_extraordinarios')
       .insert({
         articulo_id, articulo_nombre, cantidad, cliente_nombre,
-        fecha_necesaria, notas, creado_por: req.usuario?.id,
+        fecha_necesaria, notas, creado_por: req.perfil?.id,
       })
       .select()
       .single()

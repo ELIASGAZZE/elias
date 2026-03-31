@@ -4812,7 +4812,7 @@ const POS = () => {
                             {fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                             {v.centum_comprobante && <span className="text-violet-500 font-medium"> · {v.centum_comprobante}</span>}
                             {v.sucursales?.nombre && <span> · {v.sucursales.nombre}</span>}
-                            {v.perfiles?.nombre && <span> · {v.perfiles.nombre}</span>}
+                            {(v.empleado_nombre || v.perfiles?.nombre) && <span> · {v.empleado_nombre || v.perfiles.nombre}</span>}
                           </div>
                           {pagos.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1">

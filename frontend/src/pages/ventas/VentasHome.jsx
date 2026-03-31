@@ -582,9 +582,9 @@ const VentasHome = () => {
                         <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
                           {v.cajas?.nombre || 'Sin caja'}
                         </span>
-                        {esAdmin && v.perfiles?.nombre && (
+                        {esAdmin && (v.empleado_nombre || v.perfiles?.nombre) && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
-                            {v.perfiles.nombre}
+                            {v.empleado_nombre || v.perfiles.nombre}
                           </span>
                         )}
                         {v.gift_cards_vendidas && v.gift_cards_vendidas.length > 0 && (

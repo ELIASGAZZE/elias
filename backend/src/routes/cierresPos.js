@@ -827,14 +827,28 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
 // GET /api/cierres-pos/:id/eliminaciones — artículos eliminados del ticket durante el turno
 router.get('/:id/eliminaciones', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('pos_eliminaciones_log')
-      .select('*')
-      .eq('cierre_id', req.params.id)
-      .order('fecha', { ascending: true })
+    const [elimRes, cierreRes] = await Promise.all([
+      supabase
+        .from('pos_eliminaciones_log')
+        .select('*')
+        .eq('cierre_id', req.params.id)
+        .order('fecha', { ascending: true }),
+      supabase
+        .from('cierres_pos')
+        .select('empleado:empleados!empleado_id(nombre)')
+        .eq('id', req.params.id)
+        .single()
+    ])
 
-    if (error) throw error
-    res.json(data || [])
+    if (elimRes.error) throw elimRes.error
+    const eliminaciones = elimRes.data || []
+
+    const empleadoNombre = cierreRes.data?.empleado?.nombre
+    if (empleadoNombre) {
+      eliminaciones.forEach(e => { e.usuario_nombre = empleadoNombre })
+    }
+
+    res.json(eliminaciones)
   } catch (err) {
     console.error('Error al obtener eliminaciones:', err)
     res.status(500).json({ error: err.message })
@@ -844,14 +858,29 @@ router.get('/:id/eliminaciones', verificarAuth, soloAdmin, async (req, res) => {
 // GET /api/cierres-pos/:id/cancelaciones — tickets cancelados durante el turno
 router.get('/:id/cancelaciones', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('ventas_pos_canceladas')
-      .select('*')
-      .eq('cierre_id', req.params.id)
-      .order('created_at', { ascending: true })
+    const [cancRes, cierreRes] = await Promise.all([
+      supabase
+        .from('ventas_pos_canceladas')
+        .select('*')
+        .eq('cierre_id', req.params.id)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('cierres_pos')
+        .select('empleado:empleados!empleado_id(nombre)')
+        .eq('id', req.params.id)
+        .single()
+    ])
 
-    if (error) throw error
-    res.json(data || [])
+    if (cancRes.error) throw cancRes.error
+    const cancelaciones = cancRes.data || []
+
+    // Sobreescribir cajero_nombre con el empleado del cierre
+    const empleadoNombre = cierreRes.data?.empleado?.nombre
+    if (empleadoNombre) {
+      cancelaciones.forEach(c => { c.cajero_nombre = empleadoNombre })
+    }
+
+    res.json(cancelaciones)
   } catch (err) {
     console.error('Error al obtener cancelaciones:', err)
     res.status(500).json({ error: err.message })
@@ -918,21 +947,35 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
 // Cambios de precio durante un cierre (solo admin)
 router.get('/:id/cambios-precio', verificarAuth, async (req, res) => {
   try {
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' })
+    if (req.perfil.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' })
 
-    const { data, error } = await supabase
-      .from('pos_cambios_precio_log')
-      .select('*')
-      .eq('cierre_id', req.params.id)
-      .order('created_at', { ascending: false })
+    const [cpRes, cierreRes] = await Promise.all([
+      supabase
+        .from('pos_cambios_precio_log')
+        .select('*')
+        .eq('cierre_id', req.params.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('cierres_pos')
+        .select('empleado:empleados!empleado_id(nombre)')
+        .eq('id', req.params.id)
+        .single()
+    ])
 
-    if (error) {
-      if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
+    if (cpRes.error) {
+      if (cpRes.error.code === 'PGRST205' || cpRes.error.message?.includes('schema cache')) {
         return res.json([])
       }
-      throw error
+      throw cpRes.error
     }
-    res.json(data || [])
+    const cambios = cpRes.data || []
+
+    const empleadoNombre = cierreRes.data?.empleado?.nombre
+    if (empleadoNombre) {
+      cambios.forEach(cp => { cp.cajero_nombre = empleadoNombre })
+    }
+
+    res.json(cambios)
   } catch (err) {
     console.error('Error al obtener cambios de precio:', err)
     res.status(500).json({ error: 'Error al obtener cambios de precio' })

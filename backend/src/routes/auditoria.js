@@ -19,7 +19,7 @@ router.post('/cancelacion', verificarAuth, async (req, res) => {
     }
 
     const { error } = await supabase.from('ventas_pos_canceladas').insert({
-      cajero_id: req.usuario.id,
+      cajero_id: req.perfil.id,
       cajero_nombre: req.perfil?.nombre || 'Desconocido',
       sucursal_id,
       caja_id,
