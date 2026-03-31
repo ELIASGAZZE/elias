@@ -214,6 +214,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               payment_type: pd.payment_type_id,
               card_last_four: pd.card?.last_four_digits || null,
               card_brand: pd.payment_method_id || null,
+              operation_number: pd.operation_number || null,
             }
           }])
         } catch {
@@ -405,6 +406,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                     mp_payment_id: payId,
                     mp_merchant_order_id: result.merchant_order_id,
                     payment_type: pd.payment_type_id,
+                    operation_number: pd.operation_number || null,
                   }
                 }])
               } catch {

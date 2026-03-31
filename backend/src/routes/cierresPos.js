@@ -756,6 +756,7 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
             payment_type: p.detalle?.payment_type || null,
             card_last_four: p.detalle?.card_last_four || null,
             card_brand: p.detalle?.card_brand || null,
+            operation_number: p.detalle?.operation_number || null,
             mp_problema: p.detalle?.mp_problema || null,
             mp_problema_desc: p.detalle?.mp_problema_desc || null,
             created_at: v.created_at,
