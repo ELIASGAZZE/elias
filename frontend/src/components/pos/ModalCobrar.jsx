@@ -128,8 +128,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     return acc
   }, {})
 
-  // Calcular descuentos por forma de pago (desactivado en modo delivery)
-  const descuentosPorForma = (modoDelivery ? [] : promosPago).map(promo => {
+  // Calcular descuentos por forma de pago (desactivado en modo delivery y ventas solo GC)
+  const esVentaSoloGC = giftCardsEnVenta && giftCardsEnVenta.length > 0 && carrito.length === 0
+  const descuentosPorForma = (modoDelivery || esVentaSoloGC ? [] : promosPago).map(promo => {
     const reglas = promo.reglas || {}
     const nombreForma = reglas.forma_cobro_nombre
     const porcentaje = reglas.valor || 0
@@ -176,7 +177,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const restanteEfectivoRedondeado = restanteParaEfectivo > 0 ? redondearCentena(restanteParaEfectivo) : 0
   // Monto exacto en efectivo con descuento: si hay promo efectivo, calcular post-descuento redondeado
   const montoExactoEnEfectivo = (() => {
-    if (!porcentajeDescEfectivo || porcentajeDescEfectivo <= 0 || modoDelivery) return null
+    if (!porcentajeDescEfectivo || porcentajeDescEfectivo <= 0 || modoDelivery || esVentaSoloGC) return null
     const restanteSinEfectivo = totalEfectivoConGC - pagosNoEfectivo
     if (restanteSinEfectivo <= 0) return 0
     const totalDescontado = total * (1 - porcentajeDescEfectivo / 100)
