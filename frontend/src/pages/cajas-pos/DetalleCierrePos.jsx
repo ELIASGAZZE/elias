@@ -807,6 +807,7 @@ const DetalleCierrePos = () => {
                     <span className="flex-1">Venta</span>
                     <span className="w-20 text-center">Tipo</span>
                     <span className="w-24 text-center">Tarjeta</span>
+                    <span className="w-28 text-center">N° Trans.</span>
                     <span className="w-16 text-center">Hora</span>
                     <span className="w-24 text-right">Importe</span>
                   </div>
@@ -822,6 +823,9 @@ const DetalleCierrePos = () => {
                       </span>
                       <span className="w-24 text-center text-gray-500 text-[10px]">
                         {c.card_brand && c.card_last_four ? `${c.card_brand} ···${c.card_last_four}` : c.payment_type === 'account_money' ? 'QR Wallet' : '—'}
+                      </span>
+                      <span className="w-28 text-center text-gray-500 text-[10px] font-mono">
+                        {c.mp_payment_id || c.mp_order_id || '—'}
                       </span>
                       <span className="w-16 text-center text-gray-400">
                         {new Date(c.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
@@ -1250,7 +1254,7 @@ const DetalleCierrePos = () => {
 
           {!esBlind && cierre.estado === 'pendiente_gestor' && !verificacion && (
             <Link
-              to={`/cajas-pos/cierre/${cierre.id}/editar`}
+              to={`/cajas-pos/cierre/${cierre.id}/editar?from=detalle`}
               className="flex-1 border border-amber-400 text-amber-700 hover:bg-amber-50 text-center py-2.5 rounded-xl font-medium transition-colors text-sm"
             >
               Editar conteo

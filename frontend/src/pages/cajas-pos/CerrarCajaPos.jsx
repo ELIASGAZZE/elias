@@ -310,7 +310,7 @@ const CerrarCajaPos = () => {
 
       if (modoEdicion) {
         await api.put(`/api/cierres-pos/${id}/editar-conteo`, payload)
-        navigate('/cajas-pos')
+        navigate(fromDetalle ? `/cajas-pos/cierre/${id}` : '/cajas-pos')
       } else {
         const { data: cierreActualizado } = await api.put(`/api/cierres-pos/${id}/cerrar`, payload)
 
@@ -332,7 +332,8 @@ const CerrarCajaPos = () => {
   }
 
   const titulo = modoEdicion ? 'Editar Cierre POS' : 'Cerrar Caja POS'
-  const volverA = modoEdicion ? `/cajas-pos/cierre/${id}` : '/cajas-pos'
+  const fromDetalle = new URLSearchParams(location.search).get('from') === 'detalle'
+  const volverA = modoEdicion ? (fromDetalle ? `/cajas-pos/cierre/${id}` : '/cajas-pos') : '/cajas-pos'
 
   if (cargando) {
     return (
