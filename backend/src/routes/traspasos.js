@@ -1476,14 +1476,21 @@ router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) =>
       delete recibidosMap[itemOrig.articulo_id]
     }
 
-    // Extras (no estaban en canasto)
+    // Extras (no estaban en canasto) — buscar nombre/código en DB
+    const extrasIds = Object.entries(recibidosMap).filter(([, ir]) => ir.es_extra).map(([id]) => id)
+    let extrasMap = {}
+    if (extrasIds.length > 0) {
+      const { data: extrasArts } = await supabase.from('articulos').select('id, codigo, nombre').in('id', extrasIds)
+      if (extrasArts) extrasArts.forEach(a => { extrasMap[String(a.id)] = a })
+    }
     for (const [artId, ir] of Object.entries(recibidosMap)) {
       if (ir.es_extra) {
         hayDiferencias = true
+        const artDB = extrasMap[artId] || {}
         diferencias_articulos.push({
           articulo_id: artId,
-          nombre: ir.nombre || '',
-          codigo: ir.codigo || '',
+          nombre: artDB.nombre || ir.nombre || '',
+          codigo: artDB.codigo || ir.codigo || '',
           cantidad_esperada: 0,
           cantidad_recibida: ir.cantidad_recibida,
           pesos_escaneados_destino: ir.pesos_escaneados_destino || [],
@@ -1744,11 +1751,36 @@ router.get('/bultos', verificarAuth, async (req, res) => {
       .order('created_at', { ascending: false })
     if (bulErr) throw bulErr
 
-    // Enriquecer con datos de la orden
+    // Recopilar articulo_ids sin nombre en diferencias_articulos para enriquecer
+    const artIdsSinNombre = new Set()
+    for (const b of (bultos || [])) {
+      if (Array.isArray(b.diferencias_articulos)) {
+        for (const d of b.diferencias_articulos) {
+          if (!d.nombre && d.articulo_id) artIdsSinNombre.add(d.articulo_id)
+        }
+      }
+    }
+    let artNombreMap = {}
+    if (artIdsSinNombre.size > 0) {
+      const { data: artsDB } = await supabase.from('articulos').select('id, codigo, nombre').in('id', [...artIdsSinNombre])
+      if (artsDB) artsDB.forEach(a => { artNombreMap[String(a.id)] = a })
+    }
+
+    // Enriquecer con datos de la orden + nombres faltantes
     const resultado = (bultos || []).map(b => {
       const orden = ordenMap[b.orden_traspaso_id] || {}
+      let diferencias_articulos = b.diferencias_articulos
+      if (Array.isArray(diferencias_articulos) && artIdsSinNombre.size > 0) {
+        diferencias_articulos = diferencias_articulos.map(d => {
+          if (!d.nombre && artNombreMap[d.articulo_id]) {
+            return { ...d, nombre: artNombreMap[d.articulo_id].nombre, codigo: d.codigo || artNombreMap[d.articulo_id].codigo }
+          }
+          return d
+        })
+      }
       return {
         ...b,
+        diferencias_articulos,
         orden_numero: orden.numero,
         orden_estado: orden.estado,
         sucursal_origen: sucMap[orden.sucursal_origen_id] || null,

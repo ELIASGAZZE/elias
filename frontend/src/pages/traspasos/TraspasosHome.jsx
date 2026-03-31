@@ -462,7 +462,10 @@ const TraspasosHome = () => {
                                       </thead>
                                       <tbody className="divide-y divide-gray-50">
                                         {controlDestino.map((d, idx) => {
-                                          const esPesable = (d.pesos_escaneados_destino || []).length > 0 || items.find(i => i.articulo_id === d.articulo_id)?.es_pesable
+                                          const itemOrigen = items.find(i => i.articulo_id === d.articulo_id)
+                                          const nombre = d.nombre || itemOrigen?.nombre || itemOrigen?.articulo_nombre || 'Artículo'
+                                          const codigo = d.codigo || itemOrigen?.codigo || ''
+                                          const esPesable = (d.pesos_escaneados_destino || []).length > 0 || itemOrigen?.es_pesable
                                           const unidad = esPesable ? ' kg' : ' u'
                                           const fmt = (v) => esPesable ? Number(v).toFixed(3) : v
                                           const colorTipo = {
@@ -475,8 +478,8 @@ const TraspasosHome = () => {
                                           return (
                                             <tr key={idx} className={d.tipo !== 'ok' ? 'bg-red-50/30' : ''}>
                                               <td className="px-3 py-1.5">
-                                                <span className="text-gray-400 mr-1">{d.codigo || ''}</span>
-                                                <span className="text-gray-700">{d.nombre || 'Artículo'}</span>
+                                                {codigo && <span className="text-gray-400 mr-1">{codigo}</span>}
+                                                <span className="text-gray-700">{nombre}</span>
                                               </td>
                                               <td className="text-right px-2 py-1.5 text-gray-600 font-medium font-mono">
                                                 {d.es_extra ? '—' : fmt(d.cantidad_esperada)}{!d.es_extra && unidad}
