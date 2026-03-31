@@ -2070,10 +2070,10 @@ const POS = () => {
       }
       return [...prev, { articulo, cantidad, ...(deliveryPrice != null ? { precioOverride: parseFloat(deliveryPrice) } : {}) }]
     })
-  }, [modoDelivery, deliveryPriceMap])
+  }, [modoDelivery, deliveryPriceMap, giftCardsEnVenta.length])
 
   const confirmarPesable = useCallback(() => {
-    if (!popupPesable) return
+    if (!popupPesable || giftCardsEnVenta.length > 0) return
     const kg = parseFloat(popupPesableKg)
     if (!kg || kg <= 0) return
     const deliveryPrice = modoDelivery ? deliveryPriceMap[popupPesable.articulo.id] : undefined
@@ -2081,7 +2081,7 @@ const POS = () => {
     setPopupPesable(null)
     setPopupPesableKg('')
     setTimeout(() => inputBusquedaRef.current?.focus(), 50)
-  }, [popupPesable, popupPesableKg, modoDelivery, deliveryPriceMap])
+  }, [popupPesable, popupPesableKg, modoDelivery, deliveryPriceMap, giftCardsEnVenta.length])
 
   // Parsear código de barras de balanza Kretz (EAN-13, prefijo 20)
   // Formato: 20 PPPPP WWWWW C → PLU (5 dígitos) + Peso en gramos (5 dígitos) + check
