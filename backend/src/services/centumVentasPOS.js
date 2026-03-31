@@ -118,9 +118,25 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   }
   subtotalArticulos = Math.round(subtotalArticulos * 100) / 100
 
-  // Importe = total POS siempre (lo que el cliente efectivamente pagó)
-  // Para ventas con descuento_forma_pago, total < subtotalArticulos
-  const importeValor = total
+  // Calcular importeValor como Centum lo hace internamente:
+  // Para Factura B: Centum descompone cada línea en neto + IVA por separado,
+  // lo que puede diferir en centavos de sum(Precio * Cantidad) por redondeo.
+  // Para Factura A: Centum usa los precios neto directamente y suma IVA → importe = total POS.
+  let importeValor
+  if (esFacturaA) {
+    importeValor = total
+  } else {
+    // Simular cálculo interno de Centum: neto_linea + iva_linea por artículo
+    let totalCentum = 0
+    for (const art of ventaArticulos) {
+      const ivaTasa = art.CategoriaImpuestoIVA?.Tasa || 21
+      const netoUnit = Math.round(art.Precio / (1 + ivaTasa / 100) * 100) / 100
+      const netoLinea = Math.round(netoUnit * (art.Cantidad || 0) * 100) / 100
+      const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
+      totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
+    }
+    importeValor = Math.round(totalCentum * 100) / 100
+  }
 
   // Determinar IdValor según medio de pago principal
   const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
