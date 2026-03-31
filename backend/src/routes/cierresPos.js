@@ -241,30 +241,27 @@ router.get('/:id', verificarAuth, async (req, res) => {
     let cierre_anterior = null
     let apertura_siguiente = null
     if (cierre.estado !== 'abierta' && cierre.caja_id) {
-      // Excluir cierres delivery de la comparación — son independientes
-      const tipoActual = cierre.tipo || 'pos'
-      const antQuery = supabase
-        .from('cierres_pos')
-        .select('id, apertura_at, cambio_billetes')
-        .eq('caja_id', cierre.caja_id)
-        .lt('created_at', cierre.created_at)
-        .neq('estado', 'abierta')
-        .order('created_at', { ascending: false })
-        .limit(1)
-      if (tipoActual !== 'delivery') antQuery.neq('tipo', 'delivery')
-      else antQuery.eq('tipo', 'delivery')
-
-      const sigQuery = supabase
-        .from('cierres_pos')
-        .select('id, apertura_at, fondo_fijo_billetes')
-        .eq('caja_id', cierre.caja_id)
-        .gt('created_at', cierre.created_at)
-        .order('created_at', { ascending: true })
-        .limit(1)
-      if (tipoActual !== 'delivery') sigQuery.neq('tipo', 'delivery')
-      else sigQuery.eq('tipo', 'delivery')
-
-      const [antRes, sigRes] = await Promise.all([antQuery, sigQuery])
+      // Delivery no tiene continuidad de cambio — solo comparar entre cierres POS
+      const esDelivery = cierre.tipo === 'delivery'
+      const [antRes, sigRes] = esDelivery ? [{ data: [] }, { data: [] }] : await Promise.all([
+        supabase
+          .from('cierres_pos')
+          .select('id, apertura_at, cambio_billetes')
+          .eq('caja_id', cierre.caja_id)
+          .neq('tipo', 'delivery')
+          .lt('created_at', cierre.created_at)
+          .neq('estado', 'abierta')
+          .order('created_at', { ascending: false })
+          .limit(1),
+        supabase
+          .from('cierres_pos')
+          .select('id, apertura_at, fondo_fijo_billetes')
+          .eq('caja_id', cierre.caja_id)
+          .neq('tipo', 'delivery')
+          .gt('created_at', cierre.created_at)
+          .order('created_at', { ascending: true })
+          .limit(1),
+      ])
 
       if (antRes.data && antRes.data.length > 0) {
         cierre_anterior = {
