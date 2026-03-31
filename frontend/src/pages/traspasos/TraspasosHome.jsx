@@ -98,7 +98,6 @@ const TraspasosHome = () => {
   const bultosVisibles = bultos.filter(b => !b.pallet_id)
   const bultosFiltrados = bultosVisibles
     .filter(b => !filtroBultoTipo || b.tipo === filtroBultoTipo)
-    .filter(b => !filtroBultoEstado || b.estado === filtroBultoEstado)
   // Bultos hijos agrupados por pallet_id para mostrar dentro del pallet expandido
   const bultosHijosPorPallet = {}
   bultos.filter(b => b.pallet_id).forEach(b => {
@@ -119,7 +118,7 @@ const TraspasosHome = () => {
     <div className="min-h-screen bg-gray-50">
       <Navbar titulo="Traspasos entre Sucursales" sinTabs volverA="/apps" />
 
-      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <div className={`mx-auto px-4 py-6 space-y-6 ${tab === 'bultos' ? 'max-w-full' : 'max-w-5xl'}`}>
         {/* Tabs */}
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
           <button
@@ -252,95 +251,91 @@ const TraspasosHome = () => {
               </span>
             </div>
 
-            {/* Filtros de estado */}
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { key: '', label: 'Todos' },
-                { key: 'en_preparacion', label: 'En preparación' },
-                { key: 'en_origen', label: 'En origen' },
-                { key: 'en_transito', label: 'En tránsito' },
-                { key: 'en_destino', label: 'En destino' },
-                { key: 'controlado', label: 'Controlado' },
-                { key: 'con_diferencia', label: 'Con diferencia' },
-              ].map(f => {
-                const activo = filtroBultoEstado === f.key
-                const badgeStyle = f.key && !activo ? ESTADO_BULTO_BADGE[f.key] : ''
-                return (
-                  <button key={f.key}
-                    onClick={() => setFiltroBultoEstado(f.key)}
-                    className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
-                      activo
-                        ? 'bg-gray-800 text-white'
-                        : badgeStyle || 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >{f.label}</button>
-                )
-              })}
-            </div>
-
             {cargandoBultos ? (
               <div className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600" />
               </div>
-            ) : bultosFiltrados.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 text-sm">No hay bultos</div>
-            ) : (
-              <div className="space-y-2">
-                {bultosFiltrados.map(b => {
-                  const expandido = bultoExpandido === b.id
-                  const items = Array.isArray(b.items) ? b.items : []
-                  const diferencias = Array.isArray(b.diferencias) ? b.diferencias : []
-                  const tipoStyle = TIPO_BULTO_STYLE[b.tipo] || TIPO_BULTO_STYLE.bulto
-                  const cardColor = ESTADO_BULTO_CARD[b.estado] || 'border-gray-200 bg-white'
+            ) : (() => {
+              const COLUMNAS_ESTADO = [
+                { key: 'en_preparacion', label: 'En preparación', color: 'border-amber-300 bg-amber-50 text-amber-800' },
+                { key: 'en_origen', label: 'En origen', color: 'border-blue-300 bg-blue-50 text-blue-800' },
+                { key: 'en_transito', label: 'En tránsito', color: 'border-purple-300 bg-purple-50 text-purple-800' },
+                { key: 'en_destino', label: 'En destino', color: 'border-cyan-300 bg-cyan-50 text-cyan-800' },
+                { key: 'con_diferencia', label: 'Con diferencia', color: 'border-red-300 bg-red-50 text-red-800' },
+                { key: 'controlado', label: 'Controlado', color: 'border-green-300 bg-green-50 text-green-800' },
+              ]
+              const bultosPorEstado = {}
+              for (const col of COLUMNAS_ESTADO) bultosPorEstado[col.key] = []
+              for (const b of bultosFiltrados) {
+                if (bultosPorEstado[b.estado]) bultosPorEstado[b.estado].push(b)
+              }
+              const bultoSeleccionado = bultoExpandido ? bultosFiltrados.find(b => b.id === bultoExpandido) : null
 
-                  return (
-                    <div key={b.id} className={`rounded-xl border-2 overflow-hidden ${cardColor}`}>
-                      <button
-                        onClick={() => setBultoExpandido(expandido ? null : b.id)}
-                        className="w-full flex items-center gap-3 px-4 py-3 hover:opacity-90 transition-all text-left"
-                      >
-                        {/* Tipo grande */}
-                        <div className={`flex-shrink-0 flex flex-col items-center justify-center w-16 h-16 rounded-xl border ${tipoStyle.bg}`}>
-                          <span className="text-2xl leading-none">{tipoStyle.icon}</span>
-                          <span className="text-[10px] font-bold uppercase mt-0.5">{b.tipo}</span>
+              return (
+                <div className="flex gap-3" style={{ minHeight: '65vh' }}>
+                  {/* Columnas kanban */}
+                  <div className="flex gap-2 overflow-x-auto flex-1 min-w-0">
+                    {COLUMNAS_ESTADO.map(col => (
+                      <div key={col.key} className="flex flex-col min-w-[140px] flex-1">
+                        {/* Header */}
+                        <div className={`px-2 py-1.5 rounded-lg border text-center mb-2 ${col.color}`}>
+                          <span className="text-[11px] font-bold uppercase">{col.label}</span>
+                          {bultosPorEstado[col.key].length > 0 && (
+                            <span className="ml-1 text-[10px] font-mono opacity-70">({bultosPorEstado[col.key].length})</span>
+                          )}
+                        </div>
+                        {/* Cards */}
+                        <div className="flex-1 space-y-1.5 overflow-y-auto pr-0.5">
+                          {bultosPorEstado[col.key].map(b => {
+                            const tipoStyle = TIPO_BULTO_STYLE[b.tipo] || TIPO_BULTO_STYLE.bulto
+                            const isSelected = bultoExpandido === b.id
+                            return (
+                              <button key={b.id}
+                                onClick={() => setBultoExpandido(isSelected ? null : b.id)}
+                                className={`w-full text-left rounded-lg border p-2 transition-all hover:shadow-sm ${
+                                  isSelected ? 'border-sky-400 bg-sky-50 ring-1 ring-sky-300' : 'border-gray-200 bg-white hover:border-gray-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-base leading-none">{tipoStyle.icon}</span>
+                                  <span className="text-[11px] font-semibold text-gray-800 truncate">{b.precinto || b.numero_pallet || 'Sin ID'}</span>
+                                </div>
+                                {b.estado === 'con_diferencia' && b.control_articulos_at && (
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-green-100 text-green-700 font-medium mt-1 inline-block">Controlado</span>
+                                )}
+                                <div className="text-[10px] text-gray-500 mt-0.5 truncate">{b.orden_numero} · {b.sucursal_origen} → {b.sucursal_destino}</div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Panel lateral derecho — detalle del bulto seleccionado */}
+                  {bultoSeleccionado && (() => {
+                    const b = bultoSeleccionado
+                    const items = Array.isArray(b.items) ? b.items : []
+                    const diferencias = Array.isArray(b.diferencias) ? b.diferencias : []
+                    return (
+                      <div className="w-[480px] flex-shrink-0 border border-gray-200 rounded-xl bg-white overflow-y-auto" style={{ maxHeight: '75vh' }}>
+                        {/* Header panel */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50 sticky top-0 z-10">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">{(TIPO_BULTO_STYLE[b.tipo] || TIPO_BULTO_STYLE.bulto).icon}</span>
+                            <span className="font-semibold text-sm text-gray-800">{b.precinto || b.numero_pallet || 'Sin ID'}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${ESTADO_BULTO_BADGE[b.estado] || 'bg-gray-100 text-gray-500'}`}>
+                              {b.estado === 'con_diferencia' && b.control_articulos_at ? 'Con diferencias — Controlado' : (ESTADO_BULTO_LABEL[b.estado] || b.estado)}
+                            </span>
+                          </div>
+                          <button onClick={() => setBultoExpandido(null)} className="text-gray-400 hover:text-gray-600">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
                         </div>
 
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-sm text-gray-800">
-                              {b.precinto || b.numero_pallet || 'Sin ID'}
-                            </span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ESTADO_BULTO_BADGE[b.estado] || 'bg-gray-100 text-gray-500'}`}>
-                              {ESTADO_BULTO_LABEL[b.estado] || b.estado}
-                            </span>
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {b.orden_numero}
-                            <span className="mx-1.5">·</span>
-                            {b.sucursal_origen} → {b.sucursal_destino}
-                          </div>
-                          <div className="text-xs text-gray-400 mt-0.5">
-                            {b.peso_origen != null && (
-                              <span>{b.peso_origen} kg</span>
-                            )}
-                            {b.tipo === 'pallet' && b.cantidad_bultos_origen != null && (
-                              <span>{b.peso_origen != null && <span className="mx-1">·</span>}{b.cantidad_bultos_origen} bultos</span>
-                            )}
-                            {items.length > 0 && (
-                              <span>{(b.peso_origen != null || b.cantidad_bultos_origen != null) && <span className="mx-1">·</span>}{items.length} art.</span>
-                            )}
-                          </div>
-                        </div>
-                        <svg className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${expandido ? 'rotate-90' : ''}`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </button>
-
-                      {expandido && (
-                        <div className="border-t border-gray-100 px-4 py-3 bg-gray-50 space-y-3">
+                        <div className="px-4 py-3 space-y-3">
                           {/* Info general */}
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                          <div className="grid grid-cols-2 gap-3 text-xs">
                             <div>
                               <span className="text-gray-400">Orden:</span>
                               <Link to={`/traspasos/ordenes/${b.orden_traspaso_id}`}
@@ -352,7 +347,7 @@ const TraspasosHome = () => {
                                 {ESTADO_LABEL[b.orden_estado] || b.orden_estado}
                               </span>
                             </div>
-                            <div>
+                            <div className="col-span-2">
                               <span className="text-gray-400">Ruta:</span>
                               <span className="ml-1 text-gray-700">{b.sucursal_origen} → {b.sucursal_destino}</span>
                             </div>
@@ -388,7 +383,7 @@ const TraspasosHome = () => {
                               </>
                             )}
                             {b.nombre && (
-                              <div className="col-span-2 sm:col-span-3">
+                              <div className="col-span-2">
                                 <span className="text-gray-400">Descripción:</span>
                                 <span className="ml-1 text-gray-700">{b.nombre}</span>
                               </div>
@@ -450,14 +445,14 @@ const TraspasosHome = () => {
                                   <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
                                     Artículos — Origen vs Destino ({controlDestino.length})
                                   </h4>
-                                  <div className="bg-white rounded-lg border border-gray-200 max-h-64 overflow-y-auto">
+                                  <div className="bg-white rounded-lg border border-gray-200 overflow-y-auto">
                                     <table className="w-full text-xs">
                                       <thead className="bg-gray-50 sticky top-0">
                                         <tr>
                                           <th className="text-left px-3 py-1.5 text-gray-400 font-medium">Artículo</th>
-                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-20">Origen</th>
-                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-20">Destino</th>
-                                          <th className="text-center px-2 py-1.5 text-gray-400 font-medium w-20">Estado</th>
+                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-16">Origen</th>
+                                          <th className="text-right px-2 py-1.5 text-gray-400 font-medium w-16">Destino</th>
+                                          <th className="text-center px-2 py-1.5 text-gray-400 font-medium w-16">Estado</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-gray-50">
@@ -475,8 +470,131 @@ const TraspasosHome = () => {
                                             extra: 'bg-amber-100 text-amber-700',
                                           }
                                           const labelTipo = { ok: 'OK', diferencia: 'Dif.', faltante: 'Faltante', extra: 'Extra' }
+
+                                          // Para extras, buscar en qué otros canastos de la misma orden está este artículo
+                                          let filasContexto = null
+                                          if (d.es_extra) {
+                                            const otrosBultos = bultos.filter(otro =>
+                                              otro.orden_traspaso_id === b.orden_traspaso_id && otro.id !== b.id
+                                            )
+                                            const encontrados = []
+                                            const matchItem = (i) =>
+                                              String(i.articulo_id) === String(d.articulo_id) ||
+                                              (d.codigo && i.codigo && String(i.codigo) === String(d.codigo))
+                                            for (const otro of otrosBultos) {
+                                              let itemEnOtro = (otro.items || []).find(matchItem)
+                                              if (!itemEnOtro && otro.tipo === 'pallet') {
+                                                const hijos = bultos.filter(h => h.pallet_id === otro.id)
+                                                for (const hijo of hijos) {
+                                                  itemEnOtro = (hijo.items || []).find(matchItem)
+                                                  if (itemEnOtro) {
+                                                    encontrados.push({
+                                                      precinto: hijo.precinto || hijo.id?.slice(0, 8),
+                                                      tipo: hijo.tipo,
+                                                      cantidad: itemEnOtro.cantidad_preparada ?? itemEnOtro.cantidad,
+                                                      estado: hijo.estado,
+                                                    })
+                                                  }
+                                                }
+                                                continue
+                                              }
+                                              if (itemEnOtro) {
+                                                encontrados.push({
+                                                  precinto: otro.precinto || otro.numero_pallet || otro.id?.slice(0, 8),
+                                                  tipo: otro.tipo,
+                                                  cantidad: itemEnOtro.cantidad_preparada ?? itemEnOtro.cantidad,
+                                                  estado: otro.estado,
+                                                })
+                                              }
+                                            }
+                                            const ordenOrig = ordenes.find(o => o.id === b.orden_traspaso_id)
+                                            const enOrden = ordenOrig && Array.isArray(ordenOrig.items) &&
+                                              ordenOrig.items.some(i =>
+                                                String(i.articulo_id) === String(d.articulo_id) ||
+                                                (d.codigo && i.codigo && String(i.codigo) === String(d.codigo))
+                                              )
+
+                                            const filas = []
+                                            filas.push(
+                                              <tr key={`ord-${idx}`}>
+                                                <td colSpan={4} className={`px-6 py-1 text-[10px] italic ${enOrden ? 'text-blue-600 bg-blue-50/50' : 'text-amber-600 bg-amber-50/50'}`}>
+                                                  {enOrden
+                                                    ? `Sí estaba en la orden ${ordenOrig.numero || ''}`
+                                                    : `No estaba en la orden original${ordenOrig ? ` (${ordenOrig.numero})` : ''}`}
+                                                </td>
+                                              </tr>
+                                            )
+                                            if (encontrados.length === 0) {
+                                              filas.push(
+                                                <tr key={`ctx-${idx}`}><td colSpan={4} className="px-6 py-1 text-[10px] text-amber-600 italic bg-amber-50/50">
+                                                  No está en ningún otro canasto de esta orden
+                                                </td></tr>
+                                              )
+                                            } else {
+                                              for (let i = 0; i < encontrados.length; i++) {
+                                                const enc = encontrados[i]
+                                                filas.push(
+                                                  <tr key={`ctx-${idx}-${i}`}>
+                                                    <td colSpan={4} className="px-6 py-1 text-[10px] text-gray-500 bg-amber-50/30">
+                                                      Preparado en <b>{enc.precinto}</b> ({enc.tipo}) — {enc.cantidad} u — estado: {enc.estado}
+                                                    </td>
+                                                  </tr>
+                                                )
+                                              }
+                                            }
+                                            const estadosActivos = ['en_origen', 'en_preparacion', 'en_transito', 'en_destino']
+                                            const enOtrasOrdenes = []
+                                            const bultosOtraOrden = bultos.filter(otro =>
+                                              otro.orden_traspaso_id !== b.orden_traspaso_id &&
+                                              otro.sucursal_destino === b.sucursal_destino &&
+                                              estadosActivos.includes(otro.estado)
+                                            )
+                                            for (const otro of bultosOtraOrden) {
+                                              let itemEnOtro = (otro.items || []).find(matchItem)
+                                              if (!itemEnOtro && otro.tipo === 'pallet') {
+                                                const hijos = bultos.filter(h => h.pallet_id === otro.id)
+                                                for (const hijo of hijos) {
+                                                  itemEnOtro = (hijo.items || []).find(matchItem)
+                                                  if (itemEnOtro) {
+                                                    enOtrasOrdenes.push({
+                                                      orden: otro.orden_numero,
+                                                      precinto: hijo.precinto || hijo.id?.slice(0, 8),
+                                                      tipo: hijo.tipo,
+                                                      cantidad: itemEnOtro.cantidad_preparada ?? itemEnOtro.cantidad,
+                                                      estado: hijo.estado,
+                                                    })
+                                                  }
+                                                }
+                                                continue
+                                              }
+                                              if (itemEnOtro) {
+                                                enOtrasOrdenes.push({
+                                                  orden: otro.orden_numero,
+                                                  precinto: otro.precinto || otro.numero_pallet || otro.id?.slice(0, 8),
+                                                  tipo: otro.tipo,
+                                                  cantidad: itemEnOtro.cantidad_preparada ?? itemEnOtro.cantidad,
+                                                  estado: otro.estado,
+                                                })
+                                              }
+                                            }
+                                            if (enOtrasOrdenes.length > 0) {
+                                              for (let i = 0; i < enOtrasOrdenes.length; i++) {
+                                                const enc = enOtrasOrdenes[i]
+                                                filas.push(
+                                                  <tr key={`otr-${idx}-${i}`}>
+                                                    <td colSpan={4} className="px-6 py-1 text-[10px] text-purple-600 bg-purple-50/30">
+                                                      En otra orden: <b>{enc.orden}</b> → {enc.precinto} ({enc.tipo}) — {enc.cantidad} u — {ESTADO_BULTO_LABEL[enc.estado] || enc.estado}
+                                                    </td>
+                                                  </tr>
+                                                )
+                                              }
+                                            }
+                                            filasContexto = filas
+                                          }
+
                                           return (
-                                            <tr key={idx} className={d.tipo !== 'ok' ? 'bg-red-50/30' : ''}>
+                                            <React.Fragment key={idx}>
+                                            <tr className={d.tipo !== 'ok' ? 'bg-red-50/30' : ''}>
                                               <td className="px-3 py-1.5">
                                                 {codigo && <span className="text-gray-400 mr-1">{codigo}</span>}
                                                 <span className="text-gray-700">{nombre}</span>
@@ -495,6 +613,8 @@ const TraspasosHome = () => {
                                                 </span>
                                               </td>
                                             </tr>
+                                              {filasContexto}
+                                            </React.Fragment>
                                           )
                                         })}
                                       </tbody>
@@ -565,12 +685,12 @@ const TraspasosHome = () => {
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+                      </div>
+                    )
+                  })()}
+                </div>
+              )
+            })()}
           </>
         )}
       </div>
