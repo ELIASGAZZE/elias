@@ -825,6 +825,13 @@ router.get('/:id/pos-ventas', verificarAuth, async (req, res) => {
       cantidad_ventas: ventasNormales.length,
       gift_cards_activadas: (giftCardsActivadas || []).length,
       total_gift_cards_activadas: parseFloat(totalGiftCardsActivadas.toFixed(2)),
+      detalle_gift_cards: (giftCardsActivadas || []).map(gc => ({
+        id: gc.id,
+        codigo: gc.codigo,
+        monto_nominal: parseFloat(gc.monto_inicial) || 0,
+        pagos: gc.pagos || [],
+        created_at: gc.created_at,
+      })),
       detalle_ventas: ventasNormales.map(v => ({
         id: v.id,
         numero_venta: v.numero_venta,
@@ -1011,15 +1018,6 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
 
     const movimientos = []
 
-    // Apertura como primer movimiento
-    movimientos.push({
-      tipo: 'apertura',
-      descripcion: 'Fondo fijo inicial',
-      monto: parseFloat(cierre.fondo_fijo) || 0,
-      signo: '+',
-      fecha: cierre.apertura_at,
-    })
-
     // Ventas — solo la parte en efectivo
     ;(ventasRes.data || []).forEach(v => {
       const pagos = v.pagos || []
@@ -1105,34 +1103,44 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
       mov.saldo = parseFloat(saldo.toFixed(2))
     }
 
-    // Movimientos de cierre (al final, después del saldo teórico)
+    // Calcular totales
+    const fondoFijo = parseFloat(cierre.fondo_fijo) || 0
+    const ventasEfectivo = movimientos.filter(m => m.tipo === 'venta' && m.signo === '+').reduce((s, m) => s + m.monto, 0)
+    const totalRetiros = movimientos.filter(m => m.tipo === 'retiro').reduce((s, m) => s + m.monto, 0)
+    const totalGastos = movimientos.filter(m => m.tipo === 'gasto').reduce((s, m) => s + m.monto, 0)
+
+    // Efectivo neto teórico = ventas - retiros - gastos (sin fondo fijo, igual que cuadro comparativo)
+    const efectivoNetoTeorico = parseFloat((ventasEfectivo - totalRetiros - totalGastos).toFixed(2))
+
+    // Movimiento de cierre (al final)
     if (cierre.cierre_at && cierre.estado !== 'abierta') {
       const totalEfectivo = parseFloat(cierre.total_efectivo) || 0
       const cambioQueQueda = parseFloat(cierre.cambio_que_queda) || 0
+      // Neto cajero = contado + cambio dejado - fondo inicial (misma fórmula que cuadro comparativo)
+      const cajeroConto = parseFloat((totalEfectivo + cambioQueQueda - fondoFijo).toFixed(2))
       const efectivoRetirado = totalEfectivo - cambioQueQueda
 
       movimientos.push({
         tipo: 'cierre',
-        descripcion: 'Efectivo contado por cajero',
-        detalle: `Retirado: ${formatMontoBack(efectivoRetirado)} · Cambio dejado: ${formatMontoBack(cambioQueQueda)}`,
-        monto: totalEfectivo,
+        descripcion: 'Cierre de caja',
+        detalle: `Contó ${formatMontoBack(totalEfectivo)} · Retiró ${formatMontoBack(efectivoRetirado)} · Dejó cambio ${formatMontoBack(cambioQueQueda)}`,
+        monto: cajeroConto,
         signo: '=',
         fecha: cierre.cierre_at,
-        saldo: parseFloat(saldo.toFixed(2)),
-        diferencia: parseFloat((totalEfectivo - saldo).toFixed(2)),
+        saldo: efectivoNetoTeorico,
+        diferencia: parseFloat((cajeroConto - efectivoNetoTeorico).toFixed(2)),
       })
     }
-
-    const ventasEfectivo = movimientos.filter(m => m.tipo === 'venta' && m.signo === '+').reduce((s, m) => s + m.monto, 0)
 
     res.json({
       movimientos,
       resumen: {
         total_ventas_efectivo: parseFloat(ventasEfectivo.toFixed(2)),
-        total_retiros: movimientos.filter(m => m.tipo === 'retiro').reduce((s, m) => s + m.monto, 0),
-        total_gastos: movimientos.filter(m => m.tipo === 'gasto').reduce((s, m) => s + m.monto, 0),
+        total_retiros: totalRetiros,
+        total_gastos: totalGastos,
+        efectivo_neto_teorico: efectivoNetoTeorico,
         saldo_final: parseFloat(saldo.toFixed(2)),
-        fondo_fijo: parseFloat(cierre.fondo_fijo) || 0,
+        fondo_fijo: fondoFijo,
       },
     })
   } catch (err) {

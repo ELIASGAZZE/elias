@@ -376,9 +376,9 @@ const DetalleCierrePos = () => {
                     </div>
                   </div>
                   <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between items-center">
-                    <span className="text-sm font-medium text-gray-600">Saldo teórico en caja</span>
-                    <span className={`text-lg font-bold ${movimientos.resumen.saldo_final >= 0 ? 'text-teal-700' : 'text-red-600'}`}>
-                      {formatMonto(movimientos.resumen.saldo_final)}
+                    <span className="text-sm font-medium text-gray-600">Efectivo neto teórico (Ventas POS)</span>
+                    <span className={`text-lg font-bold ${movimientos.resumen.efectivo_neto_teorico >= 0 ? 'text-teal-700' : 'text-red-600'}`}>
+                      {formatMonto(movimientos.resumen.efectivo_neto_teorico)}
                     </span>
                   </div>
                 </div>
@@ -420,11 +420,11 @@ const DetalleCierrePos = () => {
                             </div>
                             <div className="grid grid-cols-3 gap-3 text-center">
                               <div className="bg-white rounded-lg p-2 border border-indigo-100">
-                                <span className="text-[10px] text-gray-500 block">Saldo teórico</span>
+                                <span className="text-[10px] text-gray-500 block">Ventas POS (teórico)</span>
                                 <span className="font-bold text-gray-800">{formatMonto(mov.saldo)}</span>
                               </div>
                               <div className="bg-white rounded-lg p-2 border border-indigo-100">
-                                <span className="text-[10px] text-gray-500 block">Cajero contó</span>
+                                <span className="text-[10px] text-gray-500 block">Cajero (neto)</span>
                                 <span className="font-bold text-indigo-700">{formatMonto(mov.monto)}</span>
                               </div>
                               <div className={`bg-white rounded-lg p-2 border ${mov.diferencia === 0 ? 'border-green-200' : 'border-red-200'}`}>
@@ -741,8 +741,24 @@ const DetalleCierrePos = () => {
                       </div>
                     )
                   })}
+                  {/* Gift cards activadas con efectivo */}
+                  {(posVentas.detalle_gift_cards || []).filter(gc =>
+                    (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')
+                  ).map(gc => {
+                    const pagoEfectivoGC = (gc.pagos || []).filter(p => (p.tipo || 'Efectivo') === 'Efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+                    return (
+                      <div key={gc.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0 bg-pink-50">
+                        <span className="w-16 text-pink-600 font-medium">GC</span>
+                        <span className="w-14 text-center text-gray-400">{new Date(gc.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="flex-1 text-right text-gray-500">{formatMonto(gc.monto_nominal)}</span>
+                        <span className="w-24 text-right text-gray-700">{formatMonto(pagoEfectivoGC)}</span>
+                        <span className="w-20 text-right text-gray-400">—</span>
+                        <span className="w-24 text-right font-medium text-pink-700">{formatMonto(pagoEfectivoGC)}</span>
+                      </div>
+                    )
+                  })}
                   <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
-                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo</span>
+                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo{(posVentas.detalle_gift_cards || []).filter(gc => (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')).length > 0 ? ` + ${(posVentas.detalle_gift_cards || []).filter(gc => (gc.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')).length} gift card(s)` : ''}</span>
                     <span className="w-24 text-right text-teal-700">{formatMonto(posVentas.total_efectivo)}</span>
                   </div>
                 </div>
