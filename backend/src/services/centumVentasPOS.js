@@ -197,6 +197,9 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
+  // Log body completo para debugging CobroNoBalanceaException
+  console.log(`[Centum POS v2] Body enviado:`, JSON.stringify(body))
+
   let response
   try {
     response = await fetch(url, {
@@ -253,17 +256,20 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     return { _creadoConWarning: true, ...data }
   }
 
-  // Debug info para CobroNoBalanceaException
+  // Debug info para CobroNoBalanceaException — incluir body completo
   const debugInfo = (texto.includes('CobroNoBalancea'))
-    ? ` [DEBUG v2: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, totalComparable=${totalComparable}, esFacturaA=${esFacturaA}, items=${ventaArticulos.map(a => `${a.Cantidad}x$${a.Precio}=>${Math.round(a.Precio*(a.Cantidad||0)*100)/100}`).join('|')}]`
+    ? ` [DEBUG v2: importeValor=${importeValor}, subtotalArticulos=${subtotalArticulos}, totalPOS=${total}, totalComparable=${totalComparable}, esFacturaA=${esFacturaA}]`
+    : ''
+  const bodyDebug = (texto.includes('CobroNoBalancea'))
+    ? ` [BODY: ${JSON.stringify(body).slice(0, 2000)}]`
     : ''
 
   registrarLlamada({
     servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
     estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
-    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}${debugInfo}`, origen: 'pos',
+    error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 300)}${debugInfo}${bodyDebug}`, origen: 'pos',
   })
-  throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 500)}${debugInfo}`)
+  throw new Error(`Error al crear venta POS en Centum (${response.status}): ${texto.slice(0, 300)}${debugInfo}`)
 }
 
 /**
