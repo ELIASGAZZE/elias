@@ -63,6 +63,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const [mpMontoIntent, setMpMontoIntent] = useState(0)
   const [mpUltimoPaymentType, setMpUltimoPaymentType] = useState(null)
   const [mpRefundingIdx, setMpRefundingIdx] = useState(null) // índice del pago que se está anulando
+  const [mpCancelando, setMpCancelando] = useState(false) // cancelando QR instore
+  const mpQrPosIdRef = useRef(null) // qr_pos_id activo (solo QR instore N950)
   const mpPollingRef = useRef(null)
   const mpTimeoutRef = useRef(null)
   const mpPollingBusyRef = useRef(false)
@@ -287,9 +289,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           setMpEstado('error')
           return
         }
+        mpQrPosIdRef.current = qrPosId
         return iniciarPagoQRInstore(montoACobrar, qrPosId)
       }
 
+      mpQrPosIdRef.current = null // No es QR instore
       const orderBody = {
         device_id: deviceId,
         amount: montoACobrar,
@@ -510,6 +514,28 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     setMpEstado('aprobado')
     setMpIntentId(null)
     setMpError('')
+  }
+
+  // Cancelar cobro QR Instore (N950) — libera la caja QR para que el cajero pueda cambiar de medio de pago
+  async function cancelarQRInstore() {
+    const qrPosId = mpQrPosIdRef.current
+    if (!qrPosId) return
+    setMpCancelando(true)
+    try {
+      await api.delete(`/api/mp-point/qr-order/${qrPosId}`)
+    } catch (err) {
+      console.error('[MP QR] Error cancelando orden:', err.message)
+    }
+    // Limpiar polling + timeout
+    if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
+    if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null }
+    mpQrPosIdRef.current = null
+    setMpEstado(null)
+    setMpIntentId(null)
+    setMpMontoIntent(0)
+    setMpError('')
+    setMpCancelando(false)
+    setMpShowProblema(false)
   }
 
   // Anular cobro MP (refund)
@@ -767,10 +793,16 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   function handleCobrarKeyDown(e) {
     const enInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
 
-    // Escape = Cerrar modal (bloqueado si hay cobro MP en curso)
+    // Escape = Cancelar QR instore si hay uno activo, sino cerrar modal (bloqueado si hay cobro MP no-QR en curso)
     if (e.key === 'Escape' && !guardando) {
       e.preventDefault()
-      if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) return
+      if (mpIntentId && (mpEstado === 'esperando' || mpEstado === 'procesando' || mpEstado === 'creando')) {
+        // Si es QR instore, Escape cancela el cobro QR (no cierra el modal)
+        if (mpQrPosIdRef.current && !mpCancelando) {
+          cancelarQRInstore()
+        }
+        return
+      }
       onCerrar()
       return
     }
@@ -1120,9 +1152,19 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 </svg>
                 <p className="text-sky-300 text-sm font-bold">{formatPrecio(mpMontoIntent)}</p>
                 <p className="text-sky-300/70 text-xs mt-1">
-                  {mpEstado === 'esperando' ? 'Esperando pago en el posnet...' : 'Procesando pago...'}
+                  {mpQrPosIdRef.current ? 'Esperando pago por QR...' : (mpEstado === 'esperando' ? 'Esperando pago en el posnet...' : 'Procesando pago...')}
                 </p>
-                <p className="text-sky-300/40 text-[10px] mt-1">Para cancelar, hacelo desde el posnet</p>
+                {mpQrPosIdRef.current ? (
+                  <button
+                    onClick={cancelarQRInstore}
+                    disabled={mpCancelando}
+                    className="mt-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all bg-red-600 hover:bg-red-500 text-white disabled:bg-slate-600 disabled:text-white/40"
+                  >
+                    {mpCancelando ? 'Cancelando...' : 'Cancelar cobro QR (Esc)'}
+                  </button>
+                ) : (
+                  <p className="text-sky-300/40 text-[10px] mt-1">Para cancelar, hacelo desde el posnet</p>
+                )}
               </div>
               <button
                 onClick={() => setMpShowProblema(true)}
