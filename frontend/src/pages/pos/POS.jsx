@@ -4131,25 +4131,29 @@ const POS = () => {
               </div>
             )}
 
-            {/* Gift cards en venta */}
+            {/* Gift cards en venta — como items del carrito */}
             {giftCardsEnVenta.length > 0 && (
-              <div className="px-3 py-2 space-y-1.5 border-t border-amber-200 bg-amber-50/50">
-                <span className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider">Gift Cards</span>
+              <div className="divide-y divide-gray-100">
                 {giftCardsEnVenta.map(gc => (
-                  <div key={gc.codigo} className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-                      </svg>
-                      <span className="text-xs font-mono text-gray-700 truncate">{gc.codigo}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-bold text-amber-700">{formatPrecio(gc.monto)}</span>
-                      <button onClick={() => quitarGiftCardDeVenta(gc.codigo)} className="text-red-300 hover:text-red-500 p-0.5">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                  <div key={gc.codigo} className="px-3 py-2.5 bg-white hover:bg-gray-50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-gray-800 truncate">Gift Card {gc.codigo}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs text-gray-500">1 x {formatPrecio(gc.monto)}</span>
+                          {gc.comprador_nombre && <span className="text-xs text-gray-400">— {gc.comprador_nombre}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-gray-800">{formatPrecio(gc.monto)}</span>
+                        <button onClick={() => quitarGiftCardDeVenta(gc.codigo)} className="text-red-300 hover:text-red-500 p-0.5">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -4412,7 +4416,7 @@ const POS = () => {
                 </div>
                 )}
 
-                {articulosFavoritos.map(art => {
+                {giftCardsEnVenta.length === 0 && articulosFavoritos.map(art => {
                   const precioFinal = precioConDescEmpleado(art)
                   const enCarrito = carrito.find(i => i.articulo.id === art.id)
                   const color = rubroColorMap[art.rubro?.nombre] || TILE_COLORS[0]
