@@ -6,6 +6,7 @@ const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/au
 const { sincronizarERP } = require('../services/syncERP')
 const { getVentasCentumByFecha, getResumenVentasCentumBI } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
+const { crearClienteEnCentum } = require('../services/centumClientes')
 const crypto = require('crypto')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
@@ -1097,6 +1098,20 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
     // No-admin solo puede ver sus propias ventas
     if (req.perfil.rol !== 'admin' && data.cajero_id !== req.perfil.id) {
       return res.status(403).json({ error: 'No tenés permiso para ver esta venta' })
+    }
+
+    // Gift card: respuesta simplificada (no necesita clasificación Centum)
+    const itemsCheck = (() => {
+      try { return typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || []) }
+      catch { return [] }
+    })()
+    if (itemsCheck.length > 0 && itemsCheck.every(it => it.es_gift_card === true)) {
+      data.clasificacion = 'GIFT_CARD'
+      if (data.caja_id) {
+        const { data: caja } = await supabase.from('cajas').select('nombre').eq('id', data.caja_id).single()
+        data.cajas = caja ? { nombre: caja.nombre } : null
+      }
+      return res.json({ venta: data })
     }
 
     // Clasificar: EMPRESA o PRUEBA
@@ -3680,6 +3695,42 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
     const esEmpleado = venta.nombre_cliente && venta.nombre_cliente.startsWith('Empleado:')
     if (esEmpleado) {
       venta.id_cliente_centum = 2
+    }
+
+    // Si el cliente no tiene id_centum, intentar resolver o crearlo en Centum
+    if (!esEmpleado && (!venta.id_cliente_centum || venta.id_cliente_centum === 0)) {
+      if (venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final') {
+        const { data: cliLocal } = await supabase
+          .from('clientes')
+          .select('*')
+          .ilike('razon_social', venta.nombre_cliente)
+          .limit(1)
+          .maybeSingle()
+
+        if (cliLocal?.id_centum) {
+          venta.id_cliente_centum = cliLocal.id_centum
+          await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
+        } else if (cliLocal) {
+          try {
+            const condIva = venta.condicion_iva || cliLocal.condicion_iva || 'CF'
+            const dir = cliLocal.direccion ? { direccion: cliLocal.direccion, localidad: cliLocal.localidad } : null
+            const resultado = await crearClienteEnCentum(cliLocal, condIva, dir)
+            const idCentum = resultado.IdCliente || resultado.Id
+            if (idCentum) {
+              await supabase.from('clientes').update({ id_centum: idCentum }).eq('id', cliLocal.id)
+              venta.id_cliente_centum = idCentum
+              await supabase.from('ventas_pos').update({ id_cliente_centum: idCentum }).eq('id', venta.id)
+              console.log(`[Centum Reenvío] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
+            } else {
+              return res.status(400).json({ error: `No se pudo crear el cliente "${venta.nombre_cliente}" en Centum: no devolvió IdCliente` })
+            }
+          } catch (errCli) {
+            return res.status(400).json({ error: `Error creando cliente "${venta.nombre_cliente}" en Centum: ${errCli.message}` })
+          }
+        } else {
+          return res.status(400).json({ error: `Cliente "${venta.nombre_cliente}" no encontrado en DB local` })
+        }
+      }
     }
 
     // Obtener condición IVA del cliente

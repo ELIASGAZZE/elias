@@ -954,6 +954,21 @@ async function retrySyncVentasCentum() {
     const venta = ventasReady[i]
     const intentos = venta.centum_intentos || 0
 
+    // ============ GIFT CARD SKIP: no se sincronizan a Centum ============
+    const itemsParsed = (() => {
+      try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) }
+      catch { return [] }
+    })()
+    if (itemsParsed.length > 0 && itemsParsed.every(it => it.es_gift_card === true)) {
+      await supabase.from('ventas_pos').update({
+        centum_sync: true,
+        centum_error: null,
+      }).eq('id', venta.id)
+      console.log(`[RetryCentumVentas] Venta ${venta.id} es gift card, marcada como synced`)
+      exitosas++
+      continue
+    }
+
     // ============ ATOMIC CLAIM: lock a nivel de base de datos ============
     // Previene que múltiples instancias (ej: durante deploy Render) procesen la misma venta.
     // NOTA: Supabase .update().select() evalúa TODOS los filtros sobre la fila YA ACTUALIZADA
