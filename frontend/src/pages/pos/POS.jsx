@@ -2562,6 +2562,10 @@ const POS = () => {
   async function agregarGiftCardAVenta() {
     if (carrito.length > 0) return // No mezclar gift cards con artículos
     if (!gcCodigo.trim() || !gcMonto || parseFloat(gcMonto) <= 0) return
+    if (gcCodigo.trim().length !== 19) {
+      setGcError('El código debe tener exactamente 19 dígitos')
+      return
+    }
     if (giftCardsEnVenta.some(g => g.codigo === gcCodigo.trim())) {
       setGcError('Esta gift card ya fue agregada')
       return

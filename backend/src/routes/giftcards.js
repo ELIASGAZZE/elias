@@ -10,6 +10,7 @@ router.post('/activar', verificarAuth, async (req, res) => {
     const { codigo, monto, comprador_nombre, pagos, caja_id, sucursal_id, cierre_id, cajero_nombre } = req.body
 
     if (!codigo || !codigo.trim()) return res.status(400).json({ error: 'Código es requerido' })
+    if (codigo.trim().length !== 19) return res.status(400).json({ error: 'El código debe tener exactamente 19 dígitos' })
     if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' })
 
     // Verificar que el código no exista ya
