@@ -433,6 +433,24 @@ router.get('/duplicados', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
+// GET /api/clientes/bi-columns
+// Admin: descubrir columnas disponibles en Clientes_VIEW (temporario para diagnóstico)
+router.get('/bi-columns', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const db = await getPool()
+    const result = await db.request().query(`SELECT TOP 1 * FROM Clientes_VIEW`)
+    const columns = result.recordset.length > 0 ? Object.keys(result.recordset[0]) : []
+    const sample = result.recordset[0] || {}
+    const relevant = columns.filter(c =>
+      /email|telefono|celular|fecha|modificac/i.test(c)
+    )
+    res.json({ total_columns: columns.length, relevant, all_columns: columns, sample_values: relevant.reduce((acc, c) => { acc[c] = sample[c]; return acc }, {}) })
+  } catch (err) {
+    console.error('Error bi-columns:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/clientes/:id
 // Detalle de un cliente
 router.get('/:id', verificarAuth, async (req, res) => {
@@ -679,8 +697,9 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
 })
 
 // PUT /api/clientes/editar-centum/:idCentum
-// Editar cliente local + sync a Centum
+// DEPRECATED: usar PUT /api/clientes/:id en su lugar (auto-sync incluido)
 router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
+  console.warn(`[Clientes] DEPRECATED: PUT /editar-centum/${req.params.idCentum} — usar PUT /api/clientes/:id`)
   const idCentum = parseInt(req.params.idCentum)
   const { razon_social, cuit, condicion_iva, direccion, localidad, codigo_postal, telefono, email, celular, grupo_descuento_id } = req.body
 
@@ -777,7 +796,38 @@ router.put('/:id', verificarAuth, async (req, res) => {
       .single()
 
     if (error) throw error
-    res.json(data)
+
+    // Auto-sync to Centum if client is linked
+    let warningCentum = null
+    if (data.id_centum) {
+      try {
+        await actualizarClienteEnCentum(data.id_centum, {
+          razon_social: updates.razon_social,
+          cuit: updates.cuit,
+          condicion_iva: updates.condicion_iva,
+          telefono: updates.telefono,
+          direccion: updates.direccion,
+          localidad: updates.localidad,
+          codigo_postal: updates.codigo_postal,
+        })
+      } catch (err) {
+        console.warn(`[Clientes] Auto-sync Centum falló para ${data.id_centum}:`, err.message)
+        warningCentum = err.message
+      }
+
+      // Sync contacto si cambió email/celular
+      if (updates.email !== undefined || updates.celular !== undefined) {
+        try {
+          await agregarContactoEnvioCentum(data.id_centum, { email: data.email, celular: data.celular })
+        } catch (err) {
+          if (!warningCentum) warningCentum = err.message
+        }
+      }
+    }
+
+    const respuesta = { ...data }
+    if (warningCentum) respuesta.warning_centum = warningCentum
+    res.json(respuesta)
   } catch (err) {
     console.error('Error al actualizar cliente:', err)
     res.status(500).json({ error: 'Error al actualizar cliente' })
@@ -1095,20 +1145,28 @@ router.post('/fix-condicion-iva', verificarAuth, soloAdmin, async (req, res) => 
       }
     }
 
-    // Comparar y actualizar los que difieran
-    let corregidos = 0
+    // Comparar y agrupar los que difieran por condicion_iva destino (para batch update)
     const detalle = []
+    const porCondicion = {} // { 'RI': [id1, id2, ...], 'MT': [...] }
     for (const local of locales) {
       const condicionCentum = centumMap.get(local.id_centum)
       if (condicionCentum && condicionCentum !== local.condicion_iva) {
+        detalle.push({ id: local.id, id_centum: local.id_centum, razon_social: null, antes: local.condicion_iva, despues: condicionCentum })
+        if (!porCondicion[condicionCentum]) porCondicion[condicionCentum] = []
+        porCondicion[condicionCentum].push(local.id)
+      }
+    }
+
+    // Batch update por condicion_iva (1 query por grupo en vez de 1 por cliente)
+    let corregidos = 0
+    for (const [condicion, ids] of Object.entries(porCondicion)) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const lote = ids.slice(i, i + 200)
         const { error } = await supabase
           .from('clientes')
-          .update({ condicion_iva: condicionCentum })
-          .eq('id', local.id)
-        if (!error) {
-          detalle.push({ id: local.id, id_centum: local.id_centum, antes: local.condicion_iva, despues: condicionCentum })
-          corregidos++
-        }
+          .update({ condicion_iva: condicion })
+          .in('id', lote)
+        if (!error) corregidos += lote.length
       }
     }
 
