@@ -1,7 +1,8 @@
 // Registrar y ver consumo interno (producción, merma, degustación)
 import React, { useState, useEffect } from 'react'
 import Navbar from '../../components/layout/Navbar'
-import api from '../../services/api'
+import api, { isNetworkError } from '../../services/api'
+import { encolarConsumo, contarConsumoPendiente, getArticulos as getArticulosOffline } from '../../services/offlineDB'
 
 const MOTIVOS = [
   { value: 'produccion', label: 'Producción (picadas, etc.)' },
@@ -19,16 +20,25 @@ const ConsumoInterno = () => {
   const [articulosDisp, setArticulosDisp] = useState([])
   const [form, setForm] = useState({ articulo_id: '', articulo_nombre: '', cantidad: '', motivo: 'produccion', notas: '', fecha: new Date().toISOString().split('T')[0] })
   const [guardando, setGuardando] = useState(false)
+  const [offline, setOffline] = useState(false)
+  const [pendientesOffline, setPendientesOffline] = useState(0)
 
   const cargar = () => {
     setCargando(true)
     api.get('/api/compras/consumo-interno')
-      .then(r => setRegistros(r.data))
-      .catch(err => console.error(err))
+      .then(r => { setRegistros(r.data); setOffline(false) })
+      .catch(err => {
+        if (isNetworkError(err)) setOffline(true)
+        else console.error(err)
+      })
       .finally(() => setCargando(false))
   }
 
-  useEffect(() => { cargar() }, [])
+  const actualizarPendientes = () => {
+    contarConsumoPendiente().then(n => setPendientesOffline(n))
+  }
+
+  useEffect(() => { cargar(); actualizarPendientes() }, [])
 
   const buscarArticulos = async (q) => {
     setBusquedaArt(q)
@@ -36,7 +46,20 @@ const ConsumoInterno = () => {
     try {
       const { data } = await api.get(`/api/articulos?busqueda=${encodeURIComponent(q)}&limit=8`)
       setArticulosDisp(data || [])
-    } catch { setArticulosDisp([]) }
+    } catch (err) {
+      // Fallback offline: buscar en cache IndexedDB
+      if (isNetworkError(err)) {
+        setOffline(true)
+        const todos = await getArticulosOffline()
+        const term = q.toLowerCase()
+        setArticulosDisp(todos.filter(a => {
+          const texto = `${a.nombre || ''} ${a.codigo || ''}`.toLowerCase()
+          return texto.includes(term)
+        }).slice(0, 8))
+      } else {
+        setArticulosDisp([])
+      }
+    }
   }
 
   const seleccionarArticulo = (art) => {
@@ -48,19 +71,29 @@ const ConsumoInterno = () => {
   const guardar = async () => {
     if (!form.articulo_id || !form.cantidad) return
     setGuardando(true)
+    const payload = {
+      articulo_id: form.articulo_id,
+      cantidad: Number(form.cantidad),
+      motivo: form.motivo,
+      notas: form.notas,
+      fecha: form.fecha,
+    }
     try {
-      await api.post('/api/compras/consumo-interno', {
-        articulo_id: form.articulo_id,
-        cantidad: Number(form.cantidad),
-        motivo: form.motivo,
-        notas: form.notas,
-        fecha: form.fecha,
-      })
+      await api.post('/api/compras/consumo-interno', payload)
       setForm({ articulo_id: '', articulo_nombre: '', cantidad: '', motivo: 'produccion', notas: '', fecha: new Date().toISOString().split('T')[0] })
       setBusquedaArt('')
       cargar()
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.error || err.message))
+      if (isNetworkError(err)) {
+        // Sin internet: encolar para sync posterior
+        await encolarConsumo({ ...payload, articulo_nombre: form.articulo_nombre })
+        setOffline(true)
+        actualizarPendientes()
+        setForm({ articulo_id: '', articulo_nombre: '', cantidad: '', motivo: 'produccion', notas: '', fecha: new Date().toISOString().split('T')[0] })
+        setBusquedaArt('')
+      } else {
+        alert('Error: ' + (err.response?.data?.error || err.message))
+      }
     } finally {
       setGuardando(false)
     }
@@ -71,6 +104,19 @@ const ConsumoInterno = () => {
       <Navbar titulo="Consumo Interno" sinTabs volverA="/compras" />
 
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+        {/* Banner offline */}
+        {offline && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-sm text-amber-800 flex items-center gap-2">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 11-12.728 0M12 9v4m0 4h.01" />
+            </svg>
+            <span>
+              <strong>Sin conexion.</strong> Podes seguir registrando consumos — se sincronizaran cuando vuelva internet.
+              {pendientesOffline > 0 && <span className="ml-1 font-semibold">({pendientesOffline} pendiente{pendientesOffline > 1 ? 's' : ''})</span>}
+            </span>
+          </div>
+        )}
+
         {/* Form registro */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <h3 className="text-sm font-semibold text-gray-700">Registrar consumo</h3>

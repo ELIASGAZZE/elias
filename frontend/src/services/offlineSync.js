@@ -1,66 +1,94 @@
-// Sincronización automática de ventas pendientes offline
+// Sincronización automática de colas offline (ventas, consumo interno, cierres)
 import api, { isNetworkError } from './api'
 import { getVentasPendientes, borrarVentaPendiente } from './offlineDB'
+import { getConsumoPendiente, borrarConsumoPendiente } from './offlineDB'
+import { getCierresPendientes, borrarCierrePendiente } from './offlineDB'
 
 let syncing = false
 
-export async function syncVentasPendientes() {
-  if (syncing) return { synced: 0, failed: 0, descartadas: 0 }
-  syncing = true
-
+// Sync genérico para cualquier cola offline
+async function syncCola(nombre, getItems, borrarItem, enviar) {
   let synced = 0
   let failed = 0
   let descartadas = 0
 
-  try {
-    const pendientes = await getVentasPendientes()
-    if (pendientes.length === 0) return { synced: 0, failed: 0, descartadas: 0 }
+  const pendientes = await getItems()
+  if (pendientes.length === 0) return { synced, failed, descartadas }
 
-    for (const venta of pendientes) {
-      try {
-        const { id, _timestamp, ...payload } = venta
-        if (_timestamp) payload.created_at_offline = new Date(_timestamp).toISOString()
-        await api.post('/api/pos/ventas', payload)
-        await borrarVentaPendiente(id)
-        synced++
-      } catch (err) {
-        // Sin red: parar sync, dejar en cola para reintentar después
-        if (isNetworkError(err)) {
-          failed++
-          break
-        }
-        // Auth expirada: parar sync
-        if (err.response?.status === 401) {
-          failed++
-          break
-        }
-        // Error de validación (400/422): descartar de la cola, no tiene sentido reintentar
-        const status = err.response?.status
-        if (status === 400 || status === 422) {
-          console.error(`[OfflineSync] Venta descartada (${status}):`, err.response?.data?.error || err.message)
-          await borrarVentaPendiente(venta.id)
-          descartadas++
-          continue
-        }
-        // Error 5xx del servidor: parar sync, reintentar después
+  for (const item of pendientes) {
+    try {
+      await enviar(item)
+      await borrarItem(item.id)
+      synced++
+    } catch (err) {
+      if (isNetworkError(err)) {
         failed++
         break
       }
+      if (err.response?.status === 401) {
+        failed++
+        break
+      }
+      const status = err.response?.status
+      if (status === 400 || status === 422) {
+        console.error(`[OfflineSync] ${nombre} descartado (${status}):`, err.response?.data?.error || err.message)
+        await borrarItem(item.id)
+        descartadas++
+        continue
+      }
+      failed++
+      break
     }
-  } finally {
-    syncing = false
   }
 
   return { synced, failed, descartadas }
 }
 
+export async function syncVentasPendientes() {
+  if (syncing) return { synced: 0, failed: 0, descartadas: 0 }
+  syncing = true
+  try {
+    return await syncCola('Venta', getVentasPendientes, borrarVentaPendiente, async (venta) => {
+      const { id, _timestamp, ...payload } = venta
+      if (_timestamp) payload.created_at_offline = new Date(_timestamp).toISOString()
+      await api.post('/api/pos/ventas', payload)
+    })
+  } finally {
+    syncing = false
+  }
+}
+
+export async function syncConsumoPendiente() {
+  return syncCola('Consumo', getConsumoPendiente, borrarConsumoPendiente, async (item) => {
+    const { id, _timestamp, ...payload } = item
+    await api.post('/api/compras/consumo-interno', payload)
+  })
+}
+
+export async function syncCierresPendientes() {
+  return syncCola('Cierre', getCierresPendientes, borrarCierrePendiente, async (item) => {
+    const { id, _timestamp, cierreId, ...payload } = item
+    await api.put(`/api/cierres-pos/${cierreId}/cerrar`, payload)
+  })
+}
+
+// Sync completo de todas las colas
+export async function syncAll() {
+  const ventas = await syncVentasPendientes()
+  const consumo = await syncConsumoPendiente()
+  const cierres = await syncCierresPendientes()
+
+  const totalSynced = ventas.synced + consumo.synced + cierres.synced
+  if (totalSynced > 0) {
+    console.log(`[OfflineSync] Sincronizado: ${ventas.synced} ventas, ${consumo.synced} consumos, ${cierres.synced} cierres`)
+  }
+
+  return { ventas, consumo, cierres }
+}
+
 // Escuchar evento online para auto-sync
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    syncVentasPendientes().then(({ synced }) => {
-      if (synced > 0) {
-        console.log(`[OfflineSync] ${synced} venta(s) sincronizada(s) automáticamente`)
-      }
-    })
+    syncAll()
   })
 }

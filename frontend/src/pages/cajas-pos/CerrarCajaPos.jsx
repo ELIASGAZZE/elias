@@ -3,8 +3,9 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
-import api from '../../services/api'
+import api, { isNetworkError } from '../../services/api'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
+import { getDenominaciones as getDenomOffline, getFormasCobro as getFormasCobroOffline, encolarCierre, getEmpleadosPIN } from '../../services/offlineDB'
 import ModalRetiroPos from '../../components/cajas-pos/ModalRetiroPos'
 import ModalGastoPos from '../../components/cajas-pos/ModalGastoPos'
 import { useAuth } from '../../context/AuthContext'
@@ -93,6 +94,9 @@ const CerrarCajaPos = () => {
   const [mediosPago, setMediosPago] = useState({})
   const [observaciones, setObservaciones] = useState('')
 
+  // Modo offline
+  const [offline, setOffline] = useState(false)
+
   // Codigo de empleado que cierra
   const [codigoEmpleado, setCodigoEmpleado] = useState('')
   const [empleadoResuelto, setEmpleadoResuelto] = useState(null)
@@ -102,14 +106,34 @@ const CerrarCajaPos = () => {
   useEffect(() => {
     const cargar = async () => {
       try {
-        const [cierreRes, denomRes, formasRes, retirosRes, gastosRes, posVentasRes] = await Promise.all([
-          api.get(`/api/cierres-pos/${id}`),
-          api.get('/api/denominaciones'),
-          api.get('/api/formas-cobro'),
-          api.get(`/api/cierres-pos/${id}/retiros`).catch(() => ({ data: [] })),
-          api.get(`/api/cierres-pos/${id}/gastos`).catch(() => ({ data: [] })),
-          api.get(`/api/cierres-pos/${id}/pos-ventas`).catch(() => ({ data: { medios_pago: [] } })),
-        ])
+        // Intentar cargar todo del servidor
+        let cierreRes, denomRes, formasRes, retirosRes, gastosRes, posVentasRes
+        let usandoOffline = false
+
+        try {
+          ;[cierreRes, denomRes, formasRes, retirosRes, gastosRes, posVentasRes] = await Promise.all([
+            api.get(`/api/cierres-pos/${id}`),
+            api.get('/api/denominaciones'),
+            api.get('/api/formas-cobro'),
+            api.get(`/api/cierres-pos/${id}/retiros`).catch(() => ({ data: [] })),
+            api.get(`/api/cierres-pos/${id}/gastos`).catch(() => ({ data: [] })),
+            api.get(`/api/cierres-pos/${id}/pos-ventas`).catch(() => ({ data: { medios_pago: [] } })),
+          ])
+        } catch (netErr) {
+          if (!isNetworkError(netErr)) throw netErr
+          // Sin internet: cargar denominaciones y formas de cobro desde cache
+          usandoOffline = true
+          setOffline(true)
+          const denomOffline = await getDenomOffline()
+          const formasOffline = await getFormasCobroOffline()
+          denomRes = { data: denomOffline }
+          formasRes = { data: formasOffline }
+          // El cierre ya estaba cargado en la sesión — usar datos mínimos
+          cierreRes = { data: { id, estado: 'abierta', caja: {}, empleado: {}, fecha: new Date().toISOString().split('T')[0] } }
+          retirosRes = { data: [] }
+          gastosRes = { data: [] }
+          posVentasRes = { data: { medios_pago: [], detalle_ventas: [] } }
+        }
 
         setRetiros(retirosRes.data || [])
         setGastos(gastosRes.data || [])
@@ -243,9 +267,23 @@ const CerrarCajaPos = () => {
       const { data } = await api.get(`/api/empleados/por-codigo/${encodeURIComponent(codigo)}`)
       setEmpleadoResuelto(data)
       setErrorEmpleado('')
-    } catch {
-      setEmpleadoResuelto(null)
-      setErrorEmpleado('Codigo no valido')
+    } catch (err) {
+      if (isNetworkError(err)) {
+        // Offline: buscar en cache de empleados PIN
+        setOffline(true)
+        const empleados = await getEmpleadosPIN()
+        const match = empleados.find(e => e.codigo === codigo)
+        if (match) {
+          setEmpleadoResuelto({ id: match.id, nombre: match.nombre, codigo: match.codigo })
+          setErrorEmpleado('')
+        } else {
+          setEmpleadoResuelto(null)
+          setErrorEmpleado('Codigo no valido (offline)')
+        }
+      } else {
+        setEmpleadoResuelto(null)
+        setErrorEmpleado('Codigo no valido')
+      }
     } finally {
       setValidandoEmpleado(false)
     }
@@ -325,6 +363,14 @@ const CerrarCajaPos = () => {
         navigate(`/cajas-pos/cierre/${id}`)
       }
     } catch (err) {
+      if (isNetworkError(err) && !modoEdicion) {
+        // Sin internet: encolar cierre para sync posterior
+        await encolarCierre({ cierreId: id, ...payload })
+        setOffline(true)
+        setError('')
+        navigate('/cajas-pos', { state: { cierreEncolado: true } })
+        return
+      }
       setError(err.response?.data?.error || (modoEdicion ? 'Error al guardar cambios' : 'Error al cerrar caja'))
     } finally {
       setEnviando(false)
@@ -363,6 +409,16 @@ const CerrarCajaPos = () => {
       <Navbar titulo={titulo} sinTabs volverA={volverA} />
 
       <div className="px-4 py-4 max-w-5xl mx-auto">
+
+        {/* Banner offline */}
+        {offline && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-4 text-sm text-amber-800 flex items-center gap-2">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 11-12.728 0M12 9v4m0 4h.01" />
+            </svg>
+            <span><strong>Sin conexion.</strong> Podes contar la caja y confirmar el cierre — se sincronizara cuando vuelva internet.</span>
+          </div>
+        )}
 
         {/* Header: info de la caja + total efectivo */}
         <div className="flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl p-3 mb-4">

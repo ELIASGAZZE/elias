@@ -1,12 +1,13 @@
 // Pagina principal de la app Control de Caja POS
 import React, { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import ModalRetiroPos from '../../components/cajas-pos/ModalRetiroPos'
 import ModalGastoPos from '../../components/cajas-pos/ModalGastoPos'
 import { imprimirCierre } from '../../utils/imprimirComprobante'
-import api from '../../services/api'
+import api, { isNetworkError } from '../../services/api'
+import { contarCierresPendientes } from '../../services/offlineDB'
 
 const ESTADOS = {
   abierta: { label: 'Abierta', color: 'bg-teal-100 text-teal-700' },
@@ -42,12 +43,16 @@ const formatHora = (ts) => {
 
 const CajasPosHome = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const { usuario, esAdmin, esGestor } = useAuth()
   const [cierres, setCierres] = useState([])
   const [cargando, setCargando] = useState(true)
+  const [cierresEncolados, setCierresEncolados] = useState(0)
+  const cierreEncolado = location.state?.cierreEncolado
 
   useEffect(() => {
     cargarDatos()
+    contarCierresPendientes().then(n => setCierresEncolados(n))
   }, [])
 
   const cargarDatos = async () => {
@@ -148,6 +153,19 @@ const CajasPosHome = () => {
       <Navbar titulo="Control Caja POS" sinTabs />
 
       <div className="px-4 py-4 space-y-4 max-w-4xl mx-auto">
+
+        {/* Banner cierre encolado offline */}
+        {(cierreEncolado || cierresEncolados > 0) && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-sm text-amber-800 flex items-center gap-2">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 11-12.728 0M12 9v4m0 4h.01" />
+            </svg>
+            <span>
+              <strong>Cierre guardado offline.</strong> Se sincronizara automaticamente cuando vuelva la conexion.
+              {cierresEncolados > 0 && <span className="ml-1">({cierresEncolados} pendiente{cierresEncolados > 1 ? 's' : ''})</span>}
+            </span>
+          </div>
+        )}
 
         {/* Cajas abiertas (solo admin) */}
             {cajasAbiertas.length > 0 && esAdmin && (

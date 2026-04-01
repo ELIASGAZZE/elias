@@ -2,7 +2,7 @@
 import { openDB } from 'idb'
 
 const DB_NAME = 'padano-pos'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 function getDB() {
   return openDB(DB_NAME, DB_VERSION, {
@@ -30,6 +30,13 @@ function getDB() {
       }
       if (!db.objectStoreNames.contains('empleadosPIN')) {
         db.createObjectStore('empleadosPIN', { keyPath: 'id' })
+      }
+      // v3: colas offline para consumo interno y cierres de caja
+      if (!db.objectStoreNames.contains('consumoPendiente')) {
+        db.createObjectStore('consumoPendiente', { autoIncrement: true })
+      }
+      if (!db.objectStoreNames.contains('cierresPendientes')) {
+        db.createObjectStore('cierresPendientes', { autoIncrement: true })
       }
     },
   })
@@ -169,6 +176,62 @@ export async function guardarEmpleadosPIN(items) {
 export async function getEmpleadosPIN() {
   const db = await getDB()
   return db.getAll('empleadosPIN')
+}
+
+// --- Consumo interno pendiente (cola offline) ---
+export async function encolarConsumo(payload) {
+  const db = await getDB()
+  await db.add('consumoPendiente', { ...payload, _timestamp: Date.now() })
+}
+
+export async function getConsumoPendiente() {
+  const db = await getDB()
+  const tx = db.transaction('consumoPendiente', 'readonly')
+  const items = []
+  let cursor = await tx.store.openCursor()
+  while (cursor) {
+    items.push({ id: cursor.key, ...cursor.value })
+    cursor = await cursor.continue()
+  }
+  return items.sort((a, b) => (a._timestamp || 0) - (b._timestamp || 0))
+}
+
+export async function contarConsumoPendiente() {
+  const db = await getDB()
+  return db.count('consumoPendiente')
+}
+
+export async function borrarConsumoPendiente(id) {
+  const db = await getDB()
+  await db.delete('consumoPendiente', id)
+}
+
+// --- Cierres de caja pendientes (cola offline) ---
+export async function encolarCierre(payload) {
+  const db = await getDB()
+  await db.add('cierresPendientes', { ...payload, _timestamp: Date.now() })
+}
+
+export async function getCierresPendientes() {
+  const db = await getDB()
+  const tx = db.transaction('cierresPendientes', 'readonly')
+  const items = []
+  let cursor = await tx.store.openCursor()
+  while (cursor) {
+    items.push({ id: cursor.key, ...cursor.value })
+    cursor = await cursor.continue()
+  }
+  return items.sort((a, b) => (a._timestamp || 0) - (b._timestamp || 0))
+}
+
+export async function contarCierresPendientes() {
+  const db = await getDB()
+  return db.count('cierresPendientes')
+}
+
+export async function borrarCierrePendiente(id) {
+  const db = await getDB()
+  await db.delete('cierresPendientes', id)
 }
 
 // --- Meta (timestamps de sync) ---
