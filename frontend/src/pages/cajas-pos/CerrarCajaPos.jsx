@@ -56,6 +56,140 @@ const CampoMedio = ({ label, monto, onMontoChange, cantidad, onCantidadChange })
   </div>
 )
 
+const BadgeTipo = ({ tipo }) => {
+  const estilos = {
+    venta: 'bg-green-100 text-green-800',
+    retiro: 'bg-blue-100 text-blue-800',
+    gasto: 'bg-orange-100 text-orange-800',
+    cierre: 'bg-gray-100 text-gray-800',
+  }
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${estilos[tipo] || 'bg-gray-100 text-gray-700'}`}>
+      {tipo.charAt(0).toUpperCase() + tipo.slice(1)}
+    </span>
+  )
+}
+
+const TabMovimientos = ({ cierreId }) => {
+  const [movimientos, setMovimientos] = useState(null)
+  const [resumen, setResumen] = useState(null)
+  const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState('')
+
+  const cargar = async () => {
+    setCargando(true)
+    setError('')
+    try {
+      const { data } = await api.get(`/api/cierres-pos/${cierreId}/movimientos`)
+      setMovimientos(data.movimientos || [])
+      setResumen(data.resumen || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al cargar movimientos')
+    } finally {
+      setCargando(false)
+    }
+  }
+
+  useEffect(() => { cargar() }, [cierreId])
+
+  if (cargando) {
+    return (
+      <div className="flex justify-center py-12">
+        <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-teal-600" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return <p className="text-sm text-red-600 bg-red-50 p-3 rounded-xl">{error}</p>
+  }
+
+  if (!movimientos || movimientos.length === 0) {
+    return <p className="text-sm text-gray-500 text-center py-8">No hay movimientos en esta sesion.</p>
+  }
+
+  return (
+    <div>
+      {/* Boton refresh */}
+      <div className="flex justify-end mb-3">
+        <button
+          onClick={cargar}
+          className="text-sm text-teal-600 hover:text-teal-800 flex items-center gap-1 font-medium transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Actualizar
+        </button>
+      </div>
+
+      {/* Tabla de movimientos */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-gray-500 text-xs">
+              <th className="text-left px-3 py-2 font-medium">Hora</th>
+              <th className="text-left px-3 py-2 font-medium">Tipo</th>
+              <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+              <th className="text-left px-3 py-2 font-medium">Detalle</th>
+              <th className="text-right px-3 py-2 font-medium">Monto</th>
+              <th className="text-right px-3 py-2 font-medium">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {movimientos.map((mov, i) => {
+              const bgColor = mov.tipo === 'venta' ? 'bg-green-50' : mov.tipo === 'retiro' ? 'bg-blue-50' : mov.tipo === 'gasto' ? 'bg-orange-50' : 'bg-gray-50'
+              return (
+                <tr key={i} className={`${bgColor} border-t border-gray-100`}>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                    {mov.fecha ? new Date(mov.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                  </td>
+                  <td className="px-3 py-2"><BadgeTipo tipo={mov.tipo} /></td>
+                  <td className="px-3 py-2 text-gray-800">{mov.descripcion}</td>
+                  <td className="px-3 py-2 text-gray-500 text-xs">
+                    {mov.total_venta ? <span className="text-gray-700 font-medium">Total {formatMonto(mov.total_venta)}</span> : null}
+                    {mov.total_venta && mov.detalle ? ' — ' : ''}
+                    {mov.detalle || ''}
+                  </td>
+                  <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${mov.signo === '+' ? 'text-green-700' : mov.signo === '-' ? 'text-red-600' : 'text-gray-700'}`}>
+                    {mov.signo === '+' ? '+' : mov.signo === '-' ? '-' : ''}{formatMonto(mov.monto)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{formatMonto(mov.saldo)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Resumen */}
+      {resumen && (
+        <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-teal-800 mb-2">Resumen de movimientos</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white rounded-lg p-2 text-center border border-teal-100">
+              <span className="text-xs text-gray-500 block">Ventas efectivo</span>
+              <span className="font-bold text-green-700">{formatMonto(resumen.total_ventas_efectivo)}</span>
+            </div>
+            <div className="bg-white rounded-lg p-2 text-center border border-teal-100">
+              <span className="text-xs text-gray-500 block">Retiros</span>
+              <span className="font-bold text-blue-700">{formatMonto(resumen.total_retiros)}</span>
+            </div>
+            <div className="bg-white rounded-lg p-2 text-center border border-teal-100">
+              <span className="text-xs text-gray-500 block">Gastos</span>
+              <span className="font-bold text-orange-700">{formatMonto(resumen.total_gastos)}</span>
+            </div>
+            <div className="bg-white rounded-lg p-2 text-center border border-teal-100">
+              <span className="text-xs text-gray-500 block">Neto teorico</span>
+              <span className="font-bold text-teal-800">{formatMonto(resumen.efectivo_neto_teorico)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const CerrarCajaPos = () => {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -66,6 +200,7 @@ const CerrarCajaPos = () => {
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
+  const [tabActiva, setTabActiva] = useState('cerrar')
 
   // Cupones MP (informativo)
   const [cuponesMP, setCuponesMP] = useState({ posnet: 0, qr: 0, problema: 0 })
@@ -410,6 +545,30 @@ const CerrarCajaPos = () => {
 
       <div className="px-4 py-4 max-w-5xl mx-auto">
 
+        {/* Pestañas admin (solo si caja abierta, no edición) */}
+        {esAdmin && !modoEdicion && cierre?.estado === 'abierta' && (
+          <div className="flex gap-1 bg-white border border-gray-200 rounded-xl p-1 mb-4">
+            <button
+              onClick={() => setTabActiva('cerrar')}
+              className={`flex-1 text-sm font-medium py-2 rounded-lg transition-colors ${tabActiva === 'cerrar' ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              Cerrar
+            </button>
+            <button
+              onClick={() => setTabActiva('movimientos')}
+              className={`flex-1 text-sm font-medium py-2 rounded-lg transition-colors ${tabActiva === 'movimientos' ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              Movimientos
+            </button>
+          </div>
+        )}
+
+        {/* Tab Movimientos */}
+        {tabActiva === 'movimientos' && esAdmin && !modoEdicion && cierre?.estado === 'abierta' ? (
+          <TabMovimientos cierreId={id} />
+        ) : (
+        <>
+
         {/* Banner offline */}
         {offline && (
           <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-4 text-sm text-amber-800 flex items-center gap-2">
@@ -687,6 +846,9 @@ const CerrarCajaPos = () => {
             : (modoEdicion ? 'Guardar cambios' : 'Confirmar cierre')
           }
         </button>
+
+        </>
+        )}
       </div>
 
       {/* Modal retiro */}

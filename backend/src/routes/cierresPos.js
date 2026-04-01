@@ -1004,7 +1004,6 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
       supabase
         .from('ventas_pos')
         .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, created_at')
-        .eq('cajero_id', cierre.cajero_id)
         .eq('caja_id', cierre.caja_id)
         .gte('created_at', desde)
         .lte('created_at', hasta)
@@ -1039,14 +1038,22 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, async (req, res) => {
       // Si no hay efectivo en esta venta, no genera movimiento de caja
       if (efectivoNeto === 0 && efectivoBruto === 0) return
 
+      // Resumen de formas de pago
+      const formasPago = pagos.map(p => {
+        const tipo = p.tipo || 'Efectivo'
+        const monto = parseFloat(p.monto) || 0
+        return `${tipo} ${formatMontoBack(monto)}`
+      })
+
       movimientos.push({
         tipo: 'venta',
         descripcion: `Venta #${v.numero_venta}${v.nombre_cliente ? ` — ${v.nombre_cliente}` : ''}`,
-        detalle: vuelto > 0 ? `Efectivo ${formatMontoBack(efectivoBruto)} - Vuelto ${formatMontoBack(vuelto)}` : null,
+        detalle: formasPago.join(' + '),
         monto: Math.abs(efectivoNeto),
         signo: efectivoNeto >= 0 ? '+' : '-',
         fecha: v.created_at,
         ref_id: v.id,
+        total_venta: parseFloat(v.total) || 0,
       })
     })
 
