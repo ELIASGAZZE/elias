@@ -649,14 +649,6 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
 
     const condicionIvaCentum = mapCondicionIVA(r.CondicionIVAClienteID)
 
-    // Obtener condicion_iva local antes de sobreescribir
-    // Si fue editada localmente (distinta de Centum), preservar la local
-    const { data: clienteLocal } = await supabase
-      .from('clientes')
-      .select('condicion_iva')
-      .eq('id_centum', idCentum)
-      .single()
-
     const updates = {
       razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
       cuit: r.CUITCliente?.trim() || null,
@@ -666,9 +658,8 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       telefono: r.Telefono1Cliente?.trim() || null,
       codigo_centum: r.CodigoCliente?.trim() || null,
     }
-    // Solo actualizar condicion_iva desde Centum si coincide con la local
-    // (si difieren, significa que fue editada localmente y Centum no lo refleja aún)
-    if (!clienteLocal?.condicion_iva || clienteLocal.condicion_iva === condicionIvaCentum) {
+    // Centum BI es la fuente de verdad para condicion_iva (no hay UI para editar localmente)
+    if (condicionIvaCentum) {
       updates.condicion_iva = condicionIvaCentum
     }
 
@@ -1057,6 +1048,75 @@ router.delete('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
   } catch (err) {
     console.error('Error al eliminar dirección:', err)
     res.status(500).json({ error: 'Error al eliminar dirección' })
+  }
+})
+
+// POST /api/clientes/fix-condicion-iva
+// Mass-update: sincroniza condicion_iva de TODOS los clientes locales contra Centum BI
+router.post('/fix-condicion-iva', verificarAuth, soloAdmin, async (req, res) => {
+  try {
+    const mapCondicionIVA = (id) => {
+      if (id === 1895) return 'RI'
+      if (id === 1894) return 'MT'
+      if (id === 1893) return 'EX'
+      return 'CF'
+    }
+
+    // Traer todos los clientes locales con id_centum
+    let locales = []
+    let from = 0
+    while (true) {
+      const { data } = await supabase
+        .from('clientes')
+        .select('id, id_centum, condicion_iva')
+        .not('id_centum', 'is', null)
+        .range(from, from + 999)
+      locales = locales.concat(data || [])
+      if (!data || data.length < 1000) break
+      from += 1000
+    }
+
+    if (locales.length === 0) {
+      return res.json({ total: 0, corregidos: 0, detalle: [] })
+    }
+
+    const db = await getPool()
+    const ids = locales.map(c => c.id_centum)
+    let centumMap = new Map()
+
+    // Query Centum BI en lotes de 500
+    for (let i = 0; i < ids.length; i += 500) {
+      const lote = ids.slice(i, i + 500)
+      const result = await db.request().query(
+        `SELECT ClienteID, CondicionIVAClienteID FROM Clientes_VIEW WHERE ClienteID IN (${lote.join(',')})`
+      )
+      for (const r of result.recordset) {
+        centumMap.set(r.ClienteID, mapCondicionIVA(r.CondicionIVAClienteID))
+      }
+    }
+
+    // Comparar y actualizar los que difieran
+    let corregidos = 0
+    const detalle = []
+    for (const local of locales) {
+      const condicionCentum = centumMap.get(local.id_centum)
+      if (condicionCentum && condicionCentum !== local.condicion_iva) {
+        const { error } = await supabase
+          .from('clientes')
+          .update({ condicion_iva: condicionCentum })
+          .eq('id', local.id)
+        if (!error) {
+          detalle.push({ id: local.id, id_centum: local.id_centum, antes: local.condicion_iva, despues: condicionCentum })
+          corregidos++
+        }
+      }
+    }
+
+    console.log(`[FixCondicionIVA] ${corregidos} clientes corregidos de ${locales.length} total`)
+    res.json({ total: locales.length, corregidos, detalle })
+  } catch (err) {
+    console.error('Error en fix-condicion-iva:', err.message)
+    res.status(500).json({ error: err.message })
   }
 })
 
