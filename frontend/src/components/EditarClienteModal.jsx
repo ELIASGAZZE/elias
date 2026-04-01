@@ -131,8 +131,8 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
     setGuardando(true)
     setError(null)
     try {
-      // 1. Guardar datos del cliente
-      await api.put(`/api/clientes/editar-centum/${cliente.id_centum}`, form)
+      // 1. Guardar datos del cliente (auto-sync a Centum incluido)
+      await api.put(`/api/clientes/${clienteId || cliente.id}`, form)
 
       // 2. Sincronizar direcciones de entrega
       if (clienteId) {

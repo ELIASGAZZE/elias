@@ -127,8 +127,6 @@ const SeccionClientes = () => {
     try {
       if (modal === 'crear') {
         await api.post('/api/clientes', form)
-      } else if (form.id_centum) {
-        await api.put(`/api/clientes/editar-centum/${form.id_centum}`, form)
       } else {
         await api.put(`/api/clientes/${form.id}`, form)
       }

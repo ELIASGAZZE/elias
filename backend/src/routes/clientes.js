@@ -28,7 +28,7 @@ async function buscarEnCentumBI(soloDigitos) {
     .query(`
       SELECT TOP 5 ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
              DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
-             CondicionIVAClienteID, ActivoCliente
+             CondicionIVAClienteID, ActivoCliente, EmailCliente
       FROM Clientes_VIEW
       WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1
     `)
@@ -45,6 +45,7 @@ async function buscarEnCentumBI(soloDigitos) {
     telefono: r.Telefono1Cliente?.trim() || null,
     codigo_centum: r.CodigoCliente?.trim() || null,
     ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
+    ...(r.EmailCliente?.trim() ? { email: r.EmailCliente.trim() } : {}),
   }
 
   // Buscar si existe localmente por id_centum (puede tener CUIT viejo)
@@ -433,24 +434,6 @@ router.get('/duplicados', verificarAuth, soloAdmin, async (req, res) => {
   }
 })
 
-// GET /api/clientes/bi-columns
-// Admin: descubrir columnas disponibles en Clientes_VIEW (temporario para diagnóstico)
-router.get('/bi-columns', verificarAuth, soloAdmin, async (req, res) => {
-  try {
-    const db = await getPool()
-    const result = await db.request().query(`SELECT TOP 1 * FROM Clientes_VIEW`)
-    const columns = result.recordset.length > 0 ? Object.keys(result.recordset[0]) : []
-    const sample = result.recordset[0] || {}
-    const relevant = columns.filter(c =>
-      /email|telefono|celular|fecha|modificac/i.test(c)
-    )
-    res.json({ total_columns: columns.length, relevant, all_columns: columns, sample_values: relevant.reduce((acc, c) => { acc[c] = sample[c]; return acc }, {}) })
-  } catch (err) {
-    console.error('Error bi-columns:', err.message)
-    res.status(500).json({ error: err.message })
-  }
-})
-
 // GET /api/clientes/:id
 // Detalle de un cliente
 router.get('/:id', verificarAuth, async (req, res) => {
@@ -640,7 +623,7 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
       .input('id', sql.Int, idCentum)
       .query(`
         SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente,
-               LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, ActivoCliente
+               LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, ActivoCliente, EmailCliente
         FROM Clientes_VIEW
         WHERE ClienteID = @id
       `)
@@ -679,6 +662,16 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
     // Centum BI es la fuente de verdad para condicion_iva (no hay UI para editar localmente)
     if (condicionIvaCentum) {
       updates.condicion_iva = condicionIvaCentum
+    }
+
+    // Email merge: Centum llena local vacío, local gana si ambos tienen
+    const centumEmail = r.EmailCliente?.trim() || null
+    if (centumEmail) {
+      // Verificar si local tiene email antes de sobrescribir
+      const { data: localCli } = await supabase.from('clientes').select('email').eq('id_centum', idCentum).single()
+      if (!localCli?.email) {
+        updates.email = centumEmail
+      }
     }
 
     const { data, error } = await supabase
