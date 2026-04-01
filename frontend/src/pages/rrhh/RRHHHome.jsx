@@ -521,7 +521,7 @@ const TabCuentaCorriente = () => {
                   <div key={idx}>
                     <div
                       className={`flex items-center justify-between py-2 px-3 rounded-lg ${
-                        mov._tipo === 'venta' ? 'bg-red-50 cursor-pointer hover:bg-red-100' : 'bg-green-50'
+                        mov._tipo === 'venta' ? 'bg-red-50 cursor-pointer hover:bg-red-100' : mov.monto < 0 ? 'bg-red-50' : 'bg-green-50'
                       }`}
                       onClick={() => mov._tipo === 'venta' && setVentaExpandida(ventaExpandida === mov.id ? null : mov.id)}
                     >
@@ -536,7 +536,7 @@ const TabCuentaCorriente = () => {
                           {mov._tipo === 'pago' && mov.registrado && ` · Por: ${mov.registrado.nombre || mov.registrado.username}`}
                         </p>
                       </div>
-                      <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : mov.monto < 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                      <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : mov.monto < 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {mov._tipo === 'venta' ? '+' : mov.monto < 0 ? '+' : '-'}{formatPrecio(Math.abs(mov._tipo === 'venta' ? mov.total : mov.monto))}
                       </span>
                     </div>
