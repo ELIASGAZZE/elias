@@ -65,15 +65,16 @@ function abrirVentanaImpresion(html) {
   // Esperar a que el contenido esté listo y lanzar impresión
   setTimeout(() => {
     try {
+      // Limpiar iframe solo después de que el usuario cierre el diálogo de impresión
+      iframe.contentWindow.addEventListener('afterprint', () => {
+        setTimeout(() => { try { document.body.removeChild(iframe) } catch {} }, 500)
+      })
       iframe.contentWindow.focus()
       iframe.contentWindow.print()
     } catch (e) {
       console.error('Error al imprimir:', e)
+      setTimeout(() => { try { document.body.removeChild(iframe) } catch {} }, 2000)
     }
-    // Limpiar iframe después de imprimir
-    setTimeout(() => {
-      try { document.body.removeChild(iframe) } catch {}
-    }, 2000)
   }, 100)
 }
 
@@ -742,21 +743,37 @@ export async function imprimirComprobanteA4(venta, caeData) {
   }, 100)
 }
 
-export function imprimirCierreCuentaEmpleado({ empleado, saldo, ventas, concepto }) {
+export function imprimirCierreCuentaEmpleado({ empleado, saldo, ventas, pagos, concepto }) {
   const ahora = new Date()
   const fechaStr = ahora.toLocaleDateString('es-AR') + ' ' + ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 
-  // Construir filas de la tabla (solo nro, fecha y monto — sin detalle de artículos)
+  // Unificar todos los movimientos en una timeline ordenada cronológicamente
+  const movimientos = [
+    ...(ventas || []).map(v => ({ tipo: 'consumo', fecha: v.created_at, monto: v.total, detalle: v.cajero?.nombre ? `Por: ${v.cajero.nombre}` : '' })),
+    ...(pagos || []).map(p => ({ tipo: 'pago', fecha: p.created_at, monto: p.monto, detalle: [p.concepto, p.registrado?.nombre ? `Por: ${p.registrado.nombre}` : ''].filter(Boolean).join(' · ') })),
+  ].sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+
+  let totalConsumos = 0
+  let totalPagos = 0
+
+  // Construir filas de la tabla
   let filasHtml = ''
-  let numComprobante = 0
-  ;(ventas || []).forEach(v => {
-    numComprobante++
-    const fecha = formatFechaHora(v.created_at)
+  let num = 0
+  movimientos.forEach(m => {
+    num++
+    const fecha = formatFechaHora(m.fecha)
+    const esConsumo = m.tipo === 'consumo'
+    const color = esConsumo ? '#dc2626' : '#16a34a'
+    const signo = esConsumo ? '+' : '-'
+
+    if (esConsumo) totalConsumos += m.monto
+    else totalPagos += m.monto
 
     filasHtml += `<tr>
-      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${numComprobante}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${num}</td>
       <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(fecha)}</td>
-      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap">${formatMonto(v.total)}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb">${esConsumo ? 'Consumo' : 'Pago'}${m.detalle ? ` <span style="color:#6b7280;font-size:11px">(${escapeHtml(m.detalle)})</span>` : ''}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap;color:${color}">${signo} ${formatMonto(m.monto)}</td>
     </tr>`
   })
 
@@ -800,13 +817,22 @@ export function imprimirCierreCuentaEmpleado({ empleado, saldo, ventas, concepto
     <tr>
       <th style="width:40px;text-align:center">#</th>
       <th>Fecha</th>
-      <th style="width:110px">Importe</th>
+      <th>Detalle</th>
+      <th style="width:120px">Importe</th>
     </tr>
   </thead>
   <tbody>
     ${filasHtml}
+    <tr style="border-top:1px solid #d1d5db">
+      <td colspan="3" style="padding:6px 8px;font-weight:bold">Total consumos</td>
+      <td style="padding:6px 8px;text-align:right;font-weight:bold;color:#dc2626">+ ${formatMonto(totalConsumos)}</td>
+    </tr>
+    ${totalPagos > 0 ? `<tr>
+      <td colspan="3" style="padding:6px 8px;font-weight:bold">Total pagos/adelantos</td>
+      <td style="padding:6px 8px;text-align:right;font-weight:bold;color:#16a34a">- ${formatMonto(totalPagos)}</td>
+    </tr>` : ''}
     <tr class="total-row">
-      <td colspan="2">TOTAL CONSUMIDO</td>
+      <td colspan="3">SALDO A DESCONTAR</td>
       <td>${formatMonto(saldo)}</td>
     </tr>
   </tbody>

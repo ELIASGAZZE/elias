@@ -274,6 +274,7 @@ const TabCuentaCorriente = () => {
   const [ventaExpandida, setVentaExpandida] = useState(null)
   const [ejecutandoCierre, setEjecutandoCierre] = useState(false)
   const [confirmandoCierre, setConfirmandoCierre] = useState(false)
+  const [reimprimiendo, setReimprimiendo] = useState(false)
 
   useEffect(() => { cargarSaldos() }, [])
 
@@ -362,6 +363,28 @@ const TabCuentaCorriente = () => {
     }
   }
 
+  const reimprimirUltimoCierre = async () => {
+    setReimprimiendo(true)
+    try {
+      const { data } = await api.get('/api/cuenta-empleados/ultimo-cierre')
+      const { cierres } = data
+
+      if (!cierres || cierres.length === 0) {
+        alert('No se encontró ningún cierre mensual previo')
+        return
+      }
+
+      for (let i = 0; i < cierres.length; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 1500))
+        imprimirCierreCuentaEmpleado(cierres[i])
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error al obtener último cierre')
+    } finally {
+      setReimprimiendo(false)
+    }
+  }
+
   const timeline = [
     ...(movimientos.ventas || []).map(v => ({ ...v, _tipo: 'venta', _fecha: v.created_at })),
     ...(movimientos.pagos || []).map(p => ({ ...p, _tipo: 'pago', _fecha: p.created_at })),
@@ -384,14 +407,23 @@ const TabCuentaCorriente = () => {
             ? `${empleadosConDeuda.length} empleado${empleadosConDeuda.length !== 1 ? 's' : ''} con deuda · Total: ${formatPrecio(totalDeuda)}`
             : 'Todos los saldos están en $0'}
         </p>
-        {empleadosConDeuda.length > 0 && !confirmandoCierre && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setConfirmandoCierre(true)}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            onClick={reimprimirUltimoCierre}
+            disabled={reimprimiendo}
+            className="border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
           >
-            Cierre mensual (todos a $0)
+            {reimprimiendo ? 'Reimprimiendo...' : 'Reimprimir último cierre'}
           </button>
-        )}
+          {empleadosConDeuda.length > 0 && !confirmandoCierre && (
+            <button
+              onClick={() => setConfirmandoCierre(true)}
+              className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              Cierre mensual (todos a $0)
+            </button>
+          )}
+        </div>
         {confirmandoCierre && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
             <span className="text-sm text-red-700">

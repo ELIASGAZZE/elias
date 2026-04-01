@@ -526,13 +526,19 @@ router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, async (req, res) 
       const saldo = (ventasMap[emp.id] || 0) - (pagosMap[emp.id] || 0)
       if (saldo <= 0) continue
 
-      // Traer movimientos (ventas) que componen la deuda pendiente
-      // (ventas sin pagar = todo lo que genera el saldo actual)
-      const { data: ventas } = await supabase
-        .from('ventas_empleados')
-        .select('id, items, total, created_at, cajero:perfiles!cajero_id(nombre)')
-        .eq('empleado_id', emp.id)
-        .order('created_at', { ascending: false })
+      // Traer todos los movimientos: ventas y pagos previos
+      const [ventasRes, pagosAntRes] = await Promise.all([
+        supabase
+          .from('ventas_empleados')
+          .select('id, items, total, created_at, cajero:perfiles!cajero_id(nombre)')
+          .eq('empleado_id', emp.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('pagos_cuenta_empleados')
+          .select('id, monto, concepto, created_at, registrado:perfiles!registrado_por(nombre)')
+          .eq('empleado_id', emp.id)
+          .order('created_at', { ascending: false }),
+      ])
 
       // Registrar pago que deja en $0
       const { error: errPago } = await supabase
@@ -549,12 +555,97 @@ router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, async (req, res) 
       cierres.push({
         empleado: emp,
         saldo,
-        ventas: ventas || [],
+        ventas: ventasRes.data || [],
+        pagos: pagosAntRes.data || [],
         concepto,
       })
     }
 
     res.json({ cierres, fecha: ahora.toISOString(), concepto })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/cuenta-empleados/ultimo-cierre — datos del último cierre mensual para reimprimir comprobantes
+router.get('/ultimo-cierre', verificarAuth, soloGestorOAdmin, async (req, res) => {
+  try {
+    // Buscar el pago de cierre más reciente (concepto empieza con "Cierre mensual")
+    const { data: ultimoPago, error: errPago } = await supabase
+      .from('pagos_cuenta_empleados')
+      .select('concepto, created_at')
+      .like('concepto', 'Cierre mensual%')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (errPago || !ultimoPago) {
+      return res.status(404).json({ error: 'No se encontró ningún cierre mensual previo' })
+    }
+
+    const concepto = ultimoPago.concepto
+    const fechaCierre = ultimoPago.created_at
+
+    // Traer todos los pagos de ese cierre (mismo concepto, misma fecha aprox — dentro de 5 min)
+    const fechaDesde = new Date(new Date(fechaCierre).getTime() - 5 * 60 * 1000).toISOString()
+    const fechaHasta = new Date(new Date(fechaCierre).getTime() + 5 * 60 * 1000).toISOString()
+
+    const { data: pagosCierre, error: errPagos } = await supabase
+      .from('pagos_cuenta_empleados')
+      .select('empleado_id, monto, concepto, created_at')
+      .eq('concepto', concepto)
+      .gte('created_at', fechaDesde)
+      .lte('created_at', fechaHasta)
+
+    if (errPagos) throw errPagos
+
+    if (!pagosCierre || pagosCierre.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron pagos del cierre' })
+    }
+
+    const empIds = pagosCierre.map(p => p.empleado_id)
+
+    // Traer datos de empleados
+    const { data: empleados } = await supabase
+      .from('empleados')
+      .select('id, nombre, codigo, sucursal_id, sucursales(nombre)')
+      .in('id', empIds)
+
+    const empMap = {}
+    ;(empleados || []).forEach(e => { empMap[e.id] = e })
+
+    // Para cada pago, traer ventas y pagos previos del empleado anteriores al cierre
+    const cierres = []
+    for (const pago of pagosCierre) {
+      const emp = empMap[pago.empleado_id]
+      if (!emp) continue
+
+      const [ventasRes, pagosAntRes] = await Promise.all([
+        supabase
+          .from('ventas_empleados')
+          .select('id, items, total, created_at, cajero:perfiles!cajero_id(nombre)')
+          .eq('empleado_id', pago.empleado_id)
+          .lte('created_at', fechaCierre)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('pagos_cuenta_empleados')
+          .select('id, monto, concepto, created_at, registrado:perfiles!registrado_por(nombre)')
+          .eq('empleado_id', pago.empleado_id)
+          .lte('created_at', fechaCierre)
+          .neq('concepto', concepto)  // excluir el pago de cierre mismo
+          .order('created_at', { ascending: false }),
+      ])
+
+      cierres.push({
+        empleado: emp,
+        saldo: pago.monto,
+        ventas: ventasRes.data || [],
+        pagos: pagosAntRes.data || [],
+        concepto,
+      })
+    }
+
+    res.json({ cierres, fecha: fechaCierre, concepto })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
