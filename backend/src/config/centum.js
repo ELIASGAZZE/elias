@@ -902,8 +902,56 @@ async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, div
   }
 }
 
+/**
+ * Obtiene ventas detalladas de Centum BI con cliente y usuario para conciliación.
+ * @param {string} fechaDesde - YYYY-MM-DD
+ * @param {string} fechaHasta - YYYY-MM-DD
+ * @returns {Array} recordset con campos extendidos
+ */
+async function getVentasCentumDetallado(fechaDesde, fechaHasta) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+    const result = await db.request()
+      .input('fechaDesde', sql.VarChar, fechaDesde)
+      .input('fechaHasta', sql.VarChar, fechaHasta)
+      .query(`
+        SELECT v.VentaID, v.NumeroDocumento, v.FechaDocumento,
+               v.FechaCreacion, v.Total, v.ClienteID, v.Anulado,
+               v.TipoComprobanteID, v.SucursalFisicaID,
+               v.DivisionEmpresaGrupoEconomicoID,
+               v.UsuarioID,
+               c.RazonSocialCliente,
+               s.NombreSucursalFisica
+        FROM Ventas_VIEW v
+        LEFT JOIN Clientes_VIEW c ON c.ClienteID = v.ClienteID
+        LEFT JOIN SucursalesFisicas_VIEW s ON s.SucursalFisicaID = v.SucursalFisicaID
+        WHERE v.FechaDocumento >= @fechaDesde
+          AND v.FechaDocumento <= @fechaHasta
+          AND v.Anulado = 0
+        ORDER BY v.VentaID
+      `)
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumDetallado',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: result.recordset.length, origen: 'conciliacion',
+    })
+
+    return result.recordset
+  } catch (err) {
+    console.error('[Centum BI] Error al obtener ventas detallado:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumDetallado',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'conciliacion',
+    })
+    throw err
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
   getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno, getVentasCentumByFecha,
-  getResumenVentasCentumBI,
+  getResumenVentasCentumBI, getVentasCentumDetallado,
 }

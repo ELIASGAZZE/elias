@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { getVentasCentumByFecha, getResumenVentasCentumBI } = require('../config/centum')
+const { getVentasCentumByFecha, getResumenVentasCentumBI, getVentasCentumDetallado } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const { crearClienteEnCentum } = require('../services/centumClientes')
 const crypto = require('crypto')
@@ -863,9 +863,9 @@ router.get('/ventas', verificarAuth, async (req, res) => {
         const hasta = `${req.query.fecha_hasta}T23:59:59-03:00`
         query = query.lte('created_at', hasta)
       }
-      // Filtro "Sin Centum": solo ventas no sincronizadas
+      // Filtro "Sin Centum": solo ventas no sincronizadas y sin comprobante
       if (req.query.sin_centum === '1') {
-        query = query.eq('centum_sync', false)
+        query = query.eq('centum_sync', false).is('centum_comprobante', null)
       }
       // Filtro "Sin CAE": ventas sin número de CAE
       if (req.query.sin_cae === '1') {
@@ -985,7 +985,7 @@ router.get('/ventas', verificarAuth, async (req, res) => {
           .select('total, tipo, pagos, id_cliente_centum')
         if (req.query.fecha) qResumen = qResumen.gte('created_at', `${req.query.fecha}T00:00:00-03:00`)
         if (req.query.fecha_hasta) qResumen = qResumen.lte('created_at', `${req.query.fecha_hasta}T23:59:59-03:00`)
-        if (req.query.sin_centum === '1') qResumen = qResumen.eq('centum_sync', false)
+        if (req.query.sin_centum === '1') qResumen = qResumen.eq('centum_sync', false).is('centum_comprobante', null)
         if (req.query.sin_cae === '1') qResumen = qResumen.is('numero_cae', null)
         if (req.query.filtro_empleado === 'empleados') qResumen = qResumen.ilike('nombre_cliente', 'Empleado:%')
         else if (req.query.filtro_empleado === 'no_empleados') qResumen = qResumen.not('nombre_cliente', 'ilike', 'Empleado:%')
@@ -1041,24 +1041,33 @@ router.get('/ventas', verificarAuth, async (req, res) => {
   }
 })
 
-// GET /api/pos/ventas/reconciliacion — Cruzar ventas POS vs Centum BI
+// GET /api/pos/ventas/reconciliacion — Legacy (mantener por compat)
 router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) => {
+  // Redirigir al nuevo endpoint
+  req.url = req.url.replace('reconciliacion', 'conciliacion')
+  router.handle(req, res)
+})
+
+// GET /api/pos/ventas/conciliacion — Cruzar ventas POS vs Centum BI (mejorado)
+router.get('/ventas/conciliacion', verificarAuth, soloAdmin, async (req, res) => {
   try {
-    const { fecha, fecha_hasta } = req.query
+    const { fecha, fecha_hasta, sucursal_id, estado, page: pageStr, page_size: pageSizeStr } = req.query
     if (!fecha) return res.status(400).json({ error: 'Parámetro fecha requerido (YYYY-MM-DD)' })
 
     const fechaDesde = fecha
     const fechaHasta = fecha_hasta || fecha
+    const pageNum = Math.max(1, parseInt(pageStr) || 1)
+    const pageSize = Math.min(200, Math.max(10, parseInt(pageSizeStr) || 50))
 
-    // 1. Obtener PVs del POS
-    const { data: cajas } = await supabase
-      .from('cajas')
-      .select('punto_venta_centum')
-      .not('punto_venta_centum', 'is', null)
+    // 1. Obtener cajas/PVs (filtrar por sucursal si se pide)
+    let cajasQuery = supabase.from('cajas').select('id, punto_venta_centum, sucursal_id, nombre').not('punto_venta_centum', 'is', null)
+    if (sucursal_id) cajasQuery = cajasQuery.eq('sucursal_id', sucursal_id)
+    const { data: cajas } = await cajasQuery
     const pvsPos = new Set((cajas || []).map(c => c.punto_venta_centum))
 
-    // 2. Consultar Centum BI
-    const ventasCentum = await getVentasCentumByFecha(fechaDesde, fechaHasta)
+    // 2. Obtener sucursales para nombres
+    const { data: sucursalesData } = await supabase.from('sucursales').select('id, nombre')
+    const sucursalesMap = new Map((sucursalesData || []).map(s => [s.id, s.nombre]))
 
     // Helper: parsear NumeroDocumento "B00007-00002942" → { pv: 7, num: 2942 }
     function parsearNumeroDocumento(str) {
@@ -1068,18 +1077,26 @@ router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) 
       return { pv: parseInt(match[1], 10), num: parseInt(match[2], 10) }
     }
 
-    // 3. Filtrar ventas de Centum que usen PVs del POS
+    // 3. Consultar Centum BI (detallado con cliente y usuario)
+    const ventasCentum = await getVentasCentumDetallado(fechaDesde, fechaHasta)
+
+    // Filtrar por PVs del POS y solo ventas del Usuario API (UsuarioID 1301)
+    const USUARIO_API_ID = 1301
     const centumPOS = ventasCentum.filter(v => {
+      if (v.UsuarioID !== USUARIO_API_ID) return false
       const parsed = parsearNumeroDocumento(v.NumeroDocumento)
       return parsed && pvsPos.has(parsed.pv)
     })
 
     // 4. Consultar ventas POS del mismo rango
-    const { data: ventasPOS } = await supabase
+    let posQuery = supabase
       .from('ventas_pos')
-      .select('id, total, numero_comprobante, centum_sync, id_venta_centum, created_at')
-      .gte('created_at', `${fechaDesde}T00:00:00`)
-      .lte('created_at', `${fechaHasta}T23:59:59`)
+      .select('id, total, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
+      .gte('created_at', `${fechaDesde}T00:00:00-03:00`)
+      .lte('created_at', `${fechaHasta}T23:59:59-03:00`)
+    if (sucursal_id) posQuery = posQuery.eq('sucursal_id', sucursal_id)
+    const { data: ventasPOS, error: posError } = await posQuery
+    if (posError) console.error('[Conciliacion] Error Supabase ventas_pos:', posError.message)
 
     // Indexar POS por id_venta_centum
     const posPorVentaId = new Map()
@@ -1087,70 +1104,166 @@ router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) 
       if (v.id_venta_centum) posPorVentaId.set(v.id_venta_centum, v)
     }
 
-    // Indexar Centum por VentaID
-    const centumPorId = new Set(centumPOS.map(v => v.VentaID))
-
-    // 5. Cruzar
-    const fantasmas = []
-    const discrepancias = []
-    const faltantes = []
-
-    for (const vc of centumPOS) {
-      const posMatch = posPorVentaId.get(vc.VentaID)
-      if (!posMatch) {
-        fantasmas.push({
-          venta_id: vc.VentaID,
-          numero_documento: vc.NumeroDocumento?.trim(),
-          total: vc.Total,
-          fecha: vc.FechaDocumento,
-          fecha_creacion: vc.FechaCreacion,
-          cliente_id: vc.ClienteID,
-        })
-      } else {
-        const totalCentum = parseFloat(vc.Total) || 0
-        const totalPOS = parseFloat(posMatch.total) || 0
-        if (totalPOS > 0 && Math.abs(totalCentum - totalPOS) / totalPOS > 0.05) {
-          discrepancias.push({
-            venta_id: vc.VentaID,
-            numero_documento: vc.NumeroDocumento?.trim(),
-            total_centum: totalCentum,
-            total_pos: totalPOS,
-            diferencia_pct: Math.round(Math.abs(totalCentum - totalPOS) / totalPOS * 100),
-            pos_id: posMatch.id,
-          })
+    // Buscar ventas POS faltantes que matchean con Centum pero cayeron fuera del rango de fecha POS
+    // (por diferencia de timezone entre FechaDocumento Centum y created_at POS)
+    const centumIdsNoMatcheados = centumPOS
+      .map(v => v.VentaID)
+      .filter(id => !posPorVentaId.has(id))
+    if (centumIdsNoMatcheados.length > 0) {
+      const { data: ventasPOSExtra } = await supabase
+        .from('ventas_pos')
+        .select('id, total, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
+        .in('id_venta_centum', centumIdsNoMatcheados)
+      for (const v of (ventasPOSExtra || [])) {
+        if (v.id_venta_centum && !posPorVentaId.has(v.id_venta_centum)) {
+          posPorVentaId.set(v.id_venta_centum, v)
+          ventasPOS.push(v)
         }
       }
     }
 
+    // Indexar Centum por VentaID
+    const centumPorId = new Map(centumPOS.map(v => [v.VentaID, v]))
+
+    // Tolerancia de matching: <= $1 O <= 0.5%
+    function totalesCoinciden(totalPOS, totalCentum) {
+      const diff = Math.abs(totalCentum - totalPOS)
+      if (diff <= 1) return true
+      if (totalPOS > 0 && (diff / totalPOS) <= 0.005) return true
+      return false
+    }
+
+    // 5. Clasificar todas las filas
+    const allRows = []
+    const matchedCentumIds = new Set()
+
+    // Recorrer ventas POS
     for (const vp of (ventasPOS || [])) {
-      if (vp.centum_sync && vp.id_venta_centum && !centumPorId.has(vp.id_venta_centum)) {
-        faltantes.push({
-          pos_id: vp.id,
-          id_venta_centum: vp.id_venta_centum,
-          numero_comprobante: vp.numero_comprobante,
-          total: vp.total,
-          fecha: vp.created_at,
+      const totalPOS = parseFloat(vp.total) || 0
+      const sucNombre = sucursalesMap.get(vp.sucursal_id) || '—'
+
+      if (!vp.centum_sync && !vp.centum_comprobante) {
+        // Pendiente de sync
+        allRows.push({
+          pos_id: vp.id, centum_venta_id: null, status: 'pending_sync', tipo: vp.tipo || 'venta',
+          fecha_pos: vp.created_at, numero_venta: vp.numero_venta,
+          cliente_pos: vp.nombre_cliente || 'Consumidor Final', sucursal_pos: sucNombre,
+          total_pos: totalPOS,
+          fecha_centum: null, comprobante: null, cliente_centum: null,
+          sucursal_centum: null, division_centum: null, total_centum: null,
+          diferencia: null, centum_error: vp.centum_error,
+        })
+        continue
+      }
+
+      if (vp.id_venta_centum && centumPorId.has(vp.id_venta_centum)) {
+        // Tiene match en Centum
+        const vc = centumPorId.get(vp.id_venta_centum)
+        matchedCentumIds.add(vc.VentaID)
+        const totalCentum = parseFloat(vc.Total) || 0
+        const diff = Math.round((totalCentum - totalPOS) * 100) / 100
+        const coincide = totalesCoinciden(totalPOS, totalCentum)
+
+        allRows.push({
+          pos_id: vp.id, centum_venta_id: vc.VentaID, status: coincide ? 'matched' : 'mismatch', tipo: vp.tipo || 'venta',
+          fecha_pos: vp.created_at, numero_venta: vp.numero_venta,
+          cliente_pos: vp.nombre_cliente || 'Consumidor Final', sucursal_pos: sucNombre,
+          total_pos: totalPOS,
+          fecha_centum: vc.FechaDocumento, comprobante: vc.NumeroDocumento?.trim() || '—',
+          cliente_centum: vc.RazonSocialCliente || '—', sucursal_centum: vc.NombreSucursalFisica?.trim() || '—',
+          division_centum: vc.DivisionEmpresaGrupoEconomicoID === 2 ? 'PRUEBA' : vc.DivisionEmpresaGrupoEconomicoID === 3 ? 'EMPRESA' : null,
+          total_centum: totalCentum, diferencia: diff, centum_error: null,
+        })
+      } else if (vp.centum_sync && vp.id_venta_centum) {
+        // Sync=true pero no encontrada en BI
+        allRows.push({
+          pos_id: vp.id, centum_venta_id: vp.id_venta_centum, status: 'missing_centum', tipo: vp.tipo || 'venta',
+          fecha_pos: vp.created_at, numero_venta: vp.numero_venta,
+          cliente_pos: vp.nombre_cliente || 'Consumidor Final', sucursal_pos: sucNombre,
+          total_pos: totalPOS,
+          fecha_centum: null, comprobante: vp.centum_comprobante || '—',
+          cliente_centum: null, sucursal_centum: null, division_centum: null, total_centum: null,
+          diferencia: null, centum_error: null,
+        })
+      } else if (vp.centum_sync && !vp.id_venta_centum) {
+        // Sync marcado pero sin ID centum (error de sync)
+        allRows.push({
+          pos_id: vp.id, centum_venta_id: null, status: 'pending_sync', tipo: vp.tipo || 'venta',
+          fecha_pos: vp.created_at, numero_venta: vp.numero_venta,
+          cliente_pos: vp.nombre_cliente || 'Consumidor Final', sucursal_pos: sucNombre,
+          total_pos: totalPOS,
+          fecha_centum: null, comprobante: null, cliente_centum: null,
+          sucursal_centum: null, division_centum: null, total_centum: null,
+          diferencia: null, centum_error: vp.centum_error,
         })
       }
     }
 
-    res.json({
-      fecha: fechaDesde,
-      fecha_hasta: fechaHasta,
-      resumen: {
-        centum_api_total: centumPOS.length,
-        pos_synced_total: (ventasPOS || []).filter(v => v.centum_sync).length,
-        fantasmas: fantasmas.length,
-        discrepancias: discrepancias.length,
-        faltantes_centum: faltantes.length,
-      },
-      fantasmas,
-      discrepancias,
-      faltantes_centum: faltantes,
-    })
+    // Ventas en Centum sin match en POS (missing_pos / "fantasmas")
+    for (const vc of centumPOS) {
+      if (matchedCentumIds.has(vc.VentaID)) continue
+      // Verificar que no haya match por otro medio
+      if (posPorVentaId.has(vc.VentaID)) continue
+
+      const totalCentum = parseFloat(vc.Total) || 0
+      const tiposNC = [3, 6, 7, 8]
+      allRows.push({
+        pos_id: null, centum_venta_id: vc.VentaID, status: 'missing_pos',
+        tipo: tiposNC.includes(vc.TipoComprobanteID) ? 'nota_credito' : 'venta',
+        fecha_pos: null, numero_venta: null, cliente_pos: null, sucursal_pos: null, total_pos: null,
+        fecha_centum: vc.FechaDocumento, comprobante: vc.NumeroDocumento?.trim() || '—',
+        cliente_centum: vc.RazonSocialCliente || `ClienteID ${vc.ClienteID}`,
+        sucursal_centum: vc.NombreSucursalFisica?.trim() || '—',
+        division_centum: vc.DivisionEmpresaGrupoEconomicoID === 2 ? 'PRUEBA' : vc.DivisionEmpresaGrupoEconomicoID === 3 ? 'EMPRESA' : null,
+        total_centum: totalCentum, diferencia: null, centum_error: null,
+      })
+    }
+
+    // 6. KPIs sobre todas las filas (antes de filtrar por estado)
+    const kpis = {
+      pos: { count: (ventasPOS || []).length, total: (ventasPOS || []).reduce((s, v) => s + (parseFloat(v.total) || 0), 0) },
+      centum: { count: centumPOS.length, total: centumPOS.reduce((s, v) => s + (parseFloat(v.Total) || 0), 0) },
+      matched: { count: 0, total: 0 },
+      mismatch: { count: 0, total_diff: 0 },
+      missing_centum: { count: 0, total: 0 },
+      missing_pos: { count: 0, total: 0 },
+      pending_sync: { count: 0, total: 0 },
+    }
+    for (const r of allRows) {
+      switch (r.status) {
+        case 'matched': kpis.matched.count++; kpis.matched.total += r.total_pos || 0; break
+        case 'mismatch': kpis.mismatch.count++; kpis.mismatch.total_diff += Math.abs(r.diferencia || 0); break
+        case 'missing_centum': kpis.missing_centum.count++; kpis.missing_centum.total += r.total_pos || 0; break
+        case 'missing_pos': kpis.missing_pos.count++; kpis.missing_pos.total += r.total_centum || 0; break
+        case 'pending_sync': kpis.pending_sync.count++; kpis.pending_sync.total += r.total_pos || 0; break
+      }
+    }
+
+    // Redondear KPIs
+    kpis.pos.total = Math.round(kpis.pos.total * 100) / 100
+    kpis.centum.total = Math.round(kpis.centum.total * 100) / 100
+    kpis.matched.total = Math.round(kpis.matched.total * 100) / 100
+    kpis.mismatch.total_diff = Math.round(kpis.mismatch.total_diff * 100) / 100
+    kpis.missing_centum.total = Math.round(kpis.missing_centum.total * 100) / 100
+    kpis.missing_pos.total = Math.round(kpis.missing_pos.total * 100) / 100
+    kpis.pending_sync.total = Math.round(kpis.pending_sync.total * 100) / 100
+
+    // 7. Filtrar por estado si se pide
+    const filtered = estado ? allRows.filter(r => r.status === estado) : allRows
+
+    // Ordenar: problemas primero
+    const statusOrder = { pending_sync: 0, missing_centum: 1, mismatch: 2, missing_pos: 3, matched: 4 }
+    filtered.sort((a, b) => (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5))
+
+    // 8. Paginar
+    const totalFiltered = filtered.length
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize))
+    const rows = filtered.slice((pageNum - 1) * pageSize, pageNum * pageSize)
+
+    res.json({ kpis, rows, page: pageNum, totalPages, totalFiltered })
   } catch (err) {
-    console.error('[POS] Error en reconciliación:', err.message)
-    res.status(500).json({ error: 'Error al ejecutar reconciliación', detalle: err.message })
+    console.error('[POS] Error en conciliación:', err.message)
+    res.status(500).json({ error: 'Error al ejecutar conciliación', detalle: err.message })
   }
 })
 
@@ -1612,6 +1725,9 @@ router.delete('/ventas/:id', verificarAuth, soloAdmin, async (req, res) => {
       }
     }
 
+    // Eliminar movimientos de gift card asociados
+    await supabase.from('movimientos_gift_card').delete().eq('venta_pos_id', req.params.id)
+
     const { error: delErr } = await supabase
       .from('ventas_pos')
       .delete()
@@ -1621,8 +1737,8 @@ router.delete('/ventas/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ ok: true })
   } catch (err) {
-    console.error('[POS] Error al eliminar venta:', err.message)
-    res.status(500).json({ error: 'Error al eliminar venta' })
+    console.error('[POS] Error al eliminar venta:', err.message, err.details || '', err.hint || '')
+    res.status(500).json({ error: 'Error al eliminar venta', detalle: err.message })
   }
 })
 
