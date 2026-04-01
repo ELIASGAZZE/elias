@@ -6,12 +6,17 @@ services:
     buildCommand: npm install
     startCommand: node src/index.js
     envVars:
+      # Supabase
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # Servidor
       - key: FRONTEND_URL
         sync: false
+      - key: BACKEND_URL
+        sync: false
+      # Centum ERP (API REST)
       - key: CENTUM_BASE_URL
         sync: false
       - key: CENTUM_API_KEY
@@ -19,4 +24,59 @@ services:
       - key: CENTUM_CONSUMER_ID
         sync: false
       - key: CENTUM_CLIENT_ID
+        sync: false
+      - key: CENTUM_OPERADOR_PRUEBA_USER
+        sync: false
+      # Centum BI (SQL Server)
+      - key: CENTUM_BI_SERVER
+        sync: false
+      - key: CENTUM_BI_PORT
+        sync: false
+      - key: CENTUM_BI_DATABASE
+        sync: false
+      - key: CENTUM_BI_USER
+        sync: false
+      - key: CENTUM_BI_PASSWORD
+        sync: false
+      # AFIP
+      - key: AFIP_ACCESS_TOKEN
+        sync: false
+      # Mercado Pago
+      - key: MP_ACCESS_TOKEN
+        sync: false
+      # Email
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # Push Notifications
+      - key: VAPID_SUBJECT
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      # Talo
+      - key: TALO_USER_ID
+        sync: false
+      - key: TALO_CLIENT_ID
+        sync: false
+      - key: TALO_CLIENT_SECRET
+        sync: false
+      # Claude AI
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # MCP
+      - key: MCP_USER
+        sync: false
+      - key: MCP_PASSWORD
+        sync: false
+      # Otros
+      - key: EMERGENCY_PIN
+        sync: false
+      - key: GOOGLE_SHEET_NOTIFICACIONES_ID
         sync: false
