@@ -91,7 +91,7 @@ async function syncClientesRecientes(horasAtras = 2) {
     .query(`
       SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
              DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
-             CondicionIVAClienteID
+             CondicionIVAClienteID, EmailCliente
       FROM Clientes_VIEW
       WHERE ActivoCliente = 1 AND FechaAltaCliente >= @desde
     `)
@@ -112,13 +112,24 @@ async function syncClientesRecientes(horasAtras = 2) {
     telefono: r.Telefono1Cliente?.trim() || null,
     codigo_centum: r.CodigoCliente?.trim() || null,
     ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
+    // Email desde BI (solo se incluye si tiene valor, para merge policy)
+    ...(r.EmailCliente?.trim() ? { _centum_email: r.EmailCliente.trim() } : {}),
   })
 
   // Obtener todos los clientes locales (con y sin id_centum) para evitar duplicados por CUIT
-  const { data: todosLocales } = await supabase
-    .from('clientes')
-    .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo_centum')
-    .eq('activo', true)
+  // Paginado para superar el límite de 1000 filas de Supabase
+  let todosLocales = []
+  let fromLocal = 0
+  while (true) {
+    const { data } = await supabase
+      .from('clientes')
+      .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo_centum, email, celular')
+      .eq('activo', true)
+      .range(fromLocal, fromLocal + 999)
+    todosLocales = todosLocales.concat(data || [])
+    if (!data || data.length < 1000) break
+    fromLocal += 1000
+  }
 
   const existentesMap = new Map((todosLocales || []).filter(e => e.id_centum).map(e => [e.id_centum, e]))
   const cuitMap = new Map((todosLocales || []).filter(e => e.cuit).map(e => [e.cuit.replace(/\D/g, ''), e]))
@@ -145,11 +156,20 @@ async function syncClientesRecientes(horasAtras = 2) {
   }
 
   // También actualizar todos los clientes locales activos con datos de Centum BI
-  const { data: localesActivos } = await supabase
-    .from('clientes')
-    .select('id, id_centum')
-    .eq('activo', true)
-    .not('id_centum', 'is', null)
+  // Paginado para superar el límite de 1000 filas de Supabase
+  let localesActivos = []
+  let fromActivos = 0
+  while (true) {
+    const { data } = await supabase
+      .from('clientes')
+      .select('id, id_centum')
+      .eq('activo', true)
+      .not('id_centum', 'is', null)
+      .range(fromActivos, fromActivos + 999)
+    localesActivos = localesActivos.concat(data || [])
+    if (!data || data.length < 1000) break
+    fromActivos += 1000
+  }
 
   if (localesActivos && localesActivos.length > 0) {
     const idsActivos = localesActivos.map(c => c.id_centum)
@@ -157,7 +177,7 @@ async function syncClientesRecientes(horasAtras = 2) {
     for (let i = 0; i < idsActivos.length; i += 500) {
       const lote = idsActivos.slice(i, i + 500)
       const resCentum = await db.request().query(
-        `SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID
+        `SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, EmailCliente
          FROM Clientes_VIEW
          WHERE ActivoCliente = 1 AND ClienteID IN (${lote.join(',')})`
       )
@@ -165,10 +185,21 @@ async function syncClientesRecientes(horasAtras = 2) {
         const local = existentesMap.get(r.ClienteID)
         if (!local) continue
         const centumData = mapearCliente(r)
+
+        // Merge email: Centum llena local vacío, local gana si ambos tienen valor
+        const emailMerge = {}
+        if (centumData._centum_email && !local.email) {
+          emailMerge.email = centumData._centum_email
+        }
+        delete centumData._centum_email
+
+        const updateData = { ...centumData, ...emailMerge }
+
         // Solo actualizar si hay diferencias
-        const cambio = Object.keys(centumData).some(k => (centumData[k] || null) !== (local[k] || null))
+        const normalize = v => (v === undefined || v === '' ? null : v)
+        const cambio = Object.keys(updateData).some(k => normalize(updateData[k]) !== normalize(local[k]))
         if (cambio) {
-          await supabase.from('clientes').update(centumData).eq('id', local.id)
+          await supabase.from('clientes').update(updateData).eq('id', local.id)
         }
       }
     }
@@ -219,14 +250,22 @@ async function syncClientesRecientes(horasAtras = 2) {
   // Desactivar clientes locales activos que ya no son clientes en Centum
   let desactivadosCount = 0
   try {
-    const { data: localesActivos } = await supabase
-      .from('clientes')
-      .select('id, id_centum')
-      .eq('activo', true)
-      .not('id_centum', 'is', null)
+    let localesActivosDesact = []
+    let fromDesact = 0
+    while (true) {
+      const { data } = await supabase
+        .from('clientes')
+        .select('id, id_centum')
+        .eq('activo', true)
+        .not('id_centum', 'is', null)
+        .range(fromDesact, fromDesact + 999)
+      localesActivosDesact = localesActivosDesact.concat(data || [])
+      if (!data || data.length < 1000) break
+      fromDesact += 1000
+    }
 
-    if (localesActivos && localesActivos.length > 0) {
-      const idsLocales = localesActivos.map(c => c.id_centum)
+    if (localesActivosDesact.length > 0) {
+      const idsLocales = localesActivosDesact.map(c => c.id_centum)
       // Consultar cuáles están inactivos en Centum (en lotes de 500)
       for (let i = 0; i < idsLocales.length; i += 500) {
         const lote = idsLocales.slice(i, i + 500)
@@ -234,7 +273,7 @@ async function syncClientesRecientes(horasAtras = 2) {
           `SELECT ClienteID FROM Clientes_VIEW WHERE ActivoCliente = 0 AND ClienteID IN (${lote.join(',')})`
         )
         for (const r of resInactivos.recordset) {
-          const cli = localesActivos.find(c => c.id_centum === r.ClienteID)
+          const cli = localesActivosDesact.find(c => c.id_centum === r.ClienteID)
           if (cli) {
             const { error: errDesact } = await supabase
               .from('clientes')
@@ -255,13 +294,21 @@ async function syncClientesRecientes(horasAtras = 2) {
   // Reactivar clientes locales inactivos que fueron reactivados en Centum
   let reactivadosCount = 0
   try {
-    const { data: localesInactivos } = await supabase
-      .from('clientes')
-      .select('id, id_centum')
-      .eq('activo', false)
-      .not('id_centum', 'is', null)
+    let localesInactivos = []
+    let fromInact = 0
+    while (true) {
+      const { data } = await supabase
+        .from('clientes')
+        .select('id, id_centum')
+        .eq('activo', false)
+        .not('id_centum', 'is', null)
+        .range(fromInact, fromInact + 999)
+      localesInactivos = localesInactivos.concat(data || [])
+      if (!data || data.length < 1000) break
+      fromInact += 1000
+    }
 
-    if (localesInactivos && localesInactivos.length > 0) {
+    if (localesInactivos.length > 0) {
       const idsInactivos = localesInactivos.map(c => c.id_centum)
       for (let i = 0; i < idsInactivos.length; i += 500) {
         const lote = idsInactivos.slice(i, i + 500)
@@ -820,7 +867,7 @@ async function syncClientesFaltantes() {
   const resCentum = await db.request().query(`
     SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
            DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
-           CondicionIVAClienteID
+           CondicionIVAClienteID, EmailCliente
     FROM Clientes_VIEW
     WHERE ActivoCliente = 1
   `)
@@ -897,6 +944,7 @@ async function syncClientesFaltantes() {
     telefono: r.Telefono1Cliente?.trim() || null,
     codigo_centum: r.CodigoCliente?.trim() || null,
     condicion_iva: r.CondicionIVAClienteID != null ? mapCondicionIVA(r.CondicionIVAClienteID) : 'CF',
+    email: r.EmailCliente?.trim() || null,
     id_centum: r.ClienteID,
     activo: true,
   }))
