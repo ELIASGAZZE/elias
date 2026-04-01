@@ -176,6 +176,8 @@ const VentasHome = () => {
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
       if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
+      if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
+      if (filtroCentum === 'sin_cae') params.append('sin_cae', '1')
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
@@ -191,8 +193,7 @@ const VentasHome = () => {
     if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
     if (filtroSucursales.length > 0 && !filtroSucursales.includes(v.sucursal_id)) return false
     // filtroEmpleado se aplica en el backend
-    if (filtroCentum === 'sin_centum' && (v.centum_sync || v.centum_comprobante)) return false
-    if (filtroCentum === 'sin_cae' && v.numero_cae) return false
+    // sin_centum y sin_cae se filtran en el backend
     return true
   })
 
@@ -245,7 +246,7 @@ const VentasHome = () => {
       <Navbar sinTabs titulo="Ventas" volverA="/apps" />
       <VentasTabBar />
 
-      <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+      <div className="w-full px-6 py-4 space-y-4">
         {/* Filtros */}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex items-center gap-1">
@@ -516,9 +517,9 @@ const VentasHome = () => {
             {busqueda ? 'Sin resultados para la búsqueda' : 'No hay ventas para esta fecha'}
           </div>
         ) : (
-          <div className="space-y-2">
+          <div>
             {totalPages > 1 && (
-              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5">
+              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5 mb-2">
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page <= 1}
@@ -538,189 +539,179 @@ const VentasHome = () => {
                 </button>
               </div>
             )}
-            {ventasFiltradas.map(v => {
-              const pagos = v.pagos || []
-              const mediosUsados = [...new Set(pagos.map(p => MEDIOS_LABELS[p.medio] || p.medio))]
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-3 py-2.5">#</th>
+                    <th className="px-3 py-2.5">Tipo</th>
+                    <th className="px-3 py-2.5">Fecha</th>
+                    <th className="px-3 py-2.5">Cliente</th>
+                    <th className="px-3 py-2.5">Clasif.</th>
+                    <th className="px-3 py-2.5">Sucursal</th>
+                    <th className="px-3 py-2.5">Caja</th>
+                    {esAdmin && <th className="px-3 py-2.5">Empleado</th>}
+                    <th className="px-3 py-2.5">Comprobante</th>
+                    <th className="px-3 py-2.5">Medios</th>
+                    <th className="px-3 py-2.5 text-right">Total</th>
+                    <th className="px-3 py-2.5 text-center">Acc.</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {ventasFiltradas.map(v => {
+                    const pagos = v.pagos || []
+                    const mediosUsados = [...new Set(pagos.map(p => MEDIOS_LABELS[p.medio] || p.medio))]
 
-              return (
-                <Link
-                  key={v.id}
-                  to={`/ventas/${v.id}`}
-                  className="block bg-white rounded-xl border border-gray-200 p-4 hover:border-rose-300 hover:shadow-sm transition-all"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        {v.tipo === 'nota_credito' ? (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-red-100 text-red-700">NC</span>
-                        ) : (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-emerald-100 text-emerald-700">Venta</span>
-                        )}
-                        {v.numero_venta && (
-                          <span className={`text-sm font-bold ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-blue-600'}`}>
-                            #{v.numero_venta}
+                    return (
+                      <tr
+                        key={v.id}
+                        onClick={() => window.location.href = `/ventas/${v.id}`}
+                        className="hover:bg-rose-50 cursor-pointer transition-colors"
+                      >
+                        <td className="px-3 py-2 font-bold text-blue-600 whitespace-nowrap">
+                          {v.numero_venta ? `#${v.numero_venta}` : '—'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {v.tipo === 'nota_credito' ? (
+                            <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-red-100 text-red-700">NC</span>
+                          ) : (
+                            <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-emerald-100 text-emerald-700">Venta</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{formatFechaHora(v.created_at)}</td>
+                        <td className="px-3 py-2 text-gray-700 max-w-[200px] truncate" title={v.nombre_cliente || 'Consumidor Final'}>
+                          {v.nombre_cliente || 'Consumidor Final'}
+                          {v.pedido && (
+                            <span className="ml-1 text-xs text-violet-600">P#{v.pedido.numero || '—'}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                            v.clasificacion === 'EMPRESA'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {v.clasificacion}
                           </span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">{v.sucursales?.nombre || '—'}</td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">{v.cajas?.nombre || '—'}</td>
+                        {esAdmin && (
+                          <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">
+                            {v.empleado_nombre || v.perfiles?.nombre || '—'}
+                          </td>
                         )}
-                        {v.clasificacion === 'EMPRESA' && v.numero_cae && (
-                          <span className="text-xs bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-mono" title={`CAE: ${v.numero_cae}`}>
-                            CAE {v.numero_cae}
-                          </span>
-                        )}
-                        <span className="text-sm font-medium text-gray-800">
-                          {formatFechaHora(v.created_at)}
-                        </span>
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                          v.clasificacion === 'EMPRESA'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-amber-100 text-amber-700'
-                        }`}>
-                          {v.clasificacion}
-                        </span>
-                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
-                          {v.sucursales?.nombre || 'Sin sucursal'}
-                        </span>
-                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600">
-                          {v.cajas?.nombre || 'Sin caja'}
-                        </span>
-                        {esAdmin && (v.empleado_nombre || v.perfiles?.nombre) && (
-                          <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
-                            {v.empleado_nombre || v.perfiles.nombre}
-                          </span>
-                        )}
-                        {v.gift_cards_vendidas && v.gift_cards_vendidas.length > 0 && (
-                          <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-medium border border-gray-300">
-                            gift card
-                          </span>
-                        )}
-                        {v.pedido && (
-                          <span className="text-xs bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded">
-                            Pedido #{v.pedido.numero || '—'}
-                          </span>
-                        )}
-                        {v.centum_comprobante && (
-                          <span className="text-xs bg-green-50 text-green-600 px-1.5 py-0.5 rounded">
-                            {v.centum_comprobante}
-                          </span>
-                        )}
-                        {v.clasificacion === 'EMPRESA' && v.centum_sync && !v.numero_cae && (
-                          <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded" title="Venta no autorizada por ARCA (sin CAE)">
-                            Sin autorizar ARCA
-                          </span>
-                        )}
-                        {esAdmin && !v.centum_sync && !v.centum_comprobante && (
-                          <button
-                            onClick={(e) => reenviarCentum(e, v.id)}
-                            disabled={reenviando === v.id}
-                            className={`text-xs px-1.5 py-0.5 rounded disabled:opacity-50 transition-colors ${
-                              v.centum_error
-                                ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                                : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-                            }`}
-                            title={v.centum_error || 'Aguardando sync automático'}
-                          >
-                            {reenviando === v.id ? 'Enviando...' : v.centum_error ? 'Reintentar Centum' : 'Enviar a Centum'}
-                          </button>
-                        )}
-                      </div>
-                      <p className="text-sm text-gray-500 truncate">
-                        {v.nombre_cliente || 'Consumidor Final'}
-                      </p>
-                      {!v.centum_sync && !v.centum_comprobante && (
-                        v.centum_error ? (
-                          <p className="text-xs text-red-500 truncate mt-0.5" title={v.centum_error}>
-                            Error: {v.centum_error}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-yellow-600 truncate mt-0.5" title="La venta será enviada a Centum automáticamente en el próximo ciclo">
-                            Aguardando sync a Centum...
-                          </p>
-                        )
-                      )}
-                      {mediosUsados.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {mediosUsados.map(m => (
-                            <span key={m} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                              {m}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-right ml-3 flex flex-col items-end gap-1.5">
-                      <span className={`text-base font-semibold ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>{formatPrecio(v.total)}</span>
-                      <div className="flex items-center gap-1">
-                        {/* Imprimir ticket */}
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
-                            const pgos = v.pagos || []
-                            imprimirTicketPOS({
-                              items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario || i.precio })),
-                              cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente, condicion_iva: v.condicion_iva || 'CF' } : null,
-                              pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio || p.tipo, monto: parseFloat(p.monto) })),
-                              subtotal: parseFloat(v.subtotal || v.total),
-                              total: parseFloat(v.total),
-                              totalPagado: parseFloat(v.total),
-                              vuelto: parseFloat(v.vuelto || 0),
-                              numeroVenta: v.numero_venta,
-                              puntoVenta: v.punto_venta_centum || null,
-                            })
-                          }}
-                          className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
-                          title="Imprimir ticket"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                          </svg>
-                        </button>
-                        {/* Imprimir A4 */}
-                        <button
-                          onClick={async (e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            try {
-                              let caeData = null
-                              if (v.id_venta_centum || v.centum_comprobante) {
-                                const { data } = await api.get(`/api/pos/ventas/${v.id}/cae`)
-                                caeData = data
-                              }
-                              await imprimirComprobanteA4(v, caeData)
-                            } catch {
-                              await imprimirComprobanteA4(v, null)
-                            }
-                          }}
-                          className="p-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 transition-colors"
-                          title="Imprimir A4"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-                          </svg>
-                        </button>
-                        {/* Estado email — solo Factura A */}
-                        {v.centum_comprobante && /^A\s/.test(v.centum_comprobante) && (
-                          <span
-                            className={`p-1.5 rounded-lg ${v.email_enviado ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}
-                            title={v.email_enviado ? `Email enviado a ${v.email_enviado_a || ''}` : 'Email no enviado'}
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              {v.email_enviado ? (
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              ) : (
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                              )}
-                            </svg>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </Link>
-              )
-            })}
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {v.centum_comprobante ? (
+                            <span className="text-xs text-green-700">{v.centum_comprobante}</span>
+                          ) : v.clasificacion === 'EMPRESA' && v.centum_sync && !v.numero_cae ? (
+                            <span className="text-xs text-orange-600" title="Sin CAE">Sin ARCA</span>
+                          ) : !v.centum_sync && !v.centum_comprobante ? (
+                            esAdmin ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); reenviarCentum(e, v.id) }}
+                                disabled={reenviando === v.id}
+                                className={`text-xs px-1.5 py-0.5 rounded disabled:opacity-50 transition-colors ${
+                                  v.centum_error
+                                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                                    : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                                }`}
+                                title={v.centum_error || 'Aguardando sync'}
+                              >
+                                {reenviando === v.id ? '...' : v.centum_error ? 'Reintentar' : 'Pendiente'}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-yellow-600">Pendiente</span>
+                            )
+                          ) : v.numero_cae ? (
+                            <span className="text-xs text-teal-700 font-mono" title={`CAE: ${v.numero_cae}`}>CAE</span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {mediosUsados.length > 0 ? (
+                            <div className="flex flex-wrap gap-0.5">
+                              {mediosUsados.map(m => (
+                                <span key={m} className="text-[10px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">{m}</span>
+                              ))}
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>
+                          {formatPrecio(v.total)}
+                        </td>
+                        <td className="px-3 py-2 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
+                                const pgos = v.pagos || []
+                                imprimirTicketPOS({
+                                  items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario || i.precio })),
+                                  cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente, condicion_iva: v.condicion_iva || 'CF' } : null,
+                                  pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio || p.tipo, monto: parseFloat(p.monto) })),
+                                  subtotal: parseFloat(v.subtotal || v.total),
+                                  total: parseFloat(v.total),
+                                  totalPagado: parseFloat(v.total),
+                                  vuelto: parseFloat(v.vuelto || 0),
+                                  numeroVenta: v.numero_venta,
+                                  puntoVenta: v.punto_venta_centum || null,
+                                })
+                              }}
+                              className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+                              title="Imprimir ticket"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                try {
+                                  let caeData = null
+                                  if (v.id_venta_centum || v.centum_comprobante) {
+                                    const { data } = await api.get(`/api/pos/ventas/${v.id}/cae`)
+                                    caeData = data
+                                  }
+                                  await imprimirComprobanteA4(v, caeData)
+                                } catch {
+                                  await imprimirComprobanteA4(v, null)
+                                }
+                              }}
+                              className="p-1 rounded hover:bg-cyan-50 text-cyan-600 transition-colors"
+                              title="Imprimir A4"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                              </svg>
+                            </button>
+                            {v.centum_comprobante && /^A\s/.test(v.centum_comprobante) && (
+                              <span
+                                className={`p-1 rounded ${v.email_enviado ? 'text-green-600' : 'text-amber-500'}`}
+                                title={v.email_enviado ? `Email enviado a ${v.email_enviado_a || ''}` : 'Email no enviado'}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  {v.email_enviado ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                  )}
+                                </svg>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
             {totalPages > 1 && (
-              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5">
+              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5 mt-2">
                 <button
                   onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo(0, 0) }}
                   disabled={page <= 1}

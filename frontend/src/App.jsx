@@ -42,6 +42,8 @@ import RRHHHome from './pages/rrhh/RRHHHome'
 import VentasHome from './pages/ventas/VentasHome'
 import DetalleVenta from './pages/ventas/DetalleVenta'
 import ReportesPromociones from './pages/ventas/ReportesPromociones'
+import ConciliacionVentas from './pages/ventas/ConciliacionVentas'
+import DuplicadosCentum from './pages/ventas/DuplicadosCentum'
 
 // Páginas de la app Tareas
 import TareasHome from './pages/tareas/TareasHome'
@@ -248,6 +250,16 @@ const App = () => {
           <Route path="/ventas/reportes/promociones" element={
             <RutaProtegida rolesPermitidos={['admin', 'gestor']}>
               <ReportesPromociones />
+            </RutaProtegida>
+          } />
+          <Route path="/ventas/conciliacion" element={
+            <RutaProtegida rolesPermitidos={['admin']}>
+              <ConciliacionVentas />
+            </RutaProtegida>
+          } />
+          <Route path="/ventas/duplicados-centum" element={
+            <RutaProtegida rolesPermitidos={['admin']}>
+              <DuplicadosCentum />
             </RutaProtegida>
           } />
           <Route path="/ventas/:id" element={
