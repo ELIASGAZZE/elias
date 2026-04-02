@@ -154,6 +154,23 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     }
   }
 
+  async function revertirPedido(pedidoId) {
+    const motivo = prompt('Motivo de la reversión:')
+    if (!motivo || !motivo.trim()) return
+    if (!confirm(`¿Revertir pedido a pendiente?\n\nMotivo: ${motivo}`)) return
+    try {
+      const { data } = await api.put(`/api/pos/pedidos/${pedidoId}/revertir`, { motivo: motivo.trim() })
+      if (data.nota_credito) {
+        alert(`Pedido revertido. Se generó Nota de Crédito #${data.nota_credito.numero || data.nota_credito.id}`)
+      }
+      cargarPedidos()
+      setPedidoSeleccionado(null)
+    } catch (err) {
+      console.error('Error revirtiendo pedido:', err)
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
   async function duplicarPedido(pedido) {
     if (!confirm('¿Crear un nuevo pedido con los mismos artículos y cliente?')) return
     try {
@@ -776,6 +793,15 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {/* Botones de acción en la card */}
                     {pedido.estado !== 'pendiente' && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
+                        {(pedido.estado === 'entregado' || pedido.estado === 'no_entregado') && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); revertirPedido(pedido.id) }}
+                            className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" /></svg>
+                            Revertir
+                          </button>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); duplicarPedido(pedido) }}
                           className="bg-violet-100 hover:bg-violet-200 text-violet-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
@@ -1185,6 +1211,15 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
               )}
               {pedidoDetalle.estado !== 'pendiente' && (
                 <div className="flex flex-wrap gap-2">
+                  {(pedidoDetalle.estado === 'entregado' || pedidoDetalle.estado === 'no_entregado') && (
+                    <button
+                      onClick={() => revertirPedido(pedidoDetalle.id)}
+                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" /></svg>
+                      Revertir a pendiente
+                    </button>
+                  )}
                   <button
                     onClick={() => duplicarPedido(pedidoDetalle)}
                     className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"

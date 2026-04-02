@@ -295,6 +295,7 @@ const DetalleCierrePos = () => {
             {cierre.apertura_at && <span>Apertura: <strong className="text-gray-700">{formatHora(cierre.apertura_at)}</strong></span>}
             {cierre.cierre_at && <span>Cierre: <strong className="text-gray-700">{formatHora(cierre.cierre_at)}</strong></span>}
             {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && <span>Cambio inicial: <strong className="text-gray-700">{formatMonto(cierre.fondo_fijo)}</strong></span>}
+            {cierre.fondo_fijo > 0 && cierre.tipo === 'delivery' && <span className="text-amber-600 font-medium">Cambio entregado: <strong>{formatMonto(cierre.fondo_fijo)}</strong></span>}
             {posVentas && <span className="text-teal-600 font-medium">Ventas POS: {posVentas.cantidad_ventas} venta(s)</span>}
           </div>
         </div>
@@ -1243,25 +1244,30 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Tickets cancelados y cobros cancelados (solo admin) */}
+        {/* Tickets cancelados, reversiones delivery y cobros cancelados (solo admin) */}
         {esAdmin && cancelaciones.length > 0 && (() => {
           const cobrosCancelados = cancelaciones.filter(c => c.motivo === 'Cobro cancelado')
-          const ticketsCancelados = cancelaciones.filter(c => c.motivo !== 'Cobro cancelado')
+          const reversiones = cancelaciones.filter(c => c.motivo?.startsWith('Reversión pedido'))
+          const ticketsCancelados = cancelaciones.filter(c => c.motivo !== 'Cobro cancelado' && !c.motivo?.startsWith('Reversión pedido'))
           const totalCobros = cobrosCancelados.reduce((s, c) => s + parseFloat(c.total || 0), 0)
           const totalTickets = ticketsCancelados.reduce((s, c) => s + parseFloat(c.total || 0), 0)
+          const totalReversiones = reversiones.reduce((s, c) => s + parseFloat(c.total || 0), 0)
 
-          const renderCancelacion = (canc) => (
-            <div key={canc.id} className="border border-red-100 rounded-lg p-2.5 bg-white/60">
+          const renderCancelacion = (canc, colorScheme = 'red') => (
+            <div key={canc.id} className={`border ${colorScheme === 'amber' ? 'border-amber-100' : 'border-red-100'} rounded-lg p-2.5 bg-white/60`}>
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xs font-medium text-gray-700 truncate">{canc.cajero_nombre}</span>
                   {canc.cliente_nombre && <span className="text-[10px] text-gray-400 truncate">· {canc.cliente_nombre}</span>}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs font-bold text-red-700">{formatMonto(canc.total)}</span>
+                  <span className={`text-xs font-bold ${colorScheme === 'amber' ? 'text-amber-700' : 'text-red-700'}`}>{formatMonto(canc.total)}</span>
                   <span className="text-xs text-gray-400">{formatHora(canc.created_at)}</span>
                 </div>
               </div>
+              {canc.motivo && (
+                <p className={`text-xs ${colorScheme === 'amber' ? 'text-amber-600' : 'text-red-600'} mb-1`}>{canc.motivo}</p>
+              )}
               {Array.isArray(canc.items) && canc.items.length > 0 && (
                 <div className="space-y-0.5">
                   {canc.items.map((item, idx) => (
@@ -1282,6 +1288,31 @@ const DetalleCierrePos = () => {
 
           return (
             <>
+              {/* Pedidos revertidos (delivery) */}
+              {reversiones.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    Pedidos revertidos ({reversiones.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div className="bg-white border border-amber-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Pedidos revertidos</span>
+                      <span className="font-bold text-amber-700">{reversiones.length}</span>
+                    </div>
+                    <div className="bg-white border border-amber-200 rounded-lg p-2">
+                      <span className="text-xs text-gray-500 block">Monto revertido</span>
+                      <span className="font-bold text-amber-600">{formatMonto(totalReversiones)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {reversiones.map(c => renderCancelacion(c, 'amber'))}
+                  </div>
+                </div>
+              )}
+
               {/* Tickets cancelados (F9) */}
               {ticketsCancelados.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
@@ -1302,7 +1333,7 @@ const DetalleCierrePos = () => {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    {ticketsCancelados.map(renderCancelacion)}
+                    {ticketsCancelados.map(c => renderCancelacion(c))}
                   </div>
                 </div>
               )}

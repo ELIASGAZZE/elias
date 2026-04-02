@@ -610,7 +610,19 @@ const VentasHome = () => {
                           </span>
                         </td>
                         <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">{v.sucursales?.nombre || '—'}</td>
-                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">{v.cajas?.nombre || '—'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-xs">
+                          <a
+                            href={v.cierre_pos_id ? `/cajas-pos/cierre/${v.cierre_pos_id}` : '/cajas-pos'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-teal-600 hover:text-teal-800 hover:underline font-medium"
+                            title={v.cierre_pos_id ? `Ver cierre #${v.cierre_pos_numero || ''}` : 'Ver cajas POS'}
+                          >
+                            {v.cajas?.nombre || '—'}
+                            {v.cierre_pos_numero ? ` #${v.cierre_pos_numero}` : ''}
+                          </a>
+                        </td>
                         {esAdmin && (
                           <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">
                             {v.empleado_nombre || v.perfiles?.nombre || '—'}

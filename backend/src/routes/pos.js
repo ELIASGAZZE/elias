@@ -962,22 +962,32 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       return { ...v, condicion_iva: condIva, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
     })
 
-    // Resolver empleado del cierre activo para cada venta
+    // Resolver empleado y cierre activo para cada venta
     if (cajaIds.length > 0) {
       const { data: cierresData } = await supabase
         .from('cierres_pos')
-        .select('id, caja_id, created_at, cerrado_at, empleado:empleados!empleado_id(nombre)')
+        .select('id, numero, caja_id, apertura_at, cierre_at, empleado:empleados!empleado_id(nombre)')
         .in('caja_id', cajaIds)
-        .order('created_at', { ascending: false })
+        .order('apertura_at', { ascending: false })
       if (cierresData && cierresData.length > 0) {
         ventas = ventas.map(v => {
           if (!v.caja_id) return v
-          const cierre = cierresData.find(c =>
-            c.caja_id === v.caja_id &&
-            c.created_at <= v.created_at &&
-            (!c.cerrado_at || c.cerrado_at >= v.created_at)
-          )
-          return cierre?.empleado?.nombre ? { ...v, empleado_nombre: cierre.empleado.nombre } : v
+          // Tolerancia de 60s para ventas delivery (se crean fracciones de segundo antes del cierre)
+          const ventaTime = new Date(v.created_at).getTime()
+          const cierre = cierresData.find(c => {
+            if (c.caja_id !== v.caja_id) return false
+            const aperturaTime = new Date(c.apertura_at).getTime()
+            const cierreTime = c.cierre_at ? new Date(c.cierre_at).getTime() : null
+            return aperturaTime <= ventaTime + 60000 &&
+              (!cierreTime || cierreTime >= ventaTime - 60000)
+          })
+          if (!cierre) return v
+          return {
+            ...v,
+            ...(cierre.empleado?.nombre ? { empleado_nombre: cierre.empleado.nombre } : {}),
+            cierre_pos_id: cierre.id,
+            cierre_pos_numero: cierre.numero || null,
+          }
         })
       }
     }
@@ -2306,11 +2316,25 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       }
     })
 
-    // Obtener config de caja para Centum
+    // Buscar caja delivery de la misma sucursal (para ventas y cierre)
+    const { data: cajaOrigen } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+    let cajaDeliveryId = caja_id // fallback: usar la caja del cajero
+    if (cajaOrigen?.sucursal_id) {
+      const { data: cajaDeliv } = await supabase
+        .from('cajas')
+        .select('id')
+        .eq('sucursal_id', cajaOrigen.sucursal_id)
+        .ilike('nombre', '%delivery%')
+        .limit(1)
+        .single()
+      if (cajaDeliv) cajaDeliveryId = cajaDeliv.id
+    }
+
+    // Obtener config de caja delivery para Centum
     const { data: cajaData } = await supabase
       .from('cajas')
       .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-      .eq('id', caja_id)
+      .eq('id', cajaDeliveryId)
       .single()
 
     // Crear la guía
@@ -2385,7 +2409,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       const insertVenta = {
         cajero_id: req.perfil.id,
         sucursal_id: cajaData?.sucursal_id || null,
-        caja_id,
+        caja_id: cajaDeliveryId,
         id_cliente_centum: pedido.id_cliente_centum || 0,
         nombre_cliente: pedido.nombre_cliente || null,
         subtotal: pedidoTotal,
@@ -2503,10 +2527,20 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
     let cierreDelivery = null
 
     if (totalEfectivo > 0) {
+      // Obtener siguiente numero de cierre
+      const { data: ultimoCierre } = await supabase
+        .from('cierres_pos')
+        .select('numero')
+        .not('numero', 'is', null)
+        .order('numero', { ascending: false })
+        .limit(1)
+      const siguienteNumero = (ultimoCierre?.[0]?.numero || 0) + 1
+
       const { data: cierreData, error: errCierre } = await supabase
         .from('cierres_pos')
         .insert({
-          caja_id,
+          numero: siguienteNumero,
+          caja_id: cajaDeliveryId,
           empleado_id: null,
           cajero_id: req.perfil.id,
           apertura_at: new Date().toISOString(),
@@ -3061,6 +3095,285 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
   } catch (err) {
     logger.error('[POS] Error al cambiar estado pedido:', err.message)
     res.status(500).json({ error: 'Error al cambiar estado: ' + err.message })
+  }
+}))
+
+// PUT /api/pos/pedidos/:id/revertir — revertir pedido entregado/no_entregado a pendiente
+router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const { motivo } = req.body
+    if (!motivo || !motivo.trim()) {
+      return res.status(400).json({ error: 'Debe indicar un motivo para revertir' })
+    }
+
+    // 1. Obtener pedido
+    const { data: pedido, error: errPedido } = await supabase
+      .from('pedidos_pos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+
+    if (errPedido || !pedido) return res.status(404).json({ error: 'Pedido no encontrado' })
+    if (!['entregado', 'no_entregado'].includes(pedido.estado)) {
+      return res.status(400).json({ error: `Solo se pueden revertir pedidos entregados o no entregados. Estado actual: ${pedido.estado}` })
+    }
+
+    // 2. Buscar si fue despachado via guía
+    const { data: guiaPedido } = await supabase
+      .from('guia_delivery_pedidos')
+      .select('*, guia:guias_delivery(*)')
+      .eq('pedido_pos_id', pedido.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    let ventaEliminada = false
+    let notaCreditoCreada = null
+    // Variables para vincular cancelación al cierre delivery (se setean en A5)
+    let cierreDeliveryId = null
+    let cierreDeliveryCajaId = null
+
+    // === CASO A: Despachado via guía ===
+    if (guiaPedido) {
+      // A1: Efectivo — anular la venta auto-creada
+      if (guiaPedido.forma_pago === 'efectivo' && guiaPedido.venta_pos_id) {
+        const { data: venta } = await supabase
+          .from('ventas_pos')
+          .select('*')
+          .eq('id', guiaPedido.venta_pos_id)
+          .single()
+
+        if (venta) {
+          if (!venta.centum_sync) {
+            // Venta no sincronizada — eliminar directamente
+            await supabase.from('ventas_pos').delete().eq('id', venta.id)
+            ventaEliminada = true
+            logger.info(`[POS] Reversión: venta ${venta.id} eliminada (no sync Centum)`)
+          } else {
+            // Venta sincronizada — crear Nota de Crédito completa
+            const itemsVenta = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
+            const totalNC = Math.abs(parseFloat(venta.total)) || 0
+
+            const itemsNC = itemsVenta.map(item => ({
+              ...item,
+              cantidad: item.cantidad || 1,
+              precioUnitario: item.precioUnitario || item.precio_unitario || item.precio || 0,
+              precio: item.precioUnitario || item.precio_unitario || item.precio || 0,
+            }))
+
+            // Crear NC en ventas_pos
+            const { data: nc, error: ncErr } = await supabase
+              .from('ventas_pos')
+              .insert({
+                cajero_id: req.perfil.id,
+                sucursal_id: venta.sucursal_id,
+                caja_id: venta.caja_id,
+                id_cliente_centum: venta.id_cliente_centum || 0,
+                nombre_cliente: venta.nombre_cliente || pedido.nombre_cliente || 'Cliente',
+                subtotal: -(parseFloat(venta.subtotal) || totalNC),
+                descuento_total: -(parseFloat(venta.descuento_total) || 0),
+                total: -totalNC,
+                monto_pagado: 0,
+                vuelto: 0,
+                items: JSON.stringify(itemsNC),
+                pagos: [],
+                tipo: 'nota_credito',
+                venta_origen_id: venta.id,
+              })
+              .select()
+              .single()
+
+            if (ncErr) throw ncErr
+            notaCreditoCreada = nc
+
+            // NC en Centum si la venta original tiene comprobante
+            if (venta.centum_comprobante) {
+              try {
+                const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+                if (pvOriginal) {
+                  let sucursalFisicaId = null
+                  let centumOperadorEmpresa = null
+                  let centumOperadorPrueba = null
+                  if (venta.caja_id) {
+                    const { data: cajaData } = await supabase
+                      .from('cajas')
+                      .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+                      .eq('id', venta.caja_id)
+                      .single()
+                    sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+                    centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+                    centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
+                  }
+
+                  let condicionIva = 'CF'
+                  if (venta.id_cliente_centum) {
+                    const { data: cli } = await supabase
+                      .from('clientes').select('condicion_iva')
+                      .eq('id_centum', venta.id_cliente_centum).single()
+                    condicionIva = cli?.condicion_iva || 'CF'
+                  }
+
+                  const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+                  const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+                  const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+                  const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+                  const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+                  const operadorMovilUser = idDivisionEmpresa === 2
+                    ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+                    : (centumOperadorEmpresa || null)
+
+                  const centumNC = await crearNotaCreditoPOS({
+                    idCliente: venta.id_cliente_centum || 2,
+                    sucursalFisicaId,
+                    idDivisionEmpresa,
+                    puntoVenta: pvOriginal.puntoVenta,
+                    items: itemsNC,
+                    total: totalNC,
+                    condicionIva,
+                    operadorMovilUser,
+                    comprobanteOriginal: venta.centum_comprobante,
+                  })
+
+                  const numDoc = centumNC.NumeroDocumento
+                  const comprobante = numDoc
+                    ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+                    : null
+                  await supabase.from('ventas_pos').update({
+                    id_venta_centum: centumNC.IdVenta || null,
+                    centum_comprobante: comprobante,
+                    centum_sync: true,
+                    numero_cae: centumNC.CAE || null,
+                  }).eq('id', nc.id)
+
+                  logger.info(`[POS] NC Centum por reversión pedido #${pedido.numero}: ${comprobante}`)
+                  fetchAndSaveCAE(nc.id, centumNC.IdVenta)
+                }
+              } catch (centumErr) {
+                logger.error('[POS] Error NC Centum en reversión:', centumErr.message)
+                await supabase.from('ventas_pos').update({
+                  centum_error: centumErr.message,
+                }).eq('id', nc.id)
+              }
+            }
+          }
+        }
+
+        // Resetear total_pagado (efectivo: el dinero se devuelve)
+        await supabase.from('pedidos_pos').update({ total_pagado: 0 }).eq('id', pedido.id)
+      }
+      // A2: Anticipado — NO tocar la venta anticipada, mantener total_pagado
+
+      // A3: Actualizar guia_delivery_pedidos
+      await supabase
+        .from('guia_delivery_pedidos')
+        .update({ estado_entrega: 'revertido', motivo_no_entrega: motivo.trim() })
+        .eq('id', guiaPedido.id)
+
+      // A4: Actualizar guia — restar montos
+      if (guiaPedido.guia) {
+        const montoRestar = parseFloat(guiaPedido.monto) || 0
+        const updateGuia = { cantidad_pedidos: Math.max(0, (guiaPedido.guia.cantidad_pedidos || 0) - 1) }
+        if (guiaPedido.forma_pago === 'efectivo') {
+          updateGuia.total_efectivo = Math.max(0, Math.round(((parseFloat(guiaPedido.guia.total_efectivo) || 0) - montoRestar) * 100) / 100)
+        } else if (guiaPedido.forma_pago === 'anticipado') {
+          updateGuia.total_anticipado = Math.max(0, Math.round(((parseFloat(guiaPedido.guia.total_anticipado) || 0) - montoRestar) * 100) / 100)
+        }
+        await supabase.from('guias_delivery').update(updateGuia).eq('id', guiaPedido.guia.id)
+
+        // A5: Ajustar cierre delivery si existe y el pedido era efectivo
+        if (guiaPedido.guia.cierre_pos_id && guiaPedido.forma_pago === 'efectivo') {
+          const { data: cierreDelivery } = await supabase
+            .from('cierres_pos')
+            .select('id, estado, total_efectivo, total_general, fondo_fijo, observaciones, caja_id')
+            .eq('id', guiaPedido.guia.cierre_pos_id)
+            .single()
+
+          if (cierreDelivery && cierreDelivery.estado === 'pendiente_gestor') {
+            const nuevoTotalEfectivo = Math.max(0, Math.round(((parseFloat(cierreDelivery.total_efectivo) || 0) - montoRestar) * 100) / 100)
+            const nuevoTotalGeneral = Math.max(0, Math.round(((parseFloat(cierreDelivery.total_general) || 0) - montoRestar) * 100) / 100)
+            const obsAnterior = cierreDelivery.observaciones || ''
+            const obsReversion = `\n⚠️ Pedido #${pedido.numero || pedido.id} ($${montoRestar}) REVERTIDO: ${motivo.trim()}. Efectivo ajustado a $${nuevoTotalEfectivo}. Cambio de $${cierreDelivery.fondo_fijo || 0} a devolver a caja.`
+
+            await supabase.from('cierres_pos').update({
+              total_efectivo: nuevoTotalEfectivo,
+              total_general: nuevoTotalGeneral,
+              observaciones: obsAnterior + obsReversion,
+            }).eq('id', cierreDelivery.id)
+          }
+
+          // Vincular la cancelación al cierre delivery en vez del cierre del cajero
+          if (cierreDelivery) {
+            cierreDeliveryId = cierreDelivery.id
+            cierreDeliveryCajaId = cierreDelivery.caja_id
+          }
+        }
+      }
+    }
+    // === CASO B: Entregado individualmente — solo revertir estado ===
+
+    // Actualizar pedido a pendiente
+    const obsActual = pedido.observaciones || ''
+    const obsAppend = `${obsActual ? obsActual + ' ' : ''}| REVERTIDO: ${motivo.trim()} por ${req.perfil.nombre || req.perfil.username} el ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`
+
+    const { data: pedidoActualizado, error: errUpdate } = await supabase
+      .from('pedidos_pos')
+      .update({ estado: 'pendiente', observaciones: obsAppend })
+      .eq('id', pedido.id)
+      .select()
+      .single()
+
+    if (errUpdate) throw errUpdate
+
+    // Registrar en auditoría (ventas_pos_canceladas)
+    const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
+
+    // Buscar cierre activo del cajero
+    let cierreActivoId = null
+    let cajaActivaId = null
+    const { data: cierreAbierto } = await supabase
+      .from('cierres_pos')
+      .select('id, caja_id')
+      .eq('cajero_id', req.perfil.id)
+      .eq('estado', 'abierta')
+      .limit(1)
+      .single()
+    if (cierreAbierto) {
+      cierreActivoId = cierreAbierto.id
+      cajaActivaId = cierreAbierto.caja_id
+    }
+
+    // Si el pedido pertenece a una guía con cierre delivery, vincular la cancelación ahí
+    if (cierreDeliveryId) {
+      cierreActivoId = cierreDeliveryId
+      cajaActivaId = cierreDeliveryCajaId
+    }
+
+    await supabase.from('ventas_pos_canceladas').insert({
+      cajero_id: req.perfil.id,
+      cajero_nombre: req.perfil?.nombre || req.perfil?.username || 'Desconocido',
+      sucursal_id: req.perfil.sucursal_id,
+      caja_id: cajaActivaId,
+      motivo: `Reversión pedido #${pedido.numero || pedido.id}: ${motivo.trim()}`,
+      items: items,
+      subtotal: parseFloat(pedido.total) || 0,
+      total: parseFloat(pedido.total) || 0,
+      cliente_nombre: pedido.nombre_cliente || null,
+      cierre_id: cierreActivoId,
+    })
+
+    logger.info(`[POS] Pedido #${pedido.numero || pedido.id} revertido a pendiente. Motivo: ${motivo.trim()}. Por: ${req.perfil.nombre || req.perfil.username}. Via guía: ${!!guiaPedido}. Forma pago: ${guiaPedido?.forma_pago || 'N/A'}. Venta eliminada: ${ventaEliminada}. NC creada: ${!!notaCreditoCreada}`)
+
+    res.json({
+      ok: true,
+      pedido: pedidoActualizado,
+      venta_eliminada: ventaEliminada,
+      nota_credito: notaCreditoCreada ? { id: notaCreditoCreada.id, numero: notaCreditoCreada.numero_venta } : null,
+      via_guia: !!guiaPedido,
+    })
+  } catch (err) {
+    logger.error('[POS] Error al revertir pedido:', err.message)
+    res.status(500).json({ error: 'Error al revertir pedido: ' + err.message })
   }
 }))
 
