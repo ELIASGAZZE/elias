@@ -793,7 +793,8 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {/* Botones de acción en la card */}
                     {pedido.estado !== 'pendiente' && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
-                        {(pedido.estado === 'entregado' || pedido.estado === 'no_entregado') && (
+                        {(pedido.estado === 'entregado' || pedido.estado === 'no_entregado') &&
+                         !(pedido.tipo === 'retiro' && !(pedido.observaciones || '').includes('PAGO ANTICIPADO') && !pedido.venta_anticipada_id) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); revertirPedido(pedido.id) }}
                             className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
@@ -1211,7 +1212,8 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
               )}
               {pedidoDetalle.estado !== 'pendiente' && (
                 <div className="flex flex-wrap gap-2">
-                  {(pedidoDetalle.estado === 'entregado' || pedidoDetalle.estado === 'no_entregado') && (
+                  {(pedidoDetalle.estado === 'entregado' || pedidoDetalle.estado === 'no_entregado') &&
+                   !(pedidoDetalle.tipo === 'retiro' && !(pedidoDetalle.observaciones || '').includes('PAGO ANTICIPADO') && !pedidoDetalle.venta_anticipada_id) && (
                     <button
                       onClick={() => revertirPedido(pedidoDetalle.id)}
                       className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"

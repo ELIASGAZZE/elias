@@ -62,8 +62,8 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
   const pedidosPM = useMemo(() => pedidos.filter(p => p.turno_entrega === 'PM'), [pedidos])
   const pedidosSinTurno = useMemo(() => pedidos.filter(p => !p.turno_entrega || (p.turno_entrega !== 'AM' && p.turno_entrega !== 'PM')), [pedidos])
 
-  const guiaAM = useMemo(() => guiasExistentes.find(g => g.turno === 'AM'), [guiasExistentes])
-  const guiaPM = useMemo(() => guiasExistentes.find(g => g.turno === 'PM'), [guiasExistentes])
+  const guiasAM = useMemo(() => guiasExistentes.filter(g => g.turno === 'AM'), [guiasExistentes])
+  const guiasPM = useMemo(() => guiasExistentes.filter(g => g.turno === 'PM'), [guiasExistentes])
 
   // Helper: total efectivo con descuento aplicado para una lista de pedidos
   function calcTotalEfectivoConDesc(lista) {
@@ -149,6 +149,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
     const totalADevolver = datosDespacho.total_a_devolver || 0
 
     const win = window.open('', '_blank')
+    if (!win) return
     win.document.write(`
       <!DOCTYPE html>
       <html>
@@ -252,11 +253,125 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
     setTimeout(() => win.print(), 300)
   }
 
+  async function reimprimirGuia(guia) {
+    try {
+      const { data } = await api.get(`/api/pos/guias-delivery/${guia.id}`)
+      const pedidosGuia = (data.guia_delivery_pedidos || []).map(gp => gp.pedido).filter(Boolean)
+      const turno = guia.turno
+      const tituloTurno = turno === 'AM' ? 'Turno AM — 9 a 13hs' : 'Turno PM — 17 a 21hs'
+      const cambio = parseFloat(guia.cambio_entregado) || 0
+      const totalEfectivo = parseFloat(guia.total_efectivo) || 0
+      const totalADevolver = totalEfectivo + cambio
+
+      const win = window.open('', '_blank')
+      win.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Guía de envíos ${turno} - ${fechaFormateada}</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; color: #333; }
+            h1 { font-size: 16px; margin-bottom: 4px; }
+            .fecha { font-size: 13px; color: #666; margin-bottom: 4px; }
+            .cadete { font-size: 13px; font-weight: bold; margin-bottom: 16px; }
+            .cambio-box { background: #f3f4f6; border: 2px solid #333; border-radius: 6px; padding: 10px; margin-bottom: 16px; font-size: 14px; font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+            th { text-align: left; font-size: 10px; text-transform: uppercase; color: #888; padding: 4px 8px; border-bottom: 2px solid #e5e7eb; }
+            td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+            .num { font-weight: bold; color: #7c3aed; }
+            .items { font-size: 11px; color: #555; }
+            .pago { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+            .pago-pagado { background: #d1fae5; color: #065f46; }
+            .pago-efectivo { background: #fef3c7; color: #92400e; }
+            .check-col { width: 30px; text-align: center; }
+            .check-box { width: 16px; height: 16px; border: 2px solid #aaa; border-radius: 3px; display: inline-block; }
+            .resumen { margin-top: 20px; border: 2px solid #333; border-radius: 6px; padding: 14px; font-size: 13px; }
+            .resumen-row { display: flex; justify-content: space-between; padding: 4px 0; }
+            .resumen-total { font-size: 16px; font-weight: bold; border-top: 2px solid #333; padding-top: 8px; margin-top: 8px; }
+            .firmas { margin-top: 30px; display: flex; gap: 40px; }
+            .firma { flex: 1; border-top: 1px solid #333; padding-top: 6px; font-size: 11px; text-align: center; }
+            .no-entregados { margin-top: 20px; font-size: 11px; }
+            .no-entregados-line { border-bottom: 1px dotted #999; padding: 6px 0; margin-bottom: 4px; }
+            @media print { body { padding: 10px; } }
+          </style>
+        </head>
+        <body>
+          <h1>Guía de envíos a domicilio — ${tituloTurno}</h1>
+          <div class="fecha">${fechaFormateada} — ${pedidosGuia.length} envío${pedidosGuia.length !== 1 ? 's' : ''}</div>
+          <div class="cadete">Cadete: ${guia.cadete_nombre || 'Sin asignar'}</div>
+
+          ${cambio > 0 ? `<div class="cambio-box">CAMBIO ENTREGADO: ${formatPrecio(cambio)}</div>` : ''}
+
+          <table>
+            <thead><tr>
+              <th class="check-col"></th>
+              <th>#</th>
+              <th>Cliente / Dirección</th>
+              <th>Artículos</th>
+              <th style="text-align:right">Total</th>
+              <th>Pago</th>
+            </tr></thead>
+            <tbody>
+              ${pedidosGuia.map((p, i) => {
+                const items = typeof p.items === 'string' ? JSON.parse(p.items) : p.items
+                const resumenItems = items.map(it => `${it.cantidad}x ${it.nombre}`).join(', ')
+                const pago = estadoPago(p.observaciones)
+                const obsMatch = (p.observaciones || '').match(/Dirección: ([^|]+)/)
+                const direccion = obsMatch ? obsMatch[1].trim() : ''
+                const celular = p.celular_cliente || ''
+                const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
+                const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+                const totalMostrar = totalConDescuento(p)
+                const tieneDesc = esEfectivo && descEfectivoPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
+                return `
+                  <tr>
+                    <td class="check-col"><div class="check-box"></div></td>
+                    <td class="num">#${p.numero || i + 1}</td>
+                    <td><strong>${p.nombre_cliente || 'S/N'}</strong>${celular ? ` <span style="font-size:10px;color:#555">📞 ${celular}</span>` : ''}<br/><span style="font-size:11px;color:#666">${direccion}</span></td>
+                    <td class="items">${resumenItems}</td>
+                    <td style="text-align:right;white-space:nowrap">${esAnticipado ? '<span style="color:#16a34a;font-size:10px">PAGADO</span>' : (tieneDesc ? `<s style="color:#999;font-size:10px">${formatPrecio(p.total)}</s><br/>` : '') + formatPrecio(totalMostrar)}</td>
+                    <td><span class="pago ${pago.cls}">${esEfectivo ? 'COBRAR' : 'YA PAGÓ'}</span></td>
+                  </tr>
+                `
+              }).join('')}
+            </tbody>
+          </table>
+
+          <div class="resumen">
+            <div class="resumen-row"><span>Total a cobrar en efectivo:</span> <span>${formatPrecio(totalEfectivo)}</span></div>
+            ${cambio > 0 ? `<div class="resumen-row"><span>Cambio entregado:</span> <span>+ ${formatPrecio(cambio)}</span></div>` : ''}
+            <div class="resumen-row resumen-total"><span>TOTAL A DEVOLVER:</span> <span>${formatPrecio(totalADevolver)}</span></div>
+          </div>
+
+          <div class="no-entregados">
+            <strong>Pedidos no entregados:</strong>
+            <div class="no-entregados-line">[ ] #_____ Motivo: _________________________________</div>
+            <div class="no-entregados-line">[ ] #_____ Motivo: _________________________________</div>
+            <div class="no-entregados-line">[ ] #_____ Motivo: _________________________________</div>
+          </div>
+
+          <div class="firmas">
+            <div class="firma">Firma cadete</div>
+            <div class="firma">Firma receptor buzón</div>
+          </div>
+        </body>
+        </html>
+      `)
+      win.document.close()
+      win.focus()
+      setTimeout(() => win.print(), 300)
+    } catch (err) {
+      alert('Error al reimprimir: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
   function handleImprimir(turno) {
     const lista = turno === 'AM' ? pedidosAM : turno === 'PM' ? pedidosPM : pedidos
     const tituloTurno = turno === 'AM' ? 'Turno AM — 9 a 13hs' : turno === 'PM' ? 'Turno PM — 17 a 21hs' : 'Todos los turnos'
     if (lista.length === 0) return
     const win = window.open('', '_blank')
+    if (!win) return
     win.document.write(`
       <!DOCTYPE html>
       <html>
@@ -399,7 +514,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
               </svg>
               Cargando...
             </div>
-          ) : pedidos.length === 0 && !guiaAM && !guiaPM ? (
+          ) : pedidos.length === 0 && guiasAM.length === 0 && guiasPM.length === 0 ? (
             <div className="text-center py-16 text-gray-400">
               <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
@@ -425,12 +540,12 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
               </div>
 
               {/* Guías ya despachadas */}
-              {guiaAM && (
-                <GuiaDespachada guia={guiaAM} turno="AM" />
-              )}
-              {guiaPM && (
-                <GuiaDespachada guia={guiaPM} turno="PM" />
-              )}
+              {guiasAM.map((g, i) => (
+                <GuiaDespachada key={g.id} guia={g} turno="AM" numero={guiasAM.length > 1 ? i + 1 : null} onReimprimir={() => reimprimirGuia(g)} />
+              ))}
+              {guiasPM.map((g, i) => (
+                <GuiaDespachada key={g.id} guia={g} turno="PM" numero={guiasPM.length > 1 ? i + 1 : null} onReimprimir={() => reimprimirGuia(g)} />
+              ))}
 
               {/* Turno AM */}
               {pedidosAM.length > 0 && (
@@ -444,7 +559,6 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
                   tieneNoPagados={noPagadosAM}
                   onImprimir={handleImprimir}
                   onDespachar={() => setMostrarDespacho('AM')}
-                  yaDespacho={!!guiaAM}
                   calcTotal={totalConDescuento}
                 />
               )}
@@ -461,7 +575,6 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
                   tieneNoPagados={noPagadosPM}
                   onImprimir={handleImprimir}
                   onDespachar={() => setMostrarDespacho('PM')}
-                  yaDespacho={!!guiaPM}
                   calcTotal={totalConDescuento}
                 />
               )}
@@ -575,7 +688,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
   )
 }
 
-function GuiaDespachada({ guia, turno }) {
+function GuiaDespachada({ guia, turno, numero, onReimprimir }) {
   const estadoColor = guia.estado === 'cerrada' ? 'bg-green-50 border-green-300 text-green-800'
     : guia.estado === 'con_diferencia' ? 'bg-red-50 border-red-300 text-red-800'
     : 'bg-blue-50 border-blue-300 text-blue-800'
@@ -587,6 +700,17 @@ function GuiaDespachada({ guia, turno }) {
   const cambio = parseFloat(guia.cambio_entregado) || 0
   const totalADevolver = (parseFloat(guia.total_efectivo) || 0) + cambio
 
+  const cierreNumero = guia.cierre?.numero
+
+  // Obtener nombre de caja desde la primera venta vinculada
+  const cajaNombre = (() => {
+    const pedidos = guia.guia_delivery_pedidos || []
+    for (const gp of pedidos) {
+      if (gp.venta?.caja?.nombre) return gp.venta.caja.nombre
+    }
+    return null
+  })()
+
   return (
     <div className={`rounded-lg border p-3 text-sm ${estadoColor}`}>
       <div className="flex items-center justify-between">
@@ -594,20 +718,36 @@ function GuiaDespachada({ guia, turno }) {
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <span className="font-semibold">Turno {turno} — {estadoLabel}</span>
+          <span className="font-semibold">Turno {turno}{numero ? ` (#${numero})` : ''} — {estadoLabel}</span>
         </div>
-        <span className="text-xs">{guia.cantidad_pedidos} pedidos · {guia.cadete_nombre || 'Sin cadete'}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs">{guia.cantidad_pedidos} pedidos · {guia.cadete_nombre || 'Sin cadete'}</span>
+          {onReimprimir && (
+            <button
+              onClick={onReimprimir}
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-white/60 hover:bg-white/90 transition-colors"
+              title="Reimprimir guía"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" />
+              </svg>
+              Reimprimir
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex gap-4 mt-1 text-xs opacity-80">
         <span>Efectivo: {formatPrecio(guia.total_efectivo)}</span>
         {cambio > 0 && <span>Cambio: {formatPrecio(cambio)}</span>}
         <span className="font-semibold">A devolver: {formatPrecio(totalADevolver)}</span>
+        {cierreNumero && <span className="ml-auto font-medium">Cierre #{cierreNumero}</span>}
+        {cajaNombre && <span className={`${!cierreNumero ? 'ml-auto' : ''} font-medium`}>Caja: {cajaNombre}</span>}
       </div>
     </div>
   )
 }
 
-function TurnoSection({ titulo, turno, pedidos, colorBorder, colorBg, colorText, tieneNoPagados, onImprimir, onDespachar, yaDespacho, calcTotal }) {
+function TurnoSection({ titulo, turno, pedidos, colorBorder, colorBg, colorText, tieneNoPagados, onImprimir, onDespachar, calcTotal }) {
   return (
     <div>
       <div className={`text-sm font-semibold ${colorText} ${colorBg} px-3 py-2 rounded-lg border-l-4 ${colorBorder} flex items-center justify-between`}>
@@ -626,7 +766,7 @@ function TurnoSection({ titulo, turno, pedidos, colorBorder, colorBg, colorText,
               Imprimir
             </button>
           )}
-          {onDespachar && !yaDespacho && (
+          {onDespachar && (
             <button
               onClick={onDespachar}
               disabled={tieneNoPagados}

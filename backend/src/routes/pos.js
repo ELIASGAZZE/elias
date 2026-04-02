@@ -2216,7 +2216,7 @@ router.get('/guias-delivery', verificarAuth, asyncHandler(async (req, res) => {
     const { fecha, estado } = req.query
     let query = supabase
       .from('guias_delivery')
-      .select('*, guia_delivery_pedidos(*, pedido:pedidos_pos(id, numero, nombre_cliente, total, observaciones, items))')
+      .select('*, cierre:cierres_pos(id, numero), guia_delivery_pedidos(*, pedido:pedidos_pos(id, numero, nombre_cliente, total, observaciones, items), venta:ventas_pos(id, caja_id, caja:cajas(id, nombre)))')
       .order('fecha', { ascending: false })
 
     if (fecha) query = query.eq('fecha', fecha)
@@ -2253,16 +2253,6 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
     const { fecha, turno, cadete_id, cadete_nombre, cambio_entregado, caja_id } = req.body
     if (!fecha || !turno) return res.status(400).json({ error: 'fecha y turno son requeridos' })
     if (!caja_id) return res.status(400).json({ error: 'caja_id es requerido (caja delivery)' })
-
-    // Verificar que no exista guía para fecha+turno
-    const { data: existente } = await supabase
-      .from('guias_delivery')
-      .select('id')
-      .eq('fecha', fecha)
-      .eq('turno', turno)
-      .single()
-
-    if (existente) return res.status(400).json({ error: `Ya existe una guía despachada para ${fecha} turno ${turno}` })
 
     // Obtener pedidos delivery pendientes para fecha+turno
     const { data: pedidos, error: errPedidos } = await supabase
@@ -3118,6 +3108,12 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
       return res.status(400).json({ error: `Solo se pueden revertir pedidos entregados o no entregados. Estado actual: ${pedido.estado}` })
     }
 
+    // Bloquear reversión de retiros no pre-pagados (solo delivery o retiro anticipado)
+    const obsRetiro = pedido.observaciones || ''
+    if (pedido.tipo === 'retiro' && !obsRetiro.includes('PAGO ANTICIPADO') && !pedido.venta_anticipada_id) {
+      return res.status(400).json({ error: 'No se pueden revertir pedidos de retiro que se abonaron al momento del retiro. Solo se permiten reversiones de pedidos delivery o retiros con pago anticipado.' })
+    }
+
     // 2. Buscar si fue despachado via guía
     const { data: guiaPedido } = await supabase
       .from('guia_delivery_pedidos')
@@ -3795,7 +3791,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: sucursalNC || venta.sucursal_id,
-        caja_id: caja_id || null,
+        caja_id: venta.caja_id || caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -subtotalDevuelto,
@@ -3839,8 +3835,8 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
         let sucursalFisicaId = null
         let centumOperadorEmpresa = null
         let centumOperadorPrueba = null
-        // Usar la caja donde se procesa la NC (no la caja de la venta original)
-        const cajaParaCentum = caja_id || venta.caja_id
+        // Usar la caja de la venta original (reconciliación de caja)
+        const cajaParaCentum = venta.caja_id || caja_id
         if (cajaParaCentum) {
           const { data: cajaData } = await supabase
             .from('cajas')
@@ -3963,6 +3959,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: venta.sucursal_id,
+        caja_id: venta.caja_id || null,
         id_cliente_centum: venta.id_cliente_centum,
         nombre_cliente: venta.nombre_cliente,
         subtotal: -Math.abs(parseFloat(venta.subtotal) || 0),
@@ -3986,6 +3983,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: venta.sucursal_id,
+        caja_id: venta.caja_id || null,
         id_cliente_centum,
         nombre_cliente,
         subtotal: parseFloat(venta.subtotal) || 0,
@@ -4223,7 +4221,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: sucursalNC || venta.sucursal_id,
-        caja_id: caja_id || null,
+        caja_id: venta.caja_id || caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -diferenciaTotal,
@@ -4266,8 +4264,8 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
         let sucursalFisicaId = null
         let centumOperadorEmpresa = null
         let centumOperadorPrueba = null
-        // Usar la caja donde se procesa la NC (no la caja de la venta original)
-        const cajaParaCentum = caja_id || venta.caja_id
+        // Usar la caja de la venta original (reconciliación de caja)
+        const cajaParaCentum = venta.caja_id || caja_id
         if (cajaParaCentum) {
           const { data: cajaData } = await supabase
             .from('cajas')
