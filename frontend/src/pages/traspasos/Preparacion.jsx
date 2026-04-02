@@ -180,7 +180,7 @@ const Preparacion = () => {
         if (JSON.stringify(itemsSinc) !== JSON.stringify(data.items)) {
           data.items = itemsSinc
           setOrden(prev => ({ ...prev, items: itemsSinc }))
-          api.put(`/api/traspasos/ordenes/${id}/pick`, { items: itemsSinc, preparacion_state: ps }).catch(() => {})
+          api.put(`/api/traspasos/ordenes/${id}/pick`, { items: itemsSinc, preparacion_state: ps }).catch(err => console.error('Error syncing pick state:', err.message))
         }
       }
       prepStateLoaded.current = true
@@ -198,7 +198,7 @@ const Preparacion = () => {
       if (data.sucursal_origen_id) {
         api.get(`/api/traspasos/stock/${data.sucursal_origen_id}`)
           .then(r => setStockOrigen(r.data || {}))
-          .catch(() => {})
+          .catch(err => console.error('Error loading stock origen:', err.message))
       }
     } catch (err) {
       console.error(err)
@@ -221,7 +221,7 @@ const Preparacion = () => {
     // Guardar junto con items actuales
     const items = orden?.items
     if (items) {
-      api.put(`/api/traspasos/ordenes/${id}/pick`, { items, preparacion_state: state }).catch(() => {})
+      api.put(`/api/traspasos/ordenes/${id}/pick`, { items, preparacion_state: state }).catch(err => console.error('Error persisting pick state:', err.message))
     }
   }, [canastoActivo, contenedores])
 
@@ -231,7 +231,7 @@ const Preparacion = () => {
     if (ids.length === 0) return
     api.post('/api/traspasos/articulos-enriquecer', { ids })
       .then(r => setTodosArticulos(r.data || []))
-      .catch(() => {})
+      .catch(err => console.error('Error enriching articles:', err.message))
   }, [orden?.id])
 
   // Input oculto para captura de escaneo — inputMode="none" no abre teclado
@@ -654,7 +654,7 @@ const Preparacion = () => {
       }
     }))
     // Persistir en servidor
-    api.put(`/api/traspasos/articulos/${articuloId}/pesos`, { peso }).catch(() => {})
+    api.put(`/api/traspasos/articulos/${articuloId}/pesos`, { peso }).catch(err => console.error('Error updating article weights:', err.message))
   }
 
   // Actualizar progreso en orden.items (para persistencia y progress circles)

@@ -19,7 +19,7 @@ const Navbar = ({ titulo, sinTabs, volverA }) => {
     if (!esAdmin) return
     api.get('/api/api-logs/errores-recientes')
       .then(({ data }) => setErroresApi(data.cantidad || 0))
-      .catch(() => {})
+      .catch(err => console.error('Error loading API errors count:', err.message))
   }, [esAdmin])
 
   const handleLogout = async () => {

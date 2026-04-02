@@ -3,29 +3,33 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearTurnoSchema, editarTurnoSchema, crearAsignacionSchema, editarAsignacionSchema } = require('../schemas/rrhh')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ── Turnos CRUD ─────────────────────────────────────────────────────────────
 
 // GET /api/turnos
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('turnos')
-      .select('*')
+      .select('*, sucursales(id, nombre)')
       .order('hora_entrada')
 
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar turnos:', err)
+    logger.error('Error al listar turnos:', err)
     res.status(500).json({ error: 'Error al listar turnos' })
   }
-})
+}))
 
 // POST /api/turnos
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, validate(crearTurnoSchema), asyncHandler(async (req, res) => {
   try {
-    const { nombre, hora_entrada, hora_salida, tolerancia_entrada_min, tolerancia_salida_min } = req.body
+    const { nombre, hora_entrada, hora_salida, tolerancia_entrada_min, tolerancia_salida_min, sucursal_id } = req.body
 
     if (!nombre || !hora_entrada || !hora_salida) {
       return res.status(400).json({ error: 'nombre, hora_entrada y hora_salida son requeridos' })
@@ -39,6 +43,7 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
         hora_salida,
         tolerancia_entrada_min: tolerancia_entrada_min ?? 10,
         tolerancia_salida_min: tolerancia_salida_min ?? 10,
+        sucursal_id: sucursal_id || null,
       })
       .select()
       .single()
@@ -46,16 +51,16 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear turno:', err)
+    logger.error('Error al crear turno:', err)
     res.status(500).json({ error: 'Error al crear turno' })
   }
-})
+}))
 
 // PUT /api/turnos/:id
-router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, validate(editarTurnoSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, hora_entrada, hora_salida, tolerancia_entrada_min, tolerancia_salida_min, activo } = req.body
+    const { nombre, hora_entrada, hora_salida, tolerancia_entrada_min, tolerancia_salida_min, activo, sucursal_id } = req.body
 
     const updates = {}
     if (nombre !== undefined) updates.nombre = nombre.trim()
@@ -64,6 +69,7 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (tolerancia_entrada_min !== undefined) updates.tolerancia_entrada_min = tolerancia_entrada_min
     if (tolerancia_salida_min !== undefined) updates.tolerancia_salida_min = tolerancia_salida_min
     if (activo !== undefined) updates.activo = activo
+    if (sucursal_id !== undefined) updates.sucursal_id = sucursal_id || null
 
     const { data, error } = await supabase
       .from('turnos')
@@ -75,27 +81,27 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar turno:', err)
+    logger.error('Error al editar turno:', err)
     res.status(500).json({ error: 'Error al editar turno' })
   }
-})
+}))
 
 // DELETE /api/turnos/:id
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('turnos').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Turno eliminado' })
   } catch (err) {
-    console.error('Error al eliminar turno:', err)
+    logger.error('Error al eliminar turno:', err)
     res.status(500).json({ error: 'Error al eliminar turno' })
   }
-})
+}))
 
 // ── Asignaciones ────────────────────────────────────────────────────────────
 
 // GET /api/turnos/asignaciones
-router.get('/asignaciones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/asignaciones', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id } = req.query
 
@@ -115,13 +121,13 @@ router.get('/asignaciones', verificarAuth, soloGestorOAdmin, async (req, res) =>
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar asignaciones:', err)
+    logger.error('Error al listar asignaciones:', err)
     res.status(500).json({ error: 'Error al listar asignaciones' })
   }
-})
+}))
 
 // POST /api/turnos/asignaciones
-router.post('/asignaciones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/asignaciones', verificarAuth, soloGestorOAdmin, validate(crearAsignacionSchema), asyncHandler(async (req, res) => {
   try {
     const { empleado_id, turno_id, dia_semana, vigente_desde, vigente_hasta } = req.body
 
@@ -149,13 +155,13 @@ router.post('/asignaciones', verificarAuth, soloGestorOAdmin, async (req, res) =
     }
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear asignación:', err)
+    logger.error('Error al crear asignación:', err)
     res.status(500).json({ error: 'Error al crear asignación' })
   }
-})
+}))
 
 // PUT /api/turnos/asignaciones/:id
-router.put('/asignaciones/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/asignaciones/:id', verificarAuth, soloGestorOAdmin, validate(editarAsignacionSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { turno_id, vigente_hasta } = req.body
@@ -174,21 +180,21 @@ router.put('/asignaciones/:id', verificarAuth, soloGestorOAdmin, async (req, res
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar asignación:', err)
+    logger.error('Error al editar asignación:', err)
     res.status(500).json({ error: 'Error al editar asignación' })
   }
-})
+}))
 
 // DELETE /api/turnos/asignaciones/:id
-router.delete('/asignaciones/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/asignaciones/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('asignaciones_turno').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Asignación eliminada' })
   } catch (err) {
-    console.error('Error al eliminar asignación:', err)
+    logger.error('Error al eliminar asignación:', err)
     res.status(500).json({ error: 'Error al eliminar asignación' })
   }
-})
+}))
 
 module.exports = router

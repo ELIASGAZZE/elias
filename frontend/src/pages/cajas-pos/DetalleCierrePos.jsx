@@ -105,21 +105,21 @@ const DetalleCierrePos = () => {
         promises.push(
           api.get(`/api/cierres-pos/${id}/retiros`)
             .then(res => setRetiros(res.data || []))
-            .catch(() => {})
+            .catch(err => console.error('Error loading retiros:', err.message))
         )
 
         // Gastos
         promises.push(
           api.get(`/api/cierres-pos/${id}/gastos`)
             .then(res => setGastos(res.data || []))
-            .catch(() => {})
+            .catch(err => console.error('Error loading gastos:', err.message))
         )
 
         if (usuario?.rol !== 'operario') {
           promises.push(
             api.get(`/api/cierres-pos/${id}/verificacion`)
               .then(res => setVerificacion(res.data))
-              .catch(() => {})
+              .catch(err => console.error('Error loading verificacion:', err.message))
           )
         }
 
@@ -137,17 +137,17 @@ const DetalleCierrePos = () => {
           promises.push(
             api.get(`/api/cierres-pos/${id}/cambios-precio`)
               .then(res => setCambiosPrecio(res.data || []))
-              .catch(() => {})
+              .catch(err => console.error('Error loading cambios-precio:', err.message))
           )
           promises.push(
             api.get(`/api/cierres-pos/${id}/cancelaciones`)
               .then(res => setCancelaciones(res.data || []))
-              .catch(() => {})
+              .catch(err => console.error('Error loading cancelaciones:', err.message))
           )
           promises.push(
             api.get(`/api/cierres-pos/${id}/eliminaciones`)
               .then(res => setEliminaciones(res.data || []))
-              .catch(() => {})
+              .catch(err => console.error('Error loading eliminaciones:', err.message))
           )
         }
 

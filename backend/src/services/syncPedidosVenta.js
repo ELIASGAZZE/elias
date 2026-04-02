@@ -5,6 +5,7 @@ const sql = require('mssql')
 const supabase = require('../config/supabase')
 const { getPool } = require('../config/centum')
 const { registrarLlamada } = require('./apiLogger')
+const logger = require('../config/logger')
 
 // Helper: agrega parámetros INT a un request para cláusulas IN y devuelve los placeholders
 function addIntParams(request, ids, prefix) {
@@ -370,14 +371,14 @@ async function sincronizarPedidosVenta(origen = 'sync') {
           }
         }
         if (cancelados > 0) {
-          console.log(`[SyncPedidos] ${cancelados} pedidos cancelados (anulados en Centum)`)
+          logger.info(`[SyncPedidos] ${cancelados} pedidos cancelados (anulados en Centum)`)
         }
       }
     }
 
     const duracion = Date.now() - inicioTotal
     if (nuevos > 0 || errores > 0 || cancelados > 0) {
-      console.log(`[SyncPedidos] ${duracion}ms: ${nuevos} nuevos, ${actualizados} act, ${cancelados} cancel, ${errores} err`)
+      logger.info(`[SyncPedidos] ${duracion}ms: ${nuevos} nuevos, ${actualizados} act, ${cancelados} cancel, ${errores} err`)
     }
 
     registrarLlamada({

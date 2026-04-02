@@ -9,6 +9,7 @@ import TabLicencias from '../control-horario/TabLicencias'
 import TabFeriados from '../control-horario/TabFeriados'
 import TabAutorizaciones from '../control-horario/TabAutorizaciones'
 import TabReportes from '../control-horario/TabReportes'
+import TabPlanificacion from '../control-horario/TabPlanificacion'
 
 const formatPrecio = (n) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0 }).format(n || 0)
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'topes', label: 'Topes' },
   { id: 'asistencia', label: 'Asistencia' },
   { id: 'turnos', label: 'Turnos' },
+  { id: 'planificacion', label: 'Planificación' },
   { id: 'licencias', label: 'Licencias' },
   { id: 'feriados', label: 'Feriados' },
   { id: 'autorizaciones', label: 'Autorizaciones' },
@@ -819,6 +821,7 @@ const RRHHHome = () => {
         {tabActivo === 'topes' && <TabTopes />}
         {tabActivo === 'asistencia' && <TabDashboard />}
         {tabActivo === 'turnos' && <TabTurnos />}
+        {tabActivo === 'planificacion' && <TabPlanificacion />}
         {tabActivo === 'licencias' && <TabLicencias />}
         {tabActivo === 'feriados' && <TabFeriados />}
         {tabActivo === 'autorizaciones' && <TabAutorizaciones />}

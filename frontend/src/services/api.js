@@ -142,4 +142,9 @@ export function isNetworkError(err) {
   return !err.response && (err.code === 'ERR_NETWORK' || err.message === 'Network Error')
 }
 
+// Extraer request ID de un error de Axios (para correlación con logs del backend)
+export function getRequestId(err) {
+  return err?.response?.headers?.['x-request-id'] || err?.response?.data?.requestId || null
+}
+
 export default api

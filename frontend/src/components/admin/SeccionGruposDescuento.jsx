@@ -47,7 +47,7 @@ const SeccionGruposDescuento = () => {
   useEffect(() => {
     api.get('/api/pos/rubros').then(({ data }) => {
       setRubrosDisponibles((data.rubros || []).sort((a, b) => a.nombre.localeCompare(b.nombre)))
-    }).catch(() => {})
+    }).catch(err => console.error('Error loading rubros:', err.message))
   }, [])
 
   const abrirCrear = () => {

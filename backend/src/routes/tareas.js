@@ -4,11 +4,15 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { obtenerTareasPendientes, fechaArgentina, calcularProximaFecha, evaluarConfigParaFecha } = require('../services/tareasScheduler')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearTareaSchema, editarTareaSchema, crearSubtareaSchema, editarSubtareaSchema, crearConfigSchema, editarConfigSchema, ejecutarTareaSchema } = require('../schemas/tareas')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ── CRUD Tareas (admin) ─────────────────────────────────────────────────────
 
 // GET /api/tareas — Listar tareas (admin: todas, otros: solo activas)
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     let query = supabase
       .from('tareas')
@@ -23,19 +27,15 @@ router.get('/', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener tareas:', err)
+    logger.error('Error al obtener tareas:', err)
     res.status(500).json({ error: 'Error al obtener tareas' })
   }
-})
+}))
 
 // POST /api/tareas — Crear tarea + subtareas opcionales
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, validate(crearTareaSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, descripcion, enlace_manual, subtareas, checklist_imprimible } = req.body
-
-    if (!nombre || !nombre.trim()) {
-      return res.status(400).json({ error: 'El nombre de la tarea es requerido' })
-    }
 
     // Crear tarea
     const { data: tarea, error } = await supabase
@@ -73,13 +73,13 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 
     res.status(201).json(tareaCompleta)
   } catch (err) {
-    console.error('Error al crear tarea:', err)
+    logger.error('Error al crear tarea:', err)
     res.status(500).json({ error: 'Error al crear tarea' })
   }
-})
+}))
 
 // PUT /api/tareas/:id — Editar tarea
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, validate(editarTareaSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, descripcion, enlace_manual, activo, checklist_imprimible } = req.body
@@ -105,28 +105,28 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar tarea:', err)
+    logger.error('Error al editar tarea:', err)
     res.status(500).json({ error: 'Error al editar tarea' })
   }
-})
+}))
 
 // DELETE /api/tareas/:id — Eliminar tarea (cascade)
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase.from('tareas').delete().eq('id', id)
     if (error) throw error
     res.json({ mensaje: 'Tarea eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar tarea:', err)
+    logger.error('Error al eliminar tarea:', err)
     res.status(500).json({ error: 'Error al eliminar tarea' })
   }
-})
+}))
 
 // ── CRUD Subtareas (admin) ──────────────────────────────────────────────────
 
 // GET /api/tareas/:tareaId/subtareas
-router.get('/:tareaId/subtareas', verificarAuth, async (req, res) => {
+router.get('/:tareaId/subtareas', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('subtareas')
@@ -137,18 +137,15 @@ router.get('/:tareaId/subtareas', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener subtareas:', err)
+    logger.error('Error al obtener subtareas:', err)
     res.status(500).json({ error: 'Error al obtener subtareas' })
   }
-})
+}))
 
 // POST /api/tareas/:tareaId/subtareas
-router.post('/:tareaId/subtareas', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:tareaId/subtareas', verificarAuth, soloAdmin, validate(crearSubtareaSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, orden } = req.body
-    if (!nombre || !nombre.trim()) {
-      return res.status(400).json({ error: 'El nombre de la subtarea es requerido' })
-    }
 
     const { data, error } = await supabase
       .from('subtareas')
@@ -159,13 +156,13 @@ router.post('/:tareaId/subtareas', verificarAuth, soloAdmin, async (req, res) =>
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear subtarea:', err)
+    logger.error('Error al crear subtarea:', err)
     res.status(500).json({ error: 'Error al crear subtarea' })
   }
-})
+}))
 
 // PUT /api/tareas/subtareas/:id
-router.put('/subtareas/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/subtareas/:id', verificarAuth, soloAdmin, validate(editarSubtareaSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, orden, activo } = req.body
     const updates = {}
@@ -187,27 +184,27 @@ router.put('/subtareas/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar subtarea:', err)
+    logger.error('Error al editar subtarea:', err)
     res.status(500).json({ error: 'Error al editar subtarea' })
   }
-})
+}))
 
 // DELETE /api/tareas/subtareas/:id
-router.delete('/subtareas/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/subtareas/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('subtareas').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Subtarea eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar subtarea:', err)
+    logger.error('Error al eliminar subtarea:', err)
     res.status(500).json({ error: 'Error al eliminar subtarea' })
   }
-})
+}))
 
 // ── Config por Sucursal (admin) ─────────────────────────────────────────────
 
 // GET /api/tareas/:tareaId/config
-router.get('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/:tareaId/config', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('tareas_config_sucursal')
@@ -218,19 +215,15 @@ router.get('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener config:', err)
+    logger.error('Error al obtener config:', err)
     res.status(500).json({ error: 'Error al obtener configuración' })
   }
-})
+}))
 
 // POST /api/tareas/:tareaId/config
-router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:tareaId/config', verificarAuth, soloAdmin, validate(crearConfigSchema), asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, tipo, frecuencia_dias, dias_semana, dia_preferencia, reprogramar_siguiente, fecha_inicio } = req.body
-
-    if (!sucursal_id) {
-      return res.status(400).json({ error: 'La sucursal es requerida' })
-    }
 
     const insert = {
       tarea_id: req.params.tareaId,
@@ -257,13 +250,13 @@ router.post('/:tareaId/config', verificarAuth, soloAdmin, async (req, res) => {
     }
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear config:', err)
+    logger.error('Error al crear config:', err)
     res.status(500).json({ error: 'Error al crear configuración' })
   }
-})
+}))
 
 // PUT /api/tareas/config/:id
-router.put('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/config/:id', verificarAuth, soloAdmin, validate(editarConfigSchema), asyncHandler(async (req, res) => {
   try {
     const { tipo, frecuencia_dias, dias_semana, dia_preferencia, reprogramar_siguiente, fecha_inicio, activo } = req.body
     const updates = {}
@@ -289,28 +282,28 @@ router.put('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar config:', err)
+    logger.error('Error al editar config:', err)
     res.status(500).json({ error: 'Error al editar configuración' })
   }
-})
+}))
 
 // DELETE /api/tareas/config/:id
-router.delete('/config/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/config/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('tareas_config_sucursal').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Configuración eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar config:', err)
+    logger.error('Error al eliminar config:', err)
     res.status(500).json({ error: 'Error al eliminar configuración' })
   }
-})
+}))
 
 // ── Panel general: todas las sucursales (admin/gestor) ─────────────────────
 
 // GET /api/tareas/panel-dia?fecha=YYYY-MM-DD — Registros + pendientes por sucursal para una fecha
 // Optimizado: solo 3 queries a DB en vez de N por sucursal
-router.get('/panel-dia', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/panel-dia', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { hoyStr } = fechaArgentina()
     const fecha = req.query.fecha || hoyStr
@@ -481,14 +474,14 @@ router.get('/panel-dia', verificarAuth, soloGestorOAdmin, async (req, res) => {
     resultado.sort((a, b) => a.sucursal_nombre.localeCompare(b.sucursal_nombre))
     res.json(resultado)
   } catch (err) {
-    console.error('Error panel-dia:', err)
+    logger.error('Error panel-dia:', err)
     res.status(500).json({ error: 'Error al obtener panel por día' })
   }
-})
+}))
 
 // GET /api/tareas/panel-general — Estado de todas las tareas en todas las sucursales
 // Reutiliza obtenerTareasPendientes para que la lógica sea idéntica a la vista de sucursal
-router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/panel-general', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { hoyStr } = fechaArgentina()
 
@@ -592,15 +585,15 @@ router.get('/panel-general', verificarAuth, soloGestorOAdmin, async (req, res) =
     resultado.sort((a, b) => b.pendientes - a.pendientes || a.sucursal_nombre.localeCompare(b.sucursal_nombre))
     res.json(resultado)
   } catch (err) {
-    console.error('Error panel general:', err)
+    logger.error('Error panel general:', err)
     res.status(500).json({ error: 'Error al obtener panel general' })
   }
-})
+}))
 
 // ── Operario: Pendientes + Ejecutar ─────────────────────────────────────────
 
 // GET /api/tareas/pendientes — Tareas pendientes hoy
-router.get('/pendientes', verificarAuth, async (req, res) => {
+router.get('/pendientes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const sucursalId = req.perfil.rol === 'admin'
       ? req.query.sucursal_id || req.perfil.sucursal_id || null
@@ -622,13 +615,13 @@ router.get('/pendientes', verificarAuth, async (req, res) => {
     const pendientes = await obtenerTareasPendientes(sucursalId)
     res.json(pendientes)
   } catch (err) {
-    console.error('Error al obtener pendientes:', err)
+    logger.error('Error al obtener pendientes:', err)
     res.status(500).json({ error: 'Error al obtener tareas pendientes' })
   }
-})
+}))
 
 // GET /api/tareas/recomendacion/:tarea_config_id — Días desde última ejecución por empleado
-router.get('/recomendacion/:tarea_config_id', verificarAuth, async (req, res) => {
+router.get('/recomendacion/:tarea_config_id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { tarea_config_id } = req.params
 
@@ -710,19 +703,15 @@ router.get('/recomendacion/:tarea_config_id', verificarAuth, async (req, res) =>
 
     res.json(resultado)
   } catch (err) {
-    console.error('Error al obtener recomendación:', err)
+    logger.error('Error al obtener recomendación:', err)
     res.status(500).json({ error: 'Error al obtener recomendación' })
   }
-})
+}))
 
 // POST /api/tareas/ejecutar — Completar tarea
-router.post('/ejecutar', verificarAuth, async (req, res) => {
+router.post('/ejecutar', verificarAuth, validate(ejecutarTareaSchema), asyncHandler(async (req, res) => {
   try {
     const { tarea_config_id, empleados_ids, subtareas_completadas, observaciones, calificacion } = req.body
-
-    if (!tarea_config_id) {
-      return res.status(400).json({ error: 'tarea_config_id es requerido' })
-    }
 
     // Verificar que la config existe y pertenece a la sucursal del usuario
     const { data: config, error: errConfig } = await supabase
@@ -796,15 +785,15 @@ router.post('/ejecutar', verificarAuth, async (req, res) => {
 
     res.status(201).json(ejecucion)
   } catch (err) {
-    console.error('Error al ejecutar tarea:', err)
+    logger.error('Error al ejecutar tarea:', err)
     res.status(500).json({ error: 'Error al registrar ejecución' })
   }
-})
+}))
 
 // ── Analytics (gestor o admin) ──────────────────────────────────────────────
 
 // GET /api/tareas/analytics/resumen
-router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -922,13 +911,13 @@ router.get('/analytics/resumen', verificarAuth, soloGestorOAdmin, async (req, re
       })),
     })
   } catch (err) {
-    console.error('Error analytics resumen:', err)
+    logger.error('Error analytics resumen:', err)
     res.status(500).json({ error: 'Error al obtener resumen' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/timeline
-router.get('/analytics/timeline', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/timeline', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -970,13 +959,13 @@ router.get('/analytics/timeline', verificarAuth, soloGestorOAdmin, async (req, r
     const timeline = Object.values(porDia).sort((a, b) => a.fecha.localeCompare(b.fecha))
     res.json(timeline)
   } catch (err) {
-    console.error('Error analytics timeline:', err)
+    logger.error('Error analytics timeline:', err)
     res.status(500).json({ error: 'Error al obtener timeline' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/por-empleado
-router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -1053,13 +1042,13 @@ router.get('/analytics/por-empleado', verificarAuth, soloGestorOAdmin, async (re
       .sort((a, b) => b.score - a.score)
     res.json(ranking)
   } catch (err) {
-    console.error('Error analytics por-empleado:', err)
+    logger.error('Error analytics por-empleado:', err)
     res.status(500).json({ error: 'Error al obtener ranking' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/incumplimiento
-router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, desde, hasta } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -1158,13 +1147,13 @@ router.get('/analytics/incumplimiento', verificarAuth, soloGestorOAdmin, async (
     final.sort((a, b) => a.cumplimiento - b.cumplimiento)
     res.json(final)
   } catch (err) {
-    console.error('Error analytics incumplimiento:', err)
+    logger.error('Error analytics incumplimiento:', err)
     res.status(500).json({ error: 'Error al obtener incumplimiento' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/historial
-router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id, tarea_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -1204,15 +1193,15 @@ router.get('/analytics/historial', verificarAuth, soloGestorOAdmin, async (req, 
 
     res.json(resultado)
   } catch (err) {
-    console.error('Error analytics historial:', err)
+    logger.error('Error analytics historial:', err)
     res.status(500).json({ error: 'Error al obtener historial' })
   }
-})
+}))
 
 // ── Ranking de empleados ─────────────────────────────────────────────────────
 
 // GET /api/tareas/ranking?periodo=mensual|anual&mes=2026-03
-router.get('/ranking', verificarAuth, async (req, res) => {
+router.get('/ranking', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { periodo, mes } = req.query
     const { hoyStr: hoyArgStr } = fechaArgentina()
@@ -1288,13 +1277,13 @@ router.get('/ranking', verificarAuth, async (req, res) => {
 
     res.json({ periodo: periodo || 'mensual', etiqueta, desde: fechaDesde, hasta: fechaHasta, ranking })
   } catch (err) {
-    console.error('Error ranking:', err)
+    logger.error('Error ranking:', err)
     res.status(500).json({ error: 'Error al obtener ranking' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/tarea-detalle?tarea_id=...&desde=...&hasta=...&sucursal_id=...
-router.get('/analytics/tarea-detalle', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/tarea-detalle', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { tarea_id, desde, hasta, sucursal_id } = req.query
     if (!tarea_id) return res.status(400).json({ error: 'tarea_id es requerido' })
@@ -1420,13 +1409,13 @@ router.get('/analytics/tarea-detalle', verificarAuth, soloGestorOAdmin, async (r
       ejecuciones: timeline,
     })
   } catch (err) {
-    console.error('Error analytics tarea-detalle:', err)
+    logger.error('Error analytics tarea-detalle:', err)
     res.status(500).json({ error: 'Error al obtener detalle de tarea' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/calidad — Análisis de calidad/calificaciones
-router.get('/analytics/calidad', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/calidad', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id } = req.query
     const fechaDesde = desde || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -1571,13 +1560,13 @@ router.get('/analytics/calidad', verificarAuth, soloGestorOAdmin, async (req, re
       tendencia,
     })
   } catch (err) {
-    console.error('Error analytics calidad:', err)
+    logger.error('Error analytics calidad:', err)
     res.status(500).json({ error: 'Error al obtener análisis de calidad' })
   }
-})
+}))
 
 // GET /api/tareas/analytics/rendimiento-empleado — Análisis individual de un empleado
-router.get('/analytics/rendimiento-empleado', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/analytics/rendimiento-empleado', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, desde, hasta, sucursal_id } = req.query
     if (!empleado_id) return res.status(400).json({ error: 'empleado_id requerido' })
@@ -1802,9 +1791,9 @@ router.get('/analytics/rendimiento-empleado', verificarAuth, soloGestorOAdmin, a
       },
     })
   } catch (err) {
-    console.error('Error analytics rendimiento-empleado:', err)
+    logger.error('Error analytics rendimiento-empleado:', err)
     res.status(500).json({ error: 'Error al obtener rendimiento del empleado' })
   }
-})
+}))
 
 module.exports = router

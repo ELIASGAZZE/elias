@@ -4,11 +4,15 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { registrarVentaPOSEnCentum } = require('../services/centumVentasPOS')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { guardarDescuentosSchema, actualizarTopeSchema, registrarVentaSchema, registrarPagoSchema } = require('../schemas/cuentaEmpleados')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ─── RUBROS DISPONIBLES (desde artículos) ──────────────────────────────────────
 
 // GET /api/cuenta-empleados/rubros — lista rubros distintos de los artículos
-router.get('/rubros', verificarAuth, async (req, res) => {
+router.get('/rubros', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 1000
     const rubrosMap = {}
@@ -41,12 +45,12 @@ router.get('/rubros', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ─── DESCUENTOS POR RUBRO (config, solo admin) ────────────────────────────────
 
 // GET /api/cuenta-empleados/descuentos — listar descuentos por rubro
-router.get('/descuentos', verificarAuth, async (req, res) => {
+router.get('/descuentos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('descuentos_empleados')
@@ -58,10 +62,10 @@ router.get('/descuentos', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/cuenta-empleados/descuentos — guardar descuentos (array completo)
-router.post('/descuentos', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/descuentos', verificarAuth, soloAdmin, validate(guardarDescuentosSchema), asyncHandler(async (req, res) => {
   try {
     const { descuentos } = req.body // [{ rubro, rubro_id_centum, porcentaje }]
 
@@ -92,12 +96,12 @@ router.post('/descuentos', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ─── TOPE MENSUAL POR EMPLEADO ─────────────────────────────────────────────────
 
 // GET /api/cuenta-empleados/topes — listar empleados con su tope
-router.get('/topes', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/topes', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('empleados')
@@ -110,10 +114,10 @@ router.get('/topes', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // PUT /api/cuenta-empleados/topes/:empleadoId — actualizar tope mensual
-router.put('/topes/:empleadoId', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/topes/:empleadoId', verificarAuth, soloAdmin, validate(actualizarTopeSchema), asyncHandler(async (req, res) => {
   try {
     const { tope_mensual } = req.body
     const { data, error } = await supabase
@@ -128,12 +132,12 @@ router.put('/topes/:empleadoId', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ─── VENTA A EMPLEADO (desde POS, cualquier cajero) ────────────────────────────
 
 // POST /api/cuenta-empleados/ventas — registrar venta a cta cte
-router.post('/ventas', verificarAuth, async (req, res) => {
+router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandler(async (req, res) => {
   try {
     const { codigo_empleado, items, total, sucursal_id, caja_id, nonce } = req.body
 
@@ -256,7 +260,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       .single()
 
     if (ventaPosError) {
-      console.error('Error guardando venta empleado en ventas_pos:', ventaPosError.message)
+      logger.error('Error guardando venta empleado en ventas_pos:', ventaPosError.message)
     }
 
     // Registrar en Centum async (no bloquea la respuesta)
@@ -331,12 +335,12 @@ router.post('/ventas', verificarAuth, async (req, res) => {
               comprobante_centum: comprobante || resultado.IdVenta || null,
             }).eq('id', venta.id)
 
-            console.log(`[Centum] Venta empleado ${venta.id} registrada: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+            logger.info(`[Centum] Venta empleado ${venta.id} registrada: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
           } else {
             if (ventaPosId) await supabase.from('ventas_pos').update({ centum_error: 'Sin resultado de Centum' }).eq('id', ventaPosId)
           }
         } catch (centumErr) {
-          console.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
+          logger.error('Error registrando venta empleado en Centum (no bloquea):', centumErr.message)
           if (ventaPosId) {
             try {
               await supabase.from('ventas_pos').update({
@@ -345,7 +349,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
                 centum_ultimo_intento: new Date().toISOString(),
               }).eq('id', ventaPosId)
             } catch (e) {
-              console.error(`[CuentaCorrienteEmpleados] No se pudo guardar centum_error para venta ${ventaPosId}:`, e.message)
+              logger.error(`[CuentaCorrienteEmpleados] No se pudo guardar centum_error para venta ${ventaPosId}:`, e.message)
             }
           }
         }
@@ -354,15 +358,15 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
     res.status(201).json({ ...venta, empleado })
   } catch (err) {
-    console.error('Error al crear venta empleado:', err)
+    logger.error('Error al crear venta empleado:', err)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ─── SALDOS Y CUENTA CORRIENTE (admin/gestor) ─────────────────────────────────
 
 // GET /api/cuenta-empleados/saldos — resumen de todos los empleados
-router.get('/saldos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/saldos', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // Traer empleados activos
     const { data: empleados, error } = await supabase
@@ -426,10 +430,10 @@ router.get('/saldos', verificarAuth, soloGestorOAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/cuenta-empleados/:empleadoId/movimientos — detalle de movimientos
-router.get('/:empleadoId/movimientos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:empleadoId/movimientos', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleadoId } = req.params
 
@@ -456,10 +460,10 @@ router.get('/:empleadoId/movimientos', verificarAuth, soloGestorOAdmin, async (r
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/cuenta-empleados/:empleadoId/pagos — registrar pago/descuento de sueldo
-router.post('/:empleadoId/pagos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/:empleadoId/pagos', verificarAuth, soloGestorOAdmin, validate(registrarPagoSchema), asyncHandler(async (req, res) => {
   try {
     const { monto, concepto } = req.body
 
@@ -483,10 +487,10 @@ router.post('/:empleadoId/pagos', verificarAuth, soloGestorOAdmin, async (req, r
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/cuenta-empleados/cierre-masivo — poner todos los saldos en $0 y devolver resumen para imprimir
-router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // 1) Traer empleados activos
     const { data: empleados, error: errEmp } = await supabase
@@ -565,10 +569,10 @@ router.post('/cierre-masivo', verificarAuth, soloGestorOAdmin, async (req, res) 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/cuenta-empleados/ultimo-cierre — datos del último cierre mensual para reimprimir comprobantes
-router.get('/ultimo-cierre', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/ultimo-cierre', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // Buscar el pago de cierre más reciente (concepto empieza con "Cierre mensual")
     const { data: ultimoPago, error: errPago } = await supabase
@@ -649,6 +653,6 @@ router.get('/ultimo-cierre', verificarAuth, soloGestorOAdmin, async (req, res) =
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 module.exports = router

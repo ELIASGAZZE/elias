@@ -4,6 +4,8 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
 const { chatCajas } = require('../services/claude')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,7 +22,7 @@ function calcPercentil(miValor, todosValores) {
 }
 
 // GET /api/cajeros/:empleadoId/historial-auditoria
-router.get('/:empleadoId/historial-auditoria', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:empleadoId/historial-auditoria', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleadoId } = req.params
     const { desde, hasta, limit: limitStr } = req.query
@@ -371,13 +373,13 @@ router.get('/:empleadoId/historial-auditoria', verificarAuth, soloGestorOAdmin, 
       },
     })
   } catch (err) {
-    console.error('Error en historial de auditoría:', err)
+    logger.error('Error en historial de auditoría:', err)
     res.status(500).json({ error: 'Error al generar historial de auditoría' })
   }
-})
+}))
 
 // POST /api/cajeros/:empleadoId/chat-ia — chat sobre historial de un cajero
-router.post('/:empleadoId/chat-ia', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/:empleadoId/chat-ia', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { mensaje, historial } = req.body
     if (!mensaje || !mensaje.trim()) {
@@ -398,9 +400,9 @@ router.post('/:empleadoId/chat-ia', verificarAuth, soloGestorOAdmin, async (req,
     const respuesta = await chatCajas(mensaje.trim(), historial || [], contexto)
     res.json({ respuesta })
   } catch (err) {
-    console.error('Error en chat IA cajero:', err)
+    logger.error('Error en chat IA cajero:', err)
     res.status(500).json({ error: err.message || 'Error al procesar mensaje' })
   }
-})
+}))
 
 module.exports = router

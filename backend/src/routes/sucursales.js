@@ -3,9 +3,14 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { appCache } = require('../config/cache')
+const { validate } = require('../middleware/validate')
+const { crearSucursalSchema, editarSucursalSchema } = require('../schemas/sucursales')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/sucursales/by-token/:token — Público: resolver token de fichaje → sucursal
-router.get('/by-token/:token', async (req, res) => {
+router.get('/by-token/:token', asyncHandler(async (req, res) => {
   try {
     const { token } = req.params
     if (!token || token.length < 8) {
@@ -25,37 +30,37 @@ router.get('/by-token/:token', async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al resolver token de fichaje:', err)
+    logger.error('Error al resolver token de fichaje:', err)
     res.status(500).json({ error: 'Error al resolver token' })
   }
-})
+}))
 
 // GET /api/sucursales
-// Admin: lista todas las sucursales
-router.get('/', verificarAuth, async (req, res) => {
+// Admin: lista todas las sucursales (cacheado 5 min)
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    const cached = appCache.get('sucursales:all')
+    if (cached) return res.json(cached)
+
     const { data, error } = await supabase
       .from('sucursales')
       .select('*')
       .order('nombre')
 
     if (error) throw error
+    appCache.set('sucursales:all', data, 5 * 60 * 1000)
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener sucursales:', err)
+    logger.error('Error al obtener sucursales:', err)
     res.status(500).json({ error: 'Error al obtener sucursales' })
   }
-})
+}))
 
 // POST /api/sucursales
 // Admin: crea una nueva sucursal
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, validate(crearSucursalSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre } = req.body
-
-    if (!nombre) {
-      return res.status(400).json({ error: 'El nombre de la sucursal es requerido' })
-    }
 
     const { data, error } = await supabase
       .from('sucursales')
@@ -64,16 +69,17 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       .single()
 
     if (error) throw error
+    appCache.del('sucursales:all')
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear sucursal:', err)
+    logger.error('Error al crear sucursal:', err)
     res.status(500).json({ error: 'Error al crear sucursal' })
   }
-})
+}))
 
 // PUT /api/sucursales/:id
 // Admin: edita una sucursal
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, validate(editarSucursalSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, centum_sucursal_id, centum_operador_empresa, centum_operador_prueba, mostrar_en_consulta, permite_pedidos } = req.body
@@ -113,15 +119,16 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
       .single()
 
     if (error) throw error
+    appCache.del('sucursales:all')
     res.json(data)
   } catch (err) {
-    console.error('Error al editar sucursal:', err)
+    logger.error('Error al editar sucursal:', err)
     res.status(500).json({ error: 'Error al editar sucursal' })
   }
-})
+}))
 
 // POST /api/sucursales/:id/generar-token — Admin: genera token único para link de fichaje
-router.post('/:id/generar-token', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:id/generar-token', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const crypto = require('crypto')
@@ -137,14 +144,14 @@ router.post('/:id/generar-token', verificarAuth, soloAdmin, async (req, res) => 
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al generar token de fichaje:', err)
+    logger.error('Error al generar token de fichaje:', err)
     res.status(500).json({ error: 'Error al generar token' })
   }
-})
+}))
 
 // DELETE /api/sucursales/:id
 // Admin: elimina una sucursal
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
 
@@ -154,11 +161,12 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
       .eq('id', id)
 
     if (error) throw error
+    appCache.del('sucursales:all')
     res.json({ mensaje: 'Sucursal eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar sucursal:', err)
+    logger.error('Error al eliminar sucursal:', err)
     res.status(500).json({ error: 'Error al eliminar sucursal' })
   }
-})
+}))
 
 module.exports = router

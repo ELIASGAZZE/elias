@@ -3,27 +3,34 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { appCache } = require('../config/cache')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/denominaciones
 // Cualquier usuario autenticado: lista todas las denominaciones
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    const cached = appCache.get('denominaciones:all')
+    if (cached) return res.json(cached)
+
     const { data, error } = await supabase
       .from('denominaciones')
       .select('*')
       .order('orden')
 
     if (error) throw error
+    appCache.set('denominaciones:all', data, 10 * 60 * 1000)
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener denominaciones:', err)
+    logger.error('Error al obtener denominaciones:', err)
     res.status(500).json({ error: 'Error al obtener denominaciones' })
   }
-})
+}))
 
 // POST /api/denominaciones
 // Admin: crea una nueva denominación
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { valor, tipo, orden } = req.body
 
@@ -50,16 +57,17 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       }
       throw error
     }
+    appCache.del('denominaciones:all')
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear denominación:', err)
+    logger.error('Error al crear denominación:', err)
     res.status(500).json({ error: 'Error al crear denominación' })
   }
-})
+}))
 
 // PUT /api/denominaciones/:id
 // Admin: edita una denominación
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { valor, tipo, activo, orden } = req.body
@@ -92,16 +100,17 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
       }
       throw error
     }
+    appCache.del('denominaciones:all')
     res.json(data)
   } catch (err) {
-    console.error('Error al editar denominación:', err)
+    logger.error('Error al editar denominación:', err)
     res.status(500).json({ error: 'Error al editar denominación' })
   }
-})
+}))
 
 // DELETE /api/denominaciones/:id
 // Admin: elimina una denominación
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase
@@ -110,11 +119,12 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
       .eq('id', id)
 
     if (error) throw error
+    appCache.del('denominaciones:all')
     res.json({ mensaje: 'Denominación eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar denominación:', err)
+    logger.error('Error al eliminar denominación:', err)
     res.status(500).json({ error: 'Error al eliminar denominación' })
   }
-})
+}))
 
 module.exports = router

@@ -4,18 +4,18 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { crearClienteAuth } = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const { validate } = require('../middleware/validate')
+const { loginSchema, refreshSchema, crearUsuarioSchema, editarUsuarioSchema } = require('../schemas/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // Convención: username → email oculto para Supabase Auth
 const usernameToEmail = (username) => username.toLowerCase() + '@padano.app'
 
 // POST /api/auth/login
 // Recibe username y contraseña, devuelve token de sesión
-router.post('/login', async (req, res) => {
+router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
   const { username, password } = req.body
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Usuario y contraseña son requeridos' })
-  }
 
   try {
     const email = usernameToEmail(username)
@@ -28,7 +28,7 @@ router.post('/login', async (req, res) => {
     })
 
     if (error) {
-      console.error('Error de Supabase en login:', error.message)
+      logger.error('Error de Supabase en login:', error.message)
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
     }
 
@@ -40,7 +40,7 @@ router.post('/login', async (req, res) => {
       .single()
 
     if (errorPerfil || !perfil) {
-      console.error('Error obteniendo perfil:', errorPerfil?.message)
+      logger.error('Error obteniendo perfil:', errorPerfil?.message)
       return res.status(401).json({ error: 'Perfil de usuario no encontrado' })
     }
 
@@ -56,19 +56,16 @@ router.post('/login', async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('Error en login:', err)
+    logger.error('Error en login:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
-})
+}))
 
 // POST /api/auth/refresh
 // Renueva el access token usando el refresh token
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', validate(refreshSchema), asyncHandler(async (req, res) => {
   try {
     const { refresh_token } = req.body
-    if (!refresh_token) {
-      return res.status(400).json({ error: 'refresh_token requerido' })
-    }
 
     const clienteAuth = crearClienteAuth()
     const { data, error } = await clienteAuth.auth.refreshSession({ refresh_token })
@@ -82,22 +79,22 @@ router.post('/refresh', async (req, res) => {
       refresh_token: data.session.refresh_token,
     })
   } catch (err) {
-    console.error('Error en refresh:', err)
+    logger.error('Error en refresh:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
-})
+}))
 
 // POST /api/auth/logout
 // Cierra la sesión del usuario
-router.post('/logout', verificarAuth, async (req, res) => {
+router.post('/logout', verificarAuth, asyncHandler(async (req, res) => {
   try {
     await supabase.auth.signOut()
     res.json({ mensaje: 'Sesión cerrada correctamente' })
   } catch (err) {
-    console.error('Error en logout:', err)
+    logger.error('Error en logout:', err)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
-})
+}))
 
 // GET /api/auth/me
 // Devuelve los datos del usuario autenticado
@@ -113,7 +110,7 @@ router.get('/me', verificarAuth, (req, res) => {
 
 // GET /api/auth/usuarios
 // Admin: lista todos los usuarios
-router.get('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/usuarios', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('perfiles')
@@ -123,34 +120,16 @@ router.get('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener usuarios:', err)
+    logger.error('Error al obtener usuarios:', err)
     res.status(500).json({ error: 'Error al obtener usuarios' })
   }
-})
+}))
 
 // POST /api/auth/usuarios
 // Admin: crea un nuevo usuario
-router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/usuarios', verificarAuth, soloAdmin, validate(crearUsuarioSchema), asyncHandler(async (req, res) => {
   const { username, password, nombre, rol, sucursal_id } = req.body
-
-  if (!username || !password || !nombre) {
-    return res.status(400).json({ error: 'Username, contraseña y nombre son requeridos' })
-  }
-
-  if (!['admin', 'operario', 'gestor'].includes(rol)) {
-    return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
-  }
-
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
-  }
-
   const usernameLimpio = username.toLowerCase().trim()
-
-  // Validar formato: solo letras, números y puntos
-  if (!/^[a-z0-9.]+$/.test(usernameLimpio)) {
-    return res.status(400).json({ error: 'El usuario solo puede contener letras, números y puntos' })
-  }
 
   try {
     // Verificar si el username ya existe
@@ -174,7 +153,7 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
     })
 
     if (authError) {
-      console.error('Error creando usuario en Auth:', authError.message, authError.status)
+      logger.error('Error creando usuario en Auth:', authError.message, authError.status)
       const msg = authError.message?.includes('already been registered')
         ? `El email ya existe en el sistema. Puede que "${usernameLimpio}" haya sido creado antes.`
         : authError.message || 'Error al crear usuario'
@@ -204,31 +183,19 @@ router.post('/usuarios', verificarAuth, soloAdmin, async (req, res) => {
       throw perfilError
     }
 
-    console.log(`[AUDIT] Usuario creado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
+    logger.info(`[AUDIT] Usuario creado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
     res.status(201).json(perfil)
   } catch (err) {
-    console.error('Error al crear usuario:', err)
+    logger.error('Error al crear usuario:', err)
     res.status(500).json({ error: 'Error al crear usuario' })
   }
-})
+}))
 
 // PUT /api/auth/usuarios/:id
 // Admin: edita perfil de un usuario (nombre, rol, sucursal_id, username, password)
-router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/usuarios/:id', verificarAuth, soloAdmin, validate(editarUsuarioSchema), asyncHandler(async (req, res) => {
   const { id } = req.params
   const { nombre, rol, sucursal_id, username, password } = req.body
-
-  if (!nombre || !nombre.trim()) {
-    return res.status(400).json({ error: 'El nombre es requerido' })
-  }
-
-  if (!['admin', 'operario', 'gestor'].includes(rol)) {
-    return res.status(400).json({ error: 'El rol debe ser "admin", "operario" o "gestor"' })
-  }
-
-  if (password && password.length < 8) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' })
-  }
 
   try {
     // Obtener perfil actual para el user_id
@@ -273,7 +240,7 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (Object.keys(authUpdate).length > 0) {
       const { error: authError } = await supabase.auth.admin.updateUserById(perfil.user_id, authUpdate)
       if (authError) {
-        console.error('Error actualizando Auth:', authError.message)
+        logger.error('Error actualizando Auth:', authError.message)
         return res.status(500).json({ error: 'Error al actualizar credenciales' })
       }
     }
@@ -294,17 +261,17 @@ router.put('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
       .single()
 
     if (error) throw error
-    console.log(`[AUDIT] Usuario editado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
+    logger.info(`[AUDIT] Usuario editado: "${usernameLimpio}" (rol: ${rol}) por admin "${req.perfil.username}"`)
     res.json(data)
   } catch (err) {
-    console.error('Error al editar usuario:', err)
+    logger.error('Error al editar usuario:', err)
     res.status(500).json({ error: 'Error al editar usuario' })
   }
-})
+}))
 
 // DELETE /api/auth/usuarios/:id
 // Admin: elimina un usuario (por perfiles.id)
-router.delete('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/usuarios/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params
 
   // No permitir eliminarse a sí mismo
@@ -341,17 +308,17 @@ router.delete('/usuarios/:id', verificarAuth, soloAdmin, async (req, res) => {
     // Si no hay cascade, eliminar perfil manualmente
     await supabase.from('perfiles').delete().eq('id', id)
 
-    console.log(`[AUDIT] Usuario eliminado: "${perfil.nombre}" por admin "${req.perfil.username}"`)
+    logger.info(`[AUDIT] Usuario eliminado: "${perfil.nombre}" por admin "${req.perfil.username}"`)
     res.json({ mensaje: 'Usuario eliminado correctamente' })
   } catch (err) {
-    console.error('Error al eliminar usuario:', err)
+    logger.error('Error al eliminar usuario:', err)
     res.status(500).json({ error: 'Error al eliminar usuario' })
   }
-})
+}))
 
 // POST /api/auth/setup-admin
 // Ruta para migrar/crear el usuario admin con el nuevo sistema de usernames
-router.post('/setup-admin', async (req, res) => {
+router.post('/setup-admin', asyncHandler(async (req, res) => {
   const { username, password, nombre } = req.body
 
   if (!username || !password) {
@@ -421,14 +388,14 @@ router.post('/setup-admin', async (req, res) => {
       email,
     })
   } catch (err) {
-    console.error('Error en setup-admin:', err)
+    logger.error('Error en setup-admin:', err)
     res.status(500).json({ error: 'Error interno', detalle: err.message })
   }
-})
+}))
 
 // GET /api/auth/offline-pins
 // Devuelve perfiles con PIN hasheado para validación offline
-router.get('/offline-pins', verificarAuth, async (req, res) => {
+router.get('/offline-pins', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: empleados, error } = await supabase
       .from('empleados')
@@ -446,15 +413,15 @@ router.get('/offline-pins', verificarAuth, async (req, res) => {
       pin_hash: e.pin_fichaje,
     })))
   } catch (err) {
-    console.error('Error obteniendo offline pins:', err)
+    logger.error('Error obteniendo offline pins:', err)
     res.status(500).json({ error: 'Error al obtener datos offline' })
   }
-})
+}))
 
 // POST /api/auth/emergency-login
 // Login de emergencia sin Supabase (solo cuando no hay internet)
 // Usa un PIN configurado en variable de entorno
-router.post('/emergency-login', async (req, res) => {
+router.post('/emergency-login', asyncHandler(async (req, res) => {
   const { pin } = req.body
   const emergencyPin = process.env.EMERGENCY_PIN
 
@@ -478,6 +445,6 @@ router.post('/emergency-login', async (req, res) => {
     },
     emergency: true,
   })
-})
+}))
 
 module.exports = router

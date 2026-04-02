@@ -5,6 +5,8 @@ const path = require('path')
 const forge = require('node-forge')
 const axios = require('axios')
 const { parseStringPromise } = require('xml2js')
+const logger = require('../config/logger')
+const { breakers } = require('../utils/circuitBreaker')
 
 const CERT_PATH = path.join(__dirname, '../../certs/COMERCIAL PADANO_7627c4ab3209aadb.crt')
 const KEY_PATH = path.join(__dirname, '../../certs/afip.key')
@@ -96,10 +98,10 @@ async function getWSAAToken() {
   </soapenv:Body>
 </soapenv:Envelope>`
 
-  const res = await axios.post('https://wsaa.afip.gov.ar/ws/services/LoginCms', soapEnv, {
+  const res = await breakers.afip.exec(() => axios.post('https://wsaa.afip.gov.ar/ws/services/LoginCms', soapEnv, {
     headers: { 'Content-Type': 'text/xml', 'SOAPAction': '' },
     timeout: 30000,
-  })
+  }))
 
   const parsed = await parseStringPromise(res.data, { explicitArray: false })
   const loginReturn = parsed['soapenv:Envelope']['soapenv:Body']['loginCmsResponse']['loginCmsReturn']
@@ -111,7 +113,7 @@ async function getWSAAToken() {
     expiration: new Date(now.getTime() + 11 * 60 * 60 * 1000),
   }
 
-  console.log('[AFIP] Token WSAA obtenido, expira:', tokenCache.expiration.toISOString())
+  logger.info('[AFIP] Token WSAA obtenido, expira:', tokenCache.expiration.toISOString())
   return tokenCache
 }
 
@@ -133,11 +135,11 @@ async function consultarPersonaSOAP(idPersona) {
   </soapenv:Body>
 </soapenv:Envelope>`
 
-  const res = await axios.post(
+  const res = await breakers.afip.exec(() => axios.post(
     'https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5',
     soapReq,
     { headers: { 'Content-Type': 'text/xml', 'SOAPAction': '' }, timeout: 15000, responseType: 'arraybuffer' }
-  )
+  ))
   // AFIP devuelve ISO-8859-1
   const decoded = new TextDecoder('iso-8859-1').decode(res.data)
 
@@ -217,7 +219,7 @@ async function consultarCUIT(cuit) {
 
   for (const c of cuitsAProbar) {
     try {
-      console.log(`[AFIP] Consultando CUIT ${c}...`)
+      logger.info(`[AFIP] Consultando CUIT ${c}...`)
       const data = await consultarPersonaSOAP(c)
 
       if (!data || !data.datosGenerales) continue
@@ -248,7 +250,7 @@ async function consultarCUIT(cuit) {
       const faultMsg = typeof err.response?.data === 'string'
         ? err.response.data.match(/<faultstring>(.*?)<\/faultstring>/)?.[1]
         : null
-      console.log(`[AFIP] Error para ${c}: ${faultMsg || err.message}`)
+      logger.info(`[AFIP] Error para ${c}: ${faultMsg || err.message}`)
 
       if (faultMsg?.includes('No existe persona')) continue
 

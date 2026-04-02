@@ -1,95 +1,104 @@
 // Componente raíz de la aplicación
 // Define las rutas y envuelve todo con el proveedor de autenticación
-import React from 'react'
+import React, { Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import RutaProtegida from './components/auth/RutaProtegida'
+import ErrorBoundary from './components/ErrorBoundary'
 
-// Hub
+// Spinner de carga para lazy loading
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primario-600" />
+  </div>
+)
+
+// Login y Hub se cargan eager (rutas principales)
+import Login from './pages/Login'
 import Hub from './pages/Hub'
 
-// Páginas de la app Pedidos
-import NuevoPedido from './pages/operario/NuevoPedido'
-import Pedidos from './pages/admin/AdminPedidos'
-import DetallePedido from './pages/DetallePedido'
-
-// Páginas de la app Control de Cajas
-import CajasHome from './pages/cajas/CajasHome'
-import CerrarCaja from './pages/cajas/CerrarCaja'
-import DetalleCierre from './pages/cajas/DetalleCierre'
-import VerificarCierre from './pages/cajas/VerificarCierre'
-import NuevoRetiro from './pages/cajas/NuevoRetiro'
-import VerificarRetiro from './pages/cajas/VerificarRetiro'
-import ChatAuditoria from './pages/cajas/ChatAuditoria'
-import BatchAnalisis from './pages/cajas/BatchAnalisis'
-
-// Páginas de la app Control Caja POS
-import CajasPosHome from './pages/cajas-pos/CajasPosHome'
-import CerrarCajaPos from './pages/cajas-pos/CerrarCajaPos'
-import DetalleCierrePos from './pages/cajas-pos/DetalleCierrePos'
-import VerificarCierrePos from './pages/cajas-pos/VerificarCierrePos'
-import NuevoRetiroPos from './pages/cajas-pos/NuevoRetiroPos'
-import VerificarRetiroPos from './pages/cajas-pos/VerificarRetiroPos'
-
-// Páginas de la app POS
-import POS from './pages/pos/POS'
-import PedidosPOS from './pages/pos/PedidosPOS'
-
-// Páginas de la app RRHH
-import RRHHHome from './pages/rrhh/RRHHHome'
-
-// Páginas de la app Ventas
-import VentasHome from './pages/ventas/VentasHome'
-import DetalleVenta from './pages/ventas/DetalleVenta'
-import ReportesPromociones from './pages/ventas/ReportesPromociones'
-import ConciliacionVentas from './pages/ventas/ConciliacionVentas'
-import DuplicadosCentum from './pages/ventas/DuplicadosCentum'
-
-// Páginas de la app Tareas
-import TareasHome from './pages/tareas/TareasHome'
-import TareasAdmin from './pages/tareas/TareasAdmin'
-import TareasAnalytics from './pages/tareas/TareasAnalytics'
-import TareasPanel from './pages/tareas/TareasPanel'
-import TareasEquipo from './pages/tareas/TareasEquipo'
-
-// Páginas de la app Auditoría
-import AuditoriaHome from './pages/auditoria/AuditoriaHome'
-
-// Páginas de la app Traspasos
-import TraspasosHome from './pages/traspasos/TraspasosHome'
-import OrdenesTraspasos from './pages/traspasos/OrdenesTraspasos'
-import NuevaOrdenTraspaso from './pages/traspasos/NuevaOrden'
-import OrdenDetalleTraspaso from './pages/traspasos/OrdenDetalle'
-import Preparacion from './pages/traspasos/Preparacion'
-import PreparacionAuto from './pages/traspasos/PreparacionAuto'
-import Recepcion from './pages/traspasos/Recepcion'
-import Reparto from './pages/traspasos/Reparto'
-import RecepcionScan from './pages/traspasos/RecepcionScan'
-
-// Páginas de la app Compras
-import ComprasHome from './pages/compras/ComprasHome'
-import Proveedores from './pages/compras/Proveedores'
-import ProveedorDetalle from './pages/compras/ProveedorDetalle'
-import DemandaProveedor from './pages/compras/DemandaProveedor'
-import OrdenesCompra from './pages/compras/OrdenesCompra'
-import OrdenDetalle from './pages/compras/OrdenDetalle'
-import NuevaOrden from './pages/compras/NuevaOrden'
-import ChatCompras from './pages/compras/ChatCompras'
-import ConsumoInterno from './pages/compras/ConsumoInterno'
-import PedidosExtra from './pages/compras/PedidosExtra'
-
-// Página de fichaje (ruta pública)
+// Página de fichaje (ruta pública, carga rápida)
 import Fichaje from './pages/fichaje/Fichaje'
 
-// Páginas solo admin
-import AdminArticulos from './pages/admin/AdminArticulos'
-import AdminArticulosManuales from './pages/admin/AdminArticulosManuales'
-import AdminArticulosCombos from './pages/admin/AdminArticulosCombos'
-import ConfiguracionHub from './pages/admin/ConfiguracionHub'
-import AdminConfiguracion from './pages/admin/AdminConfiguracion'
-import AdminApiLogs from './pages/admin/AdminApiLogs'
+// ── Lazy loading por módulo ──────────────────────────────────────────────────
 
-import Login from './pages/Login'
+// Pedidos
+const NuevoPedido = lazy(() => import('./pages/operario/NuevoPedido'))
+const Pedidos = lazy(() => import('./pages/admin/AdminPedidos'))
+const DetallePedido = lazy(() => import('./pages/DetallePedido'))
+
+// Control de Cajas
+const CajasHome = lazy(() => import('./pages/cajas/CajasHome'))
+const CerrarCaja = lazy(() => import('./pages/cajas/CerrarCaja'))
+const DetalleCierre = lazy(() => import('./pages/cajas/DetalleCierre'))
+const VerificarCierre = lazy(() => import('./pages/cajas/VerificarCierre'))
+const NuevoRetiro = lazy(() => import('./pages/cajas/NuevoRetiro'))
+const VerificarRetiro = lazy(() => import('./pages/cajas/VerificarRetiro'))
+const ChatAuditoria = lazy(() => import('./pages/cajas/ChatAuditoria'))
+const BatchAnalisis = lazy(() => import('./pages/cajas/BatchAnalisis'))
+
+// Control Caja POS
+const CajasPosHome = lazy(() => import('./pages/cajas-pos/CajasPosHome'))
+const CerrarCajaPos = lazy(() => import('./pages/cajas-pos/CerrarCajaPos'))
+const DetalleCierrePos = lazy(() => import('./pages/cajas-pos/DetalleCierrePos'))
+const VerificarCierrePos = lazy(() => import('./pages/cajas-pos/VerificarCierrePos'))
+const NuevoRetiroPos = lazy(() => import('./pages/cajas-pos/NuevoRetiroPos'))
+const VerificarRetiroPos = lazy(() => import('./pages/cajas-pos/VerificarRetiroPos'))
+
+// POS
+const POS = lazy(() => import('./pages/pos/POS'))
+const PedidosPOS = lazy(() => import('./pages/pos/PedidosPOS'))
+
+// RRHH
+const RRHHHome = lazy(() => import('./pages/rrhh/RRHHHome'))
+
+// Ventas
+const VentasHome = lazy(() => import('./pages/ventas/VentasHome'))
+const DetalleVenta = lazy(() => import('./pages/ventas/DetalleVenta'))
+const ReportesPromociones = lazy(() => import('./pages/ventas/ReportesPromociones'))
+const ConciliacionVentas = lazy(() => import('./pages/ventas/ConciliacionVentas'))
+const DuplicadosCentum = lazy(() => import('./pages/ventas/DuplicadosCentum'))
+
+// Tareas
+const TareasHome = lazy(() => import('./pages/tareas/TareasHome'))
+const TareasAdmin = lazy(() => import('./pages/tareas/TareasAdmin'))
+const TareasAnalytics = lazy(() => import('./pages/tareas/TareasAnalytics'))
+const TareasPanel = lazy(() => import('./pages/tareas/TareasPanel'))
+const TareasEquipo = lazy(() => import('./pages/tareas/TareasEquipo'))
+
+// Auditoría
+const AuditoriaHome = lazy(() => import('./pages/auditoria/AuditoriaHome'))
+
+// Traspasos
+const TraspasosHome = lazy(() => import('./pages/traspasos/TraspasosHome'))
+const OrdenesTraspasos = lazy(() => import('./pages/traspasos/OrdenesTraspasos'))
+const NuevaOrdenTraspaso = lazy(() => import('./pages/traspasos/NuevaOrden'))
+const OrdenDetalleTraspaso = lazy(() => import('./pages/traspasos/OrdenDetalle'))
+const Preparacion = lazy(() => import('./pages/traspasos/Preparacion'))
+const PreparacionAuto = lazy(() => import('./pages/traspasos/PreparacionAuto'))
+const Recepcion = lazy(() => import('./pages/traspasos/Recepcion'))
+const Reparto = lazy(() => import('./pages/traspasos/Reparto'))
+const RecepcionScan = lazy(() => import('./pages/traspasos/RecepcionScan'))
+
+// Compras
+const ComprasHome = lazy(() => import('./pages/compras/ComprasHome'))
+const Proveedores = lazy(() => import('./pages/compras/Proveedores'))
+const ProveedorDetalle = lazy(() => import('./pages/compras/ProveedorDetalle'))
+const DemandaProveedor = lazy(() => import('./pages/compras/DemandaProveedor'))
+const OrdenesCompra = lazy(() => import('./pages/compras/OrdenesCompra'))
+const OrdenDetalle = lazy(() => import('./pages/compras/OrdenDetalle'))
+const NuevaOrden = lazy(() => import('./pages/compras/NuevaOrden'))
+const ChatCompras = lazy(() => import('./pages/compras/ChatCompras'))
+const ConsumoInterno = lazy(() => import('./pages/compras/ConsumoInterno'))
+const PedidosExtra = lazy(() => import('./pages/compras/PedidosExtra'))
+
+// Admin
+const AdminArticulos = lazy(() => import('./pages/admin/AdminArticulos'))
+const AdminArticulosManuales = lazy(() => import('./pages/admin/AdminArticulosManuales'))
+const AdminArticulosCombos = lazy(() => import('./pages/admin/AdminArticulosCombos'))
+const ConfiguracionHub = lazy(() => import('./pages/admin/ConfiguracionHub'))
+const AdminConfiguracion = lazy(() => import('./pages/admin/AdminConfiguracion'))
+const AdminApiLogs = lazy(() => import('./pages/admin/AdminApiLogs'))
 
 // Redirige al home según si está logueado
 const RedirigirHome = () => {
@@ -103,7 +112,9 @@ const RedirigirHome = () => {
 const App = () => {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <AuthProvider>
+        <Suspense fallback={<LoadingSpinner />}>
         <Routes>
           {/* Ruta pública */}
           <Route path="/login" element={<Login />} />
@@ -367,7 +378,9 @@ const App = () => {
           {/* Cualquier ruta desconocida */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

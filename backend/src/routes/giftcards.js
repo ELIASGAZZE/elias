@@ -3,15 +3,15 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { activarGiftCardSchema, usarGiftCardSchema } = require('../schemas/giftcards')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // POST /api/gift-cards/activar — Cajero escanea barcode + elige monto
-router.post('/activar', verificarAuth, async (req, res) => {
+router.post('/activar', verificarAuth, validate(activarGiftCardSchema), asyncHandler(async (req, res) => {
   try {
     const { codigo, monto, comprador_nombre, pagos, caja_id, sucursal_id, cierre_id, cajero_nombre } = req.body
-
-    if (!codigo || !codigo.trim()) return res.status(400).json({ error: 'Código es requerido' })
-    if (codigo.trim().length !== 19) return res.status(400).json({ error: 'El código debe tener exactamente 19 dígitos' })
-    if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' })
 
     // Verificar que el código no exista ya
     const { data: existente } = await supabase
@@ -73,7 +73,7 @@ router.post('/activar', verificarAuth, async (req, res) => {
       .single()
 
     if (ventaErr) {
-      console.error('[GiftCards] Error al crear venta_pos:', ventaErr.message, ventaErr.details, ventaErr.hint, JSON.stringify(ventaInsert))
+      logger.error('[GiftCards] Error al crear venta_pos:', ventaErr.message, ventaErr.details, ventaErr.hint, JSON.stringify(ventaInsert))
       throw new Error('No se pudo registrar la venta de la gift card: ' + ventaErr.message)
     }
     ventaId = venta.id
@@ -91,13 +91,13 @@ router.post('/activar', verificarAuth, async (req, res) => {
 
     res.status(201).json({ gift_card: giftCard, numero_venta: venta?.numero_venta, mensaje: 'Gift card activada correctamente' })
   } catch (err) {
-    console.error('[GiftCards] Error al activar:', err.message)
+    logger.error('[GiftCards] Error al activar:', err.message)
     res.status(500).json({ error: 'Error al activar gift card: ' + err.message })
   }
-})
+}))
 
 // GET /api/gift-cards/consultar/:codigo — Consulta saldo y movimientos
-router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
+router.get('/consultar/:codigo', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: giftCard, error } = await supabase
       .from('gift_cards')
@@ -198,18 +198,15 @@ router.get('/consultar/:codigo', verificarAuth, async (req, res) => {
       movimientos: movEnriquecidos,
     })
   } catch (err) {
-    console.error('[GiftCards] Error al consultar:', err.message)
+    logger.error('[GiftCards] Error al consultar:', err.message)
     res.status(500).json({ error: 'Error al consultar gift card' })
   }
-})
+}))
 
 // POST /api/gift-cards/usar — Usa saldo como pago
-router.post('/usar', verificarAuth, async (req, res) => {
+router.post('/usar', verificarAuth, validate(usarGiftCardSchema), asyncHandler(async (req, res) => {
   try {
     const { codigo, monto, venta_pos_id } = req.body
-
-    if (!codigo) return res.status(400).json({ error: 'Código es requerido' })
-    if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' })
 
     const { data: giftCard, error: gcErr } = await supabase
       .from('gift_cards')
@@ -253,13 +250,13 @@ router.post('/usar', verificarAuth, async (req, res) => {
       mensaje: nuevoEstado === 'agotada' ? 'Gift card agotada' : `Saldo restante: $${nuevoSaldo.toFixed(2)}`,
     })
   } catch (err) {
-    console.error('[GiftCards] Error al usar:', err.message)
+    logger.error('[GiftCards] Error al usar:', err.message)
     res.status(500).json({ error: 'Error al usar gift card: ' + err.message })
   }
-})
+}))
 
 // GET /api/gift-cards — Lista gift cards con filtros
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     let query = supabase
       .from('gift_cards')
@@ -278,13 +275,13 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json({ gift_cards: data || [] })
   } catch (err) {
-    console.error('[GiftCards] Error al listar:', err.message)
+    logger.error('[GiftCards] Error al listar:', err.message)
     res.status(500).json({ error: 'Error al listar gift cards' })
   }
-})
+}))
 
 // PUT /api/gift-cards/:id/anular — Admin anula gift card
-router.put('/:id/anular', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id/anular', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: giftCard, error: gcErr } = await supabase
       .from('gift_cards')
@@ -319,9 +316,9 @@ router.put('/:id/anular', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ gift_card: { ...giftCard, estado: 'anulada', saldo: 0 }, mensaje: 'Gift card anulada' })
   } catch (err) {
-    console.error('[GiftCards] Error al anular:', err.message)
+    logger.error('[GiftCards] Error al anular:', err.message)
     res.status(500).json({ error: 'Error al anular gift card: ' + err.message })
   }
-})
+}))
 
 module.exports = router

@@ -1,6 +1,7 @@
 // Servicio de detección de patrones y análisis batch de cierres
 const supabase = require('../config/supabase')
 const { analizarCierreIA } = require('./claude')
+const logger = require('../config/logger')
 
 /**
  * Analiza todos los cierres de una fecha (batch)
@@ -145,7 +146,7 @@ async function analizarBatch(fecha, sucursalId = null, perfilId = null) {
       resultados,
     }
   } catch (err) {
-    console.error('Error en batch:', err)
+    logger.error('Error en batch:', err)
     await supabase.from('batch_analisis').update({
       estado: 'error',
       error_mensaje: err.message,
@@ -205,7 +206,7 @@ async function detectarPatrones(fecha, sucursalId = null) {
 
     return patrones
   } catch (err) {
-    console.error('Error detectando patrones:', err)
+    logger.error('Error detectando patrones:', err)
     return []
   }
 }

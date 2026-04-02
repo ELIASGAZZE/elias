@@ -4,6 +4,7 @@
 
 const supabase = require('../config/supabase')
 const { crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS } = require('./centumVentasPOS')
+const logger = require('../config/logger')
 
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
@@ -18,7 +19,7 @@ async function retrySyncVentasPOS() {
     .limit(10)
 
   if (error) {
-    console.error('[RetrySyncVentasPOS] Error al consultar ventas pendientes:', error.message)
+    logger.error('[RetrySyncVentasPOS] Error al consultar ventas pendientes:', error.message)
     return { intentadas: 0, exitosas: 0, fallidas: 0 }
   }
 
@@ -26,7 +27,7 @@ async function retrySyncVentasPOS() {
     return { intentadas: 0, exitosas: 0, fallidas: 0 }
   }
 
-  console.log(`[RetrySyncVentasPOS] ${ventasPendientes.length} ventas pendientes de enviar a Centum`)
+  logger.info(`[RetrySyncVentasPOS] ${ventasPendientes.length} ventas pendientes de enviar a Centum`)
 
   let exitosas = 0
   let fallidas = 0
@@ -186,12 +187,12 @@ async function retrySyncVentasPOS() {
         })
         .eq('id', venta.id)
 
-      console.log(`[RetrySyncVentasPOS] ✓ Venta ${venta.id} (POS #${venta.numero_venta}) enviada: ${comprobante}`)
+      logger.info(`[RetrySyncVentasPOS] ✓ Venta ${venta.id} (POS #${venta.numero_venta}) enviada: ${comprobante}`)
       exitosas++
 
     } catch (err) {
       // Error: grabar el error para que no se reintente
-      console.error(`[RetrySyncVentasPOS] ✗ Venta ${venta.id} (POS #${venta.numero_venta}): ${err.message}`)
+      logger.error(`[RetrySyncVentasPOS] ✗ Venta ${venta.id} (POS #${venta.numero_venta}): ${err.message}`)
       try {
         await supabase
           .from('ventas_pos')

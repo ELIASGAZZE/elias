@@ -40,7 +40,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
       const promos = data?.promociones || data || []
       const promo = promos.find(p => p.activa && p.tipo === 'forma_pago' && (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo')
       if (promo) setDescEfectivoPct(parseFloat(promo.reglas?.valor) || 0)
-    }).catch(() => {})
+    }).catch(err => console.error('Error loading promotions:', err.message))
   }, [])
 
   useEffect(() => {

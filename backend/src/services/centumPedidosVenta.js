@@ -1,6 +1,7 @@
 // Servicio para consultar Pedidos de Venta desde la API REST de Centum
 const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
+const logger = require('../config/logger')
 
 const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
 const API_KEY = process.env.CENTUM_API_KEY
@@ -548,7 +549,7 @@ async function crearCobroDeVenta(idVenta, idCliente, sucursalFisicaId, importe) 
 
   if (response.status === 500) {
     // 500 = cobro creado pero error en serialización de respuesta
-    console.warn(`[Cobro] Centum devolvió 500 pero el cobro se crea igualmente (idVenta=${idVenta})`)
+    logger.warn(`[Cobro] Centum devolvió 500 pero el cobro se crea igualmente (idVenta=${idVenta})`)
     registrarLlamada({
       servicio: 'centum_cobros', endpoint: url, metodo: 'POST',
       estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,

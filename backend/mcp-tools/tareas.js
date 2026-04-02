@@ -1,0 +1,97 @@
+// MCP Tools — Tareas
+module.exports = [
+  {
+    name: 'tareas_listar',
+    description: 'Listar tareas/responsabilidades definidas',
+    method: 'GET',
+    path: '/api/tareas',
+    params: {},
+  },
+  {
+    name: 'tareas_crear',
+    description: 'Crear una nueva tarea',
+    method: 'POST',
+    path: '/api/tareas',
+    params: {
+      nombre: { type: 'string', description: 'Nombre de la tarea', required: true },
+      descripcion: { type: 'string', description: 'Descripción' },
+      enlace_manual: { type: 'string', description: 'Link al manual/procedimiento' },
+      subtareas: { type: 'array', description: 'Subtareas [{nombre, orden}]' },
+    },
+  },
+  {
+    name: 'tareas_editar',
+    description: 'Editar una tarea',
+    method: 'PUT',
+    path: '/api/tareas/:id',
+    params: {
+      id: { type: 'string', description: 'ID de la tarea', required: true },
+      nombre: { type: 'string', description: 'Nombre' },
+      descripcion: { type: 'string', description: 'Descripción' },
+      activo: { type: 'boolean', description: 'Activa/inactiva' },
+    },
+  },
+  {
+    name: 'tareas_panel_general',
+    description: 'Panel general de tareas con estado de cumplimiento',
+    method: 'GET',
+    path: '/api/tareas/panel-general',
+    params: {},
+  },
+  {
+    name: 'tareas_pendientes',
+    description: 'Tareas pendientes de ejecutar',
+    method: 'GET',
+    path: '/api/tareas/pendientes',
+    params: {},
+  },
+  {
+    name: 'tareas_ejecutar',
+    description: 'Marcar una tarea como ejecutada',
+    method: 'POST',
+    path: '/api/tareas/ejecutar',
+    params: {
+      tarea_config_id: { type: 'string', description: 'ID de la config de tarea', required: true },
+      subtareas_completadas: { type: 'array', description: 'Subtareas completadas' },
+      observaciones: { type: 'string', description: 'Observaciones' },
+    },
+  },
+  {
+    name: 'tareas_ranking',
+    description: 'Ranking de cumplimiento de tareas',
+    method: 'GET',
+    path: '/api/tareas/ranking',
+    params: {},
+  },
+  {
+    name: 'tareas_analytics_resumen',
+    description: 'Resumen analítico de tareas',
+    method: 'GET',
+    path: '/api/tareas/analytics/resumen',
+    params: {},
+  },
+  {
+    name: 'tareas_analytics_por_empleado',
+    description: 'Analytics de tareas por empleado',
+    method: 'GET',
+    path: '/api/tareas/analytics/por-empleado',
+    params: {},
+  },
+  {
+    name: 'tareas_analytics_incumplimiento',
+    description: 'Reporte de incumplimiento de tareas',
+    method: 'GET',
+    path: '/api/tareas/analytics/incumplimiento',
+    params: {},
+  },
+  {
+    name: 'tareas_analytics_rendimiento',
+    description: 'Rendimiento de empleado en tareas',
+    method: 'GET',
+    path: '/api/tareas/analytics/rendimiento-empleado',
+    params: {
+      empleado_id: { type: 'string', description: 'ID del empleado' },
+    },
+    queryParams: ['empleado_id'],
+  },
+]

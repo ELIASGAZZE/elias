@@ -3,6 +3,8 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/push/vapid-public-key
 // Devuelve la clave pública VAPID para que el frontend se suscriba
@@ -12,7 +14,7 @@ router.get('/vapid-public-key', (req, res) => {
 
 // POST /api/push/subscribe
 // Guarda la suscripción push del browser del usuario
-router.post('/subscribe', verificarAuth, async (req, res) => {
+router.post('/subscribe', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { endpoint, keys } = req.body
 
@@ -33,14 +35,14 @@ router.post('/subscribe', verificarAuth, async (req, res) => {
 
     res.json({ mensaje: 'Suscripción guardada' })
   } catch (err) {
-    console.error('Error al guardar suscripción push:', err)
+    logger.error('Error al guardar suscripción push:', err)
     res.status(500).json({ error: 'Error al guardar suscripción' })
   }
-})
+}))
 
 // DELETE /api/push/subscribe
 // Elimina la suscripción push del usuario
-router.delete('/subscribe', verificarAuth, async (req, res) => {
+router.delete('/subscribe', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { endpoint } = req.body
 
@@ -58,9 +60,9 @@ router.delete('/subscribe', verificarAuth, async (req, res) => {
 
     res.json({ mensaje: 'Suscripción eliminada' })
   } catch (err) {
-    console.error('Error al eliminar suscripción push:', err)
+    logger.error('Error al eliminar suscripción push:', err)
     res.status(500).json({ error: 'Error al eliminar suscripción' })
   }
-})
+}))
 
 module.exports = router

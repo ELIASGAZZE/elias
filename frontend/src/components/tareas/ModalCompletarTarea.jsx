@@ -30,7 +30,7 @@ const ModalCompletarTarea = ({ tarea, onClose, onCompletada }) => {
         // Fallback: cargar empleados sin recomendación
         api.get('/api/empleados?empresa=zaatar')
           .then(r => setEmpleados(r.data))
-          .catch(() => {})
+          .catch(err => console.error('Error loading employees fallback:', err.message))
       })
 
     // Inicializar subtareas todas desmarcadas

@@ -3,11 +3,15 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearRetiroSchema, verificarRetiroSchema } = require('../schemas/retiros')
+const asyncHandler = require('../middleware/asyncHandler')
 
 const SELECT_RETIRO = '*, empleado:empleados!empleado_id(id, nombre, codigo)'
 
 // POST /api/cierres/:cierreId/retiros — crear retiro
-router.post('/cierres/:cierreId/retiros', verificarAuth, async (req, res) => {
+router.post('/cierres/:cierreId/retiros', verificarAuth, validate(crearRetiroSchema), asyncHandler(async (req, res) => {
   try {
     const { rol } = req.perfil
     if (rol === 'gestor') {
@@ -87,13 +91,13 @@ router.post('/cierres/:cierreId/retiros', verificarAuth, async (req, res) => {
 
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear retiro:', err)
+    logger.error('Error al crear retiro:', err)
     res.status(500).json({ error: 'Error al crear retiro' })
   }
-})
+}))
 
 // GET /api/cierres/:cierreId/retiros — listar retiros de un cierre
-router.get('/cierres/:cierreId/retiros', verificarAuth, async (req, res) => {
+router.get('/cierres/:cierreId/retiros', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -176,13 +180,13 @@ router.get('/cierres/:cierreId/retiros', verificarAuth, async (req, res) => {
 
     res.json(resultado)
   } catch (err) {
-    console.error('Error al listar retiros:', err)
+    logger.error('Error al listar retiros:', err)
     res.status(500).json({ error: 'Error al listar retiros' })
   }
-})
+}))
 
 // GET /api/retiros/:id — detalle de un retiro
-router.get('/retiros/:id', verificarAuth, async (req, res) => {
+router.get('/retiros/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: retiro, error } = await supabase
       .from('retiros')
@@ -221,13 +225,13 @@ router.get('/retiros/:id', verificarAuth, async (req, res) => {
 
     res.json({ ...retiro, _blind: false })
   } catch (err) {
-    console.error('Error al obtener retiro:', err)
+    logger.error('Error al obtener retiro:', err)
     res.status(500).json({ error: 'Error al obtener retiro' })
   }
-})
+}))
 
 // POST /api/retiros/:id/verificar — verificación ciega de retiro
-router.post('/retiros/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/retiros/:id/verificar', verificarAuth, soloGestorOAdmin, validate(verificarRetiroSchema), asyncHandler(async (req, res) => {
   try {
     const { data: retiro, error: errorRetiro } = await supabase
       .from('retiros')
@@ -273,13 +277,13 @@ router.post('/retiros/:id/verificar', verificarAuth, soloGestorOAdmin, async (re
 
     res.status(201).json(verificacion)
   } catch (err) {
-    console.error('Error al verificar retiro:', err)
+    logger.error('Error al verificar retiro:', err)
     res.status(500).json({ error: 'Error al verificar retiro' })
   }
-})
+}))
 
 // GET /api/retiros/:id/verificacion — obtener verificación de un retiro
-router.get('/retiros/:id/verificacion', verificarAuth, async (req, res) => {
+router.get('/retiros/:id/verificacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     if (req.perfil.rol === 'operario') {
       return res.status(403).json({ error: 'No tenés acceso a la verificación' })
@@ -297,9 +301,9 @@ router.get('/retiros/:id/verificacion', verificarAuth, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener verificación de retiro:', err)
+    logger.error('Error al obtener verificación de retiro:', err)
     res.status(500).json({ error: 'Error al obtener verificación' })
   }
-})
+}))
 
 module.exports = router

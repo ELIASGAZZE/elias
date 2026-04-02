@@ -1,8 +1,16 @@
-// Punto de entrada del servidor Express — v2.1
+// Punto de entrada del servidor Express — v2.3
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const helmet = require('helmet')
+const compression = require('compression')
+const logger = require('./config/logger')
+const { validateEnv } = require('./config/validateEnv')
+const { loginLimiter, apiLimiter } = require('./middleware/rateLimiter')
+const requestLogger = require('./middleware/requestLogger')
+
+// Validar env vars antes de arrancar
+validateEnv()
 
 const authRoutes = require('./routes/auth')
 const articulosRoutes = require('./routes/articulos')
@@ -34,6 +42,7 @@ const mpPointRoutes = require('./routes/mpPoint')
 const cuentaEmpleadosRoutes = require('./routes/cuentaCorrienteEmpleados')
 const fichajesRoutes = require('./routes/fichajes')
 const turnosRoutes = require('./routes/turnos')
+const planificacionRoutes = require('./routes/planificacion')
 const licenciasRoutes = require('./routes/licencias')
 const feriadosRoutes = require('./routes/feriados')
 const gruposDescuentoRoutes = require('./routes/gruposDescuento')
@@ -82,6 +91,16 @@ app.use((req, res, next) => {
   express.json({ limit: '10mb' })(req, res, next)
 })
 
+// Compresión gzip para todas las respuestas
+app.use(compression())
+
+// Request logging con pino-http (excluye health y MCP — ya filtrados en requestLogger)
+app.use(requestLogger)
+
+// ── Rate Limiting ─────────────────────────────────────────────────────────────
+app.use('/api', apiLimiter)
+app.use('/api/auth/login', loginLimiter)
+
 // ── Rutas ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
 app.use('/api/articulos', articulosRoutes)
@@ -115,6 +134,7 @@ app.use('/api/mp-point', mpPointRoutes)
 app.use('/api/cuenta-empleados', cuentaEmpleadosRoutes)
 app.use('/api/fichajes', fichajesRoutes)
 app.use('/api/turnos', turnosRoutes)
+app.use('/api/planificacion', planificacionRoutes)
 app.use('/api/licencias', licenciasRoutes)
 app.use('/api/feriados', feriadosRoutes)
 app.use('/api/grupos-descuento', gruposDescuentoRoutes)
@@ -129,16 +149,79 @@ app.get('/health', (req, res) => {
   res.json({ estado: 'ok', timestamp: new Date().toISOString() })
 })
 
+// Health check detallado (incluye estado de DBs)
+app.get('/health/detailed', async (req, res) => {
+  const checks = { servidor: 'ok', timestamp: new Date().toISOString() }
+
+  // Supabase
+  try {
+    const supabase = require('./config/supabase')
+    const { error } = await supabase.from('sucursales').select('id').limit(1)
+    checks.supabase = error ? 'error' : 'ok'
+    if (error) checks.supabase_error = error.message
+  } catch (err) {
+    checks.supabase = 'error'
+    checks.supabase_error = err.message
+  }
+
+  // Centum BI
+  try {
+    const { getPool } = require('./config/centum')
+    const pool = await getPool()
+    await pool.request().query('SELECT 1')
+    checks.centum_bi = 'ok'
+  } catch (err) {
+    checks.centum_bi = 'error'
+    checks.centum_bi_error = err.message
+  }
+
+  const allOk = checks.supabase === 'ok' && checks.centum_bi === 'ok'
+  res.status(allOk ? 200 : 503).json(checks)
+})
+
 // ── Error handler global ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error('[Error no manejado]', err.stack || err.message || err)
+  const reqId = req.id || res.getHeader('X-Request-Id')
+  logger.error({ err, path: req.path, method: req.method, reqId }, '[Error no manejado]')
   if (!res.headersSent) {
-    res.status(500).json({ error: 'Error interno del servidor' })
+    res.status(500).json({ error: 'Error interno del servidor', requestId: reqId })
   }
 })
 
 // ── Inicio del servidor ───────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`)
+const server = app.listen(PORT, () => {
+  logger.info(`Servidor corriendo en http://localhost:${PORT}`)
   iniciarCronJobs()
+})
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+async function gracefulShutdown(signal) {
+  logger.info(`${signal} recibido, cerrando servidor...`)
+  server.close(async () => {
+    try {
+      const { getPool } = require('./config/centum')
+      const pool = await getPool()
+      await pool.close()
+      logger.info('Pool SQL Server cerrado')
+    } catch (e) { /* pool may not be initialized */ }
+    logger.info('Servidor cerrado correctamente')
+    process.exit(0)
+  })
+  // Forzar cierre si no termina en 10s
+  setTimeout(() => {
+    logger.warn('Forzando cierre después de 10s')
+    process.exit(1)
+  }, 10000).unref()
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+
+// Capturar errores no manejados para logging antes de crash
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason }, 'Unhandled Promise Rejection')
+})
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught Exception — cerrando proceso')
+  process.exit(1)
 })

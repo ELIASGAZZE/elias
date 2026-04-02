@@ -4,6 +4,7 @@ const Anthropic = require('@anthropic-ai/sdk')
 const supabase = require('../config/supabase')
 const { registrarLlamada } = require('./apiLogger')
 const { getEstadisticasCajero, getResolucionesSimilares, getResolucionesCierre } = require('./historialCajero')
+const logger = require('../config/logger')
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -66,7 +67,7 @@ async function cargarReglas() {
     const reglas = data.map((r, i) => `${i + 1}. ${r.regla}`).join('\n')
     return `\n\nREGLAS APRENDIDAS DEL USUARIO (respetá siempre estas reglas):\n${reglas}`
   } catch (err) {
-    console.error('Error cargando reglas IA:', err.message)
+    logger.error('Error cargando reglas IA:', err.message)
     return ''
   }
 }
@@ -162,7 +163,7 @@ async function cachearAnalisis(cierreId, resultado, modelo, tokensUsados) {
       tokens_usados: tokensUsados || 0,
     })
   } catch (err) {
-    console.error('Error cacheando análisis IA:', err.message)
+    logger.error('Error cacheando análisis IA:', err.message)
   }
 }
 
@@ -245,7 +246,7 @@ async function analizarCierre(auditoriaData, options = {}) {
       const limpio = limpiarJSON(texto)
       resultado = validarAnalisis(JSON.parse(limpio))
     } catch (parseErr) {
-      console.error('Error parseando JSON de IA (intento 1):', parseErr.message)
+      logger.error('Error parseando JSON de IA (intento 1):', parseErr.message)
       // Retry: pedir a Claude que corrija el JSON
       const retryResp = await client.messages.create({
         model: MODELO,
@@ -272,7 +273,7 @@ async function analizarCierre(auditoriaData, options = {}) {
 
     return resultado
   } catch (err) {
-    console.error('Error en analizarCierre:', err.message)
+    logger.error('Error en analizarCierre:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'messages.create/analisis',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -466,7 +467,7 @@ async function analizarCierreAgente(auditoriaData, options = {}) {
           if (cierreId) cachearAnalisis(cierreId, resultado, MODELO, tokensTotal)
           return resultado
         } catch (parseErr) {
-          console.error('Error parseando JSON del agente:', parseErr.message)
+          logger.error('Error parseando JSON del agente:', parseErr.message)
           // Retry: pedir corrección del JSON
           try {
             const retryResp = await client.messages.create({
@@ -530,7 +531,7 @@ async function analizarCierreAgente(auditoriaData, options = {}) {
     // Fallback si no se pudo parsear resultado del agente
     throw new Error('El agente no devolvió un resultado válido')
   } catch (err) {
-    console.error('Error en analizarCierreAgente:', err.message)
+    logger.error('Error en analizarCierreAgente:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'messages.create/agente',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -651,7 +652,7 @@ async function chatCajas(mensaje, historialChat = [], contextoAuditoria = null) 
 
     return textoFinal
   } catch (err) {
-    console.error('Error en chatCajas:', err.message)
+    logger.error('Error en chatCajas:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'messages.create/chat',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,

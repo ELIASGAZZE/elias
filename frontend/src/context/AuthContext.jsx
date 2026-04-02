@@ -48,7 +48,7 @@ export const AuthProvider = ({ children }) => {
 
           // Registrar push para admins al restaurar sesión
           if (usr.rol === 'admin') {
-            import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
+            import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(err => console.error('Error registering push notifications:', err.message))
           }
 
           // Sync PINs en background
@@ -84,7 +84,7 @@ export const AuthProvider = ({ children }) => {
 
     // Registrar push para admins después del login
     if (data.usuario.rol === 'admin') {
-      import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(() => {})
+      import('../services/pushNotifications').then(m => m.registrarPushAdmin()).catch(err => console.error('Error registering push notifications:', err.message))
     }
 
     // Sync PINs en background para modo offline

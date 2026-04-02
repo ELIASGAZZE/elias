@@ -3,9 +3,11 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/reglas-ia — listar reglas activas
-router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('reglas_ia')
@@ -15,13 +17,13 @@ router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al obtener reglas IA:', err)
+    logger.error('Error al obtener reglas IA:', err)
     res.status(500).json({ error: 'Error al obtener reglas' })
   }
-})
+}))
 
 // POST /api/reglas-ia — crear nueva regla
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   const { regla } = req.body
   if (!regla || !regla.trim()) {
     return res.status(400).json({ error: 'La regla es requerida' })
@@ -40,13 +42,13 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear regla IA:', err)
+    logger.error('Error al crear regla IA:', err)
     res.status(500).json({ error: 'Error al guardar regla' })
   }
-})
+}))
 
 // DELETE /api/reglas-ia/:id — eliminar regla
-router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('reglas_ia')
@@ -56,9 +58,9 @@ router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al eliminar regla IA:', err)
+    logger.error('Error al eliminar regla IA:', err)
     res.status(500).json({ error: 'Error al eliminar regla' })
   }
-})
+}))
 
 module.exports = router

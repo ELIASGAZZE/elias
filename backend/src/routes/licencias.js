@@ -3,9 +3,13 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearLicenciaSchema, editarLicenciaSchema } = require('../schemas/rrhh')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/licencias
-router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, estado, fecha_desde, fecha_hasta } = req.query
 
@@ -24,13 +28,13 @@ router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar licencias:', err)
+    logger.error('Error al listar licencias:', err)
     res.status(500).json({ error: 'Error al listar licencias' })
   }
-})
+}))
 
 // POST /api/licencias
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, validate(crearLicenciaSchema), asyncHandler(async (req, res) => {
   try {
     const { empleado_id, tipo, fecha_desde, fecha_hasta, observaciones } = req.body
 
@@ -47,13 +51,13 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear licencia:', err)
+    logger.error('Error al crear licencia:', err)
     res.status(500).json({ error: 'Error al crear licencia' })
   }
-})
+}))
 
 // PUT /api/licencias/:id — Aprobar/rechazar
-router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, validate(editarLicenciaSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { estado, observaciones } = req.body
@@ -77,21 +81,21 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al actualizar licencia:', err)
+    logger.error('Error al actualizar licencia:', err)
     res.status(500).json({ error: 'Error al actualizar licencia' })
   }
-})
+}))
 
 // DELETE /api/licencias/:id
-router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('licencias').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Licencia eliminada' })
   } catch (err) {
-    console.error('Error al eliminar licencia:', err)
+    logger.error('Error al eliminar licencia:', err)
     res.status(500).json({ error: 'Error al eliminar licencia' })
   }
-})
+}))
 
 module.exports = router

@@ -64,7 +64,7 @@ const SeccionClientes = () => {
   useEffect(() => {
     api.get('/api/grupos-descuento')
       .then(({ data }) => setGruposDescuento((data.grupos || []).filter(g => g.activo)))
-      .catch(() => {})
+      .catch(err => console.error('Error loading discount groups:', err.message))
   }, [])
 
   // Verificar duplicados al montar
@@ -75,7 +75,7 @@ const SeccionClientes = () => {
           setDuplicados(data)
         }
       })
-      .catch(() => {}) // silenciar si no es admin
+      .catch(err => console.error('Error checking duplicates:', err.message))
   }, [])
 
   // Debounce búsqueda

@@ -4,6 +4,7 @@ const Anthropic = require('@anthropic-ai/sdk')
 const supabase = require('../config/supabase')
 const { registrarLlamada } = require('./apiLogger')
 const { calcularDemanda } = require('./demandaCompras')
+const logger = require('../config/logger')
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const MODELO = 'claude-haiku-4-5-20251001'
@@ -359,7 +360,7 @@ Respondé en texto plano, máximo 200 palabras. No uses JSON.`
 
     return resultado
   } catch (err) {
-    console.error('Error en analizarDemandaProveedor:', err.message)
+    logger.error('Error en analizarDemandaProveedor:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'compras/demanda',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -499,7 +500,7 @@ Devolvé SOLO un JSON válido (sin backticks) con esta estructura:
       alertas: resultado.alertas || [],
     }
   } catch (err) {
-    console.error('Error en generarOrdenSugerida:', err.message)
+    logger.error('Error en generarOrdenSugerida:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'compras/orden-sugerida',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -605,7 +606,7 @@ async function chatCompras(mensaje, historial = []) {
 
     return textoFinal
   } catch (err) {
-    console.error('Error en chatCompras:', err.message)
+    logger.error('Error en chatCompras:', err.message)
     registrarLlamada({
       servicio: 'claude_ia', endpoint: 'compras/chat',
       metodo: 'POST', estado: 'error', duracion_ms: Date.now() - inicio,

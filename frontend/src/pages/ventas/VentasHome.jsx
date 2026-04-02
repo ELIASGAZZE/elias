@@ -1,11 +1,12 @@
 // Historial de ventas POS
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import VentasTabBar from '../../components/ventas/VentasTabBar'
 import api from '../../services/api'
 import { imprimirTicketPOS, imprimirComprobanteA4 } from '../../utils/imprimirComprobante'
+import SectionErrorBoundary from '../../components/SectionErrorBoundary'
 
 const formatFechaHora = (fecha) => {
   if (!fecha) return ''
@@ -33,8 +34,9 @@ const VentasHome = () => {
 
   // Leer filtros iniciales desde URL
   const [ventas, setVentas] = useState([])
-  const [fecha, setFecha] = useState(searchParams.get('fecha') || new Date().toISOString().split('T')[0])
-  const [fechaHasta, setFechaHasta] = useState(searchParams.get('fecha_hasta') || new Date().toISOString().split('T')[0])
+  const hoy = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD local
+  const [fecha, setFecha] = useState(searchParams.get('fecha') || hoy)
+  const [fechaHasta, setFechaHasta] = useState(searchParams.get('fecha_hasta') || hoy)
   const [busqueda, setBusqueda] = useState(searchParams.get('busqueda') || '')
   const [busquedaFactura, setBusquedaFactura] = useState(searchParams.get('factura') || '')
   const [filtroClasificacion, setFiltroClasificacion] = useState(searchParams.get('clasificacion') || '')
@@ -59,8 +61,8 @@ const VentasHome = () => {
   // Sincronizar filtros a la URL
   useEffect(() => {
     const params = {}
-    if (fecha && fecha !== new Date().toISOString().split('T')[0]) params.fecha = fecha
-    if (fechaHasta && fechaHasta !== new Date().toISOString().split('T')[0]) params.fecha_hasta = fechaHasta
+    if (fecha && fecha !== hoy) params.fecha = fecha
+    if (fechaHasta && fechaHasta !== hoy) params.fecha_hasta = fechaHasta
     if (busqueda) params.busqueda = busqueda
     if (busquedaFactura) params.factura = busquedaFactura
     if (filtroClasificacion) params.clasificacion = filtroClasificacion
@@ -113,7 +115,7 @@ const VentasHome = () => {
     ]).then(([sucRes, cajRes]) => {
       const sucConCaja = new Set((cajRes.data || []).map(c => c.sucursal_id))
       setSucursales((sucRes.data || []).filter(s => sucConCaja.has(s.id)))
-    }).catch(() => {})
+    }).catch(err => console.error('Error loading sucursales/cajas:', err.message))
   }, [])
 
   // Cargar resumen de Centum BI para comparar
@@ -160,7 +162,7 @@ const VentasHome = () => {
       if (!syncCAE) {
         api.post('/api/pos/ventas/sync-caes').then(r => {
           if (r.data?.conCAE > 0) cargarVentasSilencioso()
-        }).catch(() => {})
+        }).catch(err => console.error('Error syncing CAEs:', err.message))
       }
     } catch (err) {
       console.error('Error al cargar ventas:', err)
@@ -187,25 +189,34 @@ const VentasHome = () => {
   }
 
   // Filtrar por clasificación, tipo y sucursal (búsqueda por cliente ahora va al backend)
-  const ventasFiltradas = ventas.filter(v => {
-    if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
-    if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
-    if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
-    if (filtroSucursales.length > 0 && !filtroSucursales.includes(v.sucursal_id)) return false
-    // filtroEmpleado se aplica en el backend
-    // sin_centum y sin_cae se filtran en el backend
-    return true
-  })
+  const ventasFiltradas = useMemo(() =>
+    ventas.filter(v => {
+      if (filtroClasificacion && v.clasificacion !== filtroClasificacion) return false
+      if (filtroTipo === 'nota_credito' && v.tipo !== 'nota_credito') return false
+      if (filtroTipo === 'venta' && v.tipo === 'nota_credito') return false
+      if (filtroSucursales.length > 0 && !filtroSucursales.includes(v.sucursal_id)) return false
+      // filtroEmpleado se aplica en el backend
+      // sin_centum y sin_cae se filtran en el backend
+      return true
+    }),
+    [ventas, filtroClasificacion, filtroTipo, filtroSucursales]
+  )
 
   // Resumen del período (viene del backend, incluye TODAS las ventas, no solo la página actual)
-  const totalVentas = resumen?.totalVentas ?? 0
-  const totalNC = resumen?.totalNC ?? 0
-  const totalDia = totalVentas + totalNC
-  const totalEmpresa = resumen?.totalEmpresa ?? 0
-  const totalPrueba = resumen?.totalPrueba ?? 0
-  const cantVentas = resumen?.cantVentas ?? 0
-  const cantNC = resumen?.cantNC ?? 0
-  const desgloseMedios = resumen?.desgloseMedios ?? {}
+  const { totalVentas, totalNC, totalDia, totalEmpresa, totalPrueba, cantVentas, cantNC, desgloseMedios } = useMemo(() => {
+    const tv = resumen?.totalVentas ?? 0
+    const tnc = resumen?.totalNC ?? 0
+    return {
+      totalVentas: tv,
+      totalNC: tnc,
+      totalDia: tv + tnc,
+      totalEmpresa: resumen?.totalEmpresa ?? 0,
+      totalPrueba: resumen?.totalPrueba ?? 0,
+      cantVentas: resumen?.cantVentas ?? 0,
+      cantNC: resumen?.cantNC ?? 0,
+      desgloseMedios: resumen?.desgloseMedios ?? {},
+    }
+  }, [resumen])
 
   const reenviarCentum = async (e, ventaId) => {
     e.preventDefault()
@@ -394,6 +405,7 @@ const VentasHome = () => {
         </div>
 
         {/* Resumen del período: POS vs Centum BI */}
+        <SectionErrorBoundary name="Resumen POS vs Centum">
         {esAdmin && resumen && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Resumen POS */}
@@ -495,6 +507,8 @@ const VentasHome = () => {
           </div>
         )}
 
+        </SectionErrorBoundary>
+
         {/* Botón reintentar todas en Centum */}
         {esAdmin && ventas.some(v => !v.centum_sync && !v.centum_comprobante && v.centum_error) && (
           <button
@@ -510,6 +524,7 @@ const VentasHome = () => {
         )}
 
         {/* Lista de ventas */}
+        <SectionErrorBoundary name="Listado de ventas">
         {cargando ? (
           <div className="text-center text-gray-400 py-10">Cargando ventas...</div>
         ) : ventasFiltradas.length === 0 ? (
@@ -733,6 +748,7 @@ const VentasHome = () => {
             )}
           </div>
         )}
+        </SectionErrorBoundary>
       </div>
     </div>
   )

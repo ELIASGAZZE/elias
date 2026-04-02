@@ -114,7 +114,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         .filter(f => f.activo !== false && (f.nombre || '').toLowerCase() !== 'efectivo')
       setFormasCobro(fcs)
       const fcsAll = (fcRes.data.formas_cobro || fcRes.data || []).filter(f => f.activo !== false)
-      guardarFormasCobro(fcsAll).catch(() => {})
+      guardarFormasCobro(fcsAll).catch(err => console.error('Error caching formas cobro:', err.message))
 
       const promos = (promosRes.data.promociones || [])
         .filter(p => p.activa && p.tipo === 'forma_pago')
@@ -385,7 +385,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
         if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null }
         mpTimeoutRef.current = null
         // Cancelar orden QR
-        api.delete(`/api/mp-point/qr-order/${qrPosId}`).catch(() => {})
+        api.delete(`/api/mp-point/qr-order/${qrPosId}`).catch(err => console.error('Error cancelling QR order:', err.message))
         setMpEstado('error')
         setMpError('Tiempo agotado esperando pago QR. Verificá el estado antes de reintentar.')
       }, 180000)
@@ -765,7 +765,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     try {
       const { data: ventaResp } = await api.post('/api/pos/ventas', payload)
       const numeroVenta = ventaResp?.venta?.numero_venta
-      syncVentasPendientes().catch(() => {})
+      syncVentasPendientes().catch(err => console.error('Error syncing pending sales:', err.message))
       imprimirTicketPOS({ ...ticketData, esOffline: false, numeroVenta })
       onConfirmar()
     } catch (err) {
@@ -847,13 +847,13 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     // F1 = Tarjeta (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
     if (e.key === 'F1' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
-      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(err => console.error('Error clearing MP device:', err.message)); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('credit_card')
     }
     // F2 = QR (posnet MP) — solo si no hay pago MP activo (desactivado en delivery)
     if (e.key === 'F2' && !modoDelivery && (!mpEstado || mpEstado === 'error' || mpEstado === 'cancelado' || mpEstado === 'aprobado')) {
       e.preventDefault()
-      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
+      if (mpEstado === 'error' || mpEstado === 'cancelado') { if (mpDeviceId) api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(err => console.error('Error clearing MP device:', err.message)); setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null) }
       iniciarPagoMP('qr')
     }
 
@@ -1216,7 +1216,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('credit_card') }}
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(err => console.error('Error clearing MP device:', err.message)) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('credit_card') }}
                   disabled={montoSuficiente || restante <= 0}
                   className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-600 disabled:text-white/30"
                 >
@@ -1224,7 +1224,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                   {formatPrecio(restante)}
                 </button>
                 <button
-                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(() => {}) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('qr') }}
+                  onClick={() => { if (mpDeviceId) { api.post(`/api/mp-point/devices/${mpDeviceId}/clear`).catch(err => console.error('Error clearing MP device:', err.message)) }; setMpEstado(null); setMpError(''); setMpIntentId(null); setMpPaymentId(null); iniciarPagoMP('qr') }}
                   disabled={montoSuficiente || restante <= 0}
                   className="flex-1 py-3 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 text-white disabled:bg-slate-600 disabled:text-white/30"
                 >

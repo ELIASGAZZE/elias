@@ -43,7 +43,7 @@ const NuevaOrden = () => {
   useEffect(() => {
     api.get('/api/sucursales')
       .then(r => setSucursales(r.data || []))
-      .catch(() => {})
+      .catch(err => console.error('Error loading sucursales:', err.message))
 
     api.get('/api/pos/articulos')
       .then(r => {

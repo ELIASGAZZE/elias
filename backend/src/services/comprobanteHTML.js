@@ -1,5 +1,6 @@
 // Genera el HTML del comprobante A4 (misma estructura que el frontend)
 const QRCode = require('qrcode')
+const logger = require('../config/logger')
 
 const formatPrecio = (precio) => {
   if (precio == null) return '$0'
@@ -25,7 +26,7 @@ async function generarComprobanteHTML(venta, caeData) {
   try {
     qrDataUrl = await QRCode.toDataURL('https://www.afip.gob.ar/landing/default.asp', { width: 100, margin: 1 })
   } catch (e) {
-    console.error('Error generando QR:', e)
+    logger.error('Error generando QR:', e)
   }
   const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
   const pagos = venta.pagos || []

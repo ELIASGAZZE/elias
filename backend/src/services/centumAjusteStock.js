@@ -1,6 +1,7 @@
 // Servicio para ajustes de stock en Centum ERP (traspasos entre sucursales)
 // Fase 1: stub que loguea la operación y permite funcionar sin Centum
 const { registrarLlamada } = require('./apiLogger')
+const logger = require('../config/logger')
 
 /**
  * Ajuste negativo de stock (salida de depósito origen)
@@ -13,7 +14,7 @@ async function ajusteStockNegativo(sucursalId, items, ordenNumero) {
   const inicio = Date.now()
   try {
     // STUB: loguear operación para implementar con endpoint real de Centum
-    console.log(`[Centum Stub] Ajuste negativo — Sucursal: ${sucursalId}, Orden: ${ordenNumero}, Items: ${items.length}`)
+    logger.info(`[Centum Stub] Ajuste negativo — Sucursal: ${sucursalId}, Orden: ${ordenNumero}, Items: ${items.length}`)
 
     const ajusteId = `STUB-NEG-${Date.now()}`
 
@@ -30,7 +31,7 @@ async function ajusteStockNegativo(sucursalId, items, ordenNumero) {
 
     return { ok: true, ajusteId, error: null }
   } catch (err) {
-    console.error('[Centum] Error ajuste negativo:', err.message)
+    logger.error('[Centum] Error ajuste negativo:', err.message)
     await registrarLlamada({
       servicio: 'centum',
       endpoint: 'AjusteStockNegativo (STUB)',
@@ -55,7 +56,7 @@ async function ajusteStockNegativo(sucursalId, items, ordenNumero) {
 async function ajusteStockPositivo(sucursalId, items, ordenNumero) {
   const inicio = Date.now()
   try {
-    console.log(`[Centum Stub] Ajuste positivo — Sucursal: ${sucursalId}, Orden: ${ordenNumero}, Items: ${items.length}`)
+    logger.info(`[Centum Stub] Ajuste positivo — Sucursal: ${sucursalId}, Orden: ${ordenNumero}, Items: ${items.length}`)
 
     const ajusteId = `STUB-POS-${Date.now()}`
 
@@ -72,7 +73,7 @@ async function ajusteStockPositivo(sucursalId, items, ordenNumero) {
 
     return { ok: true, ajusteId, error: null }
   } catch (err) {
-    console.error('[Centum] Error ajuste positivo:', err.message)
+    logger.error('[Centum] Error ajuste positivo:', err.message)
     await registrarLlamada({
       servicio: 'centum',
       endpoint: 'AjusteStockPositivo (STUB)',

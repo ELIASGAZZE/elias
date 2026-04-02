@@ -1,12 +1,13 @@
 // Conexión al SQL Server de Centum BI (modelo de datos del ERP)
 const sql = require('mssql')
 const { registrarLlamada } = require('../services/apiLogger')
+const logger = require('./logger')
 
 // Validar que las variables de entorno requeridas existan
 const requiredEnvVars = ['CENTUM_BI_SERVER', 'CENTUM_BI_PORT', 'CENTUM_BI_DATABASE', 'CENTUM_BI_USER', 'CENTUM_BI_PASSWORD']
 for (const varName of requiredEnvVars) {
   if (!process.env[varName]) {
-    console.warn(`[Centum BI] Variable de entorno ${varName} no configurada`)
+    logger.warn(`[Centum BI] Variable de entorno ${varName} no configurada`)
   }
 }
 
@@ -35,7 +36,7 @@ async function getPool() {
   if (!pool) {
     pool = await sql.connect(centumConfig)
     pool.on('error', (err) => {
-      console.error('Error en pool Centum BI:', err)
+      logger.error('Error en pool Centum BI:', err)
       pool = null
     })
   }
@@ -268,7 +269,7 @@ async function fetchNotificacionesSheet() {
   }
 
   if (!res.ok) {
-    console.error('Error al fetchear Google Sheet:', res.status)
+    logger.error('Error al fetchear Google Sheet:', res.status)
     registrarLlamada({
       servicio: 'google_sheets', endpoint: url,
       metodo: 'GET', estado: 'error', status_code: res.status,
@@ -379,7 +380,7 @@ async function getVentasSinConfirmar(planillaId) {
 
     return { cantidad: ventas.length, ventas }
   } catch (err) {
-    console.error('Error al obtener ventas sin confirmar:', err)
+    logger.error('Error al obtener ventas sin confirmar:', err)
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'VentasSinConfirmar',
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -748,7 +749,7 @@ async function getFacturasTurno(nroDocumentos) {
 
     return resultado
   } catch (err) {
-    console.error('[Centum BI] Error al obtener turnos de facturas:', err.message)
+    logger.error('[Centum BI] Error al obtener turnos de facturas:', err.message)
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'FacturasTurnoEntrega',
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -789,7 +790,7 @@ async function getVentasCentumByFecha(fechaDesde, fechaHasta) {
 
     return result.recordset
   } catch (err) {
-    console.error('[Centum BI] Error al obtener ventas por fecha:', err.message)
+    logger.error('[Centum BI] Error al obtener ventas por fecha:', err.message)
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'VentasCentumByFecha',
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -892,7 +893,7 @@ async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, div
       cantNC,
     }
   } catch (err) {
-    console.error('[Centum BI] Error al obtener resumen ventas:', err.message)
+    logger.error('[Centum BI] Error al obtener resumen ventas:', err.message)
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'ResumenVentasCentumBI',
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -940,7 +941,7 @@ async function getVentasCentumDetallado(fechaDesde, fechaHasta) {
 
     return result.recordset
   } catch (err) {
-    console.error('[Centum BI] Error al obtener ventas detallado:', err.message)
+    logger.error('[Centum BI] Error al obtener ventas detallado:', err.message)
     registrarLlamada({
       servicio: 'centum_bi', endpoint: 'VentasCentumDetallado',
       metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
@@ -950,8 +951,75 @@ async function getVentasCentumDetallado(fechaDesde, fechaHasta) {
   }
 }
 
+/**
+ * Obtiene todas las ventas del Usuario API (1301) y las NC del mismo usuario,
+ * para detectar facturas duplicadas cruzando con ventas_pos.
+ * @param {number[]} ventaIds - VentaIDs conocidos de ventas_pos para identificar las "reales"
+ * @returns {{ ventas: Array, notasCredito: Array }}
+ */
+async function getVentasPOSParaDuplicados(ventaIds) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+
+    // Todas las facturas (no NC) del usuario API 1301
+    const ventasResult = await db.request().query(`
+      SELECT v.VentaID, v.NumeroDocumento, v.FechaDocumento, v.FechaCreacion,
+             v.Total, v.ClienteID, v.TipoComprobanteID, v.SucursalFisicaID,
+             v.DivisionEmpresaGrupoEconomicoID,
+             c.RazonSocialCliente, s.NombreSucursalFisica
+      FROM Ventas_VIEW v
+      LEFT JOIN Clientes_VIEW c ON c.ClienteID = v.ClienteID
+      LEFT JOIN SucursalesFisicas_VIEW s ON s.SucursalFisicaID = v.SucursalFisicaID
+      WHERE v.UsuarioID = 1301
+        AND v.TipoComprobanteID NOT IN (3, 6, 7, 8)
+        AND v.Anulado = 0
+      ORDER BY v.VentaID
+    `)
+
+    // NC de TODOS los usuarios en sucursales POS (la NC puede haberse generado manualmente)
+    // Filtrar por sucursales que usa el POS para no traer todo el sistema
+    const sucursalIds = [...new Set(ventasResult.recordset.map(v => v.SucursalFisicaID).filter(Boolean))]
+    let ncQuery = `
+      SELECT VentaID, NumeroDocumento, Total, ClienteID, FechaCreacion,
+             SucursalFisicaID, Referencia
+      FROM Ventas_VIEW
+      WHERE TipoComprobanteID IN (3, 6)
+        AND Anulado = 0
+    `
+    const ncRequest = db.request()
+    if (sucursalIds.length > 0) {
+      const placeholders = sucursalIds.map((id, i) => {
+        ncRequest.input(`ncsuc${i}`, sql.Int, id)
+        return `@ncsuc${i}`
+      }).join(',')
+      ncQuery += ` AND SucursalFisicaID IN (${placeholders})`
+    }
+    const ncResult = await ncRequest.query(ncQuery)
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasPOSParaDuplicados',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: ventasResult.recordset.length, origen: 'duplicados',
+    })
+
+    return {
+      ventas: ventasResult.recordset,
+      notasCredito: ncResult.recordset,
+    }
+  } catch (err) {
+    logger.error('[Centum BI] Error al obtener ventas para duplicados:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasPOSParaDuplicados',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'duplicados',
+    })
+    throw err
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
   getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno, getVentasCentumByFecha,
-  getResumenVentasCentumBI, getVentasCentumDetallado,
+  getResumenVentasCentumBI, getVentasCentumDetallado, getVentasPOSParaDuplicados,
 }

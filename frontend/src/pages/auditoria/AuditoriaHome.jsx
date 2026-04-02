@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts'
 import api from '../../services/api'
+import SectionErrorBoundary from '../../components/SectionErrorBoundary'
 
 const COLORES = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#EF4444', '#06B6D4']
 
@@ -393,6 +394,7 @@ const AuditoriaHome = () => {
         ) : metricas && (
           <>
             {/* KPIs */}
+            <SectionErrorBoundary name="KPIs">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <KPI titulo="Ventas" valor={metricas.totalVentas} color="blue" />
               <KPI titulo="Facturación" valor={formatPrecio(metricas.montoTotal)} color="emerald" />
@@ -409,8 +411,10 @@ const AuditoriaHome = () => {
                 <KPI titulo="Impacto Cambios Precio" valor={formatPrecio(metricas.importeCambiosPrecio)} color={metricas.importeCambiosPrecio < 0 ? 'red' : 'emerald'} />
               )}
             </div>
+            </SectionErrorBoundary>
 
             {/* Gráficos fila 1 */}
+            <SectionErrorBoundary name="Gráficos">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Ventas por cajero */}
               {cajeroFiltro === 'todos' && ventasPorCajero.length > 0 && (
@@ -636,9 +640,11 @@ const AuditoriaHome = () => {
                 </Card>
               )}
             </div>
+            </SectionErrorBoundary>
 
             {/* ═══ Cambios de Precio ═══ */}
 
+            <SectionErrorBoundary name="Cambios de Precio">
             {/* Cambios de precio por cajero */}
             {cajeroFiltro === 'todos' && cambiosPrecioPorCajero.length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -737,6 +743,8 @@ const AuditoriaHome = () => {
                 </div>
               </Card>
             )}
+
+            </SectionErrorBoundary>
 
             {/* Tabla detalle cancelaciones */}
             {filtrado.cancelaciones.length > 0 && (

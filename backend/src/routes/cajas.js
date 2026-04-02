@@ -3,9 +3,13 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearCajaSchema, editarCajaSchema } = require('../schemas/cajas')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/cajas — lista cajas (operario/gestor: solo su sucursal, admin: todas)
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     let query = supabase
       .from('cajas')
@@ -34,21 +38,14 @@ router.get('/', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener cajas:', err)
+    logger.error('Error al obtener cajas:', err)
     res.status(500).json({ error: 'Error al obtener cajas' })
   }
-})
+}))
 
 // POST /api/cajas — admin crea caja
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, validate(crearCajaSchema), asyncHandler(async (req, res) => {
   const { nombre, sucursal_id } = req.body
-
-  if (!nombre || !nombre.trim()) {
-    return res.status(400).json({ error: 'El nombre de la caja es requerido' })
-  }
-  if (!sucursal_id) {
-    return res.status(400).json({ error: 'La sucursal es requerida' })
-  }
 
   try {
     const { data, error } = await supabase
@@ -65,13 +62,13 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
     }
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear caja:', err)
+    logger.error('Error al crear caja:', err)
     res.status(500).json({ error: 'Error al crear caja' })
   }
-})
+}))
 
 // PUT /api/cajas/:id — admin edita nombre/activo/punto_venta_centum
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, validate(editarCajaSchema), asyncHandler(async (req, res) => {
   const { id } = req.params
   const { nombre, activo, punto_venta_centum } = req.body
 
@@ -100,13 +97,13 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
     }
     res.json(data)
   } catch (err) {
-    console.error('Error al editar caja:', err)
+    logger.error('Error al editar caja:', err)
     res.status(500).json({ error: 'Error al editar caja' })
   }
-})
+}))
 
 // DELETE /api/cajas/:id — admin elimina caja
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase
@@ -117,9 +114,9 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json({ mensaje: 'Caja eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar caja:', err)
+    logger.error('Error al eliminar caja:', err)
     res.status(500).json({ error: 'Error al eliminar caja' })
   }
-})
+}))
 
 module.exports = router

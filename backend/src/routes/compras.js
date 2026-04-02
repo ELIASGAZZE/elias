@@ -5,6 +5,10 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
 const { calcularDemanda, dashboardCompras } = require('../services/demandaCompras')
 const { analizarDemandaProveedor, generarOrdenSugerida, chatCompras } = require('../services/claudeCompras')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearProveedorSchema, editarProveedorSchema, vincularArticuloSchema, crearOrdenSchema, editarOrdenSchema, chatComprasSchema, crearAjusteSchema, crearReglaIASchema, consumoInternoSchema, crearPedidoExtraSchema, crearPromocionProveedorSchema } = require('../schemas/compras')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // Todas las rutas requieren auth + admin
 router.use(verificarAuth, soloAdmin)
@@ -13,21 +17,21 @@ router.use(verificarAuth, soloAdmin)
 // Dashboard
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', asyncHandler(async (req, res) => {
   try {
     const dashboard = await dashboardCompras()
     res.json(dashboard)
   } catch (err) {
-    console.error('Error en dashboard compras:', err.message)
+    logger.error('Error en dashboard compras:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Proveedores
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/proveedores', async (req, res) => {
+router.get('/proveedores', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('proveedores')
@@ -46,9 +50,9 @@ router.get('/proveedores', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/proveedores/:id', async (req, res) => {
+router.get('/proveedores/:id', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('proveedores')
@@ -61,9 +65,9 @@ router.get('/proveedores/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/proveedores', async (req, res) => {
+router.post('/proveedores', validate(crearProveedorSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, cuit, codigo, lead_time_dias, lead_time_variabilidad_dias, dias_pedido, contacto, telefono, email, whatsapp, monto_minimo, notas } = req.body
     if (!nombre) return res.status(400).json({ error: 'Nombre requerido' })
@@ -83,9 +87,9 @@ router.post('/proveedores', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/proveedores/:id', async (req, res) => {
+router.put('/proveedores/:id', validate(editarProveedorSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, cuit, codigo, lead_time_dias, lead_time_variabilidad_dias, dias_pedido, contacto, telefono, email, whatsapp, monto_minimo, notas, activo } = req.body
 
@@ -105,11 +109,11 @@ router.put('/proveedores/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ── Artículos del proveedor ─────────────────────────────────
 
-router.get('/proveedores/:id/articulos', async (req, res) => {
+router.get('/proveedores/:id/articulos', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('proveedor_articulos')
@@ -138,9 +142,9 @@ router.get('/proveedores/:id/articulos', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/proveedores/:id/articulos', async (req, res) => {
+router.post('/proveedores/:id/articulos', validate(vincularArticuloSchema), asyncHandler(async (req, res) => {
   try {
     const { articulo_id, unidad_compra, factor_conversion, codigo_proveedor, precio_compra, es_principal } = req.body
     if (!articulo_id) return res.status(400).json({ error: 'articulo_id requerido' })
@@ -163,9 +167,9 @@ router.post('/proveedores/:id/articulos', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/proveedor-articulos/:id', async (req, res) => {
+router.put('/proveedor-articulos/:id', asyncHandler(async (req, res) => {
   try {
     const { unidad_compra, factor_conversion, codigo_proveedor, precio_compra, es_principal } = req.body
     const { data, error } = await supabase
@@ -180,9 +184,9 @@ router.put('/proveedor-articulos/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/proveedor-articulos/:id', async (req, res) => {
+router.delete('/proveedor-articulos/:id', asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('proveedor_articulos')
@@ -194,13 +198,13 @@ router.delete('/proveedor-articulos/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Promociones proveedor
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/proveedores/:id/promociones', async (req, res) => {
+router.get('/proveedores/:id/promociones', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('proveedor_promociones')
@@ -213,9 +217,9 @@ router.get('/proveedores/:id/promociones', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/proveedores/:id/promociones', async (req, res) => {
+router.post('/proveedores/:id/promociones', validate(crearPromocionProveedorSchema), asyncHandler(async (req, res) => {
   try {
     const { articulo_id, tipo, cantidad_minima, cantidad_bonus, descuento_porcentaje, precio_especial, descripcion, vigente_desde, vigente_hasta } = req.body
     if (!tipo) return res.status(400).json({ error: 'tipo requerido' })
@@ -236,9 +240,9 @@ router.post('/proveedores/:id/promociones', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/proveedor-promociones/:id', async (req, res) => {
+router.put('/proveedor-promociones/:id', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('proveedor_promociones')
@@ -252,9 +256,9 @@ router.put('/proveedor-promociones/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/proveedor-promociones/:id', async (req, res) => {
+router.delete('/proveedor-promociones/:id', asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('proveedor_promociones')
@@ -266,13 +270,13 @@ router.delete('/proveedor-promociones/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Órdenes de compra
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/ordenes', async (req, res) => {
+router.get('/ordenes', asyncHandler(async (req, res) => {
   try {
     const { estado, proveedor_id, desde, hasta } = req.query
     let query = supabase
@@ -292,9 +296,9 @@ router.get('/ordenes', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/ordenes/:id', async (req, res) => {
+router.get('/ordenes/:id', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_compra')
@@ -307,9 +311,9 @@ router.get('/ordenes/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/ordenes', async (req, res) => {
+router.post('/ordenes', validate(crearOrdenSchema), asyncHandler(async (req, res) => {
   try {
     const { proveedor_id, items, notas, fecha_entrega_esperada, metodo_envio, analisis_ia_id } = req.body
     if (!proveedor_id) return res.status(400).json({ error: 'proveedor_id requerido' })
@@ -360,9 +364,9 @@ router.post('/ordenes', async (req, res) => {
     }
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id', async (req, res) => {
+router.put('/ordenes/:id', validate(editarOrdenSchema), asyncHandler(async (req, res) => {
   try {
     const { items, notas, fecha_entrega_esperada, metodo_envio } = req.body
     const updates = { updated_at: new Date().toISOString() }
@@ -387,9 +391,9 @@ router.put('/ordenes/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id/enviar', async (req, res) => {
+router.put('/ordenes/:id/enviar', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_compra')
@@ -405,9 +409,9 @@ router.put('/ordenes/:id/enviar', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/ordenes/:id', async (req, res) => {
+router.delete('/ordenes/:id', asyncHandler(async (req, res) => {
   try {
     // Solo cancelar borradores
     const { data, error } = await supabase
@@ -424,33 +428,33 @@ router.delete('/ordenes/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // IA y demanda
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/demanda/:proveedorId', async (req, res) => {
+router.get('/demanda/:proveedorId', asyncHandler(async (req, res) => {
   try {
     const resultado = await analizarDemandaProveedor(req.params.proveedorId)
     res.json(resultado)
   } catch (err) {
-    console.error('Error demanda:', err.message)
+    logger.error('Error demanda:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/orden-sugerida/:proveedorId', async (req, res) => {
+router.post('/orden-sugerida/:proveedorId', asyncHandler(async (req, res) => {
   try {
     const resultado = await generarOrdenSugerida(req.params.proveedorId)
     res.json(resultado)
   } catch (err) {
-    console.error('Error orden sugerida:', err.message)
+    logger.error('Error orden sugerida:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/chat', async (req, res) => {
+router.post('/chat', validate(chatComprasSchema), asyncHandler(async (req, res) => {
   try {
     const { mensaje, historial } = req.body
     if (!mensaje) return res.status(400).json({ error: 'mensaje requerido' })
@@ -458,16 +462,16 @@ router.post('/chat', async (req, res) => {
     const respuesta = await chatCompras(mensaje, historial || [])
     res.json({ respuesta })
   } catch (err) {
-    console.error('Error chat compras:', err.message)
+    logger.error('Error chat compras:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Aprendizaje
 // ═══════════════════════════════════════════════════════════════
 
-router.post('/ajustes', async (req, res) => {
+router.post('/ajustes', validate(crearAjusteSchema), asyncHandler(async (req, res) => {
   try {
     const { orden_compra_id, articulo_id, cantidad_sugerida, cantidad_final, motivo, nota } = req.body
     if (!articulo_id) return res.status(400).json({ error: 'articulo_id requerido' })
@@ -486,9 +490,9 @@ router.post('/ajustes', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/reglas-ia', async (req, res) => {
+router.get('/reglas-ia', asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('compras_reglas_ia')
@@ -501,9 +505,9 @@ router.get('/reglas-ia', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/reglas-ia', async (req, res) => {
+router.post('/reglas-ia', validate(crearReglaIASchema), asyncHandler(async (req, res) => {
   try {
     const { regla, categoria, proveedor_id, articulo_id } = req.body
     if (!regla) return res.status(400).json({ error: 'regla requerida' })
@@ -523,9 +527,9 @@ router.post('/reglas-ia', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/reglas-ia/:id', async (req, res) => {
+router.delete('/reglas-ia/:id', asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('compras_reglas_ia')
@@ -537,13 +541,13 @@ router.delete('/reglas-ia/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Consumo interno
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/consumo-interno', async (req, res) => {
+router.get('/consumo-interno', asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, articulo_id } = req.query
     let query = supabase
@@ -562,9 +566,9 @@ router.get('/consumo-interno', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/consumo-interno', async (req, res) => {
+router.post('/consumo-interno', validate(consumoInternoSchema), asyncHandler(async (req, res) => {
   try {
     const { articulo_id, cantidad, motivo, notas, sucursal_id, fecha } = req.body
     if (!articulo_id || !cantidad) return res.status(400).json({ error: 'articulo_id y cantidad requeridos' })
@@ -584,13 +588,13 @@ router.post('/consumo-interno', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Pedidos extraordinarios
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/pedidos-extraordinarios', async (req, res) => {
+router.get('/pedidos-extraordinarios', asyncHandler(async (req, res) => {
   try {
     const { estado } = req.query
     let query = supabase
@@ -607,9 +611,9 @@ router.get('/pedidos-extraordinarios', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/pedidos-extraordinarios', async (req, res) => {
+router.post('/pedidos-extraordinarios', validate(crearPedidoExtraSchema), asyncHandler(async (req, res) => {
   try {
     const { articulo_id, articulo_nombre, cantidad, cliente_nombre, fecha_necesaria, notas } = req.body
     if (!cantidad) return res.status(400).json({ error: 'cantidad requerida' })
@@ -628,9 +632,9 @@ router.post('/pedidos-extraordinarios', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/pedidos-extraordinarios/:id', async (req, res) => {
+router.put('/pedidos-extraordinarios/:id', asyncHandler(async (req, res) => {
   try {
     const { estado, orden_compra_id } = req.body
     const { data, error } = await supabase
@@ -645,6 +649,6 @@ router.put('/pedidos-extraordinarios/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 module.exports = router

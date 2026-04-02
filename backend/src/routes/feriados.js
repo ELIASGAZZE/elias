@@ -3,9 +3,13 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearFeriadoSchema, importarFeriadosSchema } = require('../schemas/rrhh')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/feriados
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { anio } = req.query
     let query = supabase.from('feriados').select('*').order('fecha')
@@ -18,13 +22,13 @@ router.get('/', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar feriados:', err)
+    logger.error('Error al listar feriados:', err)
     res.status(500).json({ error: 'Error al listar feriados' })
   }
-})
+}))
 
 // POST /api/feriados
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, validate(crearFeriadoSchema), asyncHandler(async (req, res) => {
   try {
     const { fecha, descripcion, tipo, anio } = req.body
 
@@ -46,25 +50,25 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     }
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear feriado:', err)
+    logger.error('Error al crear feriado:', err)
     res.status(500).json({ error: 'Error al crear feriado' })
   }
-})
+}))
 
 // DELETE /api/feriados/:id
-router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('feriados').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Feriado eliminado' })
   } catch (err) {
-    console.error('Error al eliminar feriado:', err)
+    logger.error('Error al eliminar feriado:', err)
     res.status(500).json({ error: 'Error al eliminar feriado' })
   }
-})
+}))
 
 // POST /api/feriados/importar — Importar feriados nacionales de Argentina
-router.post('/importar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/importar', verificarAuth, soloGestorOAdmin, validate(importarFeriadosSchema), asyncHandler(async (req, res) => {
   try {
     const { anio } = req.body
     const year = anio || new Date().getFullYear()
@@ -102,9 +106,9 @@ router.post('/importar', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json({ insertados, existentes, total: feriadosNacionales.length })
   } catch (err) {
-    console.error('Error al importar feriados:', err)
+    logger.error('Error al importar feriados:', err)
     res.status(500).json({ error: 'Error al importar feriados' })
   }
-})
+}))
 
 module.exports = router

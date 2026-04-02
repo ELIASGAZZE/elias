@@ -4,17 +4,17 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { fichajesPinSchema, fichajeManualSchema, autorizacionSchema } = require('../schemas/fichajes')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ── Fichaje público (solo requiere PIN, no JWT) ─────────────────────────────
 
 // POST /api/fichajes/pin — Fichar con código de empleado (entrada o salida automática)
-router.post('/pin', async (req, res) => {
+router.post('/pin', validate(fichajesPinSchema), asyncHandler(async (req, res) => {
   try {
     const { pin, sucursal_id } = req.body
-
-    if (!pin || !pin.trim()) {
-      return res.status(400).json({ error: 'Código inválido' })
-    }
 
     // Buscar empleado activo por código
     const { data: empleado, error: empError } = await supabase
@@ -70,13 +70,13 @@ router.post('/pin', async (req, res) => {
       tipo: tipoNuevo,
     })
   } catch (err) {
-    console.error('Error al fichar con PIN:', err)
+    logger.error('Error al fichar con PIN:', err)
     res.status(500).json({ error: 'Error al registrar fichaje' })
   }
-})
+}))
 
 // GET /api/fichajes/estado/:empleadoId — Estado actual del empleado
-router.get('/estado/:empleadoId', async (req, res) => {
+router.get('/estado/:empleadoId', asyncHandler(async (req, res) => {
   try {
     const { empleadoId } = req.params
     const hoy = new Date()
@@ -98,13 +98,13 @@ router.get('/estado/:empleadoId', async (req, res) => {
 
     res.json({ presente, ultimoFichaje: ultimo || null, fichajesHoy: fichajesHoy || [] })
   } catch (err) {
-    console.error('Error al obtener estado fichaje:', err)
+    logger.error('Error al obtener estado fichaje:', err)
     res.status(500).json({ error: 'Error al obtener estado' })
   }
-})
+}))
 
 // GET /api/fichajes/ultimos — Últimos fichajes (para pantalla kiosk)
-router.get('/ultimos', async (req, res) => {
+router.get('/ultimos', asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, limit: lim, dias } = req.query
     const hoy = new Date()
@@ -126,15 +126,15 @@ router.get('/ultimos', async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al obtener últimos fichajes:', err)
+    logger.error('Error al obtener últimos fichajes:', err)
     res.status(500).json({ error: 'Error al obtener fichajes' })
   }
-})
+}))
 
 // ── Fichajes admin (requiere JWT) ───────────────────────────────────────────
 
 // GET /api/fichajes — Listar fichajes con filtros
-router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, sucursal_id, fecha_desde, fecha_hasta } = req.query
 
@@ -153,19 +153,15 @@ router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar fichajes:', err)
+    logger.error('Error al listar fichajes:', err)
     res.status(500).json({ error: 'Error al listar fichajes' })
   }
-})
+}))
 
 // POST /api/fichajes/manual — Registrar fichaje manual (admin corrige)
-router.post('/manual', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/manual', verificarAuth, soloGestorOAdmin, validate(fichajeManualSchema), asyncHandler(async (req, res) => {
   try {
     const { empleado_id, sucursal_id, tipo, fecha_hora, observaciones } = req.body
-
-    if (!empleado_id || !tipo || !fecha_hora) {
-      return res.status(400).json({ error: 'empleado_id, tipo y fecha_hora son requeridos' })
-    }
 
     const { data, error } = await supabase
       .from('fichajes')
@@ -184,26 +180,26 @@ router.post('/manual', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear fichaje manual:', err)
+    logger.error('Error al crear fichaje manual:', err)
     res.status(500).json({ error: 'Error al crear fichaje manual' })
   }
-})
+}))
 
 // DELETE /api/fichajes/:id — Eliminar fichaje erróneo
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase.from('fichajes').delete().eq('id', id)
     if (error) throw error
     res.json({ mensaje: 'Fichaje eliminado' })
   } catch (err) {
-    console.error('Error al eliminar fichaje:', err)
+    logger.error('Error al eliminar fichaje:', err)
     res.status(500).json({ error: 'Error al eliminar fichaje' })
   }
-})
+}))
 
 // GET /api/fichajes/dashboard — KPIs del día
-router.get('/dashboard', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/dashboard', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const hoy = new Date()
     const inicioDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
@@ -220,18 +216,27 @@ router.get('/dashboard', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     if (fErr) throw fErr
 
-    // Empleados con turno asignado hoy
+    const hoyStr = hoy.toISOString().split('T')[0]
+
+    // Planificacion semanal de hoy (prioridad sobre asignaciones)
+    const { data: planHoy } = await supabase
+      .from('planificacion_semanal')
+      .select('empleado_id, turno_id, sucursal_id, turnos(hora_entrada, hora_salida, tolerancia_entrada_min), empleados(id, nombre)')
+      .eq('fecha', hoyStr)
+
+    const empleadosConPlan = new Set((planHoy || []).map(p => p.empleado_id))
+
+    // Empleados con turno asignado hoy (fallback — solo los que NO tienen planificacion)
     const { data: asignacionesHoy, error: aErr } = await supabase
       .from('asignaciones_turno')
       .select('empleado_id, turno_id, turnos(hora_entrada, hora_salida, tolerancia_entrada_min), empleados(id, nombre)')
       .eq('dia_semana', diaSemana)
-      .lte('vigente_desde', hoy.toISOString().split('T')[0])
-      .or(`vigente_hasta.is.null,vigente_hasta.gte.${hoy.toISOString().split('T')[0]}`)
+      .lte('vigente_desde', hoyStr)
+      .or(`vigente_hasta.is.null,vigente_hasta.gte.${hoyStr}`)
 
     if (aErr) throw aErr
 
     // Licencias activas hoy
-    const hoyStr = hoy.toISOString().split('T')[0]
     const { data: licenciasHoy } = await supabase
       .from('licencias')
       .select('empleado_id')
@@ -250,8 +255,15 @@ router.get('/dashboard', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     const esFeriado = feriadoHoy && feriadoHoy.length > 0
 
+    // Combinar: planificacion + asignaciones (fallback para los sin plan)
+    const asignacionesFallback = (asignacionesHoy || []).filter(a => !empleadosConPlan.has(a.empleado_id))
+    const todosConTurnoHoy = [
+      ...(planHoy || []).map(p => ({ empleado_id: p.empleado_id, empleados: p.empleados, turnos: p.turnos, sucursal_id: p.sucursal_id })),
+      ...asignacionesFallback,
+    ]
+
     // Calcular estado por empleado
-    const empleadosConTurno = (asignacionesHoy || []).filter(a => !enLicencia.has(a.empleado_id))
+    const empleadosConTurno = todosConTurnoHoy.filter(a => !enLicencia.has(a.empleado_id))
     const fichajesPorEmpleado = {}
     for (const f of (fichajesHoy || [])) {
       if (!fichajesPorEmpleado[f.empleado_id]) {
@@ -310,13 +322,13 @@ router.get('/dashboard', verificarAuth, soloGestorOAdmin, async (req, res) => {
       detalle,
     })
   } catch (err) {
-    console.error('Error al obtener dashboard fichajes:', err)
+    logger.error('Error al obtener dashboard fichajes:', err)
     res.status(500).json({ error: 'Error al obtener dashboard' })
   }
-})
+}))
 
 // GET /api/fichajes/reporte — Reporte calculado
-router.get('/reporte', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/reporte', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, fecha_desde, fecha_hasta } = req.query
 
@@ -341,13 +353,23 @@ router.get('/reporte', verificarAuth, soloGestorOAdmin, async (req, res) => {
     const empleadoIds = [...new Set((fichajes || []).map(f => f.empleado_id))]
 
     let asignaciones = []
+    let planificaciones = []
     if (empleadoIds.length > 0) {
-      const { data: asig } = await supabase
-        .from('asignaciones_turno')
-        .select('*, turnos(*)')
-        .in('empleado_id', empleadoIds)
+      const [asigRes, planRes] = await Promise.all([
+        supabase
+          .from('asignaciones_turno')
+          .select('*, turnos(*)')
+          .in('empleado_id', empleadoIds),
+        supabase
+          .from('planificacion_semanal')
+          .select('*, turnos(*)')
+          .in('empleado_id', empleadoIds)
+          .gte('fecha', fecha_desde)
+          .lte('fecha', fecha_hasta),
+      ])
 
-      asignaciones = asig || []
+      asignaciones = asigRes.data || []
+      planificaciones = planRes.data || []
     }
 
     // Obtener autorizaciones del rango
@@ -407,13 +429,16 @@ router.get('/reporte', verificarAuth, soloGestorOAdmin, async (req, res) => {
         rep.totales.horas += dia.horas
         if (dia.horas > 0) rep.totales.diasTrabajados++
 
-        // Calcular tardanza
+        // Calcular tardanza — priorizar planificacion sobre asignaciones
+        const planDelDia = planificaciones.find(p => p.empleado_id === empId && p.fecha === fecha)
         const diaSemana = new Date(fecha).getDay()
-        const asigDelDia = empAsignaciones.find(a =>
-          a.dia_semana === diaSemana &&
-          a.vigente_desde <= fecha &&
-          (!a.vigente_hasta || a.vigente_hasta >= fecha)
-        )
+        const asigDelDia = planDelDia
+          ? { turnos: planDelDia.turnos }
+          : empAsignaciones.find(a =>
+              a.dia_semana === diaSemana &&
+              a.vigente_desde <= fecha &&
+              (!a.vigente_hasta || a.vigente_hasta >= fecha)
+            )
 
         if (asigDelDia?.turnos) {
           const turno = asigDelDia.turnos
@@ -453,13 +478,13 @@ router.get('/reporte', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json(Object.values(reportePorEmpleado))
   } catch (err) {
-    console.error('Error al generar reporte:', err)
+    logger.error('Error al generar reporte:', err)
     res.status(500).json({ error: 'Error al generar reporte' })
   }
-})
+}))
 
 // GET /api/fichajes/export — Exportar CSV
-router.get('/export', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/export', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, fecha_desde, fecha_hasta } = req.query
 
@@ -490,15 +515,15 @@ router.get('/export', verificarAuth, soloGestorOAdmin, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename=fichajes_${fecha_desde}_${fecha_hasta}.csv`)
     res.send('\uFEFF' + header + rows) // BOM for Excel UTF-8
   } catch (err) {
-    console.error('Error al exportar fichajes:', err)
+    logger.error('Error al exportar fichajes:', err)
     res.status(500).json({ error: 'Error al exportar' })
   }
-})
+}))
 
 // ── Autorizaciones ──────────────────────────────────────────────────────────
 
 // GET /api/fichajes/autorizaciones
-router.get('/autorizaciones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/autorizaciones', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { empleado_id, fecha_desde, fecha_hasta } = req.query
 
@@ -516,13 +541,13 @@ router.get('/autorizaciones', verificarAuth, soloGestorOAdmin, async (req, res) 
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al listar autorizaciones:', err)
+    logger.error('Error al listar autorizaciones:', err)
     res.status(500).json({ error: 'Error al listar autorizaciones' })
   }
-})
+}))
 
 // POST /api/fichajes/autorizaciones
-router.post('/autorizaciones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/autorizaciones', verificarAuth, soloGestorOAdmin, validate(autorizacionSchema), asyncHandler(async (req, res) => {
   try {
     const { empleado_id, fecha, tipo, hora_autorizada, motivo } = req.body
 
@@ -546,21 +571,21 @@ router.post('/autorizaciones', verificarAuth, soloGestorOAdmin, async (req, res)
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear autorización:', err)
+    logger.error('Error al crear autorización:', err)
     res.status(500).json({ error: 'Error al crear autorización' })
   }
-})
+}))
 
 // DELETE /api/fichajes/autorizaciones/:id
-router.delete('/autorizaciones/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/autorizaciones/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase.from('autorizaciones_horario').delete().eq('id', req.params.id)
     if (error) throw error
     res.json({ mensaje: 'Autorización eliminada' })
   } catch (err) {
-    console.error('Error al eliminar autorización:', err)
+    logger.error('Error al eliminar autorización:', err)
     res.status(500).json({ error: 'Error al eliminar autorización' })
   }
-})
+}))
 
 module.exports = router

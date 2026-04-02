@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
+import SectionErrorBoundary from '../../components/SectionErrorBoundary'
 
 const RIESGO_COLORS = {
   rojo: 'bg-red-100 text-red-700 border-red-200',
@@ -37,6 +38,7 @@ const ComprasHome = () => {
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
         {/* KPIs */}
+        <SectionErrorBoundary name="Dashboard de compras">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
             <div className="text-2xl font-bold text-red-600">{dashboard?.total_criticos || 0}</div>
@@ -103,6 +105,8 @@ const ComprasHome = () => {
             </div>
           </div>
         )}
+
+        </SectionErrorBoundary>
 
         {/* Navegación rápida */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

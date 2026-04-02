@@ -4,6 +4,10 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const webpush = require('web-push')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearPedidoSchema, editarPedidoSchema, cambiarEstadoPedidoSchema } = require('../schemas/pedidos')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // Configurar web-push con VAPID keys
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -39,18 +43,18 @@ async function notificarAdmins(titulo, cuerpo) {
           // Suscripción expiró o es inválida, la eliminamos
           await supabase.from('push_subscriptions').delete().eq('id', sub.id)
         } else {
-          console.error(`[Push] Error enviando notificación (${err.statusCode}):`, err.message)
+          logger.error(`[Push] Error enviando notificación (${err.statusCode}):`, err.message)
         }
       })
     }
   } catch (err) {
-    console.error('Error al notificar admins:', err)
+    logger.error('Error al notificar admins:', err)
   }
 }
 
 // GET /api/pedidos
 // Todos los usuarios ven todos los pedidos, con filtros opcionales
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, estado, fecha_desde, fecha_hasta, usuario_id } = req.query
 
@@ -82,14 +86,14 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json({ pedidos: data, total: count })
   } catch (err) {
-    console.error('Error al obtener pedidos:', err)
+    logger.error('Error al obtener pedidos:', err)
     res.status(500).json({ error: 'Error al obtener pedidos' })
   }
-})
+}))
 
 // GET /api/pedidos/check-pendiente
 // Verifica si el usuario ya tiene un pedido pendiente para una sucursal
-router.get('/check-pendiente', verificarAuth, async (req, res) => {
+router.get('/check-pendiente', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id } = req.query
     if (!sucursal_id) {
@@ -108,14 +112,14 @@ router.get('/check-pendiente', verificarAuth, async (req, res) => {
 
     res.json({ tiene_pendiente: data.length > 0 })
   } catch (err) {
-    console.error('Error al verificar pedido pendiente:', err)
+    logger.error('Error al verificar pedido pendiente:', err)
     res.status(500).json({ error: 'Error al verificar pedido pendiente' })
   }
-})
+}))
 
 // GET /api/pedidos/:id
 // Ver detalle de un pedido específico
-router.get('/:id', verificarAuth, async (req, res) => {
+router.get('/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
 
@@ -141,31 +145,16 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener pedido:', err)
+    logger.error('Error al obtener pedido:', err)
     res.status(500).json({ error: 'Error al obtener pedido' })
   }
-})
+}))
 
 // POST /api/pedidos
 // Operario crea un nuevo pedido
-router.post('/', verificarAuth, async (req, res) => {
+router.post('/', verificarAuth, validate(crearPedidoSchema), asyncHandler(async (req, res) => {
   try {
-    const { items, sucursal_id, nombre, tipo } = req.body // items: [{ articulo_id, cantidad }]
-
-    if (!sucursal_id) {
-      return res.status(400).json({ error: 'La sucursal es requerida' })
-    }
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'El pedido debe tener al menos un artículo' })
-    }
-
-    // Validamos cada item
-    for (const item of items) {
-      if (!item.articulo_id || !item.cantidad || item.cantidad <= 0) {
-        return res.status(400).json({ error: 'Cada item debe tener articulo_id y cantidad mayor a 0' })
-      }
-    }
+    const { items, sucursal_id, nombre, tipo } = req.body
 
     // Creamos el pedido
     const pedidoData = {
@@ -208,22 +197,17 @@ router.post('/', verificarAuth, async (req, res) => {
 
     res.status(201).json({ mensaje: 'Pedido creado correctamente', pedido_id: pedido.id })
   } catch (err) {
-    console.error('Error al crear pedido:', err)
+    logger.error('Error al crear pedido:', err)
     res.status(500).json({ error: 'Error al crear pedido' })
   }
-})
+}))
 
 // PUT /api/pedidos/:id/estado
 // Admin: cambia el estado de un pedido
-router.put('/:id/estado', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:id/estado', verificarAuth, soloGestorOAdmin, validate(cambiarEstadoPedidoSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { estado } = req.body
-
-    const estadosValidos = ['pendiente', 'cargado_en_centum', 'cancelado']
-    if (!estadosValidos.includes(estado)) {
-      return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` })
-    }
 
     const { data, error } = await supabase
       .from('pedidos')
@@ -235,24 +219,20 @@ router.put('/:id/estado', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al actualizar estado:', err)
+    logger.error('Error al actualizar estado:', err)
     res.status(500).json({ error: 'Error al actualizar estado del pedido' })
   }
-})
+}))
 
 // PUT /api/pedidos/:id
 // Admin: modifica los items de un pedido
-router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, validate(editarPedidoSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { items, estado } = req.body
 
     // Actualizamos el estado si viene
     if (estado) {
-      const estadosValidos = ['pendiente', 'cargado_en_centum', 'cancelado']
-      if (!estadosValidos.includes(estado)) {
-        return res.status(400).json({ error: 'Estado inválido' })
-      }
       await supabase.from('pedidos').update({ estado }).eq('id', id)
     }
 
@@ -274,14 +254,14 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json({ mensaje: 'Pedido actualizado correctamente' })
   } catch (err) {
-    console.error('Error al modificar pedido:', err)
+    logger.error('Error al modificar pedido:', err)
     res.status(500).json({ error: 'Error al modificar pedido' })
   }
-})
+}))
 
 // DELETE /api/pedidos/:id
 // Admin: elimina un pedido
-router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
 
@@ -294,14 +274,14 @@ router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json({ mensaje: 'Pedido eliminado correctamente' })
   } catch (err) {
-    console.error('Error al eliminar pedido:', err)
+    logger.error('Error al eliminar pedido:', err)
     res.status(500).json({ error: 'Error al eliminar pedido' })
   }
-})
+}))
 
 // GET /api/pedidos/:id/txt
 // Admin: descarga solo artículos ERP (automatico) como TXT "codigo cantidad"
-router.get('/:id/txt', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:id/txt', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
 
@@ -323,16 +303,16 @@ router.get('/:id/txt', verificarAuth, soloGestorOAdmin, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="pedido-${id}.txt"`)
     res.send(txt)
   } catch (err) {
-    console.error('Error al generar TXT:', err)
+    logger.error('Error al generar TXT:', err)
     res.status(500).json({ error: 'Error al generar TXT' })
   }
-})
+}))
 
 // GET /api/pedidos/:id/pdf
 // Admin: descarga PDF solo con artículos manuales del pedido
 const PDFDocument = require('pdfkit')
 
-router.get('/:id/pdf', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:id/pdf', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
 
@@ -404,11 +384,11 @@ router.get('/:id/pdf', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     doc.end()
   } catch (err) {
-    console.error('Error al generar PDF:', err)
+    logger.error('Error al generar PDF:', err)
     if (!res.headersSent) {
       res.status(500).json({ error: 'Error al generar PDF' })
     }
   }
-})
+}))
 
 module.exports = router

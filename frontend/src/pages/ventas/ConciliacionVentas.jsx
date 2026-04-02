@@ -52,7 +52,7 @@ const ConciliacionVentas = () => {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD local
   const [fecha, setFecha] = useState(searchParams.get('fecha') || hoy)
   const [fechaHasta, setFechaHasta] = useState(searchParams.get('fecha_hasta') || hoy)
   const [sucursalId, setSucursalId] = useState(searchParams.get('sucursal') || '')
@@ -74,7 +74,7 @@ const ConciliacionVentas = () => {
     ]).then(([sucRes, cajRes]) => {
       const sucConCaja = new Set((cajRes.data || []).map(c => c.sucursal_id))
       setSucursales((sucRes.data || []).filter(s => sucConCaja.has(s.id)))
-    }).catch(() => {})
+    }).catch(err => console.error('Error loading sucursales/cajas:', err.message))
   }, [])
 
   // Sync URL params
@@ -92,6 +92,9 @@ const ConciliacionVentas = () => {
   useEffect(() => { setPage(1) }, [fecha, fechaHasta, sucursalId, filtroEstado])
 
   // Fetch data
+  const [fetchKey, setFetchKey] = useState(0)
+  const cargar = () => setFetchKey(k => k + 1)
+
   useEffect(() => {
     setCargando(true)
     setError(null)
@@ -102,7 +105,7 @@ const ConciliacionVentas = () => {
       .then(r => setData(r.data))
       .catch(err => setError(err.response?.data?.error || err.message))
       .finally(() => setCargando(false))
-  }, [fecha, fechaHasta, sucursalId, filtroEstado, page])
+  }, [fecha, fechaHasta, sucursalId, filtroEstado, page, fetchKey])
 
   const kpis = data?.kpis
   const rawRows = data?.rows || []
@@ -160,8 +163,8 @@ const ConciliacionVentas = () => {
           </select>
         </div>
 
-        {/* Pills de estado */}
-        <div className="flex flex-wrap gap-2">
+        {/* Pills de estado + actualizar */}
+        <div className="flex flex-wrap gap-2 items-center">
           {[
             { key: '', label: 'Todos' },
             { key: 'matched', label: 'Coinciden' },
@@ -185,6 +188,11 @@ const ConciliacionVentas = () => {
               {kpis && key && kpis[key] && <span className="ml-1 opacity-70">({kpis[key].count})</span>}
             </button>
           ))}
+          <button onClick={cargar} disabled={cargando}
+            className="text-xs px-3 py-1.5 rounded-full font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-50 ml-auto"
+            title="Actualizar">
+            {cargando ? 'Consultando...' : '↻ Actualizar'}
+          </button>
         </div>
 
         {/* KPI Cards */}

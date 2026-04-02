@@ -1,0 +1,120 @@
+// MCP Tools — Articulos
+module.exports = [
+  {
+    name: 'articulos_listar',
+    description: 'Listar artículos del sistema con filtro opcional por sucursal',
+    method: 'GET',
+    path: '/api/articulos',
+    params: {
+      sucursal_id: { type: 'string', description: 'Filtrar por sucursal' },
+      tipo: { type: 'string', description: 'Tipo de artículo' },
+      ids: { type: 'string', description: 'IDs separados por coma' },
+    },
+    queryParams: ['sucursal_id', 'tipo', 'ids'],
+  },
+  {
+    name: 'articulos_actualizaciones',
+    description: 'Obtener artículos actualizados en una fecha específica',
+    method: 'GET',
+    path: '/api/articulos/actualizaciones',
+    params: {
+      fecha: { type: 'string', description: 'Fecha en formato YYYY-MM-DD', required: true },
+    },
+    queryParams: ['fecha'],
+  },
+  {
+    name: 'articulos_erp',
+    description: 'Obtener artículos del ERP Centum con paginación y búsqueda',
+    method: 'GET',
+    path: '/api/articulos/erp',
+    params: {
+      page: { type: 'number', description: 'Número de página' },
+      limit: { type: 'number', description: 'Artículos por página' },
+      buscar: { type: 'string', description: 'Término de búsqueda' },
+      ids: { type: 'string', description: 'IDs separados por coma' },
+    },
+    queryParams: ['page', 'limit', 'buscar', 'ids'],
+  },
+  {
+    name: 'articulos_por_sucursal',
+    description: 'Obtener artículos habilitados para una sucursal específica',
+    method: 'GET',
+    path: '/api/articulos/sucursal/:sucursalId',
+    params: {
+      sucursalId: { type: 'string', description: 'ID de la sucursal', required: true },
+    },
+  },
+  {
+    name: 'articulos_diagnostico_erp',
+    description: 'Obtener información de diagnóstico de la conexión con ERP',
+    method: 'GET',
+    path: '/api/articulos/diagnostico-erp',
+    params: {},
+  },
+  {
+    name: 'articulos_sincronizar_erp',
+    description: 'Sincronización completa de artículos desde Centum ERP',
+    method: 'POST',
+    path: '/api/articulos/sincronizar-erp',
+    params: {},
+  },
+  {
+    name: 'articulos_sincronizar_precios',
+    description: 'Sincronización rápida solo de precios desde ERP',
+    method: 'POST',
+    path: '/api/articulos/sincronizar-precios',
+    params: {},
+  },
+  {
+    name: 'articulos_sincronizar_stock',
+    description: 'Sincronizar stock de depósito desde ERP (proceso en background)',
+    method: 'POST',
+    path: '/api/articulos/sincronizar-stock',
+    params: {},
+  },
+  {
+    name: 'articulos_crear',
+    description: 'Crear un artículo manual (no viene del ERP)',
+    method: 'POST',
+    path: '/api/articulos',
+    params: {
+      nombre: { type: 'string', description: 'Nombre del artículo', required: true },
+      precio: { type: 'number', description: 'Precio del artículo', required: true },
+      rubro_id: { type: 'string', description: 'ID del rubro' },
+      codigo_barras: { type: 'string', description: 'Código de barras' },
+    },
+  },
+  {
+    name: 'articulos_editar',
+    description: 'Editar nombre/rubro de un artículo manual',
+    method: 'PUT',
+    path: '/api/articulos/:id',
+    params: {
+      id: { type: 'string', description: 'ID del artículo', required: true },
+      nombre: { type: 'string', description: 'Nuevo nombre' },
+      rubro_id: { type: 'string', description: 'Nuevo rubro' },
+    },
+  },
+  {
+    name: 'articulos_toggle_sucursal',
+    description: 'Habilitar/deshabilitar un artículo para una sucursal',
+    method: 'PUT',
+    path: '/api/articulos/:articuloId/sucursal/:sucursalId',
+    params: {
+      articuloId: { type: 'string', description: 'ID del artículo', required: true },
+      sucursalId: { type: 'string', description: 'ID de la sucursal', required: true },
+      habilitado: { type: 'boolean', description: 'true para habilitar, false para deshabilitar' },
+    },
+  },
+  {
+    name: 'articulos_set_stock_ideal',
+    description: 'Establecer stock ideal de un artículo en una sucursal',
+    method: 'PUT',
+    path: '/api/articulos/:articuloId/sucursal/:sucursalId/stock-ideal',
+    params: {
+      articuloId: { type: 'string', description: 'ID del artículo', required: true },
+      sucursalId: { type: 'string', description: 'ID de la sucursal', required: true },
+      stock_ideal: { type: 'number', description: 'Cantidad de stock ideal', required: true },
+    },
+  },
+]

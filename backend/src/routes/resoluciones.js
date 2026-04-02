@@ -3,9 +3,11 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // POST /api/resoluciones — crear una resolución de diferencia
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { cierre_id, tipo_diferencia, monto_diferencia, causa, descripcion, evidencia } = req.body
 
@@ -44,13 +46,13 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear resolución:', err)
+    logger.error('Error al crear resolución:', err)
     res.status(500).json({ error: 'Error al crear resolución' })
   }
-})
+}))
 
 // GET /api/resoluciones?cierre_id=X — resoluciones de un cierre específico
-router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { cierre_id, cajero_id, sucursal_id, causa, limit: limitStr } = req.query
     const limit = Math.min(parseInt(limitStr) || 50, 200)
@@ -71,13 +73,13 @@ router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json(data || [])
   } catch (err) {
-    console.error('Error al obtener resoluciones:', err)
+    logger.error('Error al obtener resoluciones:', err)
     res.status(500).json({ error: 'Error al obtener resoluciones' })
   }
-})
+}))
 
 // DELETE /api/resoluciones/:id — eliminar una resolución
-router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('resoluciones_diferencias')
@@ -87,13 +89,13 @@ router.delete('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al eliminar resolución:', err)
+    logger.error('Error al eliminar resolución:', err)
     res.status(500).json({ error: 'Error al eliminar resolución' })
   }
-})
+}))
 
 // GET /api/resoluciones/estadisticas — estadísticas agregadas de resoluciones
-router.get('/estadisticas', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/estadisticas', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, cajero_id, desde, hasta } = req.query
 
@@ -134,13 +136,13 @@ router.get('/estadisticas', verificarAuth, soloGestorOAdmin, async (req, res) =>
       })).sort((a, b) => b.cantidad - a.cantidad),
     })
   } catch (err) {
-    console.error('Error al obtener estadísticas:', err)
+    logger.error('Error al obtener estadísticas:', err)
     res.status(500).json({ error: 'Error al obtener estadísticas' })
   }
-})
+}))
 
 // GET /api/resoluciones/similares — buscar resoluciones similares (para IA)
-router.get('/similares', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/similares', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { tipo_diferencia, cajero_id, sucursal_id, monto, tolerancia: tolStr } = req.query
     const tolerancia = parseFloat(tolStr) || 5000
@@ -168,9 +170,9 @@ router.get('/similares', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json(filtradas.slice(0, 10))
   } catch (err) {
-    console.error('Error al buscar similares:', err)
+    logger.error('Error al buscar similares:', err)
     res.status(500).json({ error: 'Error al buscar resoluciones similares' })
   }
-})
+}))
 
 module.exports = router

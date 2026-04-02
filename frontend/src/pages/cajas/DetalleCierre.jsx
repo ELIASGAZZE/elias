@@ -133,14 +133,14 @@ const DetalleCierre = () => {
         promises.push(
           api.get(`/api/cierres/${id}/retiros`)
             .then(res => setRetiros(res.data || []))
-            .catch(() => {})
+            .catch(err => console.error('Error loading retiros:', err.message))
         )
 
         // Gastos
         promises.push(
           api.get(`/api/cierres/${id}/gastos`)
             .then(res => setGastos(res.data || []))
-            .catch(() => {})
+            .catch(err => console.error('Error loading gastos:', err.message))
         )
 
         // Resoluciones (gestor/admin only)
@@ -148,7 +148,7 @@ const DetalleCierre = () => {
           promises.push(
             api.get(`/api/resoluciones?cierre_id=${id}`)
               .then(res => setResoluciones(res.data || []))
-              .catch(() => {})
+              .catch(err => console.error('Error loading resoluciones:', err.message))
           )
         }
 
@@ -156,7 +156,7 @@ const DetalleCierre = () => {
           promises.push(
             api.get(`/api/cierres/${id}/verificacion`)
               .then(res => setVerificacion(res.data))
-              .catch(() => {})
+              .catch(err => console.error('Error loading verificacion:', err.message))
           )
         }
 
@@ -170,12 +170,12 @@ const DetalleCierre = () => {
           promises.push(
             api.get(`/api/cierres/${id}/ventas-sin-confirmar`)
               .then(res => setVentasSinConfirmar(res.data))
-              .catch(() => {})
+              .catch(err => console.error('Error loading ventas sin confirmar:', err.message))
           )
           promises.push(
             api.get(`/api/cierres/${id}/comprobantes`)
               .then(res => setComprobantes(res.data))
-              .catch(() => {})
+              .catch(err => console.error('Error loading comprobantes:', err.message))
           )
         }
 

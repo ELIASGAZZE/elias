@@ -8,6 +8,10 @@ const { registrarLlamada } = require('../services/apiLogger')
 const { getPool } = require('../config/centum')
 const sql = require('mssql')
 const { consultarCUIT } = require('../services/afip')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearClienteSchema } = require('../schemas/clientes')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // Fallback: buscar cliente en Centum BI por CUIT/DNI y sincronizar a Supabase
 async function buscarEnCentumBI(soloDigitos) {
@@ -59,7 +63,7 @@ async function buscarEnCentumBI(soloDigitos) {
   if (existente) {
     // Actualizar datos locales (incluye el CUIT nuevo)
     await supabase.from('clientes').update({ ...centumData, activo: true }).eq('id', existente.id)
-    console.log(`[Clientes] Fallback BI: actualizado cliente ${existente.id} (CUIT ${centumData.cuit})`)
+    logger.info(`[Clientes] Fallback BI: actualizado cliente ${existente.id} (CUIT ${centumData.cuit})`)
     return { ...existente, ...centumData, activo: true }
   }
 
@@ -91,17 +95,17 @@ async function buscarEnCentumBI(soloDigitos) {
     .single()
 
   if (errInsert) {
-    console.warn('[Clientes] Fallback BI: error insertando:', errInsert.message)
+    logger.warn('[Clientes] Fallback BI: error insertando:', errInsert.message)
     return null
   }
 
-  console.log(`[Clientes] Fallback BI: creado cliente ${insertado.id} desde Centum (${centumData.razon_social})`)
+  logger.info(`[Clientes] Fallback BI: creado cliente ${insertado.id} desde Centum (${centumData.razon_social})`)
   return insertado
 }
 
 // GET /api/clientes
 // Lista clientes con búsqueda y paginación
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1)
     const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 20), 100)
@@ -154,7 +158,7 @@ router.get('/', verificarAuth, async (req, res) => {
               return res.json({ clientes: [clienteBI], total: 1 })
             }
           } catch (errBI) {
-            console.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
+            logger.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
           }
         }
 
@@ -192,7 +196,7 @@ router.get('/', verificarAuth, async (req, res) => {
               return res.json({ clientes: [clienteBI], total: 1 })
             }
           } catch (errBI) {
-            console.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
+            logger.warn('[Clientes] Fallback Centum BI falló:', errBI.message)
           }
         }
 
@@ -208,13 +212,13 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json({ clientes: data, total: count })
   } catch (err) {
-    console.error('Error al obtener clientes:', err)
+    logger.error('Error al obtener clientes:', err)
     res.status(500).json({ error: 'Error al obtener clientes' })
   }
-})
+}))
 
 // GET /api/clientes/afip-status — diagnóstico de configuración AFIP
-router.get('/afip-status', verificarAuth, async (req, res) => {
+router.get('/afip-status', verificarAuth, asyncHandler(async (req, res) => {
   const certEnv = !!process.env.AFIP_CERT
   const keyEnv = !!process.env.AFIP_KEY
   const certLen = process.env.AFIP_CERT?.length || 0
@@ -230,11 +234,11 @@ router.get('/afip-status', verificarAuth, async (req, res) => {
   const keyFile = fs.existsSync(keyPath)
 
   res.json({ certEnv, keyEnv, certLen, keyLen, certStart, keyStart, certFile, keyFile })
-})
+}))
 
 // GET /api/clientes/buscar-afip?cuit=XXX
 // Consulta datos de un CUIT en AFIP/ARCA
-router.get('/buscar-afip', verificarAuth, async (req, res) => {
+router.get('/buscar-afip', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { cuit } = req.query
     const soloDigitos = cuit?.replace(/\D/g, '') || ''
@@ -249,7 +253,7 @@ router.get('/buscar-afip', verificarAuth, async (req, res) => {
 
     res.json({ encontrado: true, datos })
   } catch (err) {
-    console.error('Error al consultar AFIP:', err.message, err.stack?.substring(0, 300))
+    logger.error('Error al consultar AFIP:', err.message, err.stack?.substring(0, 300))
     // Si AFIP no responde, no romper el flujo
     const msg = err.response?.data?.message || err.message
     if (msg.includes('No existe persona')) {
@@ -257,11 +261,11 @@ router.get('/buscar-afip', verificarAuth, async (req, res) => {
     }
     res.status(500).json({ error: 'Error al consultar AFIP' })
   }
-})
+}))
 
 // GET /api/clientes/buscar-centum?cuit=XXX
 // Busca clientes en Centum BI por CUIT/DNI
-router.get('/buscar-centum', verificarAuth, async (req, res) => {
+router.get('/buscar-centum', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { cuit } = req.query
     if (!cuit || cuit.trim().length < 3) {
@@ -295,14 +299,14 @@ router.get('/buscar-centum', verificarAuth, async (req, res) => {
 
     res.json({ resultados })
   } catch (err) {
-    console.error('Error al buscar cliente en Centum:', err)
+    logger.error('Error al buscar cliente en Centum:', err)
     res.status(500).json({ error: 'Error al buscar en Centum' })
   }
-})
+}))
 
 // POST /api/clientes/importar-centum
 // Importa un cliente existente de Centum a la BD local
-router.post('/importar-centum', verificarAuth, async (req, res) => {
+router.post('/importar-centum', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { id_centum, razon_social, cuit, direccion, localidad, telefono } = req.body
 
@@ -379,41 +383,36 @@ router.post('/importar-centum', verificarAuth, async (req, res) => {
 
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al importar cliente de Centum:', err)
+    logger.error('Error al importar cliente de Centum:', err)
     res.status(500).json({ error: 'Error al importar cliente' })
   }
-})
+}))
 
 // GET /api/clientes/duplicados
 // Admin: detecta clientes duplicados por id_centum o CUIT
-router.get('/duplicados', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/duplicados', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
-    // Buscar duplicados por id_centum
+    // Una sola query para todos los clientes activos (en vez de 2 queries completas)
     const { data: todos } = await supabase
       .from('clientes')
       .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, activo, created_at')
       .eq('activo', true)
-      .not('id_centum', 'is', null)
       .order('id_centum', { ascending: true })
 
+    // Duplicados por id_centum
     const porIdCentum = new Map()
     for (const c of (todos || [])) {
+      if (!c.id_centum) continue
       const arr = porIdCentum.get(c.id_centum) || []
       arr.push(c)
       porIdCentum.set(c.id_centum, arr)
     }
     const duplicados_id_centum = [...porIdCentum.values()].filter(arr => arr.length > 1)
 
-    // Buscar duplicados por CUIT normalizado
-    const { data: conCuit } = await supabase
-      .from('clientes')
-      .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, activo, created_at')
-      .eq('activo', true)
-      .not('cuit', 'is', null)
-      .order('cuit', { ascending: true })
-
+    // Duplicados por CUIT normalizado (mismos datos, sin query extra)
     const porCuit = new Map()
-    for (const c of (conCuit || [])) {
+    for (const c of (todos || [])) {
+      if (!c.cuit) continue
       const norm = c.cuit.replace(/\D/g, '')
       if (norm.length < 7) continue
       const arr = porCuit.get(norm) || []
@@ -429,14 +428,14 @@ router.get('/duplicados', verificarAuth, soloAdmin, async (req, res) => {
       total_cuit: duplicados_cuit.length,
     })
   } catch (err) {
-    console.error('Error buscando duplicados:', err)
+    logger.error('Error buscando duplicados:', err)
     res.status(500).json({ error: 'Error al buscar duplicados' })
   }
-})
+}))
 
 // GET /api/clientes/:id
 // Detalle de un cliente
-router.get('/:id', verificarAuth, async (req, res) => {
+router.get('/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('clientes')
@@ -450,21 +449,17 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener cliente:', err)
+    logger.error('Error al obtener cliente:', err)
     res.status(500).json({ error: 'Error al obtener cliente' })
   }
-})
+}))
 
 // POST /api/clientes
 // Crear cliente local (código auto-generado CLI-0001) + exportar a Centum
-router.post('/', verificarAuth, async (req, res) => {
+router.post('/', verificarAuth, validate(crearClienteSchema), asyncHandler(async (req, res) => {
   try {
     const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono,
             email, celular, condicion_iva, direcciones_entrega, grupo_descuento_id } = req.body
-
-    if (!razon_social || !razon_social.trim()) {
-      return res.status(400).json({ error: 'La razón social es requerida' })
-    }
 
     // Verificar si ya existe un cliente con ese CUIT
     if (cuit && cuit.trim()) {
@@ -480,19 +475,18 @@ router.post('/', verificarAuth, async (req, res) => {
       }
     }
 
-    // Generar código auto-incremental CLI-XXXX
-    // Buscar el máximo en cada longitud posible (4,5,6 dígitos) porque Supabase ordena texto
+    // Generar código auto-incremental CLI-XXXX (una sola query)
+    const { data: topCodigos } = await supabase
+      .from('clientes')
+      .select('codigo')
+      .like('codigo', 'CLI-%')
+      .order('codigo', { ascending: false })
+      .limit(20)
     let maxNum = 0
-    for (const pattern of ['CLI-______', 'CLI-_____', 'CLI-____']) {
-      const { data: top } = await supabase
-        .from('clientes')
-        .select('codigo')
-        .like('codigo', pattern)
-        .order('codigo', { ascending: false })
-        .limit(1)
-      if (top && top.length > 0) {
-        const m = top[0].codigo.match(/^CLI-(\d+)$/)
-        if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
+    if (topCodigos) {
+      for (const row of topCodigos) {
+        const m = row.codigo.match(/^CLI-(\d+)$/)
+        if (m) { maxNum = Math.max(maxNum, parseInt(m[1])); break }
       }
     }
     const siguiente = maxNum + 1
@@ -546,12 +540,12 @@ router.post('/', verificarAuth, async (req, res) => {
           try {
             await agregarContactoEnvioCentum(idCentum, { email, celular })
           } catch (errContacto) {
-            console.warn('No se pudo agregar contacto envío en Centum:', errContacto.message)
+            logger.warn('No se pudo agregar contacto envío en Centum:', errContacto.message)
           }
         }
       }
     } catch (errCentum) {
-      console.warn('No se pudo exportar cliente a Centum (se creó solo local):', errCentum.message)
+      logger.warn('No se pudo exportar cliente a Centum (se creó solo local):', errCentum.message)
       warningCentum = 'No se pudo cargar el cliente en Centum. Se reintentará automáticamente, o cargarlo de forma manual en Centum.'
     }
 
@@ -576,15 +570,15 @@ router.post('/', verificarAuth, async (req, res) => {
     if (warningCentum) respuesta.warning_centum = warningCentum
     res.status(201).json(respuesta)
   } catch (err) {
-    console.error('Error al crear cliente:', err)
+    logger.error('Error al crear cliente:', err)
     const detalle = err.message || err.details || JSON.stringify(err)
     res.status(500).json({ error: `Error al crear cliente: ${detalle}` })
   }
-})
+}))
 
 // PUT /api/clientes/contacto/:idCentum
 // Actualizar email/celular del cliente (solo local)
-router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
+router.put('/contacto/:idCentum', verificarAuth, asyncHandler(async (req, res) => {
   const idCentum = parseInt(req.params.idCentum)
   const { email, celular } = req.body
 
@@ -606,14 +600,14 @@ router.put('/contacto/:idCentum', verificarAuth, async (req, res) => {
 
     res.json({ ok: true, email: email?.trim() || null, celular: celular?.trim() || null })
   } catch (err) {
-    console.error('Error al actualizar contacto:', err)
+    logger.error('Error al actualizar contacto:', err)
     res.status(500).json({ error: 'Error al actualizar contacto' })
   }
-})
+}))
 
 // GET /api/clientes/refresh/:idCentum
 // Refresca un cliente individual desde Centum BI
-router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
+router.get('/refresh/:idCentum', verificarAuth, asyncHandler(async (req, res) => {
   const idCentum = parseInt(req.params.idCentum)
   if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
 
@@ -684,15 +678,15 @@ router.get('/refresh/:idCentum', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error refrescando cliente:', err.message)
+    logger.error('Error refrescando cliente:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // PUT /api/clientes/editar-centum/:idCentum
 // DEPRECATED: usar PUT /api/clientes/:id en su lugar (auto-sync incluido)
-router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
-  console.warn(`[Clientes] DEPRECATED: PUT /editar-centum/${req.params.idCentum} — usar PUT /api/clientes/:id`)
+router.put('/editar-centum/:idCentum', verificarAuth, asyncHandler(async (req, res) => {
+  logger.warn(`[Clientes] DEPRECATED: PUT /editar-centum/${req.params.idCentum} — usar PUT /api/clientes/:id`)
   const idCentum = parseInt(req.params.idCentum)
   const { razon_social, cuit, condicion_iva, direccion, localidad, codigo_postal, telefono, email, celular, grupo_descuento_id } = req.body
 
@@ -734,7 +728,7 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
         codigo_postal: codigo_postal?.trim(),
       })
     } catch (err) {
-      console.error('Error actualizando cliente en Centum:', err.message)
+      logger.error('Error actualizando cliente en Centum:', err.message)
       warningCentum = err.message
     }
 
@@ -743,7 +737,7 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
       try {
         await agregarContactoEnvioCentum(idCentum, { email: email?.trim(), celular: celular?.trim() })
       } catch (err) {
-        console.error('Error actualizando contacto envío en Centum:', err.message)
+        logger.error('Error actualizando contacto envío en Centum:', err.message)
         if (!warningCentum) warningCentum = err.message
       }
     }
@@ -752,14 +746,14 @@ router.put('/editar-centum/:idCentum', verificarAuth, async (req, res) => {
     if (warningCentum) respuesta.warning_centum = warningCentum
     res.json(respuesta)
   } catch (err) {
-    console.error('Error al editar cliente con sync:', err)
+    logger.error('Error al editar cliente con sync:', err)
     res.status(500).json({ error: 'Error al editar cliente' })
   }
-})
+}))
 
 // PUT /api/clientes/:id
 // Editar cliente
-router.put('/:id', verificarAuth, async (req, res) => {
+router.put('/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { razon_social, cuit, direccion, localidad, codigo_postal, provincia, telefono, activo, grupo_descuento_id, condicion_iva, email, celular } = req.body
 
@@ -804,7 +798,7 @@ router.put('/:id', verificarAuth, async (req, res) => {
           codigo_postal: updates.codigo_postal,
         })
       } catch (err) {
-        console.warn(`[Clientes] Auto-sync Centum falló para ${data.id_centum}:`, err.message)
+        logger.warn(`[Clientes] Auto-sync Centum falló para ${data.id_centum}:`, err.message)
         warningCentum = err.message
       }
 
@@ -822,14 +816,14 @@ router.put('/:id', verificarAuth, async (req, res) => {
     if (warningCentum) respuesta.warning_centum = warningCentum
     res.json(respuesta)
   } catch (err) {
-    console.error('Error al actualizar cliente:', err)
+    logger.error('Error al actualizar cliente:', err)
     res.status(500).json({ error: 'Error al actualizar cliente' })
   }
-})
+}))
 
 // POST /api/clientes/sincronizar-centum
 // Admin: importar todos los clientes desde Centum (upsert por codigo)
-router.post('/sincronizar-centum', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/sincronizar-centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 500
     const BATCH_SIZE = 500
@@ -867,7 +861,7 @@ router.post('/sincronizar-centum', verificarAuth, soloAdmin, async (req, res) =>
         totalImportados += lote.length
       }
 
-      console.log(`[Clientes] Página ${pagina}: ${items.length} items (acumulado: ${totalImportados}/${total})`)
+      logger.info(`[Clientes] Página ${pagina}: ${items.length} items (acumulado: ${totalImportados}/${total})`)
 
       if (items.length < PAGE_SIZE) break
       pagina++
@@ -884,14 +878,14 @@ router.post('/sincronizar-centum', verificarAuth, soloAdmin, async (req, res) =>
       cantidad: totalImportados,
     })
   } catch (err) {
-    console.error('Error al sincronizar clientes:', err)
+    logger.error('Error al sincronizar clientes:', err)
     res.status(500).json({ error: 'Error al sincronizar clientes desde Centum' })
   }
-})
+}))
 
 // POST /api/clientes/:id/exportar-centum
 // Admin: exportar un cliente local a Centum
-router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:id/exportar-centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     // Obtener cliente local
     const { data: cliente, error } = await supabase
@@ -925,14 +919,14 @@ router.post('/:id/exportar-centum', verificarAuth, soloAdmin, async (req, res) =
       id_centum: idCentum,
     })
   } catch (err) {
-    console.error('Error al exportar cliente a Centum:', err)
+    logger.error('Error al exportar cliente a Centum:', err)
     res.status(500).json({ error: 'Error al exportar cliente a Centum' })
   }
-})
+}))
 
 // GET /api/clientes/por-centum/:idCentum
 // Obtener cliente por id_centum
-router.get('/por-centum/:idCentum', verificarAuth, async (req, res) => {
+router.get('/por-centum/:idCentum', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const idCentum = parseInt(req.params.idCentum)
     if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
@@ -944,14 +938,14 @@ router.get('/por-centum/:idCentum', verificarAuth, async (req, res) => {
     if (error || !data) return res.status(404).json({ error: 'Cliente no encontrado' })
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener cliente por centum:', err)
+    logger.error('Error al obtener cliente por centum:', err)
     res.status(500).json({ error: 'Error al obtener cliente' })
   }
-})
+}))
 
 // GET /api/clientes/por-centum/:idCentum/direcciones
 // Listar direcciones de entrega buscando por id_centum
-router.get('/por-centum/:idCentum/direcciones', verificarAuth, async (req, res) => {
+router.get('/por-centum/:idCentum/direcciones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const idCentum = parseInt(req.params.idCentum)
     if (!idCentum) return res.status(400).json({ error: 'ID Centum requerido' })
@@ -975,14 +969,14 @@ router.get('/por-centum/:idCentum/direcciones', verificarAuth, async (req, res) 
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('Error al obtener direcciones por centum:', err)
+    logger.error('Error al obtener direcciones por centum:', err)
     res.status(500).json({ error: 'Error al obtener direcciones' })
   }
-})
+}))
 
 // GET /api/clientes/:id/direcciones
 // Listar direcciones de entrega de un cliente
-router.get('/:id/direcciones', verificarAuth, async (req, res) => {
+router.get('/:id/direcciones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('direcciones_entrega')
@@ -994,14 +988,14 @@ router.get('/:id/direcciones', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener direcciones:', err)
+    logger.error('Error al obtener direcciones:', err)
     res.status(500).json({ error: 'Error al obtener direcciones' })
   }
-})
+}))
 
 // POST /api/clientes/:id/direcciones
 // Agregar dirección de entrega a un cliente
-router.post('/:id/direcciones', verificarAuth, async (req, res) => {
+router.post('/:id/direcciones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { direccion, localidad, referencia, es_principal } = req.body
 
@@ -1032,14 +1026,14 @@ router.post('/:id/direcciones', verificarAuth, async (req, res) => {
     if (error) throw error
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al agregar dirección:', err)
+    logger.error('Error al agregar dirección:', err)
     res.status(500).json({ error: 'Error al agregar dirección' })
   }
-})
+}))
 
 // PUT /api/clientes/:id/direcciones/:dirId
 // Editar dirección de entrega
-router.put('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
+router.put('/:id/direcciones/:dirId', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { direccion, localidad, referencia, es_principal } = req.body
 
@@ -1071,14 +1065,14 @@ router.put('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
     if (!data) return res.status(404).json({ error: 'Dirección no encontrada' })
     res.json(data)
   } catch (err) {
-    console.error('Error al editar dirección:', err)
+    logger.error('Error al editar dirección:', err)
     res.status(500).json({ error: 'Error al editar dirección' })
   }
-})
+}))
 
 // DELETE /api/clientes/:id/direcciones/:dirId
 // Eliminar dirección de entrega
-router.delete('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
+router.delete('/:id/direcciones/:dirId', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('direcciones_entrega')
@@ -1089,14 +1083,14 @@ router.delete('/:id/direcciones/:dirId', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al eliminar dirección:', err)
+    logger.error('Error al eliminar dirección:', err)
     res.status(500).json({ error: 'Error al eliminar dirección' })
   }
-})
+}))
 
 // POST /api/clientes/fix-condicion-iva
 // Mass-update: sincroniza condicion_iva de TODOS los clientes locales contra Centum BI
-router.post('/fix-condicion-iva', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/fix-condicion-iva', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const mapCondicionIVA = (id) => {
       if (id === 1895) return 'RI'
@@ -1163,12 +1157,12 @@ router.post('/fix-condicion-iva', verificarAuth, soloAdmin, async (req, res) => 
       }
     }
 
-    console.log(`[FixCondicionIVA] ${corregidos} clientes corregidos de ${locales.length} total`)
+    logger.info(`[FixCondicionIVA] ${corregidos} clientes corregidos de ${locales.length} total`)
     res.json({ total: locales.length, corregidos, detalle })
   } catch (err) {
-    console.error('Error en fix-condicion-iva:', err.message)
+    logger.error('Error en fix-condicion-iva:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 module.exports = router

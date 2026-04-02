@@ -8,21 +8,24 @@ const TabTurnos = () => {
   const [turnos, setTurnos] = useState([])
   const [asignaciones, setAsignaciones] = useState([])
   const [empleados, setEmpleados] = useState([])
+  const [sucursales, setSucursales] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [editando, setEditando] = useState(null)
-  const [form, setForm] = useState({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10 })
+  const [form, setForm] = useState({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10, sucursal_id: '' })
   const [cargando, setCargando] = useState(false)
 
   const cargar = async () => {
     try {
-      const [t, a, e] = await Promise.all([
+      const [t, a, e, s] = await Promise.all([
         api.get('/api/turnos'),
         api.get('/api/turnos/asignaciones'),
         api.get('/api/empleados'),
+        api.get('/api/sucursales'),
       ])
       setTurnos(t.data)
       setAsignaciones(a.data)
       setEmpleados(e.data)
+      setSucursales(s.data)
     } catch (err) {
       console.error('Error:', err)
     }
@@ -40,7 +43,7 @@ const TabTurnos = () => {
       }
       setShowForm(false)
       setEditando(null)
-      setForm({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10 })
+      setForm({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10, sucursal_id: '' })
       cargar()
     } catch (err) {
       alert(err.response?.data?.error || 'Error')
@@ -90,7 +93,7 @@ const TabTurnos = () => {
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-800">Turnos</h3>
         <button
-          onClick={() => { setShowForm(true); setEditando(null); setForm({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10 }) }}
+          onClick={() => { setShowForm(true); setEditando(null); setForm({ nombre: '', hora_entrada: '08:00', hora_salida: '16:00', tolerancia_entrada_min: 10, tolerancia_salida_min: 10, sucursal_id: '' }) }}
           className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700"
         >
           + Nuevo turno
@@ -100,7 +103,7 @@ const TabTurnos = () => {
       {/* Form turno */}
       {showForm && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
             <input
               placeholder="Nombre"
               value={form.nombre}
@@ -133,6 +136,16 @@ const TabTurnos = () => {
               onChange={(e) => setForm({ ...form, tolerancia_salida_min: parseInt(e.target.value) || 0 })}
               className="border rounded-lg px-3 py-2 text-sm"
             />
+            <select
+              value={form.sucursal_id || ''}
+              onChange={(e) => setForm({ ...form, sucursal_id: e.target.value || null })}
+              className="border rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Todas las sucursales</option>
+              {sucursales.map(s => (
+                <option key={s.id} value={s.id}>{s.nombre}</option>
+              ))}
+            </select>
           </div>
           <div className="flex gap-2 mt-3">
             <button onClick={guardarTurno} disabled={!form.nombre || cargando} className="text-sm bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50">
@@ -153,7 +166,7 @@ const TabTurnos = () => {
               <span className="font-medium text-gray-800">{t.nombre}</span>
               <div className="flex gap-1">
                 <button
-                  onClick={() => { setEditando(t.id); setForm(t); setShowForm(true) }}
+                  onClick={() => { setEditando(t.id); setForm({ ...t, sucursal_id: t.sucursal_id || '' }); setShowForm(true) }}
                   className="text-xs text-blue-600 hover:underline"
                 >
                   Editar
@@ -164,6 +177,7 @@ const TabTurnos = () => {
               </div>
             </div>
             <p className="text-sm text-gray-500">{t.hora_entrada} — {t.hora_salida}</p>
+            {t.sucursales && <p className="text-xs text-blue-500 mt-1">{t.sucursales.nombre}</p>}
             <p className="text-xs text-gray-400 mt-1">Tolerancia: ±{t.tolerancia_entrada_min}min entrada, ±{t.tolerancia_salida_min}min salida</p>
           </div>
         ))}
@@ -213,6 +227,10 @@ const TabTurnos = () => {
           </table>
         </div>
       )}
+
+      <p className="text-xs text-gray-400 mt-3">
+        Estos son los turnos por defecto por día de semana. Para planificar por semana específica con sucursal, usá la tab Planificación.
+      </p>
     </div>
   )
 }

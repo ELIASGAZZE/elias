@@ -2,10 +2,20 @@
 // Verifica que el usuario esté logueado y obtiene su información
 // Con fallback offline: si Supabase no responde, usa cache en memoria
 const supabase = require('../config/supabase')
+const logger = require('../config/logger')
 
 // Cache en memoria: token → { user, perfil, timestamp }
 const authCache = new Map()
 const CACHE_TTL = 1000 * 60 * 60 // 1 hora
+const CACHE_CLEANUP_INTERVAL = 1000 * 60 * 15 // Limpiar cada 15 min
+
+// Limpieza periódica para evitar memory leak
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, val] of authCache) {
+    if (now - val.timestamp > CACHE_TTL) authCache.delete(key)
+  }
+}, CACHE_CLEANUP_INTERVAL).unref()
 
 function isNetworkError(err) {
   if (!err) return false
@@ -46,7 +56,7 @@ const verificarAuth = async (req, res, next) => {
     // Obtenemos el perfil del usuario desde nuestra tabla de perfiles
     const { data: perfil, error: errorPerfil } = await supabase
       .from('perfiles')
-      .select('*, sucursales(id, nombre)')
+      .select('id, user_id, username, nombre, rol, sucursal_id, sucursales(id, nombre)')
       .eq('user_id', user.id)
       .single()
 
@@ -69,7 +79,7 @@ const verificarAuth = async (req, res, next) => {
     if (isNetworkError(err)) {
       return fallbackOffline(token, req, res, next)
     }
-    console.error('Error en middleware de auth:', err)
+    logger.error({ err }, 'Error en middleware de auth')
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 }
@@ -77,7 +87,7 @@ const verificarAuth = async (req, res, next) => {
 function fallbackOffline(token, req, res, next) {
   const cached = authCache.get(token)
   if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-    console.log('[Auth] Modo offline — usando cache para', cached.perfil.nombre)
+    logger.info({ usuario: cached.perfil.nombre }, '[Auth] Modo offline — usando cache')
     req.usuario = cached.user
     req.perfil = cached.perfil
     return next()

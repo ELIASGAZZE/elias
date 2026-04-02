@@ -60,7 +60,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
         setDirecciones(dirs.map(d => ({ ...d })))
         setDireccionesOriginales(dirs.map(d => ({ ...d })))
       })
-      .catch(() => {})
+      .catch(err => console.error('Error loading client data:', err.message))
       .finally(() => setCargando(false))
   }, [cliente])
 
@@ -142,7 +142,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
         // Eliminar las que se quitaron
         for (const orig of direccionesOriginales) {
           if (!idsActuales.has(orig.id)) {
-            await api.delete(`/api/clientes/${clienteId}/direcciones/${orig.id}`).catch(() => {})
+            await api.delete(`/api/clientes/${clienteId}/direcciones/${orig.id}`).catch(err => console.error('Error deleting address:', err.message))
           }
         }
 
@@ -154,7 +154,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
               direccion: dir.direccion,
               localidad: dir.localidad,
               referencia: dir.referencia,
-            }).catch(() => {})
+            }).catch(err => console.error('Error creating address:', err.message))
           } else if (idsOriginales.has(dir.id)) {
             const orig = direccionesOriginales.find(o => o.id === dir.id)
             if (orig.direccion !== dir.direccion || orig.localidad !== dir.localidad || orig.referencia !== dir.referencia) {
@@ -162,7 +162,7 @@ const EditarClienteModal = ({ cliente, onClose, onGuardado }) => {
                 direccion: dir.direccion,
                 localidad: dir.localidad,
                 referencia: dir.referencia,
-              }).catch(() => {})
+              }).catch(err => console.error('Error updating address:', err.message))
             }
           }
         }

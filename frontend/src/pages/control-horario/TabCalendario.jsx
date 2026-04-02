@@ -10,7 +10,7 @@ const TabCalendario = () => {
   const [cargando, setCargando] = useState(false)
 
   useEffect(() => {
-    api.get('/api/empleados').then(({ data }) => setEmpleados(data)).catch(() => {})
+    api.get('/api/empleados').then(({ data }) => setEmpleados(data)).catch(err => console.error('Error loading employees:', err.message))
   }, [])
 
   const getSemana = () => {
@@ -34,7 +34,7 @@ const TabCalendario = () => {
         fecha_hasta: domingo.toISOString().split('T')[0] + 'T23:59:59',
       }
     }).then(({ data }) => setFichajes(data))
-      .catch(() => {})
+      .catch(err => console.error('Error loading fichajes:', err.message))
       .finally(() => setCargando(false))
   }, [empleadoId, semanaOffset])
 

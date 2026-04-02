@@ -3,10 +3,19 @@ const express = require('express')
 const crypto = require('crypto')
 const router = express.Router()
 const { verificarAuth } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
+const { breakers } = require('../utils/circuitBreaker')
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout')
 
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN
 const MP_BASE_POINT = 'https://api.mercadopago.com/point/integration-api'
 const MP_BASE_ORDERS = 'https://api.mercadopago.com/v1/orders'
+
+// Wrap fetch with circuit breaker + timeout for all MP API calls
+function mpFetch(url, options = {}) {
+  return breakers.mercadopago.exec(() => fetchWithTimeout(url, options, 30000))
+}
 
 function mpHeaders(idempotencyKey) {
   const h = {
@@ -18,20 +27,36 @@ function mpHeaders(idempotencyKey) {
 }
 
 // ── SSE (Server-Sent Events) para notificaciones en tiempo real ──────────────
-const sseClients = new Map() // orderId -> Set<res>
+const sseClients = new Map() // orderId -> { createdAt, clients: Set<res> }
+
+const SSE_TTL = 30 * 60 * 1000 // 30 minutes
+const SSE_CLEANUP_INTERVAL = 5 * 60 * 1000 // 5 minutes
+
+// Periodic cleanup of stale SSE entries
+setInterval(() => {
+  const now = Date.now()
+  for (const [orderId, entry] of sseClients) {
+    if (now - entry.createdAt > SSE_TTL) {
+      for (const client of entry.clients) {
+        try { client.end() } catch {}
+      }
+      sseClients.delete(orderId)
+    }
+  }
+}, SSE_CLEANUP_INTERVAL).unref()
 
 function emitSSE(orderId, event, data) {
-  const clients = sseClients.get(orderId)
-  if (!clients || clients.size === 0) return
+  const entry = sseClients.get(orderId)
+  if (!entry || entry.clients.size === 0) return
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
-  for (const client of clients) {
+  for (const client of entry.clients) {
     try { client.write(payload) } catch {}
   }
 }
 
 // GET /api/mp-point/order/:id/events — SSE stream para recibir updates de una orden
 // Auth via query param ?token=JWT (EventSource no soporta headers custom)
-router.get('/order/:id/events', async (req, res) => {
+router.get('/order/:id/events', asyncHandler(async (req, res) => {
   const token = req.query.token
   if (!token) return res.status(401).json({ error: 'Token requerido' })
 
@@ -67,8 +92,8 @@ router.get('/order/:id/events', async (req, res) => {
   res.write(`event: connected\ndata: ${JSON.stringify({ orderId })}\n\n`)
 
   // Registrar cliente
-  if (!sseClients.has(orderId)) sseClients.set(orderId, new Set())
-  sseClients.get(orderId).add(res)
+  if (!sseClients.has(orderId)) sseClients.set(orderId, { createdAt: Date.now(), clients: new Set() })
+  sseClients.get(orderId).clients.add(res)
 
   // Keepalive cada 30s para evitar timeout de proxies
   const keepalive = setInterval(() => {
@@ -78,18 +103,18 @@ router.get('/order/:id/events', async (req, res) => {
   // Cleanup al desconectar
   req.on('close', () => {
     clearInterval(keepalive)
-    const clients = sseClients.get(orderId)
-    if (clients) {
-      clients.delete(res)
-      if (clients.size === 0) sseClients.delete(orderId)
+    const entry = sseClients.get(orderId)
+    if (entry) {
+      entry.clients.delete(res)
+      if (entry.clients.size === 0) sseClients.delete(orderId)
     }
   })
-})
+}))
 
 // POST /api/mp-point/webhook — recibe notificaciones de Mercado Pago (sin auth)
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET
 
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', asyncHandler(async (req, res) => {
   // Verificar firma HMAC si tenemos la clave secreta
   if (MP_WEBHOOK_SECRET) {
     const xSignature = req.headers['x-signature'] || ''
@@ -103,7 +128,7 @@ router.post('/webhook', async (req, res) => {
       const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`
       const hmac = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex')
       if (hmac !== v1) {
-        console.warn('[MP Webhook] Firma inválida — rechazado')
+        logger.warn('[MP Webhook] Firma inválida — rechazado')
         return res.sendStatus(403)
       }
     }
@@ -116,19 +141,19 @@ router.post('/webhook', async (req, res) => {
     const { type, action, data } = req.body || {}
     if (!data?.id) return
 
-    console.log(`[MP Webhook] ${type} ${action} — order ${data.id}`)
+    logger.info(`[MP Webhook] ${type} ${action} — order ${data.id}`)
 
     const orderId = data.id
-    const clients = sseClients.get(orderId)
-    if (!clients || clients.size === 0) {
-      console.log(`[MP Webhook] No hay clientes SSE para orden ${orderId}, skip`)
+    const entry = sseClients.get(orderId)
+    if (!entry || entry.clients.size === 0) {
+      logger.info(`[MP Webhook] No hay clientes SSE para orden ${orderId}, skip`)
       return
     }
 
     // Re-fetch la orden desde MP para validar datos (no confiar ciegamente en el webhook)
-    const resp = await fetch(`${MP_BASE_ORDERS}/${orderId}`, { headers: mpHeaders() })
+    const resp = await mpFetch(`${MP_BASE_ORDERS}/${orderId}`, { headers: mpHeaders() })
     if (!resp.ok) {
-      console.error(`[MP Webhook] Error re-fetching orden ${orderId}: ${resp.status}`)
+      logger.error(`[MP Webhook] Error re-fetching orden ${orderId}: ${resp.status}`)
       return
     }
     const order = await resp.json()
@@ -137,20 +162,20 @@ router.post('/webhook', async (req, res) => {
       status: order.status,
       transactions: order.transactions,
     })
-    console.log(`[MP Webhook] SSE emitido para orden ${orderId} — status: ${order.status}`)
+    logger.info(`[MP Webhook] SSE emitido para orden ${orderId} — status: ${order.status}`)
   } catch (err) {
-    console.error('[MP Webhook] Error procesando:', err.message)
+    logger.error('[MP Webhook] Error procesando:', err.message)
   }
-})
+}))
 
 // PATCH /api/mp-point/devices/:id — cambiar modo operativo del dispositivo
-router.patch('/devices/:id', verificarAuth, async (req, res) => {
+router.patch('/devices/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { operating_mode } = req.body
     if (!operating_mode) return res.status(400).json({ error: 'operating_mode requerido' })
 
     // Intentar con endpoint integration-api (usado para devices GET)
-    let resp = await fetch(`${MP_BASE_POINT}/devices/${req.params.id}`, {
+    let resp = await mpFetch(`${MP_BASE_POINT}/devices/${req.params.id}`, {
       method: 'PATCH',
       headers: mpHeaders(),
       body: JSON.stringify({ operating_mode }),
@@ -158,8 +183,8 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
 
     // Si falla, intentar con endpoint alternativo /point/integrations/
     if (!resp.ok && resp.status === 404) {
-      console.log('[MP Point] Endpoint integration-api no encontrado, probando /point/integrations/')
-      resp = await fetch(`https://api.mercadopago.com/point/integrations/devices/${req.params.id}`, {
+      logger.info('[MP Point] Endpoint integration-api no encontrado, probando /point/integrations/')
+      resp = await mpFetch(`https://api.mercadopago.com/point/integrations/devices/${req.params.id}`, {
         method: 'PATCH',
         headers: mpHeaders(),
         body: JSON.stringify({ operating_mode }),
@@ -168,24 +193,24 @@ router.patch('/devices/:id', verificarAuth, async (req, res) => {
 
     const data = await resp.json()
     if (!resp.ok) {
-      console.error('[MP Point] Error cambiando modo:', resp.status, data)
+      logger.error('[MP Point] Error cambiando modo:', resp.status, data)
       return res.status(resp.status).json(data)
     }
-    console.log(`[MP Point] Device ${req.params.id} cambiado a modo ${operating_mode}`)
+    logger.info(`[MP Point] Device ${req.params.id} cambiado a modo ${operating_mode}`)
     res.json(data)
   } catch (err) {
-    console.error('[MP Point] Error cambiando modo:', err.message)
+    logger.error('[MP Point] Error cambiando modo:', err.message)
     res.status(500).json({ error: 'Error al cambiar modo del dispositivo' })
   }
-})
+}))
 
 // POST /api/mp-point/devices/:id/resolve-qr — auto-detectar y asignar QR vinculado al posnet
-router.post('/devices/:id/resolve-qr', verificarAuth, async (req, res) => {
+router.post('/devices/:id/resolve-qr', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // 1. Obtener pos_id del device buscando en el listado (GET individual no existe en MP API)
-    const listResp = await fetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
+    const listResp = await mpFetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
     if (!listResp.ok) {
-      console.error('[MP QR Resolve] Error listando devices:', listResp.status)
+      logger.error('[MP QR Resolve] Error listando devices:', listResp.status)
       return res.status(listResp.status).json({ error: 'No se pudo obtener info del posnet' })
     }
     const listData = await listResp.json()
@@ -199,54 +224,54 @@ router.post('/devices/:id/resolve-qr', verificarAuth, async (req, res) => {
     }
 
     // 2. Consultar el POS para ver si ya tiene external_id
-    const posResp = await fetch(`https://api.mercadopago.com/pos/${posId}`, {
+    const posResp = await mpFetch(`https://api.mercadopago.com/pos/${posId}`, {
       headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
     })
     if (!posResp.ok) {
-      console.error('[MP QR Resolve] Error obteniendo POS:', posResp.status)
+      logger.error('[MP QR Resolve] Error obteniendo POS:', posResp.status)
       return res.status(posResp.status).json({ error: 'No se pudo obtener info de la caja QR vinculada' })
     }
     const pos = await posResp.json()
 
     // 3. Si ya tiene external_id, retornar
     if (pos.external_id) {
-      console.log(`[MP QR Resolve] POS ${posId} ya tiene external_id: ${pos.external_id}`)
+      logger.info(`[MP QR Resolve] POS ${posId} ya tiene external_id: ${pos.external_id}`)
       return res.json({ external_id: pos.external_id, auto_assigned: false })
     }
 
     // 4. Generar y asignar external_id
     const externalId = `POS${posId}`
-    const putResp = await fetch(`https://api.mercadopago.com/pos/${posId}`, {
+    const putResp = await mpFetch(`https://api.mercadopago.com/pos/${posId}`, {
       method: 'PUT',
       headers: mpHeaders(),
       body: JSON.stringify({ external_id: externalId }),
     })
     if (!putResp.ok) {
       const err = await putResp.json().catch(() => ({}))
-      console.error('[MP QR Resolve] Error asignando external_id:', putResp.status, err)
+      logger.error('[MP QR Resolve] Error asignando external_id:', putResp.status, err)
       return res.status(putResp.status).json({ error: 'No se pudo asignar el external_id a la caja QR' })
     }
 
-    console.log(`[MP QR Resolve] POS ${posId} — external_id asignado: ${externalId}`)
+    logger.info(`[MP QR Resolve] POS ${posId} — external_id asignado: ${externalId}`)
     res.json({ external_id: externalId, auto_assigned: true })
   } catch (err) {
-    console.error('[MP QR Resolve] Error:', err.message)
+    logger.error('[MP QR Resolve] Error:', err.message)
     res.status(500).json({ error: 'Error al resolver caja QR del posnet' })
   }
-})
+}))
 
 // GET /api/mp-point/devices — listar dispositivos
-router.get('/devices', verificarAuth, async (req, res) => {
+router.get('/devices', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const resp = await fetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
+    const resp = await mpFetch(`${MP_BASE_POINT}/devices`, { headers: mpHeaders() })
     const data = await resp.json()
     if (!resp.ok) return res.status(resp.status).json(data)
     res.json(data)
   } catch (err) {
-    console.error('[MP Point] Error listando devices:', err.message)
+    logger.error('[MP Point] Error listando devices:', err.message)
     res.status(500).json({ error: 'Error al listar dispositivos' })
   }
-})
+}))
 
 // POST /api/mp-point/order — crear orden de pago (Orders API, soporta tarjeta + QR)
 // Helper: buscar órdenes pendientes de un device y cancelarlas
@@ -256,7 +281,7 @@ async function cancelarOrdenesPendientes(deviceId) {
     const now = new Date()
     const desde = new Date(now - 7200000).toISOString()
     const hasta = now.toISOString()
-    const resp = await fetch(`${MP_BASE_ORDERS}?type=point&begin_date=${desde}&end_date=${hasta}`, {
+    const resp = await mpFetch(`${MP_BASE_ORDERS}?type=point&begin_date=${desde}&end_date=${hasta}`, {
       headers: mpHeaders(),
     })
     if (resp.ok) {
@@ -267,11 +292,11 @@ async function cancelarOrdenesPendientes(deviceId) {
           if (order.config?.point?.terminal_id !== deviceId) continue
           if (order.status !== 'created' && order.status !== 'at_terminal' && order.status !== 'open') continue
           try {
-            await fetch(`${MP_BASE_ORDERS}/${order.id}/cancel`, {
+            await mpFetch(`${MP_BASE_ORDERS}/${order.id}/cancel`, {
               method: 'POST',
               headers: mpHeaders(`auto-cancel-${order.id}-${Date.now()}`),
             })
-            console.log(`[MP Point] Orden pendiente cancelada: ${order.id}`)
+            logger.info(`[MP Point] Orden pendiente cancelada: ${order.id}`)
           } catch {}
         }
       }
@@ -279,21 +304,21 @@ async function cancelarOrdenesPendientes(deviceId) {
 
     // 2) Cancelar vía Integration API (delete del intent del device)
     try {
-      await fetch(`${MP_BASE_POINT}/devices/${deviceId}/payment-intents`, {
+      await mpFetch(`${MP_BASE_POINT}/devices/${deviceId}/payment-intents`, {
         method: 'DELETE',
         headers: mpHeaders(),
       })
-      console.log(`[MP Point] Payment intents del device ${deviceId} eliminados`)
+      logger.info(`[MP Point] Payment intents del device ${deviceId} eliminados`)
     } catch {}
 
     // Dar tiempo a MP para procesar las cancelaciones
     await new Promise(r => setTimeout(r, 500))
   } catch (err) {
-    console.error('[MP Point] Error limpiando órdenes pendientes:', err.message)
+    logger.error('[MP Point] Error limpiando órdenes pendientes:', err.message)
   }
 }
 
-router.post('/order', verificarAuth, async (req, res) => {
+router.post('/order', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { device_id, amount, external_reference, description, payment_type } = req.body
     if (!device_id || !amount) return res.status(400).json({ error: 'device_id y amount requeridos' })
@@ -323,7 +348,7 @@ router.post('/order', verificarAuth, async (req, res) => {
     }
 
     let idempotencyKey = `pos-order-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    let resp = await fetch(MP_BASE_ORDERS, {
+    let resp = await mpFetch(MP_BASE_ORDERS, {
       method: 'POST',
       headers: mpHeaders(idempotencyKey),
       body: JSON.stringify(orderBody),
@@ -333,12 +358,12 @@ router.post('/order', verificarAuth, async (req, res) => {
 
     // Si hay orden encolada, intentar cancelar las pendientes y reintentar
     if (!resp.ok && data.errors?.[0]?.code === 'already_queued_order_on_terminal') {
-      console.log('[MP Point] Orden encolada detectada, cancelando pendientes...')
+      logger.info('[MP Point] Orden encolada detectada, cancelando pendientes...')
       await cancelarOrdenesPendientes(device_id)
 
       // Reintentar con nuevo idempotency key
       idempotencyKey = `pos-order-retry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      resp = await fetch(MP_BASE_ORDERS, {
+      resp = await mpFetch(MP_BASE_ORDERS, {
         method: 'POST',
         headers: mpHeaders(idempotencyKey),
         body: JSON.stringify(orderBody),
@@ -347,38 +372,38 @@ router.post('/order', verificarAuth, async (req, res) => {
     }
 
     if (!resp.ok) {
-      console.error('[MP Point] Error creando orden:', data)
+      logger.error('[MP Point] Error creando orden:', data)
       const msg = data.errors?.[0]?.code === 'already_queued_order_on_terminal'
         ? 'Hay un cobro pendiente en el posnet. Cancelalo en el posnet e intentá de nuevo.'
         : data.errors?.[0]?.message || 'Error al crear orden de pago'
       return res.status(resp.status).json({ error: msg })
     }
 
-    console.log(`[MP Point] Orden creada: ${data.id} — $${amount} en device ${device_id}`)
+    logger.info(`[MP Point] Orden creada: ${data.id} — $${amount} en device ${device_id}`)
     res.json(data)
   } catch (err) {
-    console.error('[MP Point] Error creando orden:', err.message)
+    logger.error('[MP Point] Error creando orden:', err.message)
     res.status(500).json({ error: 'Error al crear orden de pago' })
   }
-})
+}))
 
 // GET /api/mp-point/order/:id — consultar estado de orden
-router.get('/order/:id', verificarAuth, async (req, res) => {
+router.get('/order/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const resp = await fetch(`${MP_BASE_ORDERS}/${req.params.id}`, { headers: mpHeaders() })
+    const resp = await mpFetch(`${MP_BASE_ORDERS}/${req.params.id}`, { headers: mpHeaders() })
     const data = await resp.json()
     if (!resp.ok) return res.status(resp.status).json(data)
     res.json(data)
   } catch (err) {
-    console.error('[MP Point] Error consultando orden:', err.message)
+    logger.error('[MP Point] Error consultando orden:', err.message)
     res.status(500).json({ error: 'Error al consultar orden' })
   }
-})
+}))
 
 // POST /api/mp-point/order/:id/cancel — cancelar orden
-router.post('/order/:id/cancel', verificarAuth, async (req, res) => {
+router.post('/order/:id/cancel', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const resp = await fetch(`${MP_BASE_ORDERS}/${req.params.id}/cancel`, {
+    const resp = await mpFetch(`${MP_BASE_ORDERS}/${req.params.id}/cancel`, {
       method: 'POST',
       headers: mpHeaders(`cancel-${req.params.id}-${Date.now()}`),
     })
@@ -389,45 +414,45 @@ router.post('/order/:id/cancel', verificarAuth, async (req, res) => {
     if (errorCode === 'order_already_canceled') return res.json({ ok: true })
     // Si está at_terminal, no se puede cancelar desde API — informar al frontend
     if (errorCode === 'cannot_cancel_order') {
-      console.log(`[MP Point] Orden ${req.params.id} en terminal, no se puede cancelar desde API`)
+      logger.info(`[MP Point] Orden ${req.params.id} en terminal, no se puede cancelar desde API`)
       return res.json({ ok: false, at_terminal: true, message: 'La orden está en el posnet. Cancelala desde el dispositivo.' })
     }
     if (!resp.ok) return res.status(resp.status).json(data)
     res.json({ ok: true, ...data })
   } catch (err) {
-    console.error('[MP Point] Error cancelando orden:', err.message)
+    logger.error('[MP Point] Error cancelando orden:', err.message)
     res.status(500).json({ error: 'Error al cancelar orden' })
   }
-})
+}))
 
 // POST /api/mp-point/devices/:id/clear — forzar limpieza de órdenes pendientes de un device
-router.post('/devices/:id/clear', verificarAuth, async (req, res) => {
+router.post('/devices/:id/clear', verificarAuth, asyncHandler(async (req, res) => {
   try {
     await cancelarOrdenesPendientes(req.params.id)
     res.json({ ok: true })
   } catch (err) {
-    console.error('[MP Point] Error limpiando device:', err.message)
+    logger.error('[MP Point] Error limpiando device:', err.message)
     res.status(500).json({ error: 'Error al limpiar órdenes pendientes' })
   }
-})
+}))
 
 // GET /api/mp-point/payment/:id — obtener detalle de un pago completado
-router.get('/payment/:id', verificarAuth, async (req, res) => {
+router.get('/payment/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const resp = await fetch(`https://api.mercadopago.com/v1/payments/${req.params.id}`, {
+    const resp = await mpFetch(`https://api.mercadopago.com/v1/payments/${req.params.id}`, {
       headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
     })
     const data = await resp.json()
     if (!resp.ok) return res.status(resp.status).json(data)
     res.json(data)
   } catch (err) {
-    console.error('[MP Point] Error obteniendo pago:', err.message)
+    logger.error('[MP Point] Error obteniendo pago:', err.message)
     res.status(500).json({ error: 'Error al obtener pago' })
   }
-})
+}))
 
 // POST /api/mp-point/order/:id/refund — devolver (anular) un cobro completado
-router.post('/order/:id/refund', verificarAuth, async (req, res) => {
+router.post('/order/:id/refund', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const orderId = req.params.id
     const { transaction_id, amount } = req.body // si viene amount → refund parcial
@@ -440,7 +465,7 @@ router.post('/order/:id/refund', verificarAuth, async (req, res) => {
     // Si body vacío → refund total
 
     const idempotencyKey = `refund-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const resp = await fetch(`${MP_BASE_ORDERS}/${orderId}/refund`, {
+    const resp = await mpFetch(`${MP_BASE_ORDERS}/${orderId}/refund`, {
       method: 'POST',
       headers: mpHeaders(idempotencyKey),
       body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
@@ -448,31 +473,31 @@ router.post('/order/:id/refund', verificarAuth, async (req, res) => {
 
     if (resp.status === 201 || resp.status === 200) {
       const data = await resp.json().catch(() => ({}))
-      console.log(`[MP Point] Refund exitoso para orden ${orderId}`)
+      logger.info(`[MP Point] Refund exitoso para orden ${orderId}`)
       return res.json({ ok: true, ...data })
     }
 
     const data = await resp.json().catch(() => ({}))
-    console.error('[MP Point] Error en refund:', data)
+    logger.error('[MP Point] Error en refund:', data)
     const msg = data.errors?.[0]?.message || data.message || 'Error al anular el cobro'
     return res.status(resp.status).json({ error: msg })
   } catch (err) {
-    console.error('[MP Point] Error en refund:', err.message)
+    logger.error('[MP Point] Error en refund:', err.message)
     res.status(500).json({ error: 'Error al anular el cobro' })
   }
-})
+}))
 
 // ── QR Instore (para posnet N950 que no muestra QR en pantalla) ───────────────
 const MP_USER_ID = '455606488'
 
 // PUT /api/mp-point/qr-order — crear orden en caja QR (instore API)
-router.put('/qr-order', verificarAuth, async (req, res) => {
+router.put('/qr-order', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { qr_pos_id, amount, external_reference, description } = req.body
     if (!qr_pos_id || !amount) return res.status(400).json({ error: 'qr_pos_id y amount requeridos' })
 
     const extRef = external_reference || `pos-qr-${Date.now()}`
-    const resp = await fetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${qr_pos_id}/orders`, {
+    const resp = await mpFetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${qr_pos_id}/orders`, {
       method: 'PUT',
       headers: mpHeaders(),
       body: JSON.stringify({
@@ -491,24 +516,24 @@ router.put('/qr-order', verificarAuth, async (req, res) => {
     })
 
     if (resp.status === 204) {
-      console.log(`[MP QR] Orden creada en caja ${qr_pos_id} — $${amount} — ref: ${extRef}`)
+      logger.info(`[MP QR] Orden creada en caja ${qr_pos_id} — $${amount} — ref: ${extRef}`)
       return res.json({ ok: true, external_reference: extRef })
     }
 
     const data = await resp.json().catch(() => ({}))
-    console.error('[MP QR] Error creando orden:', resp.status, data)
+    logger.error('[MP QR] Error creando orden:', resp.status, data)
     res.status(resp.status).json({ error: data.message || 'Error al crear orden QR' })
   } catch (err) {
-    console.error('[MP QR] Error creando orden:', err.message)
+    logger.error('[MP QR] Error creando orden:', err.message)
     res.status(500).json({ error: 'Error al crear orden QR' })
   }
-})
+}))
 
 // GET /api/mp-point/qr-order/:ref/status — consultar estado de orden QR por external_reference
-router.get('/qr-order/:ref/status', verificarAuth, async (req, res) => {
+router.get('/qr-order/:ref/status', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Buscar merchant_order por external_reference
-    const resp = await fetch(`https://api.mercadopago.com/merchant_orders/search?external_reference=${req.params.ref}`, {
+    const resp = await mpFetch(`https://api.mercadopago.com/merchant_orders/search?external_reference=${req.params.ref}`, {
       headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
     })
     const data = await resp.json()
@@ -536,15 +561,15 @@ router.get('/qr-order/:ref/status', verificarAuth, async (req, res) => {
 
     return res.json({ status: order.status === 'closed' ? 'closed' : 'pending', merchant_order_id: order.id })
   } catch (err) {
-    console.error('[MP QR] Error consultando estado:', err.message)
+    logger.error('[MP QR] Error consultando estado:', err.message)
     res.status(500).json({ error: 'Error al consultar estado QR' })
   }
-})
+}))
 
 // DELETE /api/mp-point/qr-order/:posId — cancelar/eliminar orden de la caja QR
-router.delete('/qr-order/:posId', verificarAuth, async (req, res) => {
+router.delete('/qr-order/:posId', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const resp = await fetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${req.params.posId}/orders`, {
+    const resp = await mpFetch(`https://api.mercadopago.com/instore/qr/seller/collectors/${MP_USER_ID}/pos/${req.params.posId}/orders`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
     })
@@ -552,9 +577,9 @@ router.delete('/qr-order/:posId', verificarAuth, async (req, res) => {
     const data = await resp.json().catch(() => ({}))
     res.status(resp.status).json(data)
   } catch (err) {
-    console.error('[MP QR] Error cancelando orden:', err.message)
+    logger.error('[MP QR] Error cancelando orden:', err.message)
     res.status(500).json({ error: 'Error al cancelar orden QR' })
   }
-})
+}))
 
 module.exports = router

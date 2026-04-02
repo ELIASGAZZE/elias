@@ -18,7 +18,7 @@ const TabReportes = () => {
   const [cargando, setCargando] = useState(false)
 
   useEffect(() => {
-    api.get('/api/empleados').then(({ data }) => setEmpleados(data)).catch(() => {})
+    api.get('/api/empleados').then(({ data }) => setEmpleados(data)).catch(err => console.error('Error loading employees:', err.message))
   }, [])
 
   const generar = async () => {

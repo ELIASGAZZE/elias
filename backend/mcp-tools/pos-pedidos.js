@@ -1,0 +1,102 @@
+// MCP Tools — POS Pedidos
+module.exports = [
+  {
+    name: 'pos_crear_pedido',
+    description: 'Crear un pedido en el POS (delivery, retiro, etc)',
+    method: 'POST',
+    path: '/api/pos/pedidos',
+    params: {
+      id_cliente_centum: { type: 'number', description: 'ID del cliente en Centum', required: true },
+      nombre_cliente: { type: 'string', description: 'Nombre del cliente' },
+      items: { type: 'array', description: 'Items del pedido', required: true },
+      total: { type: 'number', description: 'Total del pedido', required: true },
+      observaciones: { type: 'string', description: 'Observaciones' },
+      tipo: { type: 'string', description: 'Tipo: delivery, retiro, mostrador' },
+      direccion_entrega: { type: 'string', description: 'Dirección de entrega' },
+      sucursal_retiro: { type: 'string', description: 'Sucursal de retiro' },
+      estado: { type: 'string', description: 'Estado inicial' },
+      fecha_entrega: { type: 'string', description: 'Fecha de entrega' },
+      total_pagado: { type: 'number', description: 'Monto ya pagado' },
+      turno_entrega: { type: 'string', description: 'Turno de entrega' },
+      sucursal_id: { type: 'string', description: 'ID sucursal' },
+    },
+  },
+  {
+    name: 'pos_listar_pedidos',
+    description: 'Listar pedidos del POS con filtros',
+    method: 'GET',
+    path: '/api/pos/pedidos',
+    params: {
+      estado: { type: 'string', description: 'Filtrar por estado' },
+      fecha: { type: 'string', description: 'Filtrar por fecha (YYYY-MM-DD)' },
+      sucursal_id: { type: 'string', description: 'Filtrar por sucursal' },
+      busqueda: { type: 'string', description: 'Buscar por DNI/CUIT' },
+      tipo: { type: 'string', description: 'Filtrar por tipo' },
+    },
+    queryParams: ['estado', 'fecha', 'sucursal_id', 'busqueda', 'tipo'],
+  },
+  {
+    name: 'pos_detalle_pedido',
+    description: 'Obtener detalle de un pedido',
+    method: 'GET',
+    path: '/api/pos/pedidos/:id',
+    params: {
+      id: { type: 'string', description: 'ID del pedido', required: true },
+    },
+  },
+  {
+    name: 'pos_editar_pedido',
+    description: 'Editar un pedido existente',
+    method: 'PUT',
+    path: '/api/pos/pedidos/:id',
+    params: {
+      id: { type: 'string', description: 'ID del pedido', required: true },
+      items: { type: 'array', description: 'Nuevos items' },
+      total: { type: 'number', description: 'Nuevo total' },
+      observaciones: { type: 'string', description: 'Observaciones' },
+      direccion_entrega: { type: 'string', description: 'Dirección' },
+      fecha_entrega: { type: 'string', description: 'Fecha entrega' },
+      turno_entrega: { type: 'string', description: 'Turno' },
+    },
+  },
+  {
+    name: 'pos_pagar_pedido',
+    description: 'Registrar pago de un pedido',
+    method: 'PUT',
+    path: '/api/pos/pedidos/:id/pago',
+    params: {
+      id: { type: 'string', description: 'ID del pedido', required: true },
+      pagos: { type: 'array', description: 'Array de pagos [{forma_cobro_id, nombre, monto}]', required: true },
+      monto_pagado: { type: 'number', description: 'Monto total pagado', required: true },
+    },
+  },
+  {
+    name: 'pos_cambiar_estado_pedido',
+    description: 'Cambiar estado de un pedido (pendiente, preparando, listo, entregado, cancelado)',
+    method: 'PUT',
+    path: '/api/pos/pedidos/:id/estado',
+    params: {
+      id: { type: 'string', description: 'ID del pedido', required: true },
+      estado: { type: 'string', description: 'Nuevo estado', required: true },
+    },
+  },
+  {
+    name: 'pos_link_pago_pedido',
+    description: 'Crear link de pago Mercado Pago para un pedido',
+    method: 'POST',
+    path: '/api/pos/pedidos/:id/link-pago',
+    params: {
+      id: { type: 'string', description: 'ID del pedido', required: true },
+    },
+  },
+  {
+    name: 'pos_articulos_por_dia',
+    description: 'Obtener artículos de pedidos agrupados por día',
+    method: 'GET',
+    path: '/api/pos/pedidos/articulos-por-dia',
+    params: {
+      fecha: { type: 'string', description: 'Fecha (YYYY-MM-DD)' },
+    },
+    queryParams: ['fecha'],
+  },
+]

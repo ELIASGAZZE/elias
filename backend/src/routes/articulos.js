@@ -4,11 +4,13 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP, sincronizarStock, generateAccessToken } = require('../services/syncERP')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/articulos
 // Con sucursal_id: devuelve artículos habilitados para esa sucursal (rápido, cualquier rol)
 // Sin sucursal_id (admin): devuelve todos los artículos con relaciones por sucursal
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const sucursalId = req.query.sucursal_id
 
@@ -63,17 +65,17 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json(allData)
   } catch (err) {
-    console.error('Error al obtener artículos:', err)
+    logger.error('Error al obtener artículos:', err)
     res.status(500).json({ error: 'Error al obtener artículos' })
   }
-})
+}))
 
 // GET /api/articulos/erp
 // Cualquier usuario autenticado: artículos ERP paginados con búsqueda
 // Usado para pedidos extraordinarios (todos los artículos ERP, sin filtro por sucursal)
 // GET /api/articulos/actualizaciones?fecha=YYYY-MM-DD
 // Devuelve artículos actualizados en una fecha específica
-router.get('/actualizaciones', verificarAuth, async (req, res) => {
+router.get('/actualizaciones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const fecha = req.query.fecha
     if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
@@ -113,15 +115,15 @@ router.get('/actualizaciones', verificarAuth, async (req, res) => {
 
     res.json({ fecha, cantidad: filtrados.length, articulos: filtrados })
   } catch (err) {
-    console.error('Error obteniendo actualizaciones:', err)
+    logger.error('Error obteniendo actualizaciones:', err)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/articulos/sincronizar-forzado
 // Fuerza un sync que marca updated_at en TODOS los artículos que cambiaron vs Centum
 // Útil cuando el cron ya corrió pero no existía updated_at
-router.post('/sincronizar-forzado', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/sincronizar-forzado', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // 1. Traer precios actuales de Centum
     const { sincronizarERP } = require('../services/syncERP')
@@ -154,12 +156,12 @@ router.post('/sincronizar-forzado', verificarAuth, soloGestorOAdmin, async (req,
 
     res.json({ mensaje: `${total} artículos marcados con updated_at`, total })
   } catch (err) {
-    console.error('Error en sync forzado:', err)
+    logger.error('Error en sync forzado:', err)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/erp', verificarAuth, async (req, res) => {
+router.get('/erp', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1)
     const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 20), 100)
@@ -211,14 +213,14 @@ router.get('/erp', verificarAuth, async (req, res) => {
 
     res.json({ articulos: data, total: count })
   } catch (err) {
-    console.error('Error al obtener artículos ERP:', err)
+    logger.error('Error al obtener artículos ERP:', err)
     res.status(500).json({ error: 'Error al obtener artículos ERP' })
   }
-})
+}))
 
 // GET /api/articulos/sucursal/:sucursalId
 // Admin: ver artículos con su estado para una sucursal específica
-router.get('/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { sucursalId } = req.params
 
@@ -238,14 +240,14 @@ router.get('/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, async (req,
 
     res.json(resultado)
   } catch (err) {
-    console.error('Error al obtener artículos por sucursal:', err)
+    logger.error('Error al obtener artículos por sucursal:', err)
     res.status(500).json({ error: 'Error al obtener artículos' })
   }
-})
+}))
 
 // PUT /api/articulos/:articuloId/sucursal/:sucursalId
 // Admin: habilitar/deshabilitar un artículo y/o actualizar stock_ideal
-router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { articuloId, sucursalId } = req.params
     const { habilitado, stock_ideal } = req.body
@@ -268,14 +270,14 @@ router.put('/:articuloId/sucursal/:sucursalId', verificarAuth, soloGestorOAdmin,
     if (error) throw error
     res.json(data?.[0] || upsertData)
   } catch (err) {
-    console.error('Error al actualizar estado del artículo:', err)
+    logger.error('Error al actualizar estado del artículo:', err)
     res.status(500).json({ error: 'Error al actualizar artículo' })
   }
-})
+}))
 
 // PUT /api/articulos/:articuloId/sucursal/:sucursalId/stock-ideal
 // Cualquier usuario autenticado puede actualizar el stock ideal
-router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, async (req, res) => {
+router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { articuloId, sucursalId } = req.params
     const { stock_ideal } = req.body
@@ -298,14 +300,14 @@ router.put('/:articuloId/sucursal/:sucursalId/stock-ideal', verificarAuth, async
 
     res.json(data[0])
   } catch (err) {
-    console.error('Error al actualizar stock ideal:', err)
+    logger.error('Error al actualizar stock ideal:', err)
     res.status(500).json({ error: 'Error al actualizar stock ideal' })
   }
-})
+}))
 
 // PUT /api/articulos/:id
 // Admin: edita nombre/rubro (solo manuales) y campos de peso (cualquier pesable)
-router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, rubro, peso_promedio_pieza, peso_minimo, peso_maximo } = req.body
@@ -374,14 +376,14 @@ router.put('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al editar artículo:', err)
+    logger.error('Error al editar artículo:', err)
     res.status(500).json({ error: 'Error al editar artículo' })
   }
-})
+}))
 
 // POST /api/articulos
 // Admin: crea un artículo individual (manual) con código autogenerado
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, rubro } = req.body
 
@@ -438,14 +440,14 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.status(201).json(articulo)
   } catch (err) {
-    console.error('Error al crear artículo:', err)
+    logger.error('Error al crear artículo:', err)
     res.status(500).json({ error: 'Error al crear artículo' })
   }
-})
+}))
 
 // GET /api/articulos/diagnostico-erp
 // Admin: consulta la API de Centum y devuelve info de diagnóstico sin importar/filtrar nada
-router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/diagnostico-erp', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const baseUrl = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
     const apiKey = process.env.CENTUM_API_KEY
@@ -513,52 +515,52 @@ router.get('/diagnostico-erp', verificarAuth, soloAdmin, async (req, res) => {
       })),
     })
   } catch (err) {
-    console.error('Error en diagnóstico ERP:', err)
+    logger.error('Error en diagnóstico ERP:', err)
     res.status(500).json({ error: 'Error al consultar ERP', detalle: err.message })
   }
-})
+}))
 
 // POST /api/articulos/sincronizar-erp
 // Admin: sincroniza artículos desde ERP Centum (completa)
-router.post('/sincronizar-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/sincronizar-erp', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual')
     res.json(resultado)
   } catch (err) {
-    console.error('Error al sincronizar con ERP:', err)
+    logger.error('Error al sincronizar con ERP:', err)
     res.status(500).json({ error: 'Error al sincronizar con el ERP Centum' })
   }
-})
+}))
 
 // POST /api/articulos/sincronizar-precios
 // Sync rápida: solo precios, sin códigos de barra ni relaciones sucursales
-router.post('/sincronizar-precios', verificarAuth, async (req, res) => {
+router.post('/sincronizar-precios', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const resultado = await sincronizarERP('pos', { skipBarcodes: true, skipSucursales: true })
     res.json(resultado)
   } catch (err) {
-    console.error('Error al sincronizar precios:', err)
+    logger.error('Error al sincronizar precios:', err)
     res.status(500).json({ error: 'Error al sincronizar precios' })
   }
-})
+}))
 
 // POST /api/articulos/sincronizar-stock
 // Admin: sincroniza stock del depósito central desde ERP Centum
 // Responde inmediatamente y corre la sync en background (evita timeout de Render)
-router.post('/sincronizar-stock', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/sincronizar-stock', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   res.json({ mensaje: 'Sincronización de stock iniciada en background' })
 
   try {
     const resultado = await sincronizarStock(true, 'manual')
-    console.log('[Stock] Sync manual completada:', resultado.mensaje)
+    logger.info('[Stock] Sync manual completada:', resultado.mensaje)
   } catch (err) {
-    console.error('[Stock] Error al sincronizar stock:', err.message)
+    logger.error('[Stock] Error al sincronizar stock:', err.message)
   }
-})
+}))
 
 // POST /api/articulos/importar
 // Admin: importa artículos desde Google Sheets (o futura API externa)
-router.post('/importar', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/importar', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { articulos } = req.body
 
@@ -582,14 +584,14 @@ router.post('/importar', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json({ mensaje: `${data.length} artículos importados correctamente`, articulos: data })
   } catch (err) {
-    console.error('Error al importar artículos:', err)
+    logger.error('Error al importar artículos:', err)
     res.status(500).json({ error: 'Error al importar artículos' })
   }
-})
+}))
 
 // GET /api/articulos/combos-erp
 // Admin: lista combos del catálogo local (sincronizado desde Centum), indicando cuáles están habilitados
-router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/combos-erp', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 1000
     let allData = []
@@ -622,14 +624,14 @@ router.get('/combos-erp', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json({ combos, total: combos.length })
   } catch (err) {
-    console.error('Error al obtener combos:', err)
+    logger.error('Error al obtener combos:', err)
     res.status(500).json({ error: 'Error al obtener combos' })
   }
-})
+}))
 
 // POST /api/articulos/combos-toggle
 // Admin: habilita o deshabilita un combo en todas las sucursales
-router.post('/combos-toggle', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/combos-toggle', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { id, habilitado } = req.body
     if (!id || typeof habilitado !== 'boolean') {
@@ -650,10 +652,10 @@ router.post('/combos-toggle', verificarAuth, soloGestorOAdmin, async (req, res) 
 
     res.json({ ok: true, nombre: art.nombre, habilitado })
   } catch (err) {
-    console.error('Error al toggle combo:', err)
+    logger.error('Error al toggle combo:', err)
     res.status(500).json({ error: 'Error al actualizar combo' })
   }
-})
+}))
 
 
 // GET /api/articulos/:idCentum/imagen
@@ -661,7 +663,7 @@ router.post('/combos-toggle', verificarAuth, soloGestorOAdmin, async (req, res) 
 const imagenCache = new Map() // { idCentum: { buffer, contentType, timestamp } }
 const IMAGEN_TTL = 24 * 60 * 60 * 1000 // 24h
 
-router.get('/:idCentum/imagen', async (req, res) => {
+router.get('/:idCentum/imagen', asyncHandler(async (req, res) => {
   try {
     // Permitir carga cross-origin desde <img> tags
     res.set('Cross-Origin-Resource-Policy', 'cross-origin')
@@ -717,10 +719,10 @@ router.get('/:idCentum/imagen', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400')
     res.send(buffer)
   } catch (err) {
-    console.error('Error proxy imagen:', err.message)
+    logger.error('Error proxy imagen:', err.message)
     res.set('Content-Type', 'image/svg+xml')
     res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="#f3f4f6"/><text x="100" y="105" text-anchor="middle" fill="#9ca3af" font-family="sans-serif" font-size="14">Sin imagen</text></svg>')
   }
-})
+}))
 
 module.exports = router

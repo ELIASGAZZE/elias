@@ -4,9 +4,11 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
 const { analizarBatch } = require('../services/patronesIA')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // POST /api/batch-analisis — ejecutar análisis batch para una fecha
-router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { fecha, sucursal_id } = req.body
 
@@ -29,13 +31,13 @@ router.post('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
     const resultado = await analizarBatch(fecha, sucursal_id || null, req.perfil.id)
     res.json(resultado)
   } catch (err) {
-    console.error('Error en batch análisis:', err)
+    logger.error('Error en batch análisis:', err)
     res.status(500).json({ error: err.message || 'Error al ejecutar análisis batch' })
   }
-})
+}))
 
 // GET /api/batch-analisis — historial de batch analyses
-router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta, sucursal_id, limit: limitStr } = req.query
     const limit = Math.min(parseInt(limitStr) || 30, 100)
@@ -55,13 +57,13 @@ router.get('/', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json(data || [])
   } catch (err) {
-    console.error('Error al obtener historial batch:', err)
+    logger.error('Error al obtener historial batch:', err)
     res.status(500).json({ error: 'Error al obtener historial' })
   }
-})
+}))
 
 // GET /api/batch-analisis/:id — detalle de un batch
-router.get('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('batch_analisis')
@@ -108,9 +110,9 @@ router.get('/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
 
     res.json({ ...data, cierres: cierresConAnalisis })
   } catch (err) {
-    console.error('Error al obtener detalle batch:', err)
+    logger.error('Error al obtener detalle batch:', err)
     res.status(500).json({ error: 'Error al obtener detalle' })
   }
-})
+}))
 
 module.exports = router

@@ -4,10 +4,14 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { getVentasCentumByFecha, getResumenVentasCentumBI, getVentasCentumDetallado } = require('../config/centum')
+const { getVentasCentumByFecha, getResumenVentasCentumBI, getVentasCentumDetallado, getVentasPOSParaDuplicados } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const { crearClienteEnCentum } = require('../services/centumClientes')
 const crypto = require('crypto')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearVentaSchema } = require('../schemas/pos')
+const asyncHandler = require('../middleware/asyncHandler')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // Token HMAC para links de descarga de comprobantes (no requiere auth)
@@ -23,7 +27,7 @@ function generarLinkDescarga(ventaId) {
 
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
-router.get('/articulos', verificarAuth, async (req, res) => {
+router.get('/articulos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const campos = 'id, id_centum, codigo, nombre, tipo, rubro, subrubro, rubro_id_centum, subrubro_id_centum, marca, precio, descuento1, descuento2, descuento3, iva_tasa, es_pesable, codigos_barras, atributos, updated_at, tiene_imagen, peso_promedio_pieza, peso_minimo, peso_maximo, peso_muestras'
 
@@ -90,27 +94,27 @@ router.get('/articulos', verificarAuth, async (req, res) => {
 
     res.json({ articulos, total: articulos.length })
   } catch (err) {
-    console.error('[POS] Error al obtener artículos:', err.message)
+    logger.error('[POS] Error al obtener artículos:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/pos/sincronizar-articulos (admin/gestor)
 // Sincroniza artículos desde Centum manualmente
-router.post('/sincronizar-articulos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/sincronizar-articulos', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const resultado = await sincronizarERP('manual_pos')
     res.json(resultado)
   } catch (err) {
-    console.error('[POS] Error al sincronizar artículos:', err.message)
+    logger.error('[POS] Error al sincronizar artículos:', err.message)
     res.status(500).json({ error: 'Error al sincronizar: ' + err.message })
   }
-})
+}))
 
 // ============ ARTÍCULOS DELIVERY ============
 
 // GET /api/pos/articulos-delivery — artículos con precio delivery configurado
-router.get('/articulos-delivery', verificarAuth, async (req, res) => {
+router.get('/articulos-delivery', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('articulos_delivery')
@@ -119,13 +123,13 @@ router.get('/articulos-delivery', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data || [])
   } catch (err) {
-    console.error('[POS] Error al obtener artículos delivery:', err.message)
+    logger.error('[POS] Error al obtener artículos delivery:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/pos/articulos-delivery — upsert artículo delivery (admin)
-router.post('/articulos-delivery', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/articulos-delivery', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { articulo_id_centum, nombre, precio_delivery, activo } = req.body
     if (!articulo_id_centum || !nombre || precio_delivery == null) {
@@ -145,13 +149,13 @@ router.post('/articulos-delivery', verificarAuth, soloAdmin, async (req, res) =>
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('[POS] Error al guardar artículo delivery:', err.message)
+    logger.error('[POS] Error al guardar artículo delivery:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // DELETE /api/pos/articulos-delivery/:id — eliminar config delivery (admin)
-router.delete('/articulos-delivery/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/articulos-delivery/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('articulos_delivery')
@@ -160,15 +164,15 @@ router.delete('/articulos-delivery/:id', verificarAuth, soloAdmin, async (req, r
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('[POS] Error al eliminar artículo delivery:', err.message)
+    logger.error('[POS] Error al eliminar artículo delivery:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ============ RUBROS / SUBRUBROS ============
 
 // GET /api/pos/rubros — rubros distintos de artículos Centum
-router.get('/rubros', verificarAuth, async (req, res) => {
+router.get('/rubros', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 1000
     const map = {}
@@ -198,13 +202,13 @@ router.get('/rubros', verificarAuth, async (req, res) => {
     const rubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
     res.json({ rubros })
   } catch (err) {
-    console.error('[POS] Error al obtener rubros:', err.message)
+    logger.error('[POS] Error al obtener rubros:', err.message)
     res.status(500).json({ error: 'Error al obtener rubros' })
   }
-})
+}))
 
 // GET /api/pos/marcas — marcas distintas de artículos
-router.get('/marcas', verificarAuth, async (req, res) => {
+router.get('/marcas', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 1000
     const set = new Set()
@@ -225,13 +229,13 @@ router.get('/marcas', verificarAuth, async (req, res) => {
     const marcas = [...set].sort((a, b) => a.localeCompare(b)).map(m => ({ nombre: m }))
     res.json({ marcas })
   } catch (err) {
-    console.error('[POS] Error al obtener marcas:', err.message)
+    logger.error('[POS] Error al obtener marcas:', err.message)
     res.status(500).json({ error: 'Error al obtener marcas' })
   }
-})
+}))
 
 // GET /api/pos/subrubros — subrubros distintos de artículos Centum
-router.get('/subrubros', verificarAuth, async (req, res) => {
+router.get('/subrubros', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const PAGE_SIZE = 1000
     const map = {}
@@ -261,14 +265,14 @@ router.get('/subrubros', verificarAuth, async (req, res) => {
     const subrubros = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
     res.json({ subrubros })
   } catch (err) {
-    console.error('[POS] Error al obtener subrubros:', err.message)
+    logger.error('[POS] Error al obtener subrubros:', err.message)
     res.status(500).json({ error: 'Error al obtener subrubros' })
   }
-})
+}))
 
 // GET /api/pos/atributos-articulo
 // Lista atributos únicos desde la columna JSONB de artículos
-router.get('/atributos-articulo', verificarAuth, async (req, res) => {
+router.get('/atributos-articulo', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Leer artículos que tengan atributos no vacíos (paginar para traer todos)
     let allData = []
@@ -312,16 +316,16 @@ router.get('/atributos-articulo', verificarAuth, async (req, res) => {
 
     res.json({ atributos })
   } catch (err) {
-    console.error('[POS] Error al listar atributos:', err.message)
+    logger.error('[POS] Error al listar atributos:', err.message)
     res.status(500).json({ error: 'Error al listar atributos' })
   }
-})
+}))
 
 // ============ PROMOCIONES LOCALES ============
 
 // GET /api/pos/promociones
 // Lista promos activas (POS) o todas si ?todas=1 (admin)
-router.get('/promociones', verificarAuth, async (req, res) => {
+router.get('/promociones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     let query = supabase
       .from('promociones_pos')
@@ -337,13 +341,13 @@ router.get('/promociones', verificarAuth, async (req, res) => {
 
     res.json({ promociones: data || [] })
   } catch (err) {
-    console.error('[POS] Error al listar promociones:', err.message)
+    logger.error('[POS] Error al listar promociones:', err.message)
     res.status(500).json({ error: 'Error al listar promociones' })
   }
-})
+}))
 
 // POST /api/pos/promociones (admin/gestor)
-router.post('/promociones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/promociones', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, tipo, fecha_desde, fecha_hasta, reglas } = req.body
 
@@ -371,13 +375,13 @@ router.post('/promociones', verificarAuth, soloGestorOAdmin, async (req, res) =>
 
     res.status(201).json({ promocion: data })
   } catch (err) {
-    console.error('[POS] Error al crear promoción:', err.message)
+    logger.error('[POS] Error al crear promoción:', err.message)
     res.status(500).json({ error: 'Error al crear promoción: ' + err.message })
   }
-})
+}))
 
 // PUT /api/pos/promociones/:id (admin/gestor)
-router.put('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/promociones/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, tipo, activa, fecha_desde, fecha_hasta, reglas } = req.body
     const updates = { updated_at: new Date().toISOString() }
@@ -405,13 +409,13 @@ router.put('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, res)
 
     res.json({ promocion: data })
   } catch (err) {
-    console.error('[POS] Error al editar promoción:', err.message)
+    logger.error('[POS] Error al editar promoción:', err.message)
     res.status(500).json({ error: 'Error al editar promoción: ' + err.message })
   }
-})
+}))
 
 // DELETE /api/pos/promociones/:id (admin/gestor) — soft delete
-router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('promociones_pos')
@@ -424,16 +428,16 @@ router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, async (req, r
 
     res.json({ promocion: data, mensaje: 'Promoción desactivada' })
   } catch (err) {
-    console.error('[POS] Error al eliminar promoción:', err.message)
+    logger.error('[POS] Error al eliminar promoción:', err.message)
     res.status(500).json({ error: 'Error al eliminar promoción: ' + err.message })
   }
-})
+}))
 
 // ============ VENTAS ============
 
 // POST /api/pos/ventas
 // Guarda una venta POS localmente
-router.post('/ventas', verificarAuth, async (req, res) => {
+router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(async (req, res) => {
   try {
     const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva } = req.body
 
@@ -441,12 +445,10 @@ router.post('/ventas', verificarAuth, async (req, res) => {
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
     const totalItemsSolo = Math.round((total - totalGCActivar) * 100) / 100
 
-    if (id_cliente_centum == null) return res.status(400).json({ error: 'id_cliente_centum es requerido' })
-    // Permitir items vacíos si hay gift cards a activar
+    // Validar que haya items o gift cards a activar
     const tieneItems = items && Array.isArray(items) && items.length > 0
     const tieneGC = gift_cards_a_activar && Array.isArray(gift_cards_a_activar) && gift_cards_a_activar.length > 0
     if (!tieneItems && !tieneGC) return res.status(400).json({ error: 'items o gift_cards_a_activar es requerido' })
-    if (total == null || total <= 0) return res.status(400).json({ error: 'total debe ser mayor a 0' })
 
     const saldoApl = parseFloat(saldo_aplicado) || 0
     const totalACobrar = total - saldoApl
@@ -613,8 +615,8 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           }))
           supabase.from('pos_cambios_precio_log').insert(registros)
             .then(({ error: logErr }) => {
-              if (logErr) console.warn('[POS] No se pudo registrar cambios de precio:', logErr.message)
-              else console.log(`[POS] ${registros.length} cambio(s) de precio registrados para venta ${data.id}`)
+              if (logErr) logger.warn('[POS] No se pudo registrar cambios de precio:', logErr.message)
+              else logger.info(`[POS] ${registros.length} cambio(s) de precio registrados para venta ${data.id}`)
             })
         }
       }
@@ -622,7 +624,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
       // Sync a Centum se hace via cron cada 1 minuto (retrySyncVentasCentum)
       // La venta queda con centum_sync=false y el cron la procesa secuencialmente
       if (data) {
-        console.log(`[Centum POS] Venta ${data.id} guardada con centum_sync=false, será procesada por el cron`)
+        logger.info(`[Centum POS] Venta ${data.id} guardada con centum_sync=false, será procesada por el cron`)
       }
     }
 
@@ -641,7 +643,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
           created_by: req.perfil.id,
         })
       if (saldoError) {
-        console.error('[POS] Error al registrar movimiento de saldo:', saldoError.message)
+        logger.error('[POS] Error al registrar movimiento de saldo:', saldoError.message)
       }
     }
 
@@ -670,7 +672,7 @@ router.post('/ventas', verificarAuth, async (req, res) => {
             .select('id')
 
           if (gcErr || !updated || updated.length === 0) {
-            console.error(`[POS] Gift card ${gc.codigo} conflicto de concurrencia — saldo cambió durante la operación`)
+            logger.error(`[POS] Gift card ${gc.codigo} conflicto de concurrencia — saldo cambió durante la operación`)
             continue
           }
 
@@ -743,14 +745,14 @@ router.post('/ventas', verificarAuth, async (req, res) => {
 
     res.status(201).json({ venta: data, mensaje: tieneItems ? 'Venta registrada correctamente' : 'Gift card activada correctamente' })
   } catch (err) {
-    console.error('[POS] Error al guardar venta:', err.message)
+    logger.error('[POS] Error al guardar venta:', err.message)
     res.status(500).json({ error: 'Error al guardar venta: ' + err.message })
   }
-})
+}))
 
 // GET /api/pos/ventas/reportes/promociones?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 // Datos crudos de ventas para reporte de promociones (admin/gestor)
-router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const desde = req.query.desde || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
     const hasta = req.query.hasta || new Date().toISOString().split('T')[0]
@@ -807,14 +809,14 @@ router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyn
 
     res.json({ ventas })
   } catch (err) {
-    console.error('[POS] Error reporte promociones:', err.message)
+    logger.error('[POS] Error reporte promociones:', err.message)
     res.status(500).json({ error: 'Error al generar reporte de promociones' })
   }
-})
+}))
 
 // GET /api/pos/ventas?fecha=YYYY-MM-DD&sucursal_id=X&cajero_id=X&buscar=texto&articulo=texto
 // Lista ventas del día con filtros opcionales
-router.get('/ventas', verificarAuth, async (req, res) => {
+router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const pageSize = 50
     const page = Math.max(1, parseInt(req.query.page) || 1)
@@ -1030,26 +1032,26 @@ router.get('/ventas', verificarAuth, async (req, res) => {
           resumen = { totalVentas: totalVentasR, totalNC: totalNCR, totalEmpresa: totalEmpresaR, totalPrueba: totalPruebaR, cantVentas, cantNC, desgloseMedios: desgloseMediosR }
         }
       } catch (e) {
-        console.error('[POS] Error al calcular resumen:', e.message)
+        logger.error('[POS] Error al calcular resumen:', e.message)
       }
     }
 
     res.json({ ventas, page, totalPages, totalCount, resumen })
   } catch (err) {
-    console.error('[POS] Error al listar ventas:', err.message)
+    logger.error('[POS] Error al listar ventas:', err.message)
     res.status(500).json({ error: 'Error al listar ventas' })
   }
-})
+}))
 
 // GET /api/pos/ventas/reconciliacion — Legacy (mantener por compat)
-router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/ventas/reconciliacion', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   // Redirigir al nuevo endpoint
   req.url = req.url.replace('reconciliacion', 'conciliacion')
   router.handle(req, res)
-})
+}))
 
 // GET /api/pos/ventas/conciliacion — Cruzar ventas POS vs Centum BI (mejorado)
-router.get('/ventas/conciliacion', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/ventas/conciliacion', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { fecha, fecha_hasta, sucursal_id, estado, page: pageStr, page_size: pageSizeStr } = req.query
     if (!fecha) return res.status(400).json({ error: 'Parámetro fecha requerido (YYYY-MM-DD)' })
@@ -1096,7 +1098,7 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, async (req, res) =>
       .lte('created_at', `${fechaHasta}T23:59:59-03:00`)
     if (sucursal_id) posQuery = posQuery.eq('sucursal_id', sucursal_id)
     const { data: ventasPOS, error: posError } = await posQuery
-    if (posError) console.error('[Conciliacion] Error Supabase ventas_pos:', posError.message)
+    if (posError) logger.error('[Conciliacion] Error Supabase ventas_pos:', posError.message)
 
     // Indexar POS por id_venta_centum
     const posPorVentaId = new Map()
@@ -1262,13 +1264,167 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, async (req, res) =>
 
     res.json({ kpis, rows, page: pageNum, totalPages, totalFiltered })
   } catch (err) {
-    console.error('[POS] Error en conciliación:', err.message)
+    logger.error('[POS] Error en conciliación:', err.message)
     res.status(500).json({ error: 'Error al ejecutar conciliación', detalle: err.message })
   }
-})
+}))
+
+// GET /api/pos/ventas/duplicados-centum — Detectar facturas duplicadas en Centum BI
+router.get('/ventas/duplicados-centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  try {
+    // 1. Traer todos los id_venta_centum conocidos desde ventas_pos (Supabase)
+    const PAGE_SIZE = 1000
+    let allVentasPos = []
+    let from = 0
+    while (true) {
+      const { data } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, id_venta_centum, total, nombre_cliente, centum_comprobante')
+        .not('id_venta_centum', 'is', null)
+        .range(from, from + PAGE_SIZE - 1)
+      if (!data || data.length === 0) break
+      allVentasPos = allVentasPos.concat(data)
+      if (data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+
+    // Set de VentaIDs "reales" (linkeados a una venta POS)
+    const ventaIdsReales = new Set(allVentasPos.map(v => v.id_venta_centum))
+    // Map VentaID → venta POS para lookup rápido
+    const posPorVentaId = new Map()
+    for (const vp of allVentasPos) {
+      posPorVentaId.set(vp.id_venta_centum, vp)
+    }
+
+    // 2. Traer TODAS las ventas del usuario API desde Centum BI + NCs
+    const { ventas: ventasCentum, notasCredito } = await getVentasPOSParaDuplicados()
+
+    // 3. Identificar huérfanos: VentaIDs en Centum que NO están linkeados en ventas_pos
+    const huerfanos = ventasCentum.filter(v => !ventaIdsReales.has(v.VentaID))
+
+    // Si no hay huérfanos, no hay duplicados
+    if (huerfanos.length === 0) {
+      return res.json({
+        resumen: { total_duplicados: 0, con_nc: 0, sin_nc: 0, monto_sin_nc: 0 },
+        duplicados: [],
+      })
+    }
+
+    // 4. Para cada huérfano, buscar la venta "real" correspondiente
+    //    Criterio: mismo ClienteID + mismo Total + misma SucursalFisicaID + VentaID correlativo
+    const MAX_VENTA_ID_DIFF = 50 // VentaIDs duplicados son casi consecutivos
+    const ventasRealesCentum = ventasCentum.filter(v => ventaIdsReales.has(v.VentaID))
+    // Indexar por ClienteID+SucursalID+Total para matching rápido
+    const indexReal = new Map()
+    for (const v of ventasRealesCentum) {
+      const key = `${v.ClienteID}-${v.SucursalFisicaID}-${parseFloat(v.Total).toFixed(2)}`
+      if (!indexReal.has(key)) indexReal.set(key, [])
+      indexReal.get(key).push(v)
+    }
+
+    // 5. Construir resultado — solo incluir huérfanos con VentaID correlativo a una venta real
+    const duplicados = []
+    const ncsUsadas = new Set() // Evitar que una NC matchee con múltiples huérfanos
+    for (const huerf of huerfanos) {
+      const total = parseFloat(huerf.Total)
+      const key = `${huerf.ClienteID}-${huerf.SucursalFisicaID}-${total.toFixed(2)}`
+      const candidatas = indexReal.get(key) || []
+
+      // Buscar la venta real con VentaID más cercano (correlativo)
+      let ventaReal = null
+      let ventaPOS = null
+      let minIdDiff = Infinity
+      for (const c of candidatas) {
+        const idDiff = Math.abs(c.VentaID - huerf.VentaID)
+        if (idDiff < minIdDiff) {
+          minIdDiff = idDiff
+          ventaReal = c
+          ventaPOS = posPorVentaId.get(c.VentaID)
+        }
+      }
+
+      // Si no hay venta real con VentaID correlativo, no es duplicado — ignorar
+      if (!ventaReal || minIdDiff > MAX_VENTA_ID_DIFF) continue
+
+      // Buscar NC existente para este huérfano
+      // NC.Referencia = comprobante sin letra (ej "00002-00000957" para factura "A00002-00000957")
+      const numDoc = huerf.NumeroDocumento?.trim()
+      // Extraer parte sin letra: "A00002-00000957" → "00002-00000957"
+      const refDup = numDoc?.replace(/^[A-Z]/, '') || null
+
+      const ncsDelCliente = notasCredito.filter(nc => nc.ClienteID === huerf.ClienteID && !ncsUsadas.has(nc.VentaID))
+
+      let ncEncontrada = null
+      // Match por Referencia = comprobante sin letra
+      if (refDup) {
+        for (const nc of ncsDelCliente) {
+          const ref = nc.Referencia?.toString().trim()
+          if (ref === refDup) {
+            ncEncontrada = nc
+            break
+          }
+        }
+      }
+      // Sin fallback — solo match exacto por referencia para evitar falsos positivos
+
+      // Marcar NC como usada para que no matchee con otro huérfano
+      if (ncEncontrada) {
+        ncsUsadas.add(ncEncontrada.VentaID)
+      }
+
+      const divisionId = huerf.DivisionEmpresaGrupoEconomicoID
+      duplicados.push({
+        pos_id: ventaPOS?.id || null,
+        numero_venta_pos: ventaPOS?.numero_venta || null,
+        cliente: huerf.RazonSocialCliente?.trim() || 'DESCONOCIDO',
+        venta_real: ventaReal ? {
+          venta_id: ventaReal.VentaID,
+          comprobante: ventaReal.NumeroDocumento?.trim() || null,
+          total: parseFloat(ventaReal.Total),
+          fecha: ventaReal.FechaCreacion,
+        } : null,
+        duplicado: {
+          venta_id: huerf.VentaID,
+          comprobante: numDoc || null,
+          total,
+          fecha: huerf.FechaCreacion,
+          sucursal: huerf.NombreSucursalFisica?.trim() || null,
+          division: divisionId === 3 ? 'EMPRESA' : divisionId === 2 ? 'PRUEBA' : `ID${divisionId}`,
+        },
+        nc_existente: ncEncontrada ? {
+          comprobante: ncEncontrada.NumeroDocumento?.trim() || null,
+          total: parseFloat(ncEncontrada.Total),
+        } : null,
+        estado: ncEncontrada ? 'resuelta' : 'pendiente_nc',
+      })
+    }
+
+    // Ordenar: pendientes primero, luego por monto desc
+    duplicados.sort((a, b) => {
+      if (a.estado !== b.estado) return a.estado === 'pendiente_nc' ? -1 : 1
+      return (b.duplicado?.total || 0) - (a.duplicado?.total || 0)
+    })
+
+    const sinNC = duplicados.filter(d => d.estado === 'pendiente_nc')
+    const conNC = duplicados.filter(d => d.estado === 'resuelta')
+
+    res.json({
+      resumen: {
+        total_duplicados: duplicados.length,
+        con_nc: conNC.length,
+        sin_nc: sinNC.length,
+        monto_sin_nc: Math.round(sinNC.reduce((s, d) => s + (d.duplicado?.total || 0), 0) * 100) / 100,
+      },
+      duplicados,
+    })
+  } catch (err) {
+    logger.error('[POS] Error en duplicados-centum:', err.message)
+    res.status(500).json({ error: 'Error al detectar duplicados', detalle: err.message })
+  }
+}))
 
 // GET /api/pos/ventas/resumen-centum — resumen de ventas desde Centum BI para comparar con POS
-router.get('/ventas/resumen-centum', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/ventas/resumen-centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { fecha, fecha_hasta, sucursales: sucursalesParam, clasificacion } = req.query
     if (!fecha) return res.status(400).json({ error: 'Falta parámetro fecha' })
@@ -1307,13 +1463,13 @@ router.get('/ventas/resumen-centum', verificarAuth, soloAdmin, async (req, res) 
     const resumen = await getResumenVentasCentumBI(fecha, hasta, sucursalIds, divisionId)
     res.json(resumen)
   } catch (err) {
-    console.error('[POS] Error al obtener resumen Centum BI:', err.message)
+    logger.error('[POS] Error al obtener resumen Centum BI:', err.message)
     res.status(500).json({ error: 'Error al consultar Centum BI' })
   }
-})
+}))
 
 // GET /api/pos/ventas/:id — Detalle de una venta
-router.get('/ventas/:id', verificarAuth, async (req, res) => {
+router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
@@ -1450,24 +1606,24 @@ router.get('/ventas/:id', verificarAuth, async (req, res) => {
 
     res.json({ venta: data })
   } catch (err) {
-    console.error('[POS] Error al obtener detalle de venta:', err.message)
+    logger.error('[POS] Error al obtener detalle de venta:', err.message)
     res.status(500).json({ error: 'Error al obtener detalle de venta' })
   }
-})
+}))
 
 // POST /api/pos/ventas/sync-caes — buscar CAE para ventas EMPRESA que aún no tienen
-router.post('/ventas/sync-caes', verificarAuth, async (req, res) => {
+router.post('/ventas/sync-caes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const result = await retrySyncCAE()
     res.json(result)
   } catch (err) {
-    console.error('[POS] Error al sincronizar CAEs:', err.message)
+    logger.error('[POS] Error al sincronizar CAEs:', err.message)
     res.status(500).json({ error: 'Error al sincronizar CAEs' })
   }
-})
+}))
 
 // POST /api/pos/ventas/refresh-comprobantes — re-consulta Centum y corrige PV/número
-router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
+router.post('/ventas/refresh-comprobantes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     const { data: ventas } = await supabase.from('ventas_pos')
@@ -1491,7 +1647,7 @@ router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
             const updates = { centum_comprobante: comprobanteReal }
             if (centumData.CAE) updates.numero_cae = centumData.CAE
             await supabase.from('ventas_pos').update(updates).eq('id', v.id)
-            console.log(`[RefreshComprobantes] Venta ${v.id}: ${v.centum_comprobante} → ${comprobanteReal}`)
+            logger.info(`[RefreshComprobantes] Venta ${v.id}: ${v.centum_comprobante} → ${comprobanteReal}`)
             actualizadas++
           }
         }
@@ -1502,10 +1658,10 @@ router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
             id_venta_centum: null, centum_comprobante: null,
             centum_sync: false, centum_error: 'Venta no existe en Centum', numero_cae: null,
           }).eq('id', v.id)
-          console.log(`[RefreshComprobantes] Venta ${v.id}: NO existe en Centum, limpiada`)
+          logger.info(`[RefreshComprobantes] Venta ${v.id}: NO existe en Centum, limpiada`)
           limpiadas++
         } else {
-          console.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
+          logger.warn(`[RefreshComprobantes] Error venta ${v.id}:`, e.message)
         }
       }
     }
@@ -1513,10 +1669,10 @@ router.post('/ventas/refresh-comprobantes', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/ventas/:id/cae — obtener CAE de AFIP desde Centum
-router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
+router.get('/ventas/:id/cae', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: venta, error } = await supabase
       .from('ventas_pos')
@@ -1575,13 +1731,13 @@ router.get('/ventas/:id/cae', verificarAuth, async (req, res) => {
 
     res.json({ ...baseResponse, cae, cae_vencimiento: caeVto })
   } catch (err) {
-    console.error('[POS] Error al obtener CAE:', err.message)
+    logger.error('[POS] Error al obtener CAE:', err.message)
     res.status(500).json({ error: 'Error al obtener CAE: ' + err.message })
   }
-})
+}))
 
 // POST /api/pos/ventas/:id/enviar-email — enviar comprobante por email
-router.post('/ventas/:id/enviar-email', verificarAuth, async (req, res) => {
+router.post('/ventas/:id/enviar-email', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { email } = req.body
     if (!email || !email.trim()) {
@@ -1622,7 +1778,7 @@ router.post('/ventas/:id/enviar-email', verificarAuth, async (req, res) => {
           caeData.cae = centumData.CAE || null
           caeData.cae_vencimiento = centumData.FechaVencimientoCAE || null
         } catch (err) {
-          console.error('[Email] Error obteniendo CAE:', err.message)
+          logger.error('[Email] Error obteniendo CAE:', err.message)
         }
       }
     }
@@ -1676,10 +1832,10 @@ router.post('/ventas/:id/enviar-email', verificarAuth, async (req, res) => {
 
     res.json({ ok: true, mensaje: `Comprobante enviado a ${email.trim()}` })
   } catch (err) {
-    console.error('[POS] Error al enviar email:', err.message)
+    logger.error('[POS] Error al enviar email:', err.message)
     res.status(500).json({ error: 'Error al enviar email: ' + err.message })
   }
-})
+}))
 
 function escapeHtml(s) {
   if (s == null) return ''
@@ -1687,7 +1843,7 @@ function escapeHtml(s) {
 }
 
 // DELETE /api/pos/ventas/:id — eliminar venta no sincronizada con Centum (solo admin)
-router.delete('/ventas/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/ventas/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: venta, error: ventaErr } = await supabase
       .from('ventas_pos')
@@ -1737,13 +1893,13 @@ router.delete('/ventas/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ ok: true })
   } catch (err) {
-    console.error('[POS] Error al eliminar venta:', err.message, err.details || '', err.hint || '')
+    logger.error('[POS] Error al eliminar venta:', err.message, err.details || '', err.hint || '')
     res.status(500).json({ error: 'Error al eliminar venta', detalle: err.message })
   }
-})
+}))
 
 // GET /api/pos/ventas/:id/devoluciones — cantidades ya devueltas por item
-router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
+router.get('/ventas/:id/devoluciones', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: ncPrevias } = await supabase
       .from('ventas_pos')
@@ -1765,15 +1921,15 @@ router.get('/ventas/:id/devoluciones', verificarAuth, async (req, res) => {
 
     res.json({ ya_devuelto: yaDevuelto })
   } catch (err) {
-    console.error('[POS] Error al obtener devoluciones:', err.message)
+    logger.error('[POS] Error al obtener devoluciones:', err.message)
     res.status(500).json({ error: 'Error al obtener devoluciones' })
   }
-})
+}))
 
 // ============ PEDIDOS POS ============
 
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
-router.post('/pedidos', verificarAuth, async (req, res) => {
+router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido, cajero_nombre, pagos_anticipado, caja_cobro_id } = req.body
 
@@ -1921,7 +2077,7 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
                     fetchAndSaveCAE(venta.id, resultado.IdVenta)
                   }
                 } catch (err) {
-                  console.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
+                  logger.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
                   try {
                     await supabase.from('ventas_pos').update({
                       centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
@@ -1933,22 +2089,22 @@ router.post('/pedidos', verificarAuth, async (req, res) => {
             }
           }
         } else if (errVenta) {
-          console.error('[POS] Error creando venta anticipada:', errVenta.message)
+          logger.error('[POS] Error creando venta anticipada:', errVenta.message)
         }
       } catch (errAnticipado) {
-        console.error('[POS] Error en flujo venta anticipada:', errAnticipado.message)
+        logger.error('[POS] Error en flujo venta anticipada:', errAnticipado.message)
       }
     }
 
     res.status(201).json({ pedido: data, ventaAnticipada, mensaje: 'Pedido registrado correctamente' })
   } catch (err) {
-    console.error('[POS] Error al crear pedido:', err.message)
+    logger.error('[POS] Error al crear pedido:', err.message)
     res.status(500).json({ error: 'Error al crear pedido: ' + err.message })
   }
-})
+}))
 
 // GET /api/pos/pedidos — listar pedidos (default: pendientes)
-router.get('/pedidos', verificarAuth, async (req, res) => {
+router.get('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const estado = req.query.estado || 'pendiente'
     const { fecha, sucursal_id, busqueda, tipo } = req.query
@@ -1983,13 +2139,13 @@ router.get('/pedidos', verificarAuth, async (req, res) => {
 
     res.json({ pedidos: data || [] })
   } catch (err) {
-    console.error('[POS] Error al listar pedidos:', err.message)
+    logger.error('[POS] Error al listar pedidos:', err.message)
     res.status(500).json({ error: 'Error al listar pedidos' })
   }
-})
+}))
 
 // GET /api/pos/pedidos/guia-delivery — pedidos delivery para guía de envíos
-router.get('/pedidos/guia-delivery', verificarAuth, async (req, res) => {
+router.get('/pedidos/guia-delivery', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { fecha } = req.query
     if (!fecha) return res.status(400).json({ error: 'fecha es requerido' })
@@ -2008,15 +2164,15 @@ router.get('/pedidos/guia-delivery', verificarAuth, async (req, res) => {
 
     res.json({ pedidos: data || [] })
   } catch (err) {
-    console.error('[POS] Error al obtener guía delivery:', err.message)
+    logger.error('[POS] Error al obtener guía delivery:', err.message)
     res.status(500).json({ error: 'Error al obtener guía delivery' })
   }
-})
+}))
 
 // ============ GUIAS DELIVERY ============
 
 // GET /api/pos/guias-delivery — listar guías
-router.get('/guias-delivery', verificarAuth, async (req, res) => {
+router.get('/guias-delivery', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { fecha, estado } = req.query
     let query = supabase
@@ -2033,10 +2189,10 @@ router.get('/guias-delivery', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/guias-delivery/:id — detalle de una guía
-router.get('/guias-delivery/:id', verificarAuth, async (req, res) => {
+router.get('/guias-delivery/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('guias_delivery')
@@ -2050,10 +2206,10 @@ router.get('/guias-delivery/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/pos/guias-delivery/despachar — crear guía + ventas automáticas + cambiar estado pedidos
-router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
+router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { fecha, turno, cadete_id, cadete_nombre, cambio_entregado, caja_id } = req.body
     if (!fecha || !turno) return res.status(400).json({ error: 'fecha y turno son requeridos' })
@@ -2221,7 +2377,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
         .single()
 
       if (errVenta) {
-        console.error(`[Guía Delivery] Error creando venta para pedido ${pedido.id}:`, errVenta.message)
+        logger.error(`[Guía Delivery] Error creando venta para pedido ${pedido.id}:`, errVenta.message)
         continue
       }
 
@@ -2255,11 +2411,11 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
                 centum_error: null,
                 numero_cae: resultado.CAE || null,
               }).eq('id', venta.id)
-              console.log(`[Guía Delivery] Venta ${venta.id} registrada en Centum: ${comprobante}`)
+              logger.info(`[Guía Delivery] Venta ${venta.id} registrada en Centum: ${comprobante}`)
               fetchAndSaveCAE(venta.id, resultado.IdVenta)
             }
           } catch (err) {
-            console.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
+            logger.error(`[Guía Delivery] Error Centum para venta ${venta.id}:`, err.message)
             try {
               // Marcar UNVERIFIED — el cron verificará en BI antes de reintentar
               await supabase.from('ventas_pos').update({
@@ -2267,7 +2423,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
                 centum_ultimo_intento: new Date().toISOString(),
               }).eq('id', venta.id)
             } catch (e) {
-              console.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message)
+              logger.error(`[Guía Delivery] No se pudo guardar centum_error para venta ${venta.id}:`, e.message)
             }
           }
         })()
@@ -2287,7 +2443,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
     // Insertar relaciones guía-pedidos
     if (guiaPedidos.length > 0) {
       const { error: errGP } = await supabase.from('guia_delivery_pedidos').insert(guiaPedidos)
-      if (errGP) console.error('[Guía Delivery] Error insertando guia_delivery_pedidos:', errGP.message)
+      if (errGP) logger.error('[Guía Delivery] Error insertando guia_delivery_pedidos:', errGP.message)
     }
 
     // Cambiar estado de todos los pedidos a 'entregado'
@@ -2329,7 +2485,7 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
       .single()
 
     if (errCierre) {
-      console.error('[Guía Delivery] Error creando cierre delivery:', errCierre.message)
+      logger.error('[Guía Delivery] Error creando cierre delivery:', errCierre.message)
     }
 
     // Registrar retiro en la caja que despacha (el cambio dado al cadete)
@@ -2366,9 +2522,9 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
             oculto: true,
             observaciones: `Cambio para delivery ${turno} ${fechaFormateada} - Cadete: ${cadete_nombre || 'Sin asignar'}`,
           })
-        console.log(`[Guía Delivery] Retiro de $${cambioNum} registrado en cierre ${cierreAbierto.id}`)
+        logger.info(`[Guía Delivery] Retiro de $${cambioNum} registrado en cierre ${cierreAbierto.id}`)
       } else {
-        console.log('[Guía Delivery] No hay caja abierta para registrar retiro del cambio')
+        logger.info('[Guía Delivery] No hay caja abierta para registrar retiro del cambio')
       }
     }
 
@@ -2393,13 +2549,13 @@ router.post('/guias-delivery/despachar', verificarAuth, async (req, res) => {
       cierre_delivery_id: cierreDelivery?.id || null,
     })
   } catch (err) {
-    console.error('[Guía Delivery] Error al despachar:', err.message)
+    logger.error('[Guía Delivery] Error al despachar:', err.message)
     res.status(500).json({ error: 'Error al despachar guía: ' + err.message })
   }
-})
+}))
 
 // PUT /api/pos/guias-delivery/:id/cerrar — cierre delivery (cuando vuelve el cadete)
-router.put('/guias-delivery/:id/cerrar', verificarAuth, async (req, res) => {
+router.put('/guias-delivery/:id/cerrar', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { efectivo_recibido, observaciones, pedidos_no_entregados } = req.body
 
@@ -2497,13 +2653,13 @@ router.put('/guias-delivery/:id/cerrar', verificarAuth, async (req, res) => {
       pedidos_no_entregados: noEntregadosIds.length,
     })
   } catch (err) {
-    console.error('[Guía Delivery] Error al cerrar:', err.message)
+    logger.error('[Guía Delivery] Error al cerrar:', err.message)
     res.status(500).json({ error: 'Error al cerrar guía: ' + err.message })
   }
-})
+}))
 
 // GET /api/pos/pedidos/articulos-por-dia — artículos necesarios agrupados por fecha de entrega
-router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
+router.get('/pedidos/articulos-por-dia', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, fecha_desde, fecha_hasta } = req.query
 
@@ -2562,13 +2718,13 @@ router.get('/pedidos/articulos-por-dia', verificarAuth, async (req, res) => {
 
     res.json({ dias: resultado })
   } catch (err) {
-    console.error('[POS] Error artículos por día:', err.message)
+    logger.error('[POS] Error artículos por día:', err.message)
     res.status(500).json({ error: 'Error al obtener artículos por día' })
   }
-})
+}))
 
 // PUT /api/pos/pedidos/:id — editar items/total/observaciones de un pedido pendiente
-router.put('/pedidos/:id', verificarAuth, async (req, res) => {
+router.put('/pedidos/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente, id_cliente_centum, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido } = req.body
 
@@ -2670,13 +2826,13 @@ router.put('/pedidos/:id', verificarAuth, async (req, res) => {
 
     res.json({ pedido: data, mensaje: 'Pedido actualizado', saldoGenerado })
   } catch (err) {
-    console.error('[POS] Error al editar pedido:', err.message)
+    logger.error('[POS] Error al editar pedido:', err.message)
     res.status(500).json({ error: 'Error al editar pedido: ' + err.message })
   }
-})
+}))
 
 // PUT /api/pos/pedidos/:id/pago — registrar pago en caja de un pedido pendiente
-router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
+router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { total_pagado, observaciones, pagos_anticipado, caja_cobro_id } = req.body
 
@@ -2768,7 +2924,7 @@ router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
                     fetchAndSaveCAE(venta.id, resultado.IdVenta)
                   }
                 } catch (err) {
-                  console.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
+                  logger.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
                   try {
                     await supabase.from('ventas_pos').update({
                       centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
@@ -2780,10 +2936,10 @@ router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
             }
           }
         } else if (errVenta) {
-          console.error('[POS] Error creando venta anticipada en cobro:', errVenta.message)
+          logger.error('[POS] Error creando venta anticipada en cobro:', errVenta.message)
         }
       } catch (errAnticipado) {
-        console.error('[POS] Error en flujo venta anticipada cobro:', errAnticipado.message)
+        logger.error('[POS] Error en flujo venta anticipada cobro:', errAnticipado.message)
       }
     }
 
@@ -2797,13 +2953,13 @@ router.put('/pedidos/:id/pago', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ ...data, ventaAnticipada })
   } catch (err) {
-    console.error('Error registrando pago de pedido:', err)
+    logger.error('Error registrando pago de pedido:', err)
     res.status(500).json({ error: 'Error al registrar pago: ' + err.message })
   }
-})
+}))
 
 // PUT /api/pos/pedidos/:id/estado — cambiar estado (entregado/cancelado)
-router.put('/pedidos/:id/estado', verificarAuth, async (req, res) => {
+router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { estado } = req.body
     if (!['entregado', 'cancelado'].includes(estado)) {
@@ -2853,10 +3009,10 @@ router.put('/pedidos/:id/estado', verificarAuth, async (req, res) => {
 
     res.json({ pedido: data, mensaje: `Pedido marcado como ${estado}`, saldoGenerado })
   } catch (err) {
-    console.error('[POS] Error al cambiar estado pedido:', err.message)
+    logger.error('[POS] Error al cambiar estado pedido:', err.message)
     res.status(500).json({ error: 'Error al cambiar estado: ' + err.message })
   }
-})
+}))
 
 // ============ TALO (Links de pago) ============
 
@@ -2864,7 +3020,7 @@ const { crearPagoTalo, obtenerPagoTalo } = require('../services/talo')
 
 // POST /api/pos/pedidos/:id/link-pago
 // Genera link de pago de Talo para un pedido POS
-router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
+router.post('/pedidos/:id/link-pago', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: pedido, error } = await supabase
       .from('pedidos_pos')
@@ -2920,15 +3076,15 @@ router.post('/pedidos/:id/link-pago', verificarAuth, async (req, res) => {
       .update(updateData)
       .eq('id', pedido.id)
   } catch (err) {
-    console.error('[POS Link Talo] Error:', err)
+    logger.error('[POS Link Talo] Error:', err)
     res.status(500).json({ error: 'Error al generar link de pago: ' + err.message })
   }
-})
+}))
 
 // POST /api/pos/webhook-talo
 // Webhook de Talo — SIN auth (viene de servidores de Talo)
 // Talo envía solo { message, paymentId } — se re-consulta el pago para validar
-router.post('/webhook-talo', async (req, res) => {
+router.post('/webhook-talo', asyncHandler(async (req, res) => {
   // Responder 200 inmediatamente
   res.sendStatus(200)
 
@@ -2936,14 +3092,14 @@ router.post('/webhook-talo', async (req, res) => {
     const { paymentId } = req.body || {}
     if (!paymentId) return
 
-    console.log(`[Talo Webhook] Pago actualizado: ${paymentId}`)
+    logger.info(`[Talo Webhook] Pago actualizado: ${paymentId}`)
 
     const pago = await obtenerPagoTalo(paymentId)
     const status = (pago.status || '').toUpperCase()
 
     // Solo procesar pagos exitosos (SUCCESS, OVERPAID)
     if (status !== 'SUCCESS' && status !== 'OVERPAID') {
-      console.log(`[Talo Webhook] Pago ${paymentId} status: ${status} — ignorado`)
+      logger.info(`[Talo Webhook] Pago ${paymentId} status: ${status} — ignorado`)
       return
     }
 
@@ -2973,7 +3129,7 @@ router.post('/webhook-talo', async (req, res) => {
           mp_payment_id: String(paymentId),
         })
         .eq('id', pedidoId)
-      console.log(`[Talo Webhook] Pedido ${pedidoId} — diferencia pagada $${montoPago} (payment ${paymentId})`)
+      logger.info(`[Talo Webhook] Pedido ${pedidoId} — diferencia pagada $${montoPago} (payment ${paymentId})`)
     } else {
       const nuevaObs = obsActual ? `PAGO ANTICIPADO | ${obsActual}` : 'PAGO ANTICIPADO'
       await supabase
@@ -2984,17 +3140,17 @@ router.post('/webhook-talo', async (req, res) => {
           total_pagado: parseFloat(pedido.total) || 0,
         })
         .eq('id', pedidoId)
-      console.log(`[Talo Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)
+      logger.info(`[Talo Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)
     }
   } catch (err) {
-    console.error('[Talo Webhook] Error:', err)
+    logger.error('[Talo Webhook] Error:', err)
   }
-})
+}))
 
 // ============ SALDO A FAVOR ============
 
 // GET /api/pos/saldo/:idClienteCentum — saldo y movimientos de un cliente
-router.get('/saldo/:idClienteCentum', verificarAuth, async (req, res) => {
+router.get('/saldo/:idClienteCentum', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const idCliente = parseInt(req.params.idClienteCentum)
     if (!idCliente) return res.status(400).json({ error: 'idClienteCentum inválido' })
@@ -3012,13 +3168,13 @@ router.get('/saldo/:idClienteCentum', verificarAuth, async (req, res) => {
 
     res.json({ saldo: Math.round(saldo * 100) / 100, movimientos: movimientos || [] })
   } catch (err) {
-    console.error('[POS] Error al obtener saldo:', err.message)
+    logger.error('[POS] Error al obtener saldo:', err.message)
     res.status(500).json({ error: 'Error al obtener saldo' })
   }
-})
+}))
 
 // GET /api/pos/saldos — lista todos los clientes con saldo > 0
-router.get('/saldos', verificarAuth, async (req, res) => {
+router.get('/saldos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: movimientos, error } = await supabase
       .from('movimientos_saldo_pos')
@@ -3052,13 +3208,13 @@ router.get('/saldos', verificarAuth, async (req, res) => {
 
     res.json({ clientes: resultado })
   } catch (err) {
-    console.error('[POS] Error al listar saldos:', err.message)
+    logger.error('[POS] Error al listar saldos:', err.message)
     res.status(500).json({ error: 'Error al listar saldos' })
   }
-})
+}))
 
 // GET /api/pos/saldos/buscar-cuit?cuit=XXX — buscar saldo por DNI/CUIT
-router.get('/saldos/buscar-cuit', verificarAuth, async (req, res) => {
+router.get('/saldos/buscar-cuit', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { cuit } = req.query
     if (!cuit || cuit.trim().length < 3) return res.status(400).json({ error: 'Ingresá al menos 3 dígitos de DNI/CUIT' })
@@ -3108,13 +3264,13 @@ router.get('/saldos/buscar-cuit', verificarAuth, async (req, res) => {
 
     res.json({ clientes: resultado })
   } catch (err) {
-    console.error('[POS] Error buscando saldo por CUIT:', err.message)
+    logger.error('[POS] Error buscando saldo por CUIT:', err.message)
     res.status(500).json({ error: 'Error al buscar saldo' })
   }
-})
+}))
 
 // POST /api/pos/saldos/ajuste — ajuste manual de saldo (solo admin)
-router.post('/saldos/ajuste', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/saldos/ajuste', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id_cliente_centum, nombre_cliente, monto, motivo } = req.body
     if (!id_cliente_centum) return res.status(400).json({ error: 'id_cliente_centum requerido' })
@@ -3145,13 +3301,13 @@ router.post('/saldos/ajuste', verificarAuth, soloAdmin, async (req, res) => {
 
     res.status(201).json({ movimiento: data, saldo: Math.round(saldoActual * 100) / 100 })
   } catch (err) {
-    console.error('[POS] Error al ajustar saldo:', err.message)
+    logger.error('[POS] Error al ajustar saldo:', err.message)
     res.status(500).json({ error: 'Error al ajustar saldo' })
   }
-})
+}))
 
 // PUT /api/pos/ventas/:id/cliente — corregir cliente de una venta
-router.put('/ventas/:id/cliente', verificarAuth, async (req, res) => {
+router.put('/ventas/:id/cliente', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { id_cliente_centum, nombre_cliente } = req.body
     if (!nombre_cliente) return res.status(400).json({ error: 'nombre_cliente requerido' })
@@ -3166,15 +3322,15 @@ router.put('/ventas/:id/cliente', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('[POS] Error al corregir cliente:', err.message)
+    logger.error('[POS] Error al corregir cliente:', err.message)
     res.status(500).json({ error: 'Error al corregir cliente' })
   }
-})
+}))
 
 // ============ DEVOLUCIONES ============
 
 // POST /api/pos/devolucion — registra devolución y genera saldo a favor
-router.post('/devolucion', verificarAuth, async (req, res) => {
+router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { venta_id, id_cliente_centum, nombre_cliente, items_devueltos, tipo_problema, observacion, caja_id } = req.body
 
@@ -3387,10 +3543,10 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
           numero_cae: centumNC.CAE || null,
         }).eq('id', notaCredito.id)
 
-        console.log(`[POS] NC Centum creada para devolución: ${comprobante}`)
+        logger.info(`[POS] NC Centum creada para devolución: ${comprobante}`)
         fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
       } catch (centumErr) {
-        console.error('[POS] Error al crear NC en Centum (devolución):', centumErr.message)
+        logger.error('[POS] Error al crear NC en Centum (devolución):', centumErr.message)
         await supabase.from('ventas_pos').update({
           centum_error: centumErr.message,
         }).eq('id', notaCredito.id)
@@ -3409,13 +3565,13 @@ router.post('/devolucion', verificarAuth, async (req, res) => {
       factor_descuento: Math.round(factorDescuento * 10000) / 10000,
     })
   } catch (err) {
-    console.error('[POS] Error al procesar devolución:', err.message)
+    logger.error('[POS] Error al procesar devolución:', err.message)
     res.status(500).json({ error: 'Error al procesar devolución' })
   }
-})
+}))
 
 // POST /api/pos/correccion-cliente — NC de venta original + nueva venta al cliente correcto
-router.post('/correccion-cliente', verificarAuth, async (req, res) => {
+router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { venta_id, id_cliente_centum, nombre_cliente } = req.body
 
@@ -3563,10 +3719,10 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             centum_ultimo_intento: new Date().toISOString(),
           }).eq('id', notaCredito.id)
           centumNCOk = true
-          console.log(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
+          logger.info(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
           fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
         } catch (centumErr) {
-          console.error('[POS] Error NC Centum (corrección cliente):', centumErr.message)
+          logger.error('[POS] Error NC Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
             centum_error: `UNVERIFIED|NC corrección: ${(centumErr.message || '').slice(0, 150)}`,
             centum_intentos: 1,
@@ -3623,10 +3779,10 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
             numero_cae: centumFCV.CAE || null,
           }).eq('id', nuevaVenta.id)
           centumFCVOk = true
-          console.log(`[POS] FCV Centum corrección cliente: ${comprobanteFCV}`)
+          logger.info(`[POS] FCV Centum corrección cliente: ${comprobanteFCV}`)
           fetchAndSaveCAE(nuevaVenta.id, centumFCV.IdVenta)
         } catch (centumErr) {
-          console.error('[POS] Error FCV Centum (corrección cliente):', centumErr.message)
+          logger.error('[POS] Error FCV Centum (corrección cliente):', centumErr.message)
           await supabase.from('ventas_pos').update({
             centum_error: `UNVERIFIED|corrección cliente: ${(centumErr.message || '').slice(0, 150)}`,
             centum_ultimo_intento: new Date().toISOString(),
@@ -3643,13 +3799,13 @@ router.post('/correccion-cliente', verificarAuth, async (req, res) => {
       centum_fcv: centumFCVOk,
     })
   } catch (err) {
-    console.error('[POS] Error al corregir cliente:', err.message)
+    logger.error('[POS] Error al corregir cliente:', err.message)
     res.status(500).json({ error: 'Error al procesar corrección' })
   }
-})
+}))
 
 // POST /api/pos/devolucion-precio — diferencia de precio → NC + saldo
-router.post('/devolucion-precio', verificarAuth, async (req, res) => {
+router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { venta_id, id_cliente_centum, nombre_cliente, items_corregidos, observacion, caja_id } = req.body
 
@@ -3816,10 +3972,10 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
           numero_cae: centumNC.CAE || null,
         }).eq('id', notaCredito.id)
 
-        console.log(`[POS] NC Concepto Centum creada para dif. precio: ${comprobante}`)
+        logger.info(`[POS] NC Concepto Centum creada para dif. precio: ${comprobante}`)
         fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
       } catch (centumErr) {
-        console.error('[POS] Error NC Concepto Centum (dif. precio):', centumErr.message)
+        logger.error('[POS] Error NC Concepto Centum (dif. precio):', centumErr.message)
         await supabase.from('ventas_pos').update({
           centum_error: centumErr.message,
         }).eq('id', notaCredito.id)
@@ -3833,14 +3989,14 @@ router.post('/devolucion-precio', verificarAuth, async (req, res) => {
       centum_nc: centumNC ? true : false,
     })
   } catch (err) {
-    console.error('[POS] Error al procesar corrección de precio:', err.message)
+    logger.error('[POS] Error al procesar corrección de precio:', err.message)
     res.status(500).json({ error: 'Error al procesar corrección de precio' })
   }
-})
+}))
 
 // POST /api/pos/log-eliminacion
 // Registra eliminación de artículos del ticket (auditoría anti-robo)
-router.post('/log-eliminacion', verificarAuth, async (req, res) => {
+router.post('/log-eliminacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { items, usuario_nombre, cierre_id } = req.body
     if (!items || !items.length) return res.status(400).json({ error: 'Items requeridos' })
@@ -3856,13 +4012,13 @@ router.post('/log-eliminacion', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('[POS] Error al registrar eliminación:', err.message)
+    logger.error('[POS] Error al registrar eliminación:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/ventas/:id/centum — obtener detalle completo de la venta en Centum (diagnóstico)
-router.get('/ventas/:id/centum', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/ventas/:id/centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: venta, error } = await supabase
       .from('ventas_pos')
@@ -3893,10 +4049,10 @@ router.get('/ventas/:id/centum', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Reintentar envío de venta a Centum
-router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
+router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const ventaId = req.params.id
 
@@ -3968,7 +4124,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
               await supabase.from('clientes').update({ id_centum: idCentum }).eq('id', cliLocal.id)
               venta.id_cliente_centum = idCentum
               await supabase.from('ventas_pos').update({ id_cliente_centum: idCentum }).eq('id', venta.id)
-              console.log(`[Centum Reenvío] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
+              logger.info(`[Centum Reenvío] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
             } else {
               return res.status(400).json({ error: `No se pudo crear el cliente "${venta.nombre_cliente}" en Centum: no devolvió IdCliente` })
             }
@@ -4007,7 +4163,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
       const check = await verificarEnBI(ventaId, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
 
       if (check.found) {
-        console.log(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${check.data.IdVenta}). Vinculando sin crear duplicado.`)
+        logger.info(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${check.data.IdVenta}). Vinculando sin crear duplicado.`)
         const numDoc = check.data.NumeroDocumento
         const comprobante = numDoc
           ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
@@ -4151,13 +4307,13 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
       })
       .eq('id', ventaId)
 
-    console.log(`[Centum POS] Reenvío venta ${ventaId} OK: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
+    logger.info(`[Centum POS] Reenvío venta ${ventaId} OK: IdVenta=${resultado.IdVenta}, Comprobante=${comprobante}`)
     // Obtener CAE (await para que la respuesta ya lo incluya)
     const cae = await fetchAndSaveCAE(ventaId, resultado.IdVenta)
     return res.json({ ok: true, comprobante, idVentaCentum: resultado.IdVenta, cae })
 
   } catch (err) {
-    console.error(`[Centum POS] Error reenvío venta ${req.params.id}:`, err.message)
+    logger.error(`[Centum POS] Error reenvío venta ${req.params.id}:`, err.message)
 
     try {
       // Marcar como UNVERIFIED — el cron verificará en BI antes de reintentar
@@ -4172,12 +4328,12 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, async (req, res) => {
 
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ===================== BLOQUEOS DE PEDIDOS =====================
 
 // GET /api/pos/bloqueos — listar bloqueos activos
-router.get('/bloqueos', verificarAuth, async (req, res) => {
+router.get('/bloqueos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('pedidos_bloqueos')
@@ -4191,10 +4347,10 @@ router.get('/bloqueos', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/pos/bloqueos — crear bloqueo
-router.post('/bloqueos', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/bloqueos', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { tipo, dia_semana, fecha, turno, aplica_a, motivo } = req.body
     if (!tipo || !turno) return res.status(400).json({ error: 'tipo y turno son requeridos' })
@@ -4211,10 +4367,10 @@ router.post('/bloqueos', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // DELETE /api/pos/bloqueos/:id — eliminar bloqueo
-router.delete('/bloqueos/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/bloqueos/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('pedidos_bloqueos')
@@ -4225,10 +4381,10 @@ router.delete('/bloqueos/:id', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/bloqueos/verificar — verificar si una fecha/turno/tipo está bloqueado
-router.get('/bloqueos/verificar', verificarAuth, async (req, res) => {
+router.get('/bloqueos/verificar', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { fecha, turno, tipo_pedido } = req.query
     if (!fecha) return res.status(400).json({ error: 'fecha es requerida' })
@@ -4258,10 +4414,10 @@ router.get('/bloqueos/verificar', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/favoritos — obtener lista global de favoritos
-router.get('/favoritos', verificarAuth, async (req, res) => {
+router.get('/favoritos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('favoritos_pos')
@@ -4277,10 +4433,10 @@ router.get('/favoritos', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // POST /api/pos/favoritos — guardar lista global de favoritos (solo admin)
-router.post('/favoritos', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/favoritos', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { articulo_ids } = req.body
 
@@ -4300,11 +4456,11 @@ router.post('/favoritos', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // GET /api/pos/consulta-data
 // Devuelve sucursales con mostrar_en_consulta + stock multi-sucursal para pestaña Consulta
-router.get('/consulta-data', verificarAuth, async (req, res) => {
+router.get('/consulta-data', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Sucursales visibles en consulta
     const { data: sucursales, error: errSuc } = await supabase
@@ -4333,14 +4489,14 @@ router.get('/consulta-data', verificarAuth, async (req, res) => {
 
     res.json({ sucursales: sucursales || [], stock: allStock })
   } catch (err) {
-    console.error('Error consulta-data:', err)
+    logger.error('Error consulta-data:', err)
     res.status(500).json({ error: 'Error al obtener datos de consulta' })
   }
-})
+}))
 
 // POST /api/pos/emails-pendientes/enviar — re-enviar emails de Factura A que no se enviaron
 // Auth: verificarAuth normal O header X-Admin-Key con SUPABASE_SERVICE_KEY
-router.post('/emails-pendientes/enviar', async (req, res) => {
+router.post('/emails-pendientes/enviar', asyncHandler(async (req, res) => {
   const adminKey = req.headers['x-admin-key']
   if (adminKey && adminKey === process.env.SUPABASE_SERVICE_KEY) {
     // OK — acceso admin directo
@@ -4349,7 +4505,7 @@ router.post('/emails-pendientes/enviar', async (req, res) => {
     return verificarAuth(req, res, () => handleEmailBatch(req, res))
   }
   return handleEmailBatch(req, res)
-})
+}))
 
 async function handleEmailBatch(req, res) {
   try {
@@ -4385,20 +4541,20 @@ async function handleEmailBatch(req, res) {
       } catch (err) {
         fallidos++
         detalles.push({ venta: v.numero_venta, status: 'error', error: err.message })
-        console.error(`[Email Batch] Error venta ${v.numero_venta}:`, err.message)
+        logger.error(`[Email Batch] Error venta ${v.numero_venta}:`, err.message)
       }
     }
 
-    console.log(`[Email Batch] Resultado: ${enviados} enviados, ${saltados} saltados, ${fallidos} fallidos de ${(ventas || []).length} pendientes`)
+    logger.info(`[Email Batch] Resultado: ${enviados} enviados, ${saltados} saltados, ${fallidos} fallidos de ${(ventas || []).length} pendientes`)
     res.json({ total: (ventas || []).length, enviados, saltados, fallidos, detalles })
   } catch (err) {
-    console.error('[Email Batch] Error:', err.message)
+    logger.error('[Email Batch] Error:', err.message)
     res.status(500).json({ error: err.message })
   }
 }
 
 // GET /api/pos/ventas/:id/comprobante.pdf — descarga pública de comprobante (con token HMAC)
-router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
+router.get('/ventas/:id/comprobante.pdf', asyncHandler(async (req, res) => {
   try {
     const { token } = req.query
     const ventaId = req.params.id
@@ -4433,7 +4589,7 @@ router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
         caeData.cae = centumData.CAE || null
         caeData.cae_vencimiento = centumData.FechaVencimientoCAE || null
       } catch (err) {
-        console.error('[PDF] Error obteniendo CAE:', err.message)
+        logger.error('[PDF] Error obteniendo CAE:', err.message)
       }
     }
 
@@ -4456,9 +4612,9 @@ router.get('/ventas/:id/comprobante.pdf', async (req, res) => {
     res.setHeader('Content-Disposition', `inline; filename="${tipoDoc}_${numDoc}.pdf"`)
     res.send(pdfBuffer)
   } catch (err) {
-    console.error('[PDF] Error generando comprobante:', err.message)
+    logger.error('[PDF] Error generando comprobante:', err.message)
     res.status(500).json({ error: 'Error generando comprobante' })
   }
-})
+}))
 
 module.exports = router

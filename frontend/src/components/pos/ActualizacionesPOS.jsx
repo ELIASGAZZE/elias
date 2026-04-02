@@ -1,6 +1,5 @@
 // Modal de actualizaciones de artículos — últimos 7 días con generación de PDF
 import React, { useState } from 'react'
-import jsPDF from 'jspdf'
 import api from '../../services/api'
 
 function obtenerUltimos7Dias() {
@@ -21,7 +20,8 @@ const formatPrecio = (n) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2 }).format(n)
 }
 
-function generarPDF(fecha, articulos) {
+async function generarPDF(fecha, articulos) {
+  const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF()
   const fechaLabel = new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
@@ -139,7 +139,7 @@ export default function ActualizacionesPOS({ onCerrar }) {
         setCargando(null)
         return
       }
-      generarPDF(fecha, data.articulos)
+      await generarPDF(fecha, data.articulos)
       setCargando(null)
     } catch (err) {
       setError(err.response?.data?.error || err.message)

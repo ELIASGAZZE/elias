@@ -63,8 +63,8 @@ const TareasAnalytics = () => {
   const [filtroDetalle, setFiltroDetalle] = useState(null) // 'a_tiempo' | 'atrasadas' | null
 
   useEffect(() => {
-    api.get('/api/sucursales').then(r => setSucursales(r.data)).catch(() => {})
-    api.get('/api/empleados').then(r => setEmpleados(r.data)).catch(() => {})
+    api.get('/api/sucursales').then(r => setSucursales(r.data)).catch(err => console.error('Error loading sucursales:', err.message))
+    api.get('/api/empleados').then(r => setEmpleados(r.data)).catch(err => console.error('Error loading employees:', err.message))
   }, [])
 
   useEffect(() => {

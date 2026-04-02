@@ -58,7 +58,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
   useEffect(() => {
     api.get('/api/sucursales')
       .then(({ data }) => setSucursales((data || []).filter(s => s.permite_pedidos)))
-      .catch(() => {})
+      .catch(err => console.error('Error loading sucursales:', err.message))
   }, [])
 
   // Persistir filtros en sessionStorage

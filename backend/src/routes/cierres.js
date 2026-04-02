@@ -5,6 +5,10 @@ const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData, getTransaccionesDetalle } = require('../config/centum')
 const { analizarCierreIA, chatCajas } = require('../services/claude')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { abrirCierreSchema, cerrarCierreSchema, editarConteoSchema, chatIASchema } = require('../schemas/cierres')
+const asyncHandler = require('../middleware/asyncHandler')
 
 const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
 
@@ -122,7 +126,7 @@ function construirContinuidadCambio(cierre, cierreAnterior, aperturaSiguiente) {
 // ── Rutas ────────────────────────────────────────────────────────────────────
 
 // GET /api/cierres — lista cierres con filtros
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     let query = supabase
       .from('cierres')
@@ -157,13 +161,13 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json(filtered)
   } catch (err) {
-    console.error('Error al obtener cierres:', err)
+    logger.error('Error al obtener cierres:', err)
     res.status(500).json({ error: 'Error al obtener cierres' })
   }
-})
+}))
 
 // GET /api/cierres/ultimo-cambio?caja_id=X — último cambio dejado en caja
-router.get('/ultimo-cambio', verificarAuth, async (req, res) => {
+router.get('/ultimo-cambio', verificarAuth, asyncHandler(async (req, res) => {
   const { caja_id } = req.query
   if (!caja_id) {
     return res.status(400).json({ error: 'caja_id es requerido' })
@@ -188,13 +192,13 @@ router.get('/ultimo-cambio', verificarAuth, async (req, res) => {
       cambio_monedas: data.cambio_monedas || {},
     })
   } catch (err) {
-    console.error('Error al obtener último cambio:', err)
+    logger.error('Error al obtener último cambio:', err)
     res.json({ cambio_billetes: {}, cambio_monedas: {} })
   }
-})
+}))
 
 // GET /api/cierres/validar-planilla/:planillaId?caja_id=X — valida planilla en Centum y cruce con caja/sucursal
-router.get('/validar-planilla/:planillaId', verificarAuth, async (req, res) => {
+router.get('/validar-planilla/:planillaId', verificarAuth, asyncHandler(async (req, res) => {
   const planillaNum = parseInt(req.params.planillaId)
   if (isNaN(planillaNum)) {
     return res.status(400).json({ error: 'El ID de planilla debe ser un número' })
@@ -243,13 +247,13 @@ router.get('/validar-planilla/:planillaId', verificarAuth, async (req, res) => {
       nombre_sucursal: planilla.nombre_sucursal,
     })
   } catch (err) {
-    console.error('Error al validar planilla en Centum:', err)
+    logger.error('Error al validar planilla en Centum:', err)
     res.status(503).json({ error: 'No se pudo conectar con el ERP', detalle: err.message })
   }
-})
+}))
 
 // GET /api/cierres/:id/comprobantes — comprobantes del ERP (facturas, NC, ND, anticipos)
-router.get('/:id/comprobantes', verificarAuth, async (req, res) => {
+router.get('/:id/comprobantes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -281,15 +285,15 @@ router.get('/:id/comprobantes', verificarAuth, async (req, res) => {
     if (transData.status === 'fulfilled') {
       resultado.transacciones = transData.value.transacciones
     } else {
-      console.error('Error al obtener transacciones:', transData.reason?.message)
+      logger.error('Error al obtener transacciones:', transData.reason?.message)
       resultado.transacciones = []
     }
     res.json(resultado)
   } catch (err) {
-    console.error('Error al obtener comprobantes:', err)
+    logger.error('Error al obtener comprobantes:', err)
     res.status(500).json({ error: 'Error al conectar con el ERP' })
   }
-})
+}))
 
 // GET /api/cierres/:id/auditoria — datos consolidados de auditoría para IA
 // ── Función reutilizable de auditoría (evita fetch interno) ─────────────────
@@ -557,19 +561,19 @@ async function obtenerDatosAuditoria(cierreId) {
     }
 }
 
-router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:id/auditoria', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const resultado = await obtenerDatosAuditoria(req.params.id)
     if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
     res.json(resultado.data)
   } catch (err) {
-    console.error('Error en auditoría de cierre:', err)
+    logger.error('Error en auditoría de cierre:', err)
     res.status(500).json({ error: 'Error al generar auditoría' })
   }
-})
+}))
 
 // GET /api/cierres/:id/analisis-ia — análisis automático de un cierre con IA
-router.get('/:id/analisis-ia', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.get('/:id/analisis-ia', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const resultado = await obtenerDatosAuditoria(req.params.id)
     if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
@@ -578,13 +582,13 @@ router.get('/:id/analisis-ia', verificarAuth, soloGestorOAdmin, async (req, res)
     const analisis = await analizarCierreIA(resultado.data, { forceRefresh })
     res.json(analisis)
   } catch (err) {
-    console.error('Error en análisis IA:', err)
+    logger.error('Error en análisis IA:', err)
     res.status(500).json({ error: err.message || 'Error al generar análisis de IA' })
   }
-})
+}))
 
 // POST /api/cierres/:id/chat-ia — chat sobre un cierre específico
-router.post('/:id/chat-ia', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/:id/chat-ia', verificarAuth, soloGestorOAdmin, validate(chatIASchema), asyncHandler(async (req, res) => {
   try {
     const { mensaje, historial } = req.body
     if (!mensaje || !mensaje.trim()) {
@@ -598,13 +602,13 @@ router.post('/:id/chat-ia', verificarAuth, soloGestorOAdmin, async (req, res) =>
     const respuesta = await chatCajas(mensaje.trim(), historial || [], contexto)
     res.json({ respuesta })
   } catch (err) {
-    console.error('Error en chat IA:', err)
+    logger.error('Error en chat IA:', err)
     res.status(500).json({ error: err.message || 'Error al procesar mensaje' })
   }
-})
+}))
 
 // POST /api/cierres/chat-ia-general — chat general de auditoría sin cierre específico
-router.post('/chat-ia-general', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/chat-ia-general', verificarAuth, soloGestorOAdmin, validate(chatIASchema), asyncHandler(async (req, res) => {
   try {
     const { mensaje, historial } = req.body
     if (!mensaje || !mensaje.trim()) {
@@ -627,13 +631,13 @@ router.post('/chat-ia-general', verificarAuth, soloGestorOAdmin, async (req, res
     const respuesta = await chatCajas(mensaje.trim(), historial || [], contexto)
     res.json({ respuesta })
   } catch (err) {
-    console.error('Error en chat IA general:', err)
+    logger.error('Error en chat IA general:', err)
     res.status(500).json({ error: err.message || 'Error al procesar mensaje' })
   }
-})
+}))
 
 // GET /api/cierres/:id — detalle de un cierre (CIEGO para gestor)
-router.get('/:id', verificarAuth, async (req, res) => {
+router.get('/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error } = await supabase
       .from('cierres')
@@ -725,13 +729,13 @@ router.get('/:id', verificarAuth, async (req, res) => {
 
     res.json({ ...cierre, cierre_anterior, apertura_siguiente, _blind: false })
   } catch (err) {
-    console.error('Error al obtener cierre:', err)
+    logger.error('Error al obtener cierre:', err)
     res.status(500).json({ error: 'Error al obtener cierre' })
   }
-})
+}))
 
 // POST /api/cierres/abrir — operario/admin abre una caja
-router.post('/abrir', verificarAuth, async (req, res) => {
+router.post('/abrir', verificarAuth, validate(abrirCierreSchema), asyncHandler(async (req, res) => {
   const { rol } = req.perfil
 
   if (rol === 'gestor') {
@@ -739,16 +743,6 @@ router.post('/abrir', verificarAuth, async (req, res) => {
   }
 
   const { caja_id, codigo_empleado, empleado_id, planilla_id, fondo_fijo, fondo_fijo_billetes, fondo_fijo_monedas, diferencias_apertura, observaciones_apertura, skip_validacion } = req.body
-
-  if (!caja_id) {
-    return res.status(400).json({ error: 'Seleccioná una caja' })
-  }
-  if (!codigo_empleado && !empleado_id) {
-    return res.status(400).json({ error: 'Ingresá el código del empleado' })
-  }
-  if (!planilla_id || !planilla_id.toString().trim()) {
-    return res.status(400).json({ error: 'El ID de planilla de caja es requerido' })
-  }
 
   try {
     // Resolver empleado por código si se envió codigo_empleado
@@ -798,11 +792,11 @@ router.post('/abrir', verificarAuth, async (req, res) => {
         }
       }
     } catch (centumErr) {
-      console.error('Error al validar planilla en Centum:', centumErr)
+      logger.error('Error al validar planilla en Centum:', centumErr)
       if (!skip_validacion) {
         return res.status(503).json({ error: 'No se pudo conectar con el ERP para validar la planilla' })
       }
-      console.warn(`[Cierres] Planilla ${planillaNum} abierta SIN validación Centum (ERP no disponible)`)
+      logger.warn(`[Cierres] Planilla ${planillaNum} abierta SIN validación Centum (ERP no disponible)`)
     }
 
     // Validar que la caja no esté ya abierta
@@ -848,13 +842,13 @@ router.post('/abrir', verificarAuth, async (req, res) => {
 
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al abrir caja:', err)
+    logger.error('Error al abrir caja:', err)
     res.status(500).json({ error: 'Error al abrir caja' })
   }
-})
+}))
 
 // PUT /api/cierres/:id/cerrar — operario/admin cierra la caja con el conteo completo
-router.put('/:id/cerrar', verificarAuth, async (req, res) => {
+router.put('/:id/cerrar', verificarAuth, validate(cerrarCierreSchema), asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -920,13 +914,13 @@ router.put('/:id/cerrar', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al cerrar caja:', err)
+    logger.error('Error al cerrar caja:', err)
     res.status(500).json({ error: 'Error al cerrar caja' })
   }
-})
+}))
 
 // PUT /api/cierres/:id/editar-conteo — cajero edita su conteo antes de verificación
-router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
+router.put('/:id/editar-conteo', verificarAuth, validate(editarConteoSchema), asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -993,7 +987,7 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
     const nuevoCambioBilletes = cambio_billetes || {}
     const nuevoCambioMonedas = cambio_monedas || {}
 
-    console.log('[editar-conteo] Buscando cierre siguiente para caja_id:', cierre.caja_id, 'después de:', cierre.created_at)
+    logger.info('[editar-conteo] Buscando cierre siguiente para caja_id:', cierre.caja_id, 'después de:', cierre.created_at)
 
     const { data: siguientes, error: errorSig } = await supabase
       .from('cierres')
@@ -1003,7 +997,7 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
       .order('created_at', { ascending: true })
       .limit(1)
 
-    console.log('[editar-conteo] Resultado búsqueda siguiente:', { encontrados: siguientes?.length, error: errorSig?.message })
+    logger.info('[editar-conteo] Resultado búsqueda siguiente:', { encontrados: siguientes?.length, error: errorSig?.message })
 
     if (siguientes && siguientes.length > 0) {
       const siguienteCierre = siguientes[0]
@@ -1011,7 +1005,7 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
       const fondoMonedas = siguienteCierre.fondo_fijo_monedas || {}
       const diferencias = {}
 
-      console.log('[editar-conteo] Cierre siguiente:', siguienteCierre.planilla_id, '| cambio editado:', nuevoCambioBilletes, '| fondo siguiente:', fondoBilletes)
+      logger.info('[editar-conteo] Cierre siguiente:', siguienteCierre.planilla_id, '| cambio editado:', nuevoCambioBilletes, '| fondo siguiente:', fondoBilletes)
 
       // Comparar billetes
       const allBilletes = new Set([...Object.keys(nuevoCambioBilletes), ...Object.keys(fondoBilletes)])
@@ -1033,7 +1027,7 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
         }
       }
 
-      console.log('[editar-conteo] Diferencias recalculadas:', Object.keys(diferencias).length > 0 ? diferencias : 'NINGUNA')
+      logger.info('[editar-conteo] Diferencias recalculadas:', Object.keys(diferencias).length > 0 ? diferencias : 'NINGUNA')
 
       await supabase
         .from('cierres')
@@ -1043,13 +1037,13 @@ router.put('/:id/editar-conteo', verificarAuth, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al editar conteo:', err)
+    logger.error('Error al editar conteo:', err)
     res.status(500).json({ error: 'Error al editar conteo' })
   }
-})
+}))
 
 // GET /api/cierres/:id/verificacion — obtener la verificación de un cierre
-router.get('/:id/verificacion', verificarAuth, async (req, res) => {
+router.get('/:id/verificacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -1077,13 +1071,13 @@ router.get('/:id/verificacion', verificarAuth, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener verificación:', err)
+    logger.error('Error al obtener verificación:', err)
     res.status(500).json({ error: 'Error al obtener verificación' })
   }
-})
+}))
 
 // POST /api/cierres/:id/verificar — gestor/admin envía verificación ciega
-router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -1138,13 +1132,13 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, async (req, res) 
 
     res.status(201).json(verificacion)
   } catch (err) {
-    console.error('Error al verificar cierre:', err)
+    logger.error('Error al verificar cierre:', err)
     res.status(500).json({ error: 'Error al verificar cierre' })
   }
-})
+}))
 
 // GET /api/cierres/:id/erp — datos del ERP (Centum) para la planilla de este cierre
-router.get('/:id/erp', verificarAuth, async (req, res) => {
+router.get('/:id/erp', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -1173,13 +1167,13 @@ router.get('/:id/erp', verificarAuth, async (req, res) => {
 
     res.json(erpData)
   } catch (err) {
-    console.error('Error al obtener datos ERP:', err)
+    logger.error('Error al obtener datos ERP:', err)
     res.status(500).json({ error: 'Error al conectar con el ERP' })
   }
-})
+}))
 
 // GET /api/cierres/:id/ventas-sin-confirmar — ventas cerradas sin confirmar en la sesión
-router.get('/:id/ventas-sin-confirmar', verificarAuth, async (req, res) => {
+router.get('/:id/ventas-sin-confirmar', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -1203,13 +1197,13 @@ router.get('/:id/ventas-sin-confirmar', verificarAuth, async (req, res) => {
     const data = await getVentasSinConfirmar(planillaId)
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener ventas sin confirmar:', err)
+    logger.error('Error al obtener ventas sin confirmar:', err)
     res.status(500).json({ error: 'Error al conectar con el ERP' })
   }
-})
+}))
 
 // PUT /api/cierres/:id — admin edita planilla_id de un cierre
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { planilla_id } = req.body
     if (!planilla_id || !planilla_id.toString().trim()) {
@@ -1242,13 +1236,13 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al editar cierre:', err)
+    logger.error('Error al editar cierre:', err)
     res.status(500).json({ error: 'Error al editar cierre' })
   }
-})
+}))
 
 // DELETE /api/cierres/:id — admin elimina un cierre y sus datos relacionados
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres')
@@ -1293,9 +1287,9 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ ok: true, planilla_id: cierre.planilla_id })
   } catch (err) {
-    console.error('Error al eliminar cierre:', err)
+    logger.error('Error al eliminar cierre:', err)
     res.status(500).json({ error: 'Error al eliminar cierre' })
   }
-})
+}))
 
 module.exports = router

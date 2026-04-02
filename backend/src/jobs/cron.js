@@ -1,6 +1,7 @@
 // Tareas programadas (cron jobs)
 const cron = require('node-cron')
 const https = require('https')
+const logger = require('../config/logger')
 const { sincronizarERP, sincronizarStock, sincronizarStockMultiSucursal, sincronizarImagenesPresencia } = require('../services/syncERP')
 const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = require('../services/centumClientes')
 const { retrySyncVentasCentum, retrySyncCAE, retryEmailsPendientes } = require('../services/centumVentasPOS')
@@ -11,7 +12,7 @@ const { registrarLlamada } = require('../services/apiLogger')
 const cronLocks = {}
 async function withLock(name, fn) {
   if (cronLocks[name]) {
-    console.log(`[CRON] ${name} ya está corriendo, saltando...`)
+    logger.info(`[CRON] ${name} ya está corriendo, saltando...`)
     return null
   }
   cronLocks[name] = true
@@ -27,33 +28,33 @@ async function iniciarCronJobs() {
   // Render puede correr instancia vieja y nueva simultáneamente durante ~30-60s.
   // Este delay asegura que la instancia vieja termine antes de que la nueva arranque crons.
   const STARTUP_DELAY_MS = 45000 // 45 segundos
-  console.log(`[CRON] Esperando ${STARTUP_DELAY_MS/1000}s antes de iniciar crons (anti-race deploy)...`)
+  logger.info(`[CRON] Esperando ${STARTUP_DELAY_MS/1000}s antes de iniciar crons (anti-race deploy)...`)
   await new Promise(r => setTimeout(r, STARTUP_DELAY_MS))
-  console.log('[CRON] Delay completado, iniciando cron jobs...')
+  logger.info('[CRON] Delay completado, iniciando cron jobs...')
 
   // Sincronización ERP: todos los días a las 06:00 UTC (03:00 Argentina)
   cron.schedule('0 6 * * *', async () => {
     const inicio = new Date().toISOString()
-    console.log(`[CRON ${inicio}] Iniciando sincronización ERP automática...`)
+    logger.info(`[CRON ${inicio}] Iniciando sincronización ERP automática...`)
 
     try {
       const resultado = await sincronizarERP('cron')
-      console.log(`[CRON ${new Date().toISOString()}] Sync ERP completada: ${resultado.mensaje}`)
+      logger.info(`[CRON ${new Date().toISOString()}] Sync ERP completada: ${resultado.mensaje}`)
     } catch (err) {
-      console.error(`[CRON ${new Date().toISOString()}] Error en sync ERP:`, err.message)
+      logger.error(`[CRON ${new Date().toISOString()}] Error en sync ERP:`, err.message)
     }
   })
 
   // Sincronización stock depósito central: cada hora en punto
   cron.schedule('0 * * * *', async () => {
     const inicio = new Date().toISOString()
-    console.log(`[CRON ${inicio}] Iniciando sincronización de stock depósito...`)
+    logger.info(`[CRON ${inicio}] Iniciando sincronización de stock depósito...`)
 
     try {
       const resultado = await sincronizarStock(false, 'cron')
-      console.log(`[CRON ${new Date().toISOString()}] Sync stock completada: ${resultado.mensaje}`)
+      logger.info(`[CRON ${new Date().toISOString()}] Sync stock completada: ${resultado.mensaje}`)
     } catch (err) {
-      console.error(`[CRON ${new Date().toISOString()}] Error en sync stock:`, err.message)
+      logger.error(`[CRON ${new Date().toISOString()}] Error en sync stock:`, err.message)
     }
   })
 
@@ -61,9 +62,9 @@ async function iniciarCronJobs() {
   const BACKEND_URL = process.env.BACKEND_URL || 'https://padano-backend.onrender.com'
   cron.schedule('*/14 * * * *', () => {
     https.get(`${BACKEND_URL}/health`, (res) => {
-      console.log(`[KEEP-ALIVE] Ping OK (${res.statusCode})`)
+      logger.info(`[KEEP-ALIVE] Ping OK (${res.statusCode})`)
     }).on('error', (err) => {
-      console.error('[KEEP-ALIVE] Ping falló:', err.message)
+      logger.error('[KEEP-ALIVE] Ping falló:', err.message)
     })
   })
 
@@ -73,10 +74,10 @@ async function iniciarCronJobs() {
       try {
         const resultado = await syncClientesRecientes(2)
         if (resultado.nuevos > 0 || resultado.actualizados > 0) {
-          console.log(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
+          logger.info(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
         }
       } catch (err) {
-        console.error('[SyncClientes] Error:', err.message)
+        logger.error('[SyncClientes] Error:', err.message)
       }
     })
   })
@@ -87,10 +88,10 @@ async function iniciarCronJobs() {
       try {
         const resultado = await retrySyncCentum()
         if (resultado.reintentados > 0) {
-          console.log(`[RetryCentum] ${resultado.exitosos}/${resultado.reintentados} clientes sincronizados a Centum (${resultado.fallidos} fallidos)`)
+          logger.info(`[RetryCentum] ${resultado.exitosos}/${resultado.reintentados} clientes sincronizados a Centum (${resultado.fallidos} fallidos)`)
         }
       } catch (err) {
-        console.error('[RetryCentum] Error:', err.message)
+        logger.error('[RetryCentum] Error:', err.message)
       }
     })
   })
@@ -101,10 +102,10 @@ async function iniciarCronJobs() {
       try {
         const resultado = await syncClientesFaltantes()
         if (resultado.insertados > 0) {
-          console.log(`[SyncFaltantes] ${resultado.insertados} clientes faltantes importados de Centum BI`)
+          logger.info(`[SyncFaltantes] ${resultado.insertados} clientes faltantes importados de Centum BI`)
         }
       } catch (err) {
-        console.error('[SyncFaltantes] Error:', err.message)
+        logger.error('[SyncFaltantes] Error:', err.message)
       }
     })
   })
@@ -116,10 +117,10 @@ async function iniciarCronJobs() {
       try {
         const resultado = await retrySyncVentasCentum()
         if (resultado.reintentadas > 0) {
-          console.log(`[RetryCentumVentas] ${resultado.exitosas}/${resultado.reintentadas} ventas sincronizadas a Centum (${resultado.fallidas} fallidas)`)
+          logger.info(`[RetryCentumVentas] ${resultado.exitosas}/${resultado.reintentadas} ventas sincronizadas a Centum (${resultado.fallidas} fallidas)`)
         }
       } catch (err) {
-        console.error('[RetryCentumVentas] Error:', err.message)
+        logger.error('[RetryCentumVentas] Error:', err.message)
       }
     })
   })
@@ -129,10 +130,10 @@ async function iniciarCronJobs() {
     try {
       const resultado = await retrySyncCAE()
       if (resultado.revisadas > 0) {
-        console.log(`[RetryCAE] ${resultado.conCAE}/${resultado.revisadas} ventas obtuvieron CAE (+ email automático si aplica)`)
+        logger.info(`[RetryCAE] ${resultado.conCAE}/${resultado.revisadas} ventas obtuvieron CAE (+ email automático si aplica)`)
       }
     } catch (err) {
-      console.error('[RetryCAE] Error:', err.message)
+      logger.error('[RetryCAE] Error:', err.message)
     }
   })
 
@@ -142,10 +143,10 @@ async function iniciarCronJobs() {
       try {
         const resultado = await retryEmailsPendientes()
         if (resultado.pendientes > 0) {
-          console.log(`[RetryEmails] ${resultado.enviados}/${resultado.pendientes} emails enviados (${resultado.sinEmail} sin email cliente, ${resultado.fallidos} fallidos)`)
+          logger.info(`[RetryEmails] ${resultado.enviados}/${resultado.pendientes} emails enviados (${resultado.sinEmail} sin email cliente, ${resultado.fallidos} fallidos)`)
         }
       } catch (err) {
-        console.error('[RetryEmails] Error:', err.message)
+        logger.error('[RetryEmails] Error:', err.message)
       }
     })
   })
@@ -156,19 +157,19 @@ async function iniciarCronJobs() {
     const ayer = new Date()
     ayer.setDate(ayer.getDate() - 1)
     const fechaAyer = ayer.toISOString().split('T')[0]
-    console.log(`[CRON ${new Date().toISOString()}] Iniciando análisis batch para ${fechaAyer}...`)
+    logger.info(`[CRON ${new Date().toISOString()}] Iniciando análisis batch para ${fechaAyer}...`)
 
     const inicioBatch = Date.now()
     try {
       const resultado = await analizarBatch(fechaAyer)
-      console.log(`[CRON] Batch completado: ${resultado.total} cierres, ${resultado.con_diferencia} con diferencia, puntaje promedio: ${resultado.puntaje_promedio || 'N/A'}`)
+      logger.info(`[CRON] Batch completado: ${resultado.total} cierres, ${resultado.con_diferencia} con diferencia, puntaje promedio: ${resultado.puntaje_promedio || 'N/A'}`)
       registrarLlamada({
         servicio: 'batch_ia', endpoint: `analizarBatch(${fechaAyer})`, metodo: 'BATCH',
         estado: 'ok', duracion_ms: Date.now() - inicioBatch,
         items_procesados: resultado.total, origen: 'cron',
       })
     } catch (err) {
-      console.error('[CRON] Error en análisis batch:', err.message)
+      logger.error('[CRON] Error en análisis batch:', err.message)
       registrarLlamada({
         servicio: 'batch_ia', endpoint: `analizarBatch(${fechaAyer})`, metodo: 'BATCH',
         estado: 'error', duracion_ms: Date.now() - inicioBatch,
@@ -181,9 +182,9 @@ async function iniciarCronJobs() {
   cron.schedule('*/30 * * * *', async () => {
     try {
       const resultado = await sincronizarStockMultiSucursal('cron')
-      console.log(`[StockMulti] ${resultado.mensaje}`)
+      logger.info(`[StockMulti] ${resultado.mensaje}`)
     } catch (err) {
-      console.error('[StockMulti] Error:', err.message)
+      logger.error('[StockMulti] Error:', err.message)
     }
   })
 
@@ -191,24 +192,24 @@ async function iniciarCronJobs() {
   cron.schedule('10 6 * * *', async () => {
     try {
       const resultado = await sincronizarImagenesPresencia('cron')
-      console.log(`[SyncImágenes] ${resultado.mensaje}`)
+      logger.info(`[SyncImágenes] ${resultado.mensaje}`)
     } catch (err) {
-      console.error('[SyncImágenes] Error:', err.message)
+      logger.error('[SyncImágenes] Error:', err.message)
     }
   })
 
-  console.log('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
-  console.log('[CRON] Sincronización stock depósito programada: cada hora en punto')
-  console.log('[CRON] Keep-alive programado: cada 14 minutos')
-  console.log('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
-  console.log('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
-  console.log('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
-  console.log('[CRON] Retry ventas pendientes Centum: cada 3 minutos (cola secuencial, anti-duplicación)')
-  console.log('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
-  console.log('[CRON] Retry emails pendientes: cada 10 minutos (offset 7)')
-  console.log('[CRON] Stock multi-sucursal: cada 30 minutos')
-  console.log('[CRON] Presencia imágenes: 06:10 UTC diariamente')
-  console.log('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
+  logger.info('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
+  logger.info('[CRON] Sincronización stock depósito programada: cada hora en punto')
+  logger.info('[CRON] Keep-alive programado: cada 14 minutos')
+  logger.info('[CRON] Sync clientes incremental: cada 5 minutos (últimas 2h)')
+  logger.info('[CRON] Retry clientes pendientes Centum: cada 5 minutos')
+  logger.info('[CRON] Full scan clientes faltantes: cada hora (minuto 30)')
+  logger.info('[CRON] Retry ventas pendientes Centum: cada 3 minutos (cola secuencial, anti-duplicación)')
+  logger.info('[CRON] Retry CAE + email automático: cada 5 minutos (offset 4)')
+  logger.info('[CRON] Retry emails pendientes: cada 10 minutos (offset 7)')
+  logger.info('[CRON] Stock multi-sucursal: cada 30 minutos')
+  logger.info('[CRON] Presencia imágenes: 06:10 UTC diariamente')
+  logger.info('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
 }
 
 module.exports = { iniciarCronJobs }

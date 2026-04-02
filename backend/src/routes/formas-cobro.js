@@ -3,27 +3,34 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { appCache } = require('../config/cache')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/formas-cobro
 // Cualquier usuario autenticado: lista todas las formas de cobro
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    const cached = appCache.get('formas_cobro:all')
+    if (cached) return res.json(cached)
+
     const { data, error } = await supabase
       .from('formas_cobro')
       .select('*')
       .order('orden')
 
     if (error) throw error
+    appCache.set('formas_cobro:all', data, 5 * 60 * 1000)
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener formas de cobro:', err)
+    logger.error('Error al obtener formas de cobro:', err)
     res.status(500).json({ error: 'Error al obtener formas de cobro' })
   }
-})
+}))
 
 // POST /api/formas-cobro
 // Admin: crea una nueva forma de cobro
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, orden } = req.body
 
@@ -46,16 +53,17 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
       }
       throw error
     }
+    appCache.del('formas_cobro:all')
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear forma de cobro:', err)
+    logger.error('Error al crear forma de cobro:', err)
     res.status(500).json({ error: 'Error al crear forma de cobro' })
   }
-})
+}))
 
 // PUT /api/formas-cobro/:id
 // Admin: edita una forma de cobro
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, activo, orden } = req.body
@@ -87,16 +95,17 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
       }
       throw error
     }
+    appCache.del('formas_cobro:all')
     res.json(data)
   } catch (err) {
-    console.error('Error al editar forma de cobro:', err)
+    logger.error('Error al editar forma de cobro:', err)
     res.status(500).json({ error: 'Error al editar forma de cobro' })
   }
-})
+}))
 
 // DELETE /api/formas-cobro/:id
 // Admin: elimina una forma de cobro
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase
@@ -105,11 +114,12 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
       .eq('id', id)
 
     if (error) throw error
+    appCache.del('formas_cobro:all')
     res.json({ mensaje: 'Forma de cobro eliminada correctamente' })
   } catch (err) {
-    console.error('Error al eliminar forma de cobro:', err)
+    logger.error('Error al eliminar forma de cobro:', err)
     res.status(500).json({ error: 'Error al eliminar forma de cobro' })
   }
-})
+}))
 
 module.exports = router

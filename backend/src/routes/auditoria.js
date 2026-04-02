@@ -3,10 +3,12 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // POST /api/auditoria/cancelacion
 // Registra una venta cancelada
-router.post('/cancelacion', verificarAuth, async (req, res) => {
+router.post('/cancelacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { motivo, items, subtotal, total, cliente_nombre, caja_id, sucursal_id, cierre_id } = req.body
     if (!motivo) return res.status(400).json({ error: 'Motivo requerido' })
@@ -33,15 +35,15 @@ router.post('/cancelacion', verificarAuth, async (req, res) => {
 
     if (error) {
       // Si la tabla no existe, logueamos pero no rompemos el flujo
-      console.warn('[Auditoria] No se pudo registrar cancelación (tabla puede no existir):', error.message)
+      logger.warn('[Auditoria] No se pudo registrar cancelación (tabla puede no existir):', error.message)
       return res.json({ ok: true, warning: 'No se pudo persistir' })
     }
     res.json({ ok: true })
   } catch (err) {
-    console.error('[Auditoria] Error al registrar cancelación:', err.message)
+    logger.error('[Auditoria] Error al registrar cancelación:', err.message)
     res.json({ ok: true, warning: 'Error interno' })
   }
-})
+}))
 
 // Helper para queries seguras (devuelve [] si la tabla no existe)
 async function safeQuery(query) {
@@ -57,7 +59,7 @@ async function safeQuery(query) {
 
 // GET /api/auditoria/dashboard
 // Datos agregados para el dashboard de auditoría
-router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
+router.get('/dashboard', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { desde, hasta } = req.query
     if (!desde || !hasta) return res.status(400).json({ error: 'Parámetros desde y hasta requeridos' })
@@ -181,9 +183,9 @@ router.get('/dashboard', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ ventas, cancelaciones, eliminaciones, cierres, cambiosPrecio })
   } catch (err) {
-    console.error('[Auditoria] Error dashboard:', err.message)
+    logger.error('[Auditoria] Error dashboard:', err.message)
     res.status(500).json({ error: 'Error al obtener datos de auditoría' })
   }
-})
+}))
 
 module.exports = router

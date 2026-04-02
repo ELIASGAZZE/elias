@@ -1,5 +1,6 @@
 // Servicio de logging para llamadas a APIs externas
 const supabase = require('../config/supabase')
+const logger = require('../config/logger')
 
 /**
  * Registra una llamada a API externa en la tabla api_logs.
@@ -30,7 +31,7 @@ async function registrarLlamada(datos) {
       origen: datos.origen || 'cron',
     })
   } catch (err) {
-    console.error('[apiLogger] Error al registrar llamada:', err.message)
+    logger.error('[apiLogger] Error al registrar llamada:', err.message)
   }
 }
 

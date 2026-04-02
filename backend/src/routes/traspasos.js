@@ -4,13 +4,15 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { ajusteStockNegativo, ajusteStockPositivo } = require('../services/centumAjusteStock')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // ═══════════════════════════════════════════════════════════════
 // Artículos ligero — solo los campos necesarios para preparación
 // ═══════════════════════════════════════════════════════════════
 
 // Buscar artículo por código (para control ciego)
-router.get('/articulo-por-codigo/:codigo', verificarAuth, async (req, res) => {
+router.get('/articulo-por-codigo/:codigo', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const codigo = req.params.codigo.trim()
     if (!codigo) return res.status(400).json({ error: 'Código requerido' })
@@ -53,9 +55,9 @@ router.get('/articulo-por-codigo/:codigo', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/articulos-enriquecer', verificarAuth, async (req, res) => {
+router.post('/articulos-enriquecer', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { ids } = req.body // array de id_centum (articulo_id en ordenes)
     if (!Array.isArray(ids) || ids.length === 0) return res.json([])
@@ -84,10 +86,10 @@ router.post('/articulos-enriquecer', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Actualizar peso min/max de un artículo pesable (auto-ajuste desde preparación)
-router.put('/articulos/:id/pesos', verificarAuth, async (req, res) => {
+router.put('/articulos/:id/pesos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { peso } = req.body
@@ -117,13 +119,13 @@ router.put('/articulos/:id/pesos', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Stock por sucursal (para mostrar en picker de artículos)
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/stock/:sucursalId', verificarAuth, async (req, res) => {
+router.get('/stock/:sucursalId', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Obtener centum_sucursal_id de la sucursal
     const { data: suc } = await supabase
@@ -158,13 +160,13 @@ router.get('/stock/:sucursalId', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Config
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/config', verificarAuth, async (req, res) => {
+router.get('/config', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase.from('traspaso_config').select('*')
     if (error) throw error
@@ -174,9 +176,9 @@ router.get('/config', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/config', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/config', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const entries = Object.entries(req.body)
     for (const [clave, valor] of entries) {
@@ -186,13 +188,13 @@ router.put('/config', verificarAuth, soloAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Dashboard
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/dashboard', verificarAuth, async (req, res) => {
+router.get('/dashboard', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const hoy = new Date().toISOString().split('T')[0]
 
@@ -215,13 +217,13 @@ router.get('/dashboard', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Órdenes CRUD
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/ordenes', verificarAuth, async (req, res) => {
+router.get('/ordenes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { estado, sucursal, desde, hasta } = req.query
     let query = supabase
@@ -262,9 +264,9 @@ router.get('/ordenes', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/ordenes/:id', verificarAuth, async (req, res) => {
+router.get('/ordenes/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -299,9 +301,9 @@ router.get('/ordenes/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.post('/ordenes', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/ordenes', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { sucursal_origen_id, sucursal_destino_id, items, notas } = req.body
     if (!sucursal_origen_id || !sucursal_destino_id) {
@@ -338,9 +340,9 @@ router.post('/ordenes', verificarAuth, soloGestorOAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/ordenes/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // Solo editar pendientees
     const { data: orden } = await supabase
@@ -371,9 +373,9 @@ router.put('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) => 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: orden } = await supabase
       .from('ordenes_traspaso')
@@ -396,7 +398,7 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Transiciones de estado
@@ -404,7 +406,7 @@ router.delete('/ordenes/:id', verificarAuth, soloGestorOAdmin, async (req, res) 
 
 // GET /api/traspasos/asignar-preparacion
 // Busca la orden pendiente más antigua, la pasa a en_preparacion y la devuelve
-router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
+router.get('/asignar-preparacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Buscar la orden pendiente más antigua
     const { data: pendientes, error: errBuscar } = await supabase
@@ -450,9 +452,9 @@ router.get('/asignar-preparacion', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -471,9 +473,9 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -546,7 +548,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
           .eq('id', art.id)
       }
     } catch (pesoErr) {
-      console.error('Error actualizando pesos automáticos:', pesoErr)
+      logger.error('Error actualizando pesos automáticos:', pesoErr)
       // No falla la operación principal
     }
 
@@ -572,7 +574,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
         const { error: faltErr } = await supabase
           .from('traspaso_articulos_faltantes')
           .insert(rows)
-        if (faltErr) console.error('Error insertando faltantes:', faltErr)
+        if (faltErr) logger.error('Error insertando faltantes:', faltErr)
       }
 
       // Crear nueva orden con los faltantes si se pidió
@@ -610,14 +612,14 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
           .single()
 
         if (nuevaErr) {
-          console.error('Error creando orden con faltantes:', nuevaErr)
+          logger.error('Error creando orden con faltantes:', nuevaErr)
         } else {
           nueva_orden_id = nuevaOrden.id
           nueva_orden_numero = nuevaOrden.numero
         }
       }
     } catch (faltantesErr) {
-      console.error('Error procesando faltantes:', faltantesErr)
+      logger.error('Error procesando faltantes:', faltantesErr)
       // No falla la operación principal
     }
 
@@ -625,9 +627,9 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, async (req
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: orden } = await supabase
       .from('ordenes_traspaso')
@@ -674,9 +676,9 @@ router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, async (req
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
+router.put('/ordenes/:id/recibir', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Validar que todos los canastos estén verificados
     const { data: canastos } = await supabase
@@ -731,13 +733,13 @@ router.put('/ordenes/:id/recibir', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Pick (guardar progreso de preparación en items de la orden)
 // ═══════════════════════════════════════════════════════════════
 
-router.put('/ordenes/:id/pick', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/ordenes/:id/pick', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { items, preparacion_state } = req.body
     if (!Array.isArray(items)) return res.status(400).json({ error: 'items requerido' })
@@ -761,13 +763,13 @@ router.put('/ordenes/:id/pick', verificarAuth, soloGestorOAdmin, async (req, res
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Canastos (legacy)
 // ═══════════════════════════════════════════════════════════════
 
-router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     // Validar que la orden esté en preparación
     const { data: orden } = await supabase
@@ -831,10 +833,10 @@ router.post('/ordenes/:id/canastos', verificarAuth, soloGestorOAdmin, async (req
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Despachar canasto por escaneo (DEBE ir antes de /canastos/:id para evitar conflicto)
-router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
+router.put('/canastos/despachar-scan', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { precinto, canasto_id } = req.body
     if (!precinto && !canasto_id) return res.status(400).json({ error: 'Precinto o canasto_id requerido' })
@@ -862,7 +864,7 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
     }
 
     if (errBuscar || !canasto) {
-      console.error('[despachar-scan] No encontrado:', { canasto_id, precinto, errBuscar: errBuscar?.message || errBuscar, canasto })
+      logger.error('[despachar-scan] No encontrado:', { canasto_id, precinto, errBuscar: errBuscar?.message || errBuscar, canasto })
       return res.status(404).json({ error: canasto_id ? 'Canasto no encontrado' : `Canasto con precinto "${precinto}" no encontrado`, debug: { errBuscar: errBuscar?.message, canasto_id, precinto } })
     }
 
@@ -973,13 +975,13 @@ router.put('/canastos/despachar-scan', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Recibir canasto por escaneo libre (sin seleccionar orden)
 // ═══════════════════════════════════════════════════════════════
 
-router.put('/canastos/recibir-scan', verificarAuth, async (req, res) => {
+router.put('/canastos/recibir-scan', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { canasto_id } = req.body
     if (!canasto_id) return res.status(400).json({ error: 'canasto_id requerido' })
@@ -1062,13 +1064,13 @@ router.put('/canastos/recibir-scan', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Canastos en tránsito hacia la sucursal del usuario
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/canastos/en-transito-mi-sucursal', verificarAuth, async (req, res) => {
+router.get('/canastos/en-transito-mi-sucursal', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const userSucursalId = req.perfil.sucursales?.id || req.perfil.sucursal_id
     if (!userSucursalId) {
@@ -1103,10 +1105,10 @@ router.get('/canastos/en-transito-mi-sucursal', verificarAuth, async (req, res) 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Canastos con diferencia pendientes de control en mi sucursal
-router.get('/canastos/con-diferencia-mi-sucursal', verificarAuth, async (req, res) => {
+router.get('/canastos/con-diferencia-mi-sucursal', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const userSucursalId = req.perfil.sucursales?.id || req.perfil.sucursal_id
     if (!userSucursalId) return res.json([])
@@ -1143,9 +1145,9 @@ router.get('/canastos/con-diferencia-mi-sucursal', verificarAuth, async (req, re
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: canasto } = await supabase
       .from('traspaso_canastos')
@@ -1179,9 +1181,9 @@ router.put('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) =>
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: canasto } = await supabase
       .from('traspaso_canastos')
@@ -1216,9 +1218,9 @@ router.put('/canastos/:id/cerrar', verificarAuth, soloGestorOAdmin, async (req, 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/pesar-destino', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { peso_destino } = req.body
     if (peso_destino === undefined || peso_destino === null) {
@@ -1272,10 +1274,10 @@ router.put('/canastos/:id/pesar-destino', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Conteo ciego para bultos en recepción
-router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/conteo-ciego', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { items } = req.body
     if (!Array.isArray(items) || items.length === 0) {
@@ -1338,10 +1340,10 @@ router.put('/canastos/:id/conteo-ciego', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Items consolidados para control de artículos (incluye hijos si es pallet)
-router.get('/canastos/:id/items-control', verificarAuth, async (req, res) => {
+router.get('/canastos/:id/items-control', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: canasto } = await supabase
       .from('traspaso_canastos')
@@ -1381,10 +1383,10 @@ router.get('/canastos/:id/items-control', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Control de artículos individuales (post-diferencia en peso/bultos)
-router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/control-articulos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { items_recibidos, fotos } = req.body
     if (!Array.isArray(items_recibidos) || items_recibidos.length === 0) {
@@ -1530,10 +1532,10 @@ router.put('/canastos/:id/control-articulos', verificarAuth, async (req, res) =>
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Verificar artículo extra: ¿está en la orden? ¿en qué canasto fue preparado?
-router.post('/canastos/:id/verificar-articulo-extra', verificarAuth, async (req, res) => {
+router.post('/canastos/:id/verificar-articulo-extra', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { articulo_id, codigo } = req.body
     if (!articulo_id && !codigo) {
@@ -1599,9 +1601,9 @@ router.post('/canastos/:id/verificar-articulo-extra', verificarAuth, async (req,
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/verificar', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { diferencias } = req.body
     if (!diferencias) return res.status(400).json({ error: 'diferencias requeridas' })
@@ -1636,9 +1638,9 @@ router.put('/canastos/:id/verificar', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.delete('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.delete('/canastos/:id', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data: canasto } = await supabase
       .from('traspaso_canastos')
@@ -1660,13 +1662,13 @@ router.delete('/canastos/:id', verificarAuth, soloGestorOAdmin, async (req, res)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Reparto — escaneo de canastos para despacho
 // ═══════════════════════════════════════════════════════════════
 
-router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
+router.get('/ordenes-reparto', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Órdenes en estado preparado
     const { data: ordenes, error } = await supabase
@@ -1721,10 +1723,10 @@ router.get('/ordenes-reparto', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Listar bultos (canastos + pallets) de órdenes preparadas/despachadas/recibidas
-router.get('/bultos', verificarAuth, async (req, res) => {
+router.get('/bultos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     // Obtener órdenes que ya pasaron de preparación
     const estadosValidos = ['preparado', 'despachado', 'recibido', 'con_diferencia']
@@ -1816,14 +1818,14 @@ router.get('/bultos', verificarAuth, async (req, res) => {
 
     res.json(resultado)
   } catch (err) {
-    console.error('[Traspasos] Error al listar bultos:', err.message)
+    logger.error('[Traspasos] Error al listar bultos:', err.message)
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Buscar canasto/pallet por precinto (sin despachar) — para confirmar antes de cargar
 // Verificar si un canasto está en uso en otra orden activa
-router.get('/canastos/verificar-precinto/:precinto', verificarAuth, async (req, res) => {
+router.get('/canastos/verificar-precinto/:precinto', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const precinto = req.params.precinto.trim()
     if (!precinto) return res.json({ en_uso: false })
@@ -1861,9 +1863,9 @@ router.get('/canastos/verificar-precinto/:precinto', verificarAuth, async (req, 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
-router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res) => {
+router.get('/canastos/buscar-precinto/:precinto', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const precinto = req.params.precinto.trim()
     if (!precinto) return res.status(400).json({ error: 'Precinto requerido' })
@@ -1910,13 +1912,13 @@ router.get('/canastos/buscar-precinto/:precinto', verificarAuth, async (req, res
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Preparar con canastos (batch) — crea canastos + pallets y marca preparada
 // ═══════════════════════════════════════════════════════════════
 
-router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { canastos: canastosBody, pallets: palletsBody, bultos: bultosBody, articulos_faltantes, crear_nueva_orden, observacion } = req.body
 
@@ -2123,7 +2125,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
         }).eq('id', art.id)
       }
     } catch (pesoErr) {
-      console.error('Error actualizando pesos automáticos:', pesoErr)
+      logger.error('Error actualizando pesos automáticos:', pesoErr)
     }
 
     // Manejar faltantes
@@ -2169,7 +2171,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
         if (nuevaOrden) { nueva_orden_id = nuevaOrden.id; nueva_orden_numero = nuevaOrden.numero }
       }
     } catch (faltantesErr) {
-      console.error('Error procesando faltantes:', faltantesErr)
+      logger.error('Error procesando faltantes:', faltantesErr)
     }
 
     res.json({
@@ -2183,13 +2185,13 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Verificar pallet por conteo de bultos
 // ═══════════════════════════════════════════════════════════════
 
-router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/verificar-pallet', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { cantidad_bultos_destino } = req.body
     if (cantidad_bultos_destino === undefined || cantidad_bultos_destino === null) {
@@ -2233,13 +2235,13 @@ router.put('/canastos/:id/verificar-pallet', verificarAuth, async (req, res) => 
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Recibir canasto/pallet en destino (en_transito → en_destino)
 // ═══════════════════════════════════════════════════════════════
 
-router.put('/canastos/:id/recibir-en-destino', verificarAuth, async (req, res) => {
+router.put('/canastos/:id/recibir-en-destino', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: canasto } = await supabase
       .from('traspaso_canastos')
@@ -2277,7 +2279,7 @@ router.put('/canastos/:id/recibir-en-destino', verificarAuth, async (req, res) =
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // ═══════════════════════════════════════════════════════════════
 // Registro de canastos — CRUD + generación de códigos CAN-XXXX
@@ -2304,7 +2306,7 @@ const siguienteCodigoCanasto = async () => {
 }
 
 // Listar todos los canastos registrados
-router.get('/canastos-registro', verificarAuth, async (req, res) => {
+router.get('/canastos-registro', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('canastos_registro')
@@ -2316,20 +2318,20 @@ router.get('/canastos-registro', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Siguiente código disponible
-router.get('/canastos-registro/siguiente-codigo', verificarAuth, async (req, res) => {
+router.get('/canastos-registro/siguiente-codigo', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const codigo = await siguienteCodigoCanasto()
     res.json({ codigo })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Crear N canastos (batch)
-router.post('/canastos-registro', verificarAuth, async (req, res) => {
+router.post('/canastos-registro', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const cantidad = Math.min(Math.max(parseInt(req.body.cantidad) || 1, 1), 100)
 
@@ -2354,10 +2356,10 @@ router.post('/canastos-registro', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 // Cambiar estado activo/baja
-router.put('/canastos-registro/:id', verificarAuth, async (req, res) => {
+router.put('/canastos-registro/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { estado } = req.body
     if (!['activo', 'baja'].includes(estado)) {
@@ -2376,6 +2378,6 @@ router.put('/canastos-registro/:id', verificarAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
-})
+}))
 
 module.exports = router

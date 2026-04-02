@@ -6,6 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 POS system for Padano SRL — a full-stack JavaScript app with ERP integration (Centum), electronic invoicing (AFIP), payments (Mercado Pago, Talo), and 203 MCP tools exposed at `/mcp`.
 
+### Modules
+
+| Module | Description |
+|--------|-------------|
+| POS / Ventas | Point of sale, sales history, conciliation, receipts (ticket + A4) |
+| Compras | Purchase orders, suppliers, demand analysis, AI-suggested orders |
+| Traspasos | Inter-branch transfers with canastos/pallets tracking |
+| Cajas / Cierres | Cash register control, opening/closing, denomination counts |
+| Pedidos | Internal orders with payment links (MP, Talo) |
+| Clientes | Client management, Centum sync, AFIP lookup, duplicates detection |
+| Artículos | Product catalog, ERP sync, stock by branch, pricing |
+| RRHH | Employees, shifts, time tracking (fichajes), licenses, holidays |
+| Tareas | Task management with AI analytics and compliance tracking |
+| Auditoría | Sales audit with KPIs, charts, AI chat, cancellation tracking |
+| Gift Cards | Activation, sale, balance tracking |
+| Promociones | Conditional promotions (buy N of A, get discount on B) |
+| Delivery | Delivery guides, PedidosYa + Rappi integration (in progress) |
+
 ## Development Commands
 
 ```bash
@@ -37,11 +55,11 @@ elias/
 │   ├── index.js              # Express app entry — mounts all /api routes + MCP
 │   ├── config/               # supabase.js (Supabase client), centum.js (SQL Server BI)
 │   ├── middleware/auth.js    # JWT verification + offline cache fallback
-│   ├── routes/               # ~35 route files, mounted under /api/{module}
-│   ├── services/             # Business logic: ERP sync, AFIP, MP, email, PDF
+│   ├── routes/               # 35 route files, mounted under /api/{module}
+│   ├── services/             # 20 service files: ERP sync, AFIP, MP, email, PDF, AI
 │   └── jobs/cron.js          # node-cron scheduled background tasks
 ├── backend/mcp-server.js     # MCP StreamableHTTPServerTransport at /mcp
-├── backend/mcp-tools-config.js  # All 203 MCP tool definitions
+├── backend/mcp-tools-config.js  # All MCP tool definitions (~203)
 ├── frontend/src/
 │   ├── App.jsx               # All routes defined here (react-router-dom v6)
 │   ├── pages/                # Feature modules: pos/, compras/, auditoria/, rrhh/, etc.
@@ -51,12 +69,12 @@ elias/
 │   ├── services/offlineDB.js # IndexedDB cache (articles, clients, promos)
 │   └── utils/                # Receipt/label printing (jsPDF, thermal printer)
 ├── supabase/schema.sql       # Core database schema
-└── sql/                      # ~23 additional migration SQL files
+└── sql/                      # 23 additional migration SQL files
 ```
 
 ### Auth & Roles
 
-Three roles: `admin`, `gestor`, `operario`. Stored in Supabase `perfiles` table linked to `auth.users`.
+Three roles: `admin`, `gestor`, `operario`. Stored in Supabase `perfiles` table linked to `auth.users`. Note: the original schema CHECK constraint only has `admin`/`operario` — `gestor` was added later in application code but the DB constraint may need updating.
 
 - **Backend:** `verificarAuth` middleware validates Supabase JWT via `Authorization: Bearer` header. Populates `req.usuario` and `req.perfil`. Has in-memory cache (1h TTL) for offline fallback. Role guards: `soloAdmin`, `soloGestorOAdmin`.
 - **Frontend:** `AuthContext` stores user in state + localStorage. `RutaProtegida` component wraps routes with `rolesPermitidos` or `soloAdmin` props. `api.js` auto-injects token and handles 401 refresh.
@@ -88,9 +106,37 @@ Frontend routes are all declared in `App.jsx` — no nested route files. Each pa
 |--------|---------|-----------|
 | Centum ERP | REST API + SQL Server BI for articles, clients, stock, sales | `services/centum*.js`, `config/centum.js` |
 | AFIP | Electronic invoicing (Factura A/B, Nota de Crédito) | `services/afip.js` |
-| Mercado Pago | Point/posnet payments | `routes/mpPoint.js`, `services/mercadopago.js` |
+| Mercado Pago | Point/posnet payments + QR | `routes/mpPoint.js`, `services/mercadopago.js` |
 | Talo | Bank transfer payment links | `services/talo.js` |
 | Supabase | PostgreSQL + Auth + Row-Level Security | `config/supabase.js` |
+| Claude AI | AI analysis for audits, purchases, tasks | `services/claude.js`, `services/claudeCompras.js`, `services/patronesIA.js` |
+| Web Push | VAPID push notifications to admins | `routes/push.js` |
+| PedidosYa/Rappi | Delivery platform integration (in progress) | `routes/pos.js` (guías delivery) |
+
+### Key Services (backend/src/services/)
+
+| Service | Purpose |
+|---------|---------|
+| `centumVentasPOS.js` | Sync POS sales → Centum ERP |
+| `centumClientes.js` | Client sync with Centum REST + BI |
+| `centumPedidosVenta.js` | Sync sales orders to Centum |
+| `centumAjusteStock.js` | Automatic stock adjustments in ERP |
+| `syncERP.js` | General ERP synchronization |
+| `retrySyncVentasPOS.js` | Retry failed sale syncs |
+| `syncPedidosVenta.js` | Sync sales orders |
+| `afip.js` | AFIP electronic invoicing (CAE) |
+| `mercadopago.js` | Mercado Pago Point integration |
+| `talo.js` | Talo bank transfer links |
+| `claude.js` | AI analysis for audits and cashier behavior |
+| `claudeCompras.js` | AI-suggested purchase orders + demand analysis |
+| `patronesIA.js` | AI behavior pattern detection for auditing |
+| `tareasScheduler.js` | Cron-based task scheduling |
+| `historialCajero.js` | Cashier performance history |
+| `email.js` | Email sending (invoices, reports) |
+| `pdfGenerator.js` | PDF generation |
+| `comprobanteHTML.js` | HTML receipt generation |
+| `apiLogger.js` | API request/response logging |
+| `demandaCompras.js` | Purchase demand calculation |
 
 ### Database
 

@@ -3,9 +3,13 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloGestorOAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearGastoSchema, controlarGastoSchema } = require('../schemas/gastos')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // POST /api/cierres-pos/:cierreId/gastos — crear gasto
-router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => {
+router.post('/cierres-pos/:cierreId/gastos', verificarAuth, validate(crearGastoSchema), asyncHandler(async (req, res) => {
   try {
     const { rol } = req.perfil
     if (rol === 'gestor') {
@@ -61,13 +65,13 @@ router.post('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => 
 
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear gasto:', err)
+    logger.error('Error al crear gasto:', err)
     res.status(500).json({ error: 'Error al crear gasto' })
   }
-})
+}))
 
 // GET /api/cierres-pos/:cierreId/gastos — listar gastos de un cierre
-router.get('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => {
+router.get('/cierres-pos/:cierreId/gastos', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres_pos')
@@ -103,13 +107,13 @@ router.get('/cierres-pos/:cierreId/gastos', verificarAuth, async (req, res) => {
 
     res.json(gastos || [])
   } catch (err) {
-    console.error('Error al listar gastos:', err)
+    logger.error('Error al listar gastos:', err)
     res.status(500).json({ error: 'Error al listar gastos' })
   }
-})
+}))
 
 // PUT /api/gastos-pos/:id/controlar — marcar gasto como controlado (gestor/admin)
-router.put('/gastos-pos/:id/controlar', verificarAuth, soloGestorOAdmin, async (req, res) => {
+router.put('/gastos-pos/:id/controlar', verificarAuth, soloGestorOAdmin, validate(controlarGastoSchema), asyncHandler(async (req, res) => {
   try {
     const { data: gasto, error: errorGasto } = await supabase
       .from('gastos_pos')
@@ -143,13 +147,13 @@ router.put('/gastos-pos/:id/controlar', verificarAuth, soloGestorOAdmin, async (
 
     res.json(data)
   } catch (err) {
-    console.error('Error al controlar gasto:', err)
+    logger.error('Error al controlar gasto:', err)
     res.status(500).json({ error: 'Error al controlar gasto' })
   }
-})
+}))
 
 // DELETE /api/gastos-pos/:id — eliminar gasto (solo si caja abierta)
-router.delete('/gastos-pos/:id', verificarAuth, async (req, res) => {
+router.delete('/gastos-pos/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: gasto, error: errorGasto } = await supabase
       .from('gastos_pos')
@@ -179,9 +183,9 @@ router.delete('/gastos-pos/:id', verificarAuth, async (req, res) => {
 
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al eliminar gasto:', err)
+    logger.error('Error al eliminar gasto:', err)
     res.status(500).json({ error: 'Error al eliminar gasto' })
   }
-})
+}))
 
 module.exports = router

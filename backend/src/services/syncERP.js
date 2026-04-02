@@ -2,6 +2,7 @@
 const crypto = require('crypto')
 const supabase = require('../config/supabase')
 const { registrarLlamada } = require('./apiLogger')
+const logger = require('../config/logger')
 
 // Guard de concurrencia: evita que dos syncs de stock corran a la vez
 let stockSyncRunning = false
@@ -72,7 +73,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
   if (!response.ok) {
     const texto = await response.text()
     const duracion = Date.now() - inicioFetch
-    console.error('Error del ERP Centum:', response.status, texto)
+    logger.error('Error del ERP Centum:', response.status, texto)
     registrarLlamada({
       servicio: 'centum_articulos', endpoint, metodo: 'POST',
       estado: 'error', status_code: response.status, duracion_ms: duracion,
@@ -210,7 +211,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     todosLosArticulos = Object.values(articulosActuales).map(a => ({ id: a.id }))
   }
 
-  console.log(`[Sync] ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios`)
+  logger.info(`[Sync] ${nuevos.length} nuevos, ${actualizados.length} actualizados, ${sinCambios} sin cambios`)
 
   // Crear relaciones con sucursales (skip en sync rápida)
   if (!skipSucursales) {
@@ -289,9 +290,9 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
           .then(() => barcodesSincronizados++)
       ))
     }
-    console.log(`[Sync] ${barcodesSincronizados} artículos con códigos de barra sincronizados`)
+    logger.info(`[Sync] ${barcodesSincronizados} artículos con códigos de barra sincronizados`)
   } catch (err) {
-    console.error('[Sync] Error al sincronizar códigos de barra:', err.message)
+    logger.error('[Sync] Error al sincronizar códigos de barra:', err.message)
   }
 
   // Sincronizar atributos de artículos desde Centum BI
@@ -351,9 +352,9 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
           .then(() => atributosSincronizados++)
       ))
     }
-    console.log(`[Sync] ${atributosSincronizados} artículos con atributos sincronizados`)
+    logger.info(`[Sync] ${atributosSincronizados} artículos con atributos sincronizados`)
   } catch (err) {
-    console.error('[Sync] Error al sincronizar atributos:', err.message)
+    logger.error('[Sync] Error al sincronizar atributos:', err.message)
   }
 
   // Sincronizar combos al catálogo local
@@ -398,10 +399,10 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
         .eq('tipo', 'automatico')
         .ilike('nombre', 'COMBO%')
 
-      console.log(`[Sync] ${combosSincronizados} combos sincronizados al catálogo local`)
+      logger.info(`[Sync] ${combosSincronizados} combos sincronizados al catálogo local`)
     }
   } catch (err) {
-    console.error('[Sync] Error al sincronizar combos:', err.message)
+    logger.error('[Sync] Error al sincronizar combos:', err.message)
   }
 
   const duracion = Date.now() - inicioFetch
@@ -471,7 +472,7 @@ async function _sincronizarStockInternal(fullSync, origen) {
   let pagina = 1
   const stockPorIdCentum = {}
 
-  console.log(`[Stock] Fase 1: descargando existencias del depósito (${fullSync ? 'full sync' : fechaDesde ? `incremental desde ${fechaDesde}` : 'primera sync completa'})...`)
+  logger.info(`[Stock] Fase 1: descargando existencias del depósito (${fullSync ? 'full sync' : fechaDesde ? `incremental desde ${fechaDesde}` : 'primera sync completa'})...`)
   while (true) {
     const accessToken = generateAccessToken(apiKey)
     let url = `${baseUrl}/ArticulosExistencias?idsSucursalesFisicas=6087&numeroPagina=${pagina}&cantidadItemsPorPagina=${PAGE_SIZE}`
@@ -512,12 +513,12 @@ async function _sincronizarStockInternal(fullSync, origen) {
       }
     }
 
-    console.log(`[Stock] Página ${pagina}: ${items.length} items (acumulado: ${Object.keys(stockPorIdCentum).length}/${total})`)
+    logger.info(`[Stock] Página ${pagina}: ${items.length} items (acumulado: ${Object.keys(stockPorIdCentum).length}/${total})`)
 
     if (items.length < PAGE_SIZE) break
     pagina++
     if (pagina > 1000) {
-      console.warn('[Stock] Se alcanzó el límite de 1000 páginas, deteniendo sync')
+      logger.warn('[Stock] Se alcanzó el límite de 1000 páginas, deteniendo sync')
       break
     }
   }
@@ -528,7 +529,7 @@ async function _sincronizarStockInternal(fullSync, origen) {
   }
 
   // Fase 2: leer artículos de BD y agrupar por stock para batch updates
-  console.log(`[Stock] Fase 2: actualizando BD (${totalProcesados} items del ERP)...`)
+  logger.info(`[Stock] Fase 2: actualizando BD (${totalProcesados} items del ERP)...`)
   const BATCH = 500
   let totalActualizados = 0
   const allIdsCentum = Object.keys(stockPorIdCentum).map(Number)
@@ -554,7 +555,7 @@ async function _sincronizarStockInternal(fullSync, origen) {
 
   // Batch update: un UPDATE por cada valor de stock distinto
   const valoresUnicos = Object.keys(stockPorValor)
-  console.log(`[Stock] ${valoresUnicos.length} valores de stock distintos para actualizar`)
+  logger.info(`[Stock] ${valoresUnicos.length} valores de stock distintos para actualizar`)
 
   for (const stockStr of valoresUnicos) {
     const stock = parseInt(stockStr)
@@ -569,7 +570,7 @@ async function _sincronizarStockInternal(fullSync, origen) {
         .in('id', loteIds)
 
       if (error) {
-        console.error(`[Stock] Error update stock=${stock}:`, error.message)
+        logger.error(`[Stock] Error update stock=${stock}:`, error.message)
       } else {
         totalActualizados += loteIds.length
       }
@@ -581,7 +582,7 @@ async function _sincronizarStockInternal(fullSync, origen) {
     .from('config')
     .upsert({ clave: 'ultima_sync_stock', valor: syncInicio, updated_at: new Date().toISOString() }, { onConflict: 'clave' })
   if (configError) {
-    console.error('[Stock] Error guardando fecha de sync:', configError.message)
+    logger.error('[Stock] Error guardando fecha de sync:', configError.message)
   }
 
   const duracionTotal = Date.now() - inicioTotal
@@ -664,7 +665,7 @@ async function sincronizarStockMultiSucursal(origen = 'cron') {
         pagina++
         if (pagina > 500) break
       } catch (err) {
-        console.error(`[StockMulti] Error sucursal ${suc.nombre} página ${pagina}:`, err.message)
+        logger.error(`[StockMulti] Error sucursal ${suc.nombre} página ${pagina}:`, err.message)
         break
       }
     }
@@ -676,11 +677,11 @@ async function sincronizarStockMultiSucursal(origen = 'cron') {
       const { error } = await supabase
         .from('stock_sucursales')
         .upsert(lote, { onConflict: 'id_centum,centum_sucursal_id' })
-      if (error) console.error(`[StockMulti] Error upsert ${suc.nombre}:`, error.message)
+      if (error) logger.error(`[StockMulti] Error upsert ${suc.nombre}:`, error.message)
       else totalUpserted += lote.length
     }
 
-    console.log(`[StockMulti] ${suc.nombre}: ${rows.length} items`)
+    logger.info(`[StockMulti] ${suc.nombre}: ${rows.length} items`)
   }
 
   const duracion = Date.now() - inicioTotal
@@ -756,7 +757,7 @@ async function sincronizarImagenesPresencia(origen = 'cron') {
     items_procesados: marcados, origen,
   })
 
-  console.log(`[SyncImágenes] ${marcados} artículos marcados con imagen`)
+  logger.info(`[SyncImágenes] ${marcados} artículos marcados con imagen`)
   return { mensaje: `${marcados} artículos marcados con imagen`, total: marcados }
 }
 

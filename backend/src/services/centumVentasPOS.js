@@ -3,6 +3,10 @@ const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
 const { crearClienteEnCentum } = require('./centumClientes')
 const { createClient } = require('@supabase/supabase-js')
+const logger = require('../config/logger')
+const { breakers } = require('../utils/circuitBreaker')
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout')
+const { cooldownWithBackoff } = require('../utils/retry')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
 
 const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
@@ -14,10 +18,8 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 
 // ============ ANTI-DUPLICACIÓN: constantes ============
 const MAX_INTENTOS = 3
-const COOLDOWN_MS = {
-  1: 10 * 60 * 1000,  // Después del 1er intento: 10 min
-  2: 30 * 60 * 1000,  // Después del 2do intento: 30 min
-}
+// Cooldown uses exponential backoff with jitter via cooldownWithBackoff()
+// Base: 5 min → attempt 1: ~5 min, attempt 2: ~10 min, attempt 3+: capped at 1 hour
 // Prefijos para centum_error que codifican el estado
 const PREFIX_UNVERIFIED = 'UNVERIFIED|'
 const PREFIX_DEFINITIVE = 'DEFINITIVE|'
@@ -127,7 +129,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   // El ratio se calcula sobre precios originales (con IVA) porque total POS también incluye IVA.
   if (total < subtotalOriginal && subtotalOriginal > 0) {
     const ratio = total / subtotalOriginal
-    console.log(`[Centum POS] Descuento detectado: total=${total}, subtotalOriginal=${subtotalOriginal}, ratio=${ratio.toFixed(6)}`)
+    logger.info(`[Centum POS] Descuento detectado: total=${total}, subtotalOriginal=${subtotalOriginal}, ratio=${ratio.toFixed(6)}`)
     for (const art of ventaArticulos) {
       art.Precio = Math.round(art.Precio * ratio * 100) / 100
     }
@@ -170,7 +172,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
   }
 
-  console.log(`[Centum POS] esFacturaA=${esFacturaA}, subtotalOrig=${subtotalOriginal}, importeValor=${importeValor}, total=${total}`)
+  logger.info(`[Centum POS] esFacturaA=${esFacturaA}, subtotalOrig=${subtotalOriginal}, importeValor=${importeValor}, total=${total}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -199,11 +201,11 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
 
   let response
   try {
-    response = await fetch(url, {
+    response = await breakers.centum.exec(() => fetchWithTimeout(url, {
       method: 'POST',
       headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
-    })
+    }, 30000))
   } catch (err) {
     registrarLlamada({
       servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
@@ -223,12 +225,12 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
       estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
       items_procesados: ventaArticulos.length, origen: 'pos',
     })
-    console.log(`[Centum POS] Venta creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    logger.info(`[Centum POS] Venta creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
 
     // Verificar discrepancia de total: si Centum devuelve un total muy diferente, logear alerta
     const centumTotal = parseFloat(data.Total) || 0
     if (centumTotal > 0 && Math.abs(centumTotal - total) > total * 0.05) {
-      console.error(`[Centum POS] ⚠️ DISCREPANCIA DE TOTAL: POS=${total}, Centum=${centumTotal}, IdVenta=${data.IdVenta}. Body enviado: items=${ventaArticulos.length}, importeValor=${importeValor}`)
+      logger.error(`[Centum POS] ⚠️ DISCREPANCIA DE TOTAL: POS=${total}, Centum=${centumTotal}, IdVenta=${data.IdVenta}. Body enviado: items=${ventaArticulos.length}, importeValor=${importeValor}`)
       registrarLlamada({
         servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
         estado: 'warning', status_code: response.status, duracion_ms: Date.now() - inicio,
@@ -244,7 +246,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
 
   if (response.status === 500) {
     // Centum a veces devuelve 500 pero crea la venta
-    console.warn(`[Centum POS] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    logger.warn(`[Centum POS] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
     registrarLlamada({
       servicio: 'centum_ventas_pos', endpoint: url, metodo: 'POST',
       estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
@@ -305,7 +307,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       ? (config.centum_operador_prueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (config.centum_operador_empresa || null)
 
-    console.log(`[Centum POS] División=${idDivisionEmpresa}, operador=${operadorMovilUser}, sucursalFisica=${config.sucursalFisicaId}, PV=${config.puntoVenta}, configEmpresa=${config.centum_operador_empresa}, configPrueba=${config.centum_operador_prueba}`)
+    logger.info(`[Centum POS] División=${idDivisionEmpresa}, operador=${operadorMovilUser}, sucursalFisica=${config.sucursalFisicaId}, PV=${config.puntoVenta}, configEmpresa=${config.centum_operador_empresa}, configPrueba=${config.centum_operador_prueba}`)
 
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,
@@ -322,7 +324,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
 
     return resultado
   } catch (err) {
-    console.error('[Centum POS] Error al registrar venta en Centum:', err.message, err.stack)
+    logger.error('[Centum POS] Error al registrar venta en Centum:', err.message, err.stack)
     throw err // propagar para que pos.js guarde el error real en centum_error
   }
 }
@@ -390,7 +392,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
 
   const importeValor = esFacturaA ? total : subtotalArticulos
 
-  console.log(`[Centum POS NC] Preparando NC artículos: condicionIva=${condicionIva}, totalPOS=${total}, importeValor=${importeValor}, PV=${puntoVenta}`)
+  logger.info(`[Centum POS NC] Preparando NC artículos: condicionIva=${condicionIva}, totalPOS=${total}, importeValor=${importeValor}, PV=${puntoVenta}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -417,17 +419,17 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
     const ref = extraerPuntoVentaDeComprobante(comprobanteOriginal)
     if (ref) {
       body.Referencia = String(ref.numero)
-      console.log(`[Centum POS NC] Referencia: ${ref.numero} (de comprobante ${comprobanteOriginal})`)
+      logger.info(`[Centum POS NC] Referencia: ${ref.numero} (de comprobante ${comprobanteOriginal})`)
     }
   }
 
   let response
   try {
-    response = await fetch(url, {
+    response = await breakers.centum.exec(() => fetchWithTimeout(url, {
       method: 'POST',
       headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
-    })
+    }, 30000))
   } catch (err) {
     registrarLlamada({
       servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
@@ -447,12 +449,12 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
       estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
       items_procesados: ventaArticulos.length, origen: 'pos',
     })
-    console.log(`[Centum POS NC] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    logger.info(`[Centum POS NC] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
     return data
   }
 
   if (response.status === 500) {
-    console.warn(`[Centum POS NC] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    logger.warn(`[Centum POS NC] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
     registrarLlamada({
       servicio: 'centum_nc_pos', endpoint: url, metodo: 'POST',
       estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
@@ -493,7 +495,7 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
   const importeConcepto = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
   const importeValor = total // El valor efectivo siempre es el total con IVA
 
-  console.log(`[Centum POS NC Concepto] Preparando NC concepto: condicionIva=${condicionIva}, total=${total}, importeConcepto=${importeConcepto}, PV=${puntoVenta}`)
+  logger.info(`[Centum POS NC Concepto] Preparando NC concepto: condicionIva=${condicionIva}, total=${total}, importeConcepto=${importeConcepto}, PV=${puntoVenta}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -536,11 +538,11 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
 
   let response
   try {
-    response = await fetch(url, {
+    response = await breakers.centum.exec(() => fetchWithTimeout(url, {
       method: 'POST',
       headers: getHeaders({ operadorMovilUser }),
       body: JSON.stringify(body),
-    })
+    }, 30000))
   } catch (err) {
     registrarLlamada({
       servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
@@ -560,12 +562,12 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
       estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
       items_procesados: 1, origen: 'pos',
     })
-    console.log(`[Centum POS NC Concepto] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
+    logger.info(`[Centum POS NC Concepto] NC creada: IdVenta=${data.IdVenta}, Total=${data.Total}`)
     return data
   }
 
   if (response.status === 500) {
-    console.warn(`[Centum POS NC Concepto] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
+    logger.warn(`[Centum POS NC Concepto] HTTP 500 pero posiblemente creada. Response: ${texto.slice(0, 300)}`)
     registrarLlamada({
       servicio: 'centum_nc_concepto_pos', endpoint: url, metodo: 'POST',
       estado: 'ok_con_warning', status_code: 500, duracion_ms: Date.now() - inicio,
@@ -608,10 +610,10 @@ async function obtenerVentaCentum(idVenta) {
 
   let response
   try {
-    response = await fetch(url, {
+    response = await breakers.centum.exec(() => fetchWithTimeout(url, {
       method: 'GET',
       headers: getHeaders(),
-    })
+    }, 30000))
   } catch (err) {
     registrarLlamada({
       servicio: 'centum_ventas_pos', endpoint: url, metodo: 'GET',
@@ -642,7 +644,7 @@ async function obtenerVentaCentum(idVenta) {
     items_procesados: 1, origen: 'pos',
   })
 
-  console.log(`[Centum POS] GET Venta ${idVenta}: CAE=${data.CAE || '(vacío)'}, FechaVtoCAE=${data.FechaVencimientoCAE || '(vacío)'}`)
+  logger.info(`[Centum POS] GET Venta ${idVenta}: CAE=${data.CAE || '(vacío)'}, FechaVtoCAE=${data.FechaVencimientoCAE || '(vacío)'}`)
   return data
 }
 
@@ -682,7 +684,7 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
         `)
       if (obsResult.recordset.length > 0) {
         const row = obsResult.recordset[0]
-        console.log(`[Centum POS] Venta encontrada por ObservacionInterna POS:${ventaPosId} → VentaID=${row.VentaID}`)
+        logger.info(`[Centum POS] Venta encontrada por ObservacionInterna POS:${ventaPosId} → VentaID=${row.VentaID}`)
         const numDocStr = (row.NumeroDocumento || '').trim()
         const numDocMatch = numDocStr.match(/^([A-Z])(\d+)-(\d+)$/)
         return {
@@ -698,7 +700,7 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
       }
     } catch (obsErr) {
       // Si Ventas_VIEW no tiene ObservacionInterna, el query falla silenciosamente
-      console.log(`[Centum POS] ObservacionInterna no disponible en BI: ${obsErr.message?.slice(0, 100)}`)
+      logger.info(`[Centum POS] ObservacionInterna no disponible en BI: ${obsErr.message?.slice(0, 100)}`)
     }
 
     // Intento 2: Buscar por total + sucursal + fecha (fallback)
@@ -718,7 +720,7 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
       `)
 
     if (result.recordset.length === 0) {
-      console.log(`[Centum POS] No se encontró venta existente en BI para total=${total}, sucursal=${sucursalFisicaId}`)
+      logger.info(`[Centum POS] No se encontró venta existente en BI para total=${total}, sucursal=${sucursalFisicaId}`)
       return null
     }
 
@@ -735,12 +737,12 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
         existente = row
         break
       } else {
-        console.log(`[Centum POS] Venta BI ${row.VentaID} ya vinculada a POS ${yaVinculada.id}, buscando otra`)
+        logger.info(`[Centum POS] Venta BI ${row.VentaID} ya vinculada a POS ${yaVinculada.id}, buscando otra`)
       }
     }
 
     if (!existente) {
-      console.log(`[Centum POS] Todas las ventas BI con total=${total} ya están vinculadas`)
+      logger.info(`[Centum POS] Todas las ventas BI con total=${total} ya están vinculadas`)
       return null
     }
 
@@ -753,7 +755,7 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
       Numero: parseInt(numDocMatch[3]),
     } : null
 
-    console.log(`[Centum POS] Venta existente encontrada en BI: VentaID=${existente.VentaID}, NumDoc=${numDocStr}, Total=${existente.Total}`)
+    logger.info(`[Centum POS] Venta existente encontrada en BI: VentaID=${existente.VentaID}, NumDoc=${numDocStr}, Total=${existente.Total}`)
     return {
       IdVenta: existente.VentaID,
       NumeroDocumento: numDoc,
@@ -767,10 +769,10 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
       || msg.includes('econnreset') || msg.includes('socket') || msg.includes('network')
       || msg.includes('failed to connect') || msg.includes('pool')
     if (esConexion) {
-      console.error(`[Centum POS] BI CAÍDO al buscar venta existente: ${err.message}`)
+      logger.error(`[Centum POS] BI CAÍDO al buscar venta existente: ${err.message}`)
       throw err // Propagar — el caller NO debe crear la venta si BI está caído
     }
-    console.warn(`[Centum POS] Error no-conexión al buscar venta existente en BI: ${err.message}`)
+    logger.warn(`[Centum POS] Error no-conexión al buscar venta existente en BI: ${err.message}`)
     return null
   }
 }
@@ -789,7 +791,7 @@ async function buscarVentaExistenteEnCentumAPI(ventaPosId, sucursalFisicaId) {
 
   let response
   try {
-    response = await fetch(url, {
+    response = await breakers.centum.exec(() => fetchWithTimeout(url, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
@@ -797,15 +799,15 @@ async function buscarVentaExistenteEnCentumAPI(ventaPosId, sucursalFisicaId) {
         fechaDocumentoHasta: hoy,
         idSucursal: sucursalFisicaId,
       }),
-    })
+    }, 30000))
   } catch (err) {
-    console.warn(`[Centum API Check] Error de conexión: ${err.message}`)
+    logger.warn(`[Centum API Check] Error de conexión: ${err.message}`)
     throw new Error('API Centum no disponible: ' + err.message)
   }
 
   if (!response.ok) {
     const texto = await response.text().catch(() => '')
-    console.warn(`[Centum API Check] HTTP ${response.status}: ${texto.slice(0, 200)}`)
+    logger.warn(`[Centum API Check] HTTP ${response.status}: ${texto.slice(0, 200)}`)
     throw new Error(`API Centum error ${response.status}`)
   }
 
@@ -826,11 +828,11 @@ async function buscarVentaExistenteEnCentumAPI(ventaPosId, sucursalFisicaId) {
   )
 
   if (!encontrada) {
-    console.log(`[Centum API Check] No encontrada venta con ${target} entre ${ventas.length} del día (sucursal ${sucursalFisicaId})`)
+    logger.info(`[Centum API Check] No encontrada venta con ${target} entre ${ventas.length} del día (sucursal ${sucursalFisicaId})`)
     return null
   }
 
-  console.log(`[Centum API Check] ENCONTRADA venta POS:${ventaPosId} → IdVenta=${encontrada.IdVenta}`)
+  logger.info(`[Centum API Check] ENCONTRADA venta POS:${ventaPosId} → IdVenta=${encontrada.IdVenta}`)
   return {
     IdVenta: encontrada.IdVenta,
     NumeroDocumento: encontrada.NumeroDocumento || null,
@@ -854,7 +856,7 @@ async function verificarEnBI(ventaPosId, sucursalFisicaId, puntoVenta, total) {
     if (existente) return { found: true, data: existente }
     return { found: false }
   } catch (biErr) {
-    console.warn(`[AntiDup] BI caído (${biErr.message}), intentando vía API REST...`)
+    logger.warn(`[AntiDup] BI caído (${biErr.message}), intentando vía API REST...`)
 
     // Canal 2: API REST — directo a Centum, sin replicación
     try {
@@ -862,7 +864,7 @@ async function verificarEnBI(ventaPosId, sucursalFisicaId, puntoVenta, total) {
       if (existenteAPI) return { found: true, data: existenteAPI }
       return { found: false }
     } catch (apiErr) {
-      console.error(`[AntiDup] Ambos canales caídos — BI: ${biErr.message}, API: ${apiErr.message}`)
+      logger.error(`[AntiDup] Ambos canales caídos — BI: ${biErr.message}, API: ${apiErr.message}`)
       return { biDown: true, error: `BI: ${biErr.message} | API: ${apiErr.message}` }
     }
   }
@@ -891,7 +893,7 @@ async function retrySyncVentasCentum() {
     .limit(10)
 
   if (error) {
-    console.error('[RetryCentumVentas] Error en query Supabase:', error.message || error)
+    logger.error('[RetryCentumVentas] Error en query Supabase:', error.message || error)
     return { reintentadas: 0, exitosas: 0, fallidas: 0 }
   }
   if (!pendientes?.length) {
@@ -920,11 +922,11 @@ async function retrySyncVentasCentum() {
     // COOLDOWN: si tiene intentos previos, respetar cooldown según nro de intento
     if (intentos > 0 && v.centum_ultimo_intento) {
       const tsUltimo = new Date(v.centum_ultimo_intento).getTime()
-      const cooldownRequerido = COOLDOWN_MS[intentos] || COOLDOWN_MS[2] // 2+ usa 30 min
+      const cooldownRequerido = cooldownWithBackoff(intentos) // exponential backoff with jitter
       const transcurrido = ahoraMs - tsUltimo
       if (transcurrido < cooldownRequerido) {
         const restante = Math.round((cooldownRequerido - transcurrido) / 1000)
-        console.log(`[RetryCentumVentas] Venta ${v.id} en cooldown (intento ${intentos}, faltan ${restante}s)`)
+        logger.info(`[RetryCentumVentas] Venta ${v.id} en cooldown (intento ${intentos}, faltan ${restante}s)`)
         enCooldown++
         return false
       }
@@ -948,7 +950,7 @@ async function retrySyncVentasCentum() {
     return true
   })
 
-  console.log(`[RetryCentumVentas] ${pendientes.length} pendientes: ${ventasReady.length} listas, ${enCooldown} en cooldown, ${enMaxRetries} max reintentos`)
+  logger.info(`[RetryCentumVentas] ${pendientes.length} pendientes: ${ventasReady.length} listas, ${enCooldown} en cooldown, ${enMaxRetries} max reintentos`)
 
   if (!ventasReady.length) {
     return { reintentadas: 0, exitosas: 0, fallidas: 0, enCooldown, enMaxRetries }
@@ -971,7 +973,7 @@ async function retrySyncVentasCentum() {
         centum_sync: true,
         centum_error: null,
       }).eq('id', venta.id)
-      console.log(`[RetryCentumVentas] Venta ${venta.id} es gift card, marcada como synced`)
+      logger.info(`[RetryCentumVentas] Venta ${venta.id} es gift card, marcada como synced`)
       exitosas++
       continue
     }
@@ -1000,11 +1002,11 @@ async function retrySyncVentasCentum() {
       .eq('centum_ultimo_intento', ahoraClaim)
 
     if (!claimed || claimed.length === 0) {
-      console.log(`[RetryCentumVentas] Venta ${venta.id} ya reclamada por otra instancia, saltando`)
+      logger.info(`[RetryCentumVentas] Venta ${venta.id} ya reclamada por otra instancia, saltando`)
       continue
     }
 
-    console.log(`[RetryCentumVentas] Procesando ${i+1}/${ventasReady.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, intentos=${intentos}, cliente: ${venta.nombre_cliente || 'CF'})`)
+    logger.info(`[RetryCentumVentas] Procesando ${i+1}/${ventasReady.length}: venta ${venta.id} (#${venta.numero_venta || '?'}, intentos=${intentos}, cliente: ${venta.nombre_cliente || 'CF'})`)
     try {
       // Obtener config de caja/sucursal
       const { data: cajaData } = await supabase
@@ -1046,7 +1048,7 @@ async function retrySyncVentasCentum() {
             // Ya tiene id_centum, usar directamente
             venta.id_cliente_centum = cliLocal.id_centum
             await supabase.from('ventas_pos').update({ id_cliente_centum: cliLocal.id_centum }).eq('id', venta.id)
-            console.log(`[Centum Retry] Cliente resuelto: ${venta.nombre_cliente} → id_centum=${cliLocal.id_centum}`)
+            logger.info(`[Centum Retry] Cliente resuelto: ${venta.nombre_cliente} → id_centum=${cliLocal.id_centum}`)
           } else if (cliLocal) {
             // Cliente existe local pero sin id_centum → crearlo en Centum
             try {
@@ -1058,7 +1060,7 @@ async function retrySyncVentasCentum() {
                 await supabase.from('clientes').update({ id_centum: idCentum }).eq('id', cliLocal.id)
                 venta.id_cliente_centum = idCentum
                 await supabase.from('ventas_pos').update({ id_cliente_centum: idCentum }).eq('id', venta.id)
-                console.log(`[Centum Retry] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
+                logger.info(`[Centum Retry] Cliente "${venta.nombre_cliente}" creado en Centum → id_centum=${idCentum}`)
               } else {
                 throw new Error('Centum no devolvió IdCliente')
               }
@@ -1171,7 +1173,7 @@ async function retrySyncVentasCentum() {
 
           if (check.found) {
             // Ya existe en Centum → vincular sin crear duplicado
-            console.log(`[RetryCentumVentas] Venta ${venta.id} ENCONTRADA en BI (intento ${intentos}): IdVenta=${check.data.IdVenta}`)
+            logger.info(`[RetryCentumVentas] Venta ${venta.id} ENCONTRADA en BI (intento ${intentos}): IdVenta=${check.data.IdVenta}`)
             const numDocEx = check.data.NumeroDocumento
             const comprobanteEx = numDocEx
               ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
@@ -1190,14 +1192,14 @@ async function retrySyncVentasCentum() {
 
           if (check.biDown) {
             // BI caído → NO reintentar, esperar al próximo ciclo
-            console.warn(`[RetryCentumVentas] Venta ${venta.id}: BI CAÍDO, abortando reintento (${check.error})`)
+            logger.warn(`[RetryCentumVentas] Venta ${venta.id}: BI CAÍDO, abortando reintento (${check.error})`)
             // No modificar intentos ni error — simplemente esperar
             fallidas++
             continue
           }
 
           // check.found === false → no existe en BI, seguro reintentar
-          console.log(`[RetryCentumVentas] Venta ${venta.id}: verificada en BI, NO encontrada → seguro reintentar (intento ${intentos + 1})`)
+          logger.info(`[RetryCentumVentas] Venta ${venta.id}: verificada en BI, NO encontrada → seguro reintentar (intento ${intentos + 1})`)
         }
 
         // ============ PRE-WRITE: registrar intento ANTES del POST ============
@@ -1219,7 +1221,7 @@ async function retrySyncVentasCentum() {
         } catch (postErr) {
           // CUALQUIER error post-POST → marcar UNVERIFIED
           // No distinguimos 500 de timeout — SIEMPRE verificar en BI antes de reintentar
-          console.warn(`[RetryCentumVentas] Venta ${venta.id}: POST falló (intento ${nuevoIntentos}): ${postErr.message}`)
+          logger.warn(`[RetryCentumVentas] Venta ${venta.id}: POST falló (intento ${nuevoIntentos}): ${postErr.message}`)
           await supabase.from('ventas_pos').update({
             id_venta_centum: null,
             centum_comprobante: null,
@@ -1250,7 +1252,7 @@ async function retrySyncVentasCentum() {
           if (centumReal?.CAE) caeReal = centumReal.CAE
           ventaConfirmada = true
         } catch (e) {
-          console.warn(`[RetryCentumVentas] No se pudo verificar venta ${venta.id} en Centum:`, e.message)
+          logger.warn(`[RetryCentumVentas] No se pudo verificar venta ${venta.id} en Centum:`, e.message)
           if (resultado?._creadoConWarning) {
             ventaConfirmada = false
             comprobante = null
@@ -1282,14 +1284,14 @@ async function retrySyncVentasCentum() {
           centum_ultimo_intento: new Date().toISOString(),
           numero_cae: null,
         }).eq('id', venta.id)
-        console.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada → UNVERIFIED`)
+        logger.warn(`[RetryCentumVentas] Venta ${venta.id}: creación no confirmada → UNVERIFIED`)
       }
 
-      console.log(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
+      logger.info(`[RetryCentumVentas] Venta ${venta.id} OK: Comprobante=${comprobante}`)
       if (!caeReal && resultado?.IdVenta) fetchAndSaveCAE(venta.id, resultado.IdVenta)
       exitosas++
     } catch (err) {
-      console.error(`[RetryCentumVentas] Error venta ${venta.id} (#${venta.numero_venta}):`, err.message)
+      logger.error(`[RetryCentumVentas] Error venta ${venta.id} (#${venta.numero_venta}):`, err.message)
       try {
         registrarLlamada({
           servicio: 'centum_ventas_retry', endpoint: `venta #${venta.numero_venta}`, metodo: 'POST',
@@ -1297,7 +1299,7 @@ async function retrySyncVentasCentum() {
         })
         await supabase.from('ventas_pos').update({ centum_error: `Retry: ${(err.message || '').slice(0, 200)}` }).eq('id', venta.id)
       } catch (e2) {
-        console.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e2.message)
+        logger.error(`[RetryCentumVentas] No se pudo guardar centum_error para venta ${venta.id}:`, e2.message)
       }
       fallidas++
     }
@@ -1337,20 +1339,20 @@ async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
     if (cae) {
       updates.numero_cae = cae
       await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
-      console.log(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}${updates.centum_comprobante ? `, comprobante=${updates.centum_comprobante}` : ''}`)
+      logger.info(`[Centum POS] CAE guardado para venta ${ventaPosId}: ${cae}${updates.centum_comprobante ? `, comprobante=${updates.centum_comprobante}` : ''}`)
 
       // Envío automático de email (async, best effort)
       enviarComprobanteAutomatico(ventaPosId, cae, caeVto).catch(err => {
-        console.warn(`[Email Auto] Error para venta ${ventaPosId}:`, err.message)
+        logger.warn(`[Email Auto] Error para venta ${ventaPosId}:`, err.message)
       })
     } else if (updates.centum_comprobante) {
       // Sin CAE pero con comprobante real actualizado (ej: NC sin autorizar ARCA)
       await supabase.from('ventas_pos').update(updates).eq('id', ventaPosId)
-      console.log(`[Centum POS] Comprobante actualizado para venta ${ventaPosId}: ${updates.centum_comprobante}`)
+      logger.info(`[Centum POS] Comprobante actualizado para venta ${ventaPosId}: ${updates.centum_comprobante}`)
     }
     return cae
   } catch (err) {
-    console.warn(`[Centum POS] No se pudo obtener CAE para venta ${ventaPosId}:`, err.message)
+    logger.warn(`[Centum POS] No se pudo obtener CAE para venta ${ventaPosId}:`, err.message)
     return null
   }
 }
@@ -1367,15 +1369,15 @@ async function fetchAndSaveCAE(ventaPosId, idVentaCentum) {
 async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   // Obtener venta completa
   const { data: venta, error } = await supabase.from('ventas_pos').select('*').eq('id', ventaPosId).single()
-  if (error || !venta) { console.log(`[Email Auto] Venta ${ventaPosId} no encontrada`); return }
+  if (error || !venta) { logger.info(`[Email Auto] Venta ${ventaPosId} no encontrada`); return }
   if (venta.email_enviado) return // Ya se envió
 
   // Obtener cliente y su email
-  if (!venta.id_cliente_centum) { console.log(`[Email Auto] Venta ${ventaPosId} sin cliente asignado`); return }
+  if (!venta.id_cliente_centum) { logger.info(`[Email Auto] Venta ${ventaPosId} sin cliente asignado`); return }
   const { data: cli } = await supabase.from('clientes')
     .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo, email')
     .eq('id_centum', venta.id_cliente_centum).single()
-  if (!cli?.email) { console.log(`[Email Auto] Cliente ${venta.id_cliente_centum} sin email (venta ${ventaPosId})`); return }
+  if (!cli?.email) { logger.info(`[Email Auto] Cliente ${venta.id_cliente_centum} sin email (venta ${ventaPosId})`); return }
 
   // Verificar que sea EMPRESA (no PRUEBA)
   const condIva = cli.condicion_iva || 'CF'
@@ -1427,7 +1429,7 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
     email_enviado_at: new Date().toISOString(),
   }).eq('id', ventaPosId)
 
-  console.log(`[Email Auto] Comprobante enviado a ${cli.email} para venta ${venta.numero_venta} (${numDoc})`)
+  logger.info(`[Email Auto] Comprobante enviado a ${cli.email} para venta ${venta.numero_venta} (${numDoc})`)
 }
 
 /**
@@ -1464,7 +1466,7 @@ async function retrySyncCAE() {
 
   const omitidas = ventas.length - necesitanCAE.length
   if (omitidas > 0) {
-    console.log(`[RetryCAE] Omitidas ${omitidas} ventas PRUEBA (factura manual, sin CAE esperado)`)
+    logger.info(`[RetryCAE] Omitidas ${omitidas} ventas PRUEBA (factura manual, sin CAE esperado)`)
   }
 
   let conCAE = 0
@@ -1507,7 +1509,7 @@ async function retryEmailsPendientes() {
       }
     } catch (err) {
       fallidos++
-      console.warn(`[RetryEmails] Error venta ${v.numero_venta}:`, err.message)
+      logger.warn(`[RetryEmails] Error venta ${v.numero_venta}:`, err.message)
     }
   }
 

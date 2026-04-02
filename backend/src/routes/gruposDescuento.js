@@ -3,9 +3,11 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/grupos-descuento — listar todos (con count de clientes + rubros)
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: grupos, error } = await supabase
       .from('grupos_descuento')
@@ -46,13 +48,13 @@ router.get('/', verificarAuth, async (req, res) => {
 
     res.json({ grupos: resultado })
   } catch (err) {
-    console.error('Error al obtener grupos descuento:', err)
+    logger.error('Error al obtener grupos descuento:', err)
     res.status(500).json({ error: 'Error al obtener grupos de descuento' })
   }
-})
+}))
 
 // POST /api/grupos-descuento — crear grupo
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, porcentaje } = req.body
 
@@ -79,13 +81,13 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
 
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear grupo descuento:', err)
+    logger.error('Error al crear grupo descuento:', err)
     res.status(500).json({ error: 'Error al crear grupo de descuento' })
   }
-})
+}))
 
 // PUT /api/grupos-descuento/:id — editar grupo
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { nombre, porcentaje, activo } = req.body
     const updates = {}
@@ -123,13 +125,13 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json(data)
   } catch (err) {
-    console.error('Error al editar grupo descuento:', err)
+    logger.error('Error al editar grupo descuento:', err)
     res.status(500).json({ error: 'Error al editar grupo de descuento' })
   }
-})
+}))
 
 // GET /api/grupos-descuento/:id/clientes — listar clientes del grupo
-router.get('/:id/clientes', verificarAuth, async (req, res) => {
+router.get('/:id/clientes', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('clientes')
@@ -140,13 +142,13 @@ router.get('/:id/clientes', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ clientes: data || [] })
   } catch (err) {
-    console.error('Error al obtener clientes del grupo:', err)
+    logger.error('Error al obtener clientes del grupo:', err)
     res.status(500).json({ error: 'Error al obtener clientes' })
   }
-})
+}))
 
 // POST /api/grupos-descuento/:id/clientes — agregar cliente al grupo
-router.post('/:id/clientes', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:id/clientes', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { cliente_id } = req.body
     if (!cliente_id) return res.status(400).json({ error: 'Se requiere cliente_id' })
@@ -160,13 +162,13 @@ router.post('/:id/clientes', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al agregar cliente al grupo:', err)
+    logger.error('Error al agregar cliente al grupo:', err)
     res.status(500).json({ error: 'Error al agregar cliente' })
   }
-})
+}))
 
 // DELETE /api/grupos-descuento/:id/clientes/:clienteId — quitar cliente del grupo
-router.delete('/:id/clientes/:clienteId', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id/clientes/:clienteId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { error } = await supabase
       .from('clientes')
@@ -176,13 +178,13 @@ router.delete('/:id/clientes/:clienteId', verificarAuth, soloAdmin, async (req, 
     if (error) throw error
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al quitar cliente del grupo:', err)
+    logger.error('Error al quitar cliente del grupo:', err)
     res.status(500).json({ error: 'Error al quitar cliente' })
   }
-})
+}))
 
 // GET /api/grupos-descuento/buscar-clientes — buscar clientes para agregar (sin grupo o de otro grupo)
-router.get('/buscar-clientes/search', verificarAuth, async (req, res) => {
+router.get('/buscar-clientes/search', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const q = req.query.q?.trim()
     if (!q || q.length < 2) return res.json({ clientes: [] })
@@ -197,13 +199,13 @@ router.get('/buscar-clientes/search', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ clientes: data || [] })
   } catch (err) {
-    console.error('Error al buscar clientes:', err)
+    logger.error('Error al buscar clientes:', err)
     res.status(500).json({ error: 'Error al buscar clientes' })
   }
-})
+}))
 
 // DELETE /api/grupos-descuento/:id — eliminar grupo (solo si no tiene clientes)
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     // Verificar que no tenga clientes asignados
     const { count } = await supabase
@@ -225,15 +227,15 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ ok: true })
   } catch (err) {
-    console.error('Error al eliminar grupo descuento:', err)
+    logger.error('Error al eliminar grupo descuento:', err)
     res.status(500).json({ error: 'Error al eliminar grupo de descuento' })
   }
-})
+}))
 
 // ─── RUBROS POR GRUPO ────────────────────────────────────────────────────────
 
 // GET /api/grupos-descuento/:id/rubros — listar rubros con descuento del grupo
-router.get('/:id/rubros', verificarAuth, async (req, res) => {
+router.get('/:id/rubros', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('grupos_descuento_rubros')
@@ -243,13 +245,13 @@ router.get('/:id/rubros', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json({ rubros: data || [] })
   } catch (err) {
-    console.error('Error al obtener rubros del grupo:', err)
+    logger.error('Error al obtener rubros del grupo:', err)
     res.status(500).json({ error: 'Error al obtener rubros' })
   }
-})
+}))
 
 // POST /api/grupos-descuento/:id/rubros — guardar rubros (array completo, reemplaza todos)
-router.post('/:id/rubros', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:id/rubros', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { rubros } = req.body // [{ rubro, rubro_id_centum, porcentaje }]
     if (!Array.isArray(rubros)) {
@@ -291,9 +293,9 @@ router.post('/:id/rubros', verificarAuth, soloAdmin, async (req, res) => {
 
     res.json({ rubros: data || [] })
   } catch (err) {
-    console.error('Error al guardar rubros del grupo:', err)
+    logger.error('Error al guardar rubros del grupo:', err)
     res.status(500).json({ error: 'Error al guardar rubros' })
   }
-})
+}))
 
 module.exports = router

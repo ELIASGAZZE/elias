@@ -21,6 +21,7 @@ const sortRows = (rows, key, dir) => {
   return [...rows].sort((a, b) => {
     let va, vb
     if (key === 'estado') { va = a.estado === 'pendiente_nc' ? 0 : 1; vb = b.estado === 'pendiente_nc' ? 0 : 1 }
+    else if (key === 'fecha') { va = new Date(a.duplicado?.fecha || 0).getTime(); vb = new Date(b.duplicado?.fecha || 0).getTime() }
     else if (key === 'total') { va = a.duplicado?.total ?? 0; vb = b.duplicado?.total ?? 0 }
     else if (key === 'numero_venta') { va = a.numero_venta_pos ?? 0; vb = b.numero_venta_pos ?? 0 }
     else if (key === 'cliente') { va = a.cliente || ''; vb = b.cliente || '' }
@@ -50,14 +51,16 @@ const DuplicadosCentum = () => {
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
 
-  useEffect(() => {
+  const cargar = () => {
     setCargando(true)
     setError(null)
     api.get('/api/pos/ventas/duplicados-centum')
       .then(r => setData(r.data))
       .catch(err => setError(err.response?.data?.error || err.message))
       .finally(() => setCargando(false))
-  }, [])
+  }
+
+  useEffect(() => { cargar() }, [])
 
   const resumen = data?.resumen
   const rawRows = data?.duplicados || []
@@ -120,8 +123,8 @@ const DuplicadosCentum = () => {
           </div>
         )}
 
-        {/* Filtro por estado */}
-        <div className="flex flex-wrap gap-2">
+        {/* Filtro por estado + actualizar */}
+        <div className="flex flex-wrap gap-2 items-center">
           {[
             { key: '', label: 'Todos' },
             { key: 'pendiente_nc', label: 'Pendientes NC' },
@@ -140,6 +143,11 @@ const DuplicadosCentum = () => {
               {resumen && key === 'resuelta' && <span className="ml-1 opacity-70">({resumen.con_nc})</span>}
             </button>
           ))}
+          <button onClick={cargar} disabled={cargando}
+            className="text-xs px-3 py-1.5 rounded-full font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-50 ml-auto"
+            title="Actualizar">
+            {cargando ? 'Consultando...' : '↻ Actualizar'}
+          </button>
         </div>
 
         {/* Error */}
@@ -162,6 +170,7 @@ const DuplicadosCentum = () => {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-left font-semibold text-gray-500 uppercase tracking-wider">
                   <SortHeader field="estado">Estado</SortHeader>
+                  <SortHeader field="fecha">Fecha</SortHeader>
                   <SortHeader field="numero_venta">Venta POS</SortHeader>
                   <SortHeader field="comprobante_real">Factura Original</SortHeader>
                   <SortHeader field="comprobante_dup">Factura Duplicada</SortHeader>
@@ -185,6 +194,9 @@ const DuplicadosCentum = () => {
                         }`}>
                           {d.estado === 'pendiente_nc' ? 'Pendiente NC' : 'Resuelta'}
                         </span>
+                      </td>
+                      <td className="px-2 py-2 text-gray-700 whitespace-nowrap">
+                        {formatFechaHora(d.duplicado?.fecha)}
                       </td>
                       <td className="px-2 py-2 font-bold text-blue-600 whitespace-nowrap">
                         {d.numero_venta_pos ? `#${d.numero_venta_pos}` : '—'}

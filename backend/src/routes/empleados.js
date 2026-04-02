@@ -4,11 +4,15 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
+const logger = require('../config/logger')
+const { validate } = require('../middleware/validate')
+const { crearEmpleadoSchema, editarEmpleadoSchema, asignarPinSchema, cambiarPinSchema } = require('../schemas/empleados')
+const asyncHandler = require('../middleware/asyncHandler')
 
 // GET /api/empleados
 // Operario/Gestor: solo empleados de su sucursal. Admin: todos (o filtrados por sucursal_id).
 // Por defecto solo activo=true, salvo que se envíe ?todas=true
-router.get('/', verificarAuth, async (req, res) => {
+router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { sucursal_id, todas, empresa } = req.query
     const { rol, sucursal_id: perfilSucursalId } = req.perfil
@@ -33,14 +37,14 @@ router.get('/', verificarAuth, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (err) {
-    console.error('Error al obtener empleados:', err)
+    logger.error('Error al obtener empleados:', err)
     res.status(500).json({ error: 'Error al obtener empleados' })
   }
-})
+}))
 
 // GET /api/empleados/por-codigo/:codigo
 // Busca empleado activo por código. Devuelve id + nombre + sucursal_id + tope/consumido mes.
-router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
+router.get('/por-codigo/:codigo', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { codigo } = req.params
     const { data, error } = await supabase
@@ -71,24 +75,16 @@ router.get('/por-codigo/:codigo', verificarAuth, async (req, res) => {
 
     res.json({ ...data, consumido_mes, disponible })
   } catch (err) {
-    console.error('Error al buscar empleado por código:', err)
+    logger.error('Error al buscar empleado por código:', err)
     res.status(500).json({ error: 'Error al buscar empleado' })
   }
-})
+}))
 
 // POST /api/empleados
 // Admin: crea un nuevo empleado
-router.post('/', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/', verificarAuth, soloAdmin, validate(crearEmpleadoSchema), asyncHandler(async (req, res) => {
   try {
     const { nombre, sucursal_id, codigo, fecha_cumpleanos, empresa } = req.body
-
-    if (!nombre || !nombre.trim()) {
-      return res.status(400).json({ error: 'El nombre del empleado es requerido' })
-    }
-
-    if (!codigo || !codigo.trim()) {
-      return res.status(400).json({ error: 'El código del empleado es requerido' })
-    }
 
     const insert = { nombre: nombre.trim(), codigo: codigo.trim() }
     if (sucursal_id) insert.sucursal_id = sucursal_id
@@ -109,14 +105,14 @@ router.post('/', verificarAuth, soloAdmin, async (req, res) => {
     }
     res.status(201).json(data)
   } catch (err) {
-    console.error('Error al crear empleado:', err)
+    logger.error('Error al crear empleado:', err)
     res.status(500).json({ error: 'Error al crear empleado' })
   }
-})
+}))
 
 // PUT /api/empleados/:id
 // Admin: edita nombre, sucursal_id, activo. Solo actualiza campos enviados.
-router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.put('/:id', verificarAuth, soloAdmin, validate(editarEmpleadoSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { nombre, sucursal_id, activo, codigo, fecha_cumpleanos, empresa } = req.body
@@ -148,14 +144,14 @@ router.put('/:id', verificarAuth, soloAdmin, async (req, res) => {
     }
     res.json(data)
   } catch (err) {
-    console.error('Error al editar empleado:', err)
+    logger.error('Error al editar empleado:', err)
     res.status(500).json({ error: 'Error al editar empleado' })
   }
-})
+}))
 
 // DELETE /api/empleados/:id
 // Admin: elimina un empleado
-router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
+router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { error } = await supabase
@@ -166,22 +162,18 @@ router.delete('/:id', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json({ mensaje: 'Empleado eliminado correctamente' })
   } catch (err) {
-    console.error('Error al eliminar empleado:', err)
+    logger.error('Error al eliminar empleado:', err)
     res.status(500).json({ error: 'Error al eliminar empleado' })
   }
-})
+}))
 
 // ── PIN de fichaje ──────────────────────────────────────────────────────────
 
 // POST /api/empleados/:id/pin — Asignar/cambiar PIN (admin)
-router.post('/:id/pin', verificarAuth, soloAdmin, async (req, res) => {
+router.post('/:id/pin', verificarAuth, soloAdmin, validate(asignarPinSchema), asyncHandler(async (req, res) => {
   try {
     const { id } = req.params
     const { pin, temporal } = req.body
-
-    if (!pin || pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin)) {
-      return res.status(400).json({ error: 'El PIN debe ser de 4-6 dígitos numéricos' })
-    }
 
     // Verificar que el PIN no esté en uso por otro empleado
     const { data: empleados } = await supabase
@@ -210,23 +202,15 @@ router.post('/:id/pin', verificarAuth, soloAdmin, async (req, res) => {
     if (error) throw error
     res.json({ ...data, mensaje: 'PIN asignado correctamente' })
   } catch (err) {
-    console.error('Error al asignar PIN:', err)
+    logger.error('Error al asignar PIN:', err)
     res.status(500).json({ error: 'Error al asignar PIN' })
   }
-})
+}))
 
 // POST /api/empleados/cambiar-pin — Empleado cambia su propio PIN
-router.post('/cambiar-pin', async (req, res) => {
+router.post('/cambiar-pin', validate(cambiarPinSchema), asyncHandler(async (req, res) => {
   try {
     const { empleado_id, pin_actual, pin_nuevo } = req.body
-
-    if (!empleado_id || !pin_actual || !pin_nuevo) {
-      return res.status(400).json({ error: 'empleado_id, pin_actual y pin_nuevo son requeridos' })
-    }
-
-    if (pin_nuevo.length < 4 || pin_nuevo.length > 6 || !/^\d+$/.test(pin_nuevo)) {
-      return res.status(400).json({ error: 'El PIN nuevo debe ser de 4-6 dígitos numéricos' })
-    }
 
     // Verificar PIN actual
     const { data: emp, error: empError } = await supabase
@@ -269,9 +253,9 @@ router.post('/cambiar-pin', async (req, res) => {
     if (error) throw error
     res.json({ mensaje: 'PIN cambiado correctamente' })
   } catch (err) {
-    console.error('Error al cambiar PIN:', err)
+    logger.error('Error al cambiar PIN:', err)
     res.status(500).json({ error: 'Error al cambiar PIN' })
   }
-})
+}))
 
 module.exports = router

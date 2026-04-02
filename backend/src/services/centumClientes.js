@@ -1,10 +1,11 @@
 // Servicio de sincronización de clientes con ERP Centum
 const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
+const logger = require('../config/logger')
 
 const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
 const API_KEY = process.env.CENTUM_API_KEY
-if (!API_KEY) console.error('⚠ CENTUM_API_KEY no está configurada en variables de entorno')
+if (!API_KEY) logger.error('⚠ CENTUM_API_KEY no está configurada en variables de entorno')
 const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 
 /**
@@ -147,7 +148,7 @@ async function syncClientesRecientes(horasAtras = 2) {
       if (localPorCuit && !localPorCuit.id_centum) {
         // Linkear id_centum al existente
         await supabase.from('clientes').update({ id_centum: r.ClienteID, ...mapearCliente(r) }).eq('id', localPorCuit.id)
-        console.log(`[SyncClientes] Linkeado ${r.RazonSocialCliente} (CUIT ${cuit}) → id_centum ${r.ClienteID}`)
+        logger.info(`[SyncClientes] Linkeado ${r.RazonSocialCliente} (CUIT ${cuit}) → id_centum ${r.ClienteID}`)
       } else if (!localPorCuit) {
         nuevosBI.push(r)
       }
@@ -243,7 +244,7 @@ async function syncClientesRecientes(horasAtras = 2) {
       .from('clientes')
       .update(mapearCliente(r))
       .eq('id', local.id)
-    if (error) console.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
+    if (error) logger.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
     else actualizadosCount++
   }
 
@@ -284,11 +285,11 @@ async function syncClientesRecientes(horasAtras = 2) {
         }
       }
       if (desactivadosCount > 0) {
-        console.log(`[SyncClientes] ${desactivadosCount} clientes desactivados (inactivos en Centum)`)
+        logger.info(`[SyncClientes] ${desactivadosCount} clientes desactivados (inactivos en Centum)`)
       }
     }
   } catch (err) {
-    console.warn('[SyncClientes] Error al verificar clientes inactivos:', err.message)
+    logger.warn('[SyncClientes] Error al verificar clientes inactivos:', err.message)
   }
 
   // Reactivar clientes locales inactivos que fueron reactivados en Centum
@@ -327,11 +328,11 @@ async function syncClientesRecientes(horasAtras = 2) {
         }
       }
       if (reactivadosCount > 0) {
-        console.log(`[SyncClientes] ${reactivadosCount} clientes reactivados (activos en Centum)`)
+        logger.info(`[SyncClientes] ${reactivadosCount} clientes reactivados (activos en Centum)`)
       }
     }
   } catch (err) {
-    console.warn('[SyncClientes] Error al verificar clientes reactivados:', err.message)
+    logger.warn('[SyncClientes] Error al verificar clientes reactivados:', err.message)
   }
 
   const resultado = { nuevos: nuevosCount, actualizados: actualizadosCount, desactivados: desactivadosCount, reactivados: reactivadosCount }
@@ -401,7 +402,7 @@ async function retrySyncCentum() {
             .query(`SELECT TOP 1 ClienteID FROM Clientes_VIEW WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1`)
           if (res.recordset.length > 0) {
             idCentum = res.recordset[0].ClienteID
-            console.log(`[RetryCentum] Cliente ${cliente.razon_social} ya existe en Centum (ID: ${idCentum}), linkeando`)
+            logger.info(`[RetryCentum] Cliente ${cliente.razon_social} ya existe en Centum (ID: ${idCentum}), linkeando`)
           }
         }
       }
@@ -422,7 +423,7 @@ async function retrySyncCentum() {
               .query(`SELECT TOP 1 ClienteID FROM Clientes_VIEW WHERE CUITCliente LIKE @cuit AND ActivoCliente = 1`)
             if (res.recordset.length > 0) {
               idCentum = res.recordset[0].ClienteID
-              console.log(`[RetryCentum] Cliente ${cliente.razon_social} YaExiste, linkeando ID: ${idCentum}`)
+              logger.info(`[RetryCentum] Cliente ${cliente.razon_social} YaExiste, linkeando ID: ${idCentum}`)
             }
           }
           if (!idCentum) throw errCrear
@@ -450,7 +451,7 @@ async function retrySyncCentum() {
         fallidos++
       }
     } catch (err) {
-      console.warn(`[RetryCentum] Falló cliente ${cliente.id} (${cliente.razon_social}):`, err.message)
+      logger.warn(`[RetryCentum] Falló cliente ${cliente.id} (${cliente.razon_social}):`, err.message)
       fallidos++
     }
   }
@@ -694,7 +695,7 @@ async function agregarContactoEnvioCentum(idCliente, { email, celular }) {
   try {
     idsActividad = await getActividadesEnvio()
   } catch (err) {
-    console.warn('No se pudieron obtener actividades de envío:', err.message)
+    logger.warn('No se pudieron obtener actividades de envío:', err.message)
   }
 
   const body = {
@@ -731,7 +732,7 @@ async function agregarContactoEnvioCentum(idCliente, { email, celular }) {
     // Si el email/celular ya existe como contacto, no es un error real
     const code = data?.Code || ''
     if (code.includes('YaExiste')) {
-      console.log(`[Centum] Contacto envío ya existe para cliente ${idCliente}, ignorando.`)
+      logger.info(`[Centum] Contacto envío ya existe para cliente ${idCliente}, ignorando.`)
       registrarLlamada({
         servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
         estado: 'ok_existente', status_code: response.status, duracion_ms: Date.now() - inicio,
@@ -955,13 +956,13 @@ async function syncClientesFaltantes() {
     const lote = inserts.slice(i, i + 200)
     const { data: upserted, error } = await supabase.from('clientes').upsert(lote, { onConflict: 'id_centum', ignoreDuplicates: true })
     if (error) {
-      console.warn(`[SyncFaltantes] Error insertando lote ${i}:`, error.message)
+      logger.warn(`[SyncFaltantes] Error insertando lote ${i}:`, error.message)
     } else {
       insertados += lote.length
     }
   }
 
-  console.log(`[SyncFaltantes] ${insertados} clientes faltantes importados de Centum BI`)
+  logger.info(`[SyncFaltantes] ${insertados} clientes faltantes importados de Centum BI`)
 
   registrarLlamada({
     servicio: 'centum_clientes_bi', endpoint: 'Clientes_VIEW (full scan)', metodo: 'QUERY',
