@@ -407,7 +407,7 @@ const VentasHome = () => {
         {/* Resumen del período: POS vs Centum BI */}
         <SectionErrorBoundary name="Resumen POS vs Centum">
         {esAdmin && resumen && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             {/* Resumen POS */}
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex items-center justify-between mb-3">
@@ -444,66 +444,6 @@ const VentasHome = () => {
               )}
             </div>
 
-            {/* Resumen Centum BI */}
-            <div className={`bg-white rounded-xl border p-4 ${
-              resumenCentum && Math.abs((resumenCentum.totalVentas + resumenCentum.totalNC) - totalDia) > 100
-                ? 'border-red-300 bg-red-50'
-                : 'border-gray-200'
-            }`}>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase">
-                  {fecha === fechaHasta ? 'Centum BI' : 'Centum BI (período)'}
-                </h2>
-                {resumenCentum && (
-                  <span className="text-xs text-gray-400">{resumenCentum.cantVentas} venta{resumenCentum.cantVentas !== 1 ? 's' : ''}{resumenCentum.cantNC > 0 ? ` · ${resumenCentum.cantNC} NC` : ''}</span>
-                )}
-              </div>
-              {cargandoCentum ? (
-                <p className="text-sm text-gray-400">Consultando Centum BI...</p>
-              ) : resumenCentum ? (
-                <>
-                  {(() => {
-                    const totalCentum = resumenCentum.totalVentas + resumenCentum.totalNC
-                    const diff = totalCentum - totalDia
-                    const hayDiff = Math.abs(diff) > 100
-                    return (
-                      <>
-                        <p className="text-2xl font-bold text-gray-800 mb-1">{formatPrecio(totalCentum)}</p>
-                        {hayDiff && (
-                          <p className={`text-sm font-semibold mb-2 ${diff > 0 ? 'text-red-600' : 'text-amber-600'}`}>
-                            {diff > 0 ? '+' : ''}{formatPrecio(diff)} vs POS
-                            {resumenCentum.cantVentas !== cantVentas && (
-                              <span className="text-xs font-normal ml-1">({resumenCentum.cantVentas - cantVentas > 0 ? '+' : ''}{resumenCentum.cantVentas - cantVentas} ventas)</span>
-                            )}
-                          </p>
-                        )}
-                        {!hayDiff && (
-                          <p className="text-sm text-emerald-600 font-medium mb-2">Coincide con POS</p>
-                        )}
-                      </>
-                    )
-                  })()}
-                  <div className="flex flex-wrap gap-2">
-                    <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
-                      Ventas: {formatPrecio(resumenCentum.totalVentas)}
-                    </span>
-                    {resumenCentum.cantNC > 0 && (
-                      <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
-                        NC: {formatPrecio(resumenCentum.totalNC)}
-                      </span>
-                    )}
-                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
-                      Empresa: {formatPrecio(resumenCentum.totalEmpresa)}
-                    </span>
-                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
-                      Prueba: {formatPrecio(resumenCentum.totalPrueba)}
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-gray-400">No se pudo conectar a Centum BI</p>
-              )}
-            </div>
           </div>
         )}
 
