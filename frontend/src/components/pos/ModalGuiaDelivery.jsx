@@ -204,16 +204,21 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
               const pago = estadoPago(p.observaciones)
               const obsMatch = (p.observaciones || '').match(/Dirección: ([^|]+)/)
               const direccion = obsMatch ? obsMatch[1].trim() : ''
+              const celular = p.celular_cliente || ''
               const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
+              const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
               const totalMostrar = totalConDescuento(p)
               const tieneDesc = esEfectivo && descPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
+              const obsEntrega = p.observaciones_pedido || ''
+              const tarjeta = p.tarjeta_regalo || ''
+              const extras = [obsEntrega, tarjeta ? `🎁 ${tarjeta}` : ''].filter(Boolean).join(' · ')
               return `
                 <tr>
                   <td class="check-col"><div class="check-box"></div></td>
                   <td class="num">#${p.numero || i + 1}</td>
-                  <td><strong>${p.nombre_cliente || 'S/N'}</strong><br/><span style="font-size:11px;color:#666">${direccion}</span></td>
+                  <td><strong>${p.nombre_cliente || 'S/N'}</strong>${celular ? ` <span style="font-size:10px;color:#555">📞 ${celular}</span>` : ''}<br/><span style="font-size:11px;color:#666">${direccion}</span>${extras ? `<br/><span style="font-size:10px;color:#7c3aed;font-style:italic">${extras}</span>` : ''}</td>
                   <td class="items">${resumenItems}</td>
-                  <td style="text-align:right;white-space:nowrap">${tieneDesc ? `<s style="color:#999;font-size:10px">${formatPrecio(p.total)}</s><br/>` : ''}${formatPrecio(totalMostrar)}</td>
+                  <td style="text-align:right;white-space:nowrap">${esAnticipado ? '<span style="color:#16a34a;font-size:10px">PAGADO</span>' : (tieneDesc ? `<s style="color:#999;font-size:10px">${formatPrecio(p.total)}</s><br/>` : '') + formatPrecio(totalMostrar)}</td>
                   <td><span class="pago ${pago.cls}">${esEfectivo ? 'COBRAR' : 'YA PAGÓ'}</span></td>
                 </tr>
               `
@@ -306,16 +311,21 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
       const pagoClass = pago.cls
       const obsMatch = (p.observaciones || '').match(/Dirección: ([^|]+)/)
       const direccion = obsMatch ? obsMatch[1].trim() : ''
+      const celular = p.celular_cliente || ''
       const totalMostrar = totalConDescuento(p)
       const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
+      const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
       const tieneDesc = esEfectivo && descEfectivoPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
+      const obsEntrega = p.observaciones_pedido || ''
+      const tarjeta = p.tarjeta_regalo || ''
+      const extras = [obsEntrega, tarjeta ? `🎁 ${tarjeta}` : ''].filter(Boolean).join(' · ')
       return `
         <tr>
           <td class="check-col"><div class="check-box"></div></td>
           <td class="num">#${p.numero || i + 1}</td>
-          <td><strong>${p.nombre_cliente || 'S/N'}</strong><br/><span style="font-size:11px;color:#666">${direccion}</span></td>
+          <td><strong>${p.nombre_cliente || 'S/N'}</strong>${celular ? ` <span style="font-size:10px;color:#555">📞 ${celular}</span>` : ''}<br/><span style="font-size:11px;color:#666">${direccion}</span>${extras ? `<br/><span style="font-size:10px;color:#7c3aed;font-style:italic">${extras}</span>` : ''}</td>
           <td class="items">${resumenItems}</td>
-          <td style="text-align:right;white-space:nowrap">${tieneDesc ? `<s style="color:#999;font-size:10px">${formatPrecio(p.total)}</s><br/>` : ''}${formatPrecio(totalMostrar)}</td>
+          <td style="text-align:right;white-space:nowrap">${esAnticipado ? '<span style="color:#16a34a;font-size:10px">PAGADO</span>' : (tieneDesc ? `<s style="color:#999;font-size:10px">${formatPrecio(p.total)}</s><br/>` : '') + formatPrecio(totalMostrar)}</td>
           <td><span class="pago ${pagoClass}">${pago.label}</span></td>
         </tr>
       `
@@ -670,6 +680,14 @@ function TurnoSection({ titulo, turno, pedidos, colorBorder, colorBg, colorText,
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
                       </svg>
                       <span className="text-xs text-gray-600">{direccion}</span>
+                    </div>
+                  )}
+                  {p.celular_cliente && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+                      </svg>
+                      <span className="text-xs text-gray-600">{p.celular_cliente}</span>
                     </div>
                   )}
                   <div className="mt-1.5 text-xs text-gray-500">

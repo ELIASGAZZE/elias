@@ -2174,7 +2174,24 @@ router.get('/pedidos/guia-delivery', verificarAuth, asyncHandler(async (req, res
     const { data, error } = await query
     if (error) throw error
 
-    res.json({ pedidos: data || [] })
+    // Enriquecer pedidos con celular del cliente desde tabla clientes
+    const pedidos = data || []
+    const idsCliente = [...new Set(pedidos.map(p => p.id_cliente_centum).filter(Boolean))]
+    let celularMap = {}
+    if (idsCliente.length > 0) {
+      const { data: clientes } = await supabase
+        .from('clientes')
+        .select('id_centum, celular')
+        .in('id_centum', idsCliente)
+      if (clientes) {
+        clientes.forEach(c => { if (c.celular) celularMap[c.id_centum] = c.celular })
+      }
+    }
+    pedidos.forEach(p => {
+      p.celular_cliente = celularMap[p.id_cliente_centum] || null
+    })
+
+    res.json({ pedidos })
   } catch (err) {
     logger.error('[POS] Error al obtener guía delivery:', err.message)
     res.status(500).json({ error: 'Error al obtener guía delivery' })
@@ -2458,12 +2475,24 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       if (errGP) logger.error('[Guía Delivery] Error insertando guia_delivery_pedidos:', errGP.message)
     }
 
-    // Cambiar estado de todos los pedidos a 'entregado'
+    // Cambiar estado de todos los pedidos a 'entregado' y marcar total_pagado
     const pedidoIds = pedidos.map(p => p.id)
-    await supabase
-      .from('pedidos_pos')
-      .update({ estado: 'entregado' })
-      .in('id', pedidoIds)
+    for (const pedido of pedidos) {
+      const obs = pedido.observaciones || ''
+      const pedidoTotal = parseFloat(pedido.total) || 0
+      let totalPagado = parseFloat(pedido.total_pagado) || 0
+
+      // Si paga en efectivo y no tenía total_pagado, calcular con descuento aplicado
+      if (obs.includes('PAGO EN ENTREGA: EFECTIVO') && totalPagado === 0) {
+        const desc = descEfectivoPct > 0 ? Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100 : 0
+        totalPagado = Math.round((pedidoTotal - desc) * 100) / 100
+      }
+
+      await supabase
+        .from('pedidos_pos')
+        .update({ estado: 'entregado', total_pagado: totalPagado || pedidoTotal })
+        .eq('id', pedido.id)
+    }
 
     // Crear cierre delivery SOLO si hay efectivo a cobrar
     const cambioNum = parseFloat(cambio_entregado) || 0

@@ -1,6 +1,7 @@
 import React from 'react'
 import ModalCobrar from '../../../components/pos/ModalCobrar'
 import NuevoClienteModal from '../../../components/NuevoClienteModal'
+import EditarClienteModal from '../../../components/EditarClienteModal'
 import api from '../../../services/api'
 import { formatPrecio } from '../utils/promotionEngine'
 
@@ -73,8 +74,28 @@ const PedidoWizardModal = ({
   guardandoPedido,
   finalizarPedidoWizard,
 }) => {
+  const [mostrarEditarCliente, setMostrarEditarCliente] = React.useState(false)
+
+  const condicionIvaLabel = {
+    CF: 'Consumidor Final',
+    RI: 'Resp. Inscripto',
+    MT: 'Monotributista',
+    EX: 'IVA Exento',
+  }
+
   return (
     <>
+      {/* Modal editar cliente */}
+      {mostrarEditarCliente && clientePedido && (
+        <EditarClienteModal
+          cliente={clientePedido}
+          onClose={() => setMostrarEditarCliente(false)}
+          onGuardado={(clienteActualizado) => {
+            setClientePedido(prev => ({ ...prev, ...clienteActualizado }))
+          }}
+        />
+      )}
+
       {/* Modal de cobro para pedido (pago anticipado o cobro en caja) */}
       {mostrarCobrarPedido && (
         <ModalCobrar
@@ -94,7 +115,7 @@ const PedidoWizardModal = ({
       )}
 
       {/* Modal wizard pedido: paso 0 = fecha, paso 1 = cliente, paso 2 = tipo, paso 3 = dirección/sucursal, paso 4 = pago */}
-      {mostrarBuscarClientePedido && (
+      {mostrarBuscarClientePedido && !mostrarEditarCliente && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={cerrarWizardPedido}>
           <div
             className="bg-white rounded-xl w-full max-w-md max-h-[85vh] flex flex-col shadow-xl"
@@ -295,9 +316,29 @@ const PedidoWizardModal = ({
                       <span className="text-gray-500">Fecha:</span>{' '}
                       <span className="font-medium text-gray-800">{new Date(fechaEntregaPedido + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
                     </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-gray-500">Cliente:</span>{' '}
+                        <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                      </div>
+                      <button
+                        onClick={() => setMostrarEditarCliente(true)}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                        Editar
+                      </button>
+                    </div>
                     <div>
-                      <span className="text-gray-500">Cliente:</span>{' '}
-                      <span className="font-medium text-gray-800">{clientePedido.razon_social}</span>
+                      <span className="text-gray-500">Cond. IVA:</span>{' '}
+                      <span className={`font-medium text-xs px-1.5 py-0.5 rounded ${
+                        clientePedido.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700' :
+                        clientePedido.condicion_iva === 'MT' ? 'bg-green-100 text-green-700' :
+                        clientePedido.condicion_iva === 'EX' ? 'bg-purple-100 text-purple-700' :
+                        'bg-gray-200 text-gray-700'
+                      }`}>{condicionIvaLabel[clientePedido.condicion_iva] || clientePedido.condicion_iva || 'Sin datos'}</span>
                     </div>
                   </div>
                   {/* Email y celular del cliente */}
