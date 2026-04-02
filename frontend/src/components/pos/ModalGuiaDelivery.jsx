@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import api from '../../services/api'
+import { imprimirTicketsDeliveryBatch } from '../../utils/imprimirComprobante'
 
 const hoyISO = () => new Date().toISOString().split('T')[0]
 const mananaISO = () => {
@@ -113,6 +114,13 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
 
       // Imprimir guía del cadete
       imprimirGuiaCadete(mostrarDespacho, data)
+
+      // Imprimir tickets de las ventas en comandera (80mm)
+      if (data.ventas_creadas && data.ventas_creadas.length > 0) {
+        setTimeout(() => {
+          imprimirTicketsDeliveryBatch(data.ventas_creadas, data.punto_venta)
+        }, 1000)
+      }
 
       // Recargar datos
       setMostrarDespacho(null)

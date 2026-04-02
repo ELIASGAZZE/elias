@@ -439,7 +439,7 @@ router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, asyncHandler(
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
@@ -629,6 +629,18 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     }
 
     const ventaId = data?.id || null
+
+    // Vincular eliminaciones de artículos del mismo ticket (auditoría)
+    if (ticket_uid && ventaId && data?.numero_venta) {
+      supabase
+        .from('pos_eliminaciones_log')
+        .update({ venta_pos_id: ventaId, numero_venta: data.numero_venta })
+        .eq('ticket_uid', ticket_uid)
+        .is('venta_pos_id', null)
+        .then(({ error: linkErr }) => {
+          if (linkErr) logger.warn('[POS] No se pudo vincular eliminaciones al ticket:', linkErr.message)
+        })
+    }
 
     // Registrar movimiento negativo de saldo si se aplicó
     if (saldoApl > 0 && id_cliente_centum) {
@@ -2453,79 +2465,87 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       .update({ estado: 'entregado' })
       .in('id', pedidoIds)
 
-    // Crear cierre delivery en Control Caja POS (pendiente de verificación)
+    // Crear cierre delivery SOLO si hay efectivo a cobrar
     const cambioNum = parseFloat(cambio_entregado) || 0
     const totalADevolver = totalEfectivo + cambioNum
     const fechaFormateada = fecha.split('-').reverse().join('/')
     const labelDelivery = `Delivery ${fechaFormateada} ${turno}`
 
-    const { data: cierreDelivery, error: errCierre } = await supabase
-      .from('cierres_pos')
-      .insert({
-        caja_id,
-        empleado_id: null,
-        cajero_id: req.perfil.id,
-        apertura_at: new Date().toISOString(),
-        cierre_at: new Date().toISOString(),
-        fecha,
-        fondo_fijo: cambioNum,
-        fondo_fijo_billetes: {},
-        fondo_fijo_monedas: {},
-        tipo: 'delivery',
-        estado: 'pendiente_gestor',
-        total_efectivo: totalADevolver,
-        total_general: totalADevolver,
-        medios_pago: totalAnticipado > 0 ? [{ nombre: 'Pago anticipado (MP)', total: totalAnticipado }] : [],
-        billetes: {},
-        monedas: {},
-        observaciones_apertura: labelDelivery,
-        observaciones: `Guía delivery ${turno} - ${pedidos.length} pedidos. Cadete: ${cadete_nombre || 'Sin asignar'}. Efectivo a cobrar: $${totalEfectivo}. Cambio entregado: $${cambioNum}. Total a devolver: $${totalADevolver}.`,
-      })
-      .select()
-      .single()
+    let cierreDelivery = null
 
-    if (errCierre) {
-      logger.error('[Guía Delivery] Error creando cierre delivery:', errCierre.message)
-    }
-
-    // Registrar retiro en la caja que despacha (el cambio dado al cadete)
-    if (cambioNum > 0) {
-      // Buscar cierre abierto de la caja que despacha
-      const { data: cierreAbierto } = await supabase
+    if (totalEfectivo > 0) {
+      const { data: cierreData, error: errCierre } = await supabase
         .from('cierres_pos')
-        .select('id')
-        .eq('caja_id', caja_id)
-        .eq('estado', 'abierta')
-        .limit(1)
+        .insert({
+          caja_id,
+          empleado_id: null,
+          cajero_id: req.perfil.id,
+          apertura_at: new Date().toISOString(),
+          cierre_at: new Date().toISOString(),
+          fecha,
+          fondo_fijo: cambioNum,
+          fondo_fijo_billetes: {},
+          fondo_fijo_monedas: {},
+          tipo: 'delivery',
+          estado: 'pendiente_gestor',
+          total_efectivo: totalADevolver,
+          total_general: totalADevolver,
+          medios_pago: totalAnticipado > 0 ? [{ nombre: 'Pago anticipado (MP)', total: totalAnticipado }] : [],
+          billetes: {},
+          monedas: {},
+          observaciones_apertura: labelDelivery,
+          observaciones: `Guía delivery ${turno} - ${pedidos.length} pedidos. Cadete: ${cadete_nombre || 'Sin asignar'}. Efectivo a cobrar: $${totalEfectivo}. Cambio entregado: $${cambioNum}. Total a devolver: $${totalADevolver}.`,
+        })
+        .select()
         .single()
 
-      if (cierreAbierto) {
-        // Calcular número secuencial del retiro
-        const { data: maxRetiro } = await supabase
-          .from('retiros_pos')
-          .select('numero')
-          .eq('cierre_pos_id', cierreAbierto.id)
-          .order('numero', { ascending: false })
-          .limit(1)
-
-        const numRetiro = (maxRetiro && maxRetiro.length > 0 ? maxRetiro[0].numero : 0) + 1
-
-        await supabase
-          .from('retiros_pos')
-          .insert({
-            cierre_pos_id: cierreAbierto.id,
-            empleado_id: null,
-            numero: numRetiro,
-            billetes: {},
-            monedas: {},
-            total: cambioNum,
-            oculto: true,
-            observaciones: `Cambio para delivery ${turno} ${fechaFormateada} - Cadete: ${cadete_nombre || 'Sin asignar'}`,
-          })
-        logger.info(`[Guía Delivery] Retiro de $${cambioNum} registrado en cierre ${cierreAbierto.id}`)
+      if (errCierre) {
+        logger.error('[Guía Delivery] Error creando cierre delivery:', errCierre.message)
       } else {
-        logger.info('[Guía Delivery] No hay caja abierta para registrar retiro del cambio')
+        cierreDelivery = cierreData
       }
+
+      // Registrar retiro en la caja que despacha (el cambio dado al cadete)
+      if (cambioNum > 0) {
+        // Buscar cierre abierto de la caja que despacha
+        const { data: cierreAbierto } = await supabase
+          .from('cierres_pos')
+          .select('id')
+          .eq('caja_id', caja_id)
+          .eq('estado', 'abierta')
+          .limit(1)
+          .single()
+
+        if (cierreAbierto) {
+          // Calcular número secuencial del retiro
+          const { data: maxRetiro } = await supabase
+            .from('retiros_pos')
+            .select('numero')
+            .eq('cierre_pos_id', cierreAbierto.id)
+            .order('numero', { ascending: false })
+            .limit(1)
+
+          const numRetiro = (maxRetiro && maxRetiro.length > 0 ? maxRetiro[0].numero : 0) + 1
+
+          await supabase
+            .from('retiros_pos')
+            .insert({
+              cierre_pos_id: cierreAbierto.id,
+              empleado_id: null,
+              numero: numRetiro,
+              billetes: {},
+              monedas: {},
+              total: cambioNum,
+              oculto: true,
+              observaciones: `Cambio para delivery ${turno} ${fechaFormateada} - Cadete: ${cadete_nombre || 'Sin asignar'}`,
+            })
+          logger.info(`[Guía Delivery] Retiro de $${cambioNum} registrado en cierre ${cierreAbierto.id}`)
+        } else {
+          logger.info('[Guía Delivery] No hay caja abierta para registrar retiro del cambio')
+        }
+      }
+    } else {
+      logger.info(`[Guía Delivery] Sin efectivo a cobrar — no se crea cierre delivery`)
     }
 
     // Vincular cierre al registro de guía
@@ -2538,7 +2558,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
 
     res.json({
       guia,
-      ventas_creadas: ventasCreadas.length,
+      ventas_creadas: ventasCreadas,
       pedidos_despachados: pedidoIds.length,
       total_efectivo: totalEfectivo,
       total_anticipado: totalAnticipado,
@@ -2547,6 +2567,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       cambio_entregado: cambioNum,
       total_a_devolver: totalADevolver,
       cierre_delivery_id: cierreDelivery?.id || null,
+      punto_venta: cajaData?.punto_venta_centum || null,
     })
   } catch (err) {
     logger.error('[Guía Delivery] Error al despachar:', err.message)
@@ -3998,7 +4019,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
 // Registra eliminación de artículos del ticket (auditoría anti-robo)
 router.post('/log-eliminacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const { items, usuario_nombre, cierre_id } = req.body
+    const { items, usuario_nombre, cierre_id, ticket_uid } = req.body
     if (!items || !items.length) return res.status(400).json({ error: 'Items requeridos' })
 
     const { error } = await supabase.from('pos_eliminaciones_log').insert({
@@ -4007,6 +4028,7 @@ router.post('/log-eliminacion', verificarAuth, asyncHandler(async (req, res) => 
       items,
       fecha: new Date().toISOString(),
       cierre_id: cierre_id || null,
+      ticket_uid: ticket_uid || null,
     })
 
     if (error) throw error

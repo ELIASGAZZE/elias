@@ -1319,20 +1319,26 @@ const DetalleCierrePos = () => {
               usuario: e.usuario_nombre,
               fecha: e.fecha || e.created_at,
               elimId: e.id,
+              venta_pos_id: e.venta_pos_id || null,
+              numero_venta: e.numero_venta || null,
+              ticket_uid: e.ticket_uid || null,
             }))
           )
           const totalImporte = allItems.reduce((s, i) => s + parseFloat(i.precio || i.precio_unitario || 0) * parseFloat(i.cantidad || 1), 0)
 
-          // Group by user + time proximity (2 min)
+          // Group by ticket_uid (if available) or by user + time proximity (2 min)
           const grupos = []
           const sorted = [...allItems].sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
           for (const item of sorted) {
             const t = new Date(item.fecha).getTime()
             const last = grupos[grupos.length - 1]
-            if (last && last.usuario === item.usuario && t - last.lastTime < 120000) {
+            const mismoTicket = item.ticket_uid && last?.ticket_uid && item.ticket_uid === last.ticket_uid
+            const mismoGrupoLegacy = !item.ticket_uid && last && last.usuario === item.usuario && t - last.lastTime < 120000
+            if (mismoTicket || mismoGrupoLegacy) {
               last.items.push(item)
               last.lastTime = t
               last.total += parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1)
+              if (item.venta_pos_id) { last.venta_pos_id = item.venta_pos_id; last.numero_venta = item.numero_venta }
             } else {
               grupos.push({
                 usuario: item.usuario,
@@ -1340,6 +1346,9 @@ const DetalleCierrePos = () => {
                 lastTime: t,
                 items: [item],
                 total: parseFloat(item.precio || item.precio_unitario || 0) * parseFloat(item.cantidad || 1),
+                venta_pos_id: item.venta_pos_id,
+                numero_venta: item.numero_venta,
+                ticket_uid: item.ticket_uid,
               })
             }
           }
@@ -1368,7 +1377,22 @@ const DetalleCierrePos = () => {
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs font-medium text-gray-700">{g.usuario}</span>
-                        {g.items.length >= 3 && (
+                        {g.numero_venta ? (
+                          <a
+                            href={`/ventas?busqueda=${g.numero_venta}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium hover:bg-emerald-200 transition-colors cursor-pointer"
+                            title="Ver venta en nueva pestaña"
+                          >
+                            Venta #{g.numero_venta}
+                          </a>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">
+                            Sin venta asociada
+                          </span>
+                        )}
+                        {!g.numero_venta && g.items.length >= 3 && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">Posible ticket cancelado</span>
                         )}
                       </div>
@@ -1387,7 +1411,7 @@ const DetalleCierrePos = () => {
                     ))}
                     <div className="flex justify-end mt-1 pt-1 border-t border-amber-100">
                       <span className="text-xs font-bold text-amber-700">
-                        {g.items.length >= 3 ? 'Venta posible: ' : ''}{formatMonto(g.total)}
+                        {formatMonto(g.total)}
                       </span>
                     </div>
                   </div>

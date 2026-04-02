@@ -559,8 +559,8 @@ const POS = () => {
 
   // Multi-ticket: 2 tickets en paralelo
   const [tickets, setTickets] = useState([
-    { carrito: [], cliente: { ...CLIENTE_DEFAULT } },
-    { carrito: [], cliente: { ...CLIENTE_DEFAULT } },
+    { carrito: [], cliente: { ...CLIENTE_DEFAULT }, ticketUid: crypto.randomUUID() },
+    { carrito: [], cliente: { ...CLIENTE_DEFAULT }, ticketUid: crypto.randomUUID() },
   ])
   const [ticketActivo, setTicketActivo] = useState(0)
   const ticketActivoRef = useRef(ticketActivo)
@@ -569,6 +569,9 @@ const POS = () => {
   // Derivar carrito y cliente del ticket activo
   const carrito = tickets[ticketActivo].carrito
   const cliente = tickets[ticketActivo].cliente
+  const ticketUid = tickets[ticketActivo].ticketUid
+  const ticketUidRef = useRef(ticketUid)
+  ticketUidRef.current = ticketUid
 
   // Auto-expiración: si un ticket inactivo con items no se usa en 7 min, se limpia
   const TICKET_TIMEOUT = 7 * 60 * 1000
@@ -591,7 +594,7 @@ const POS = () => {
           if (lastActivity > 0 && ahora - lastActivity >= TICKET_TIMEOUT) {
             changed = true
             ticketTimestamps.current[idx] = 0
-            return { carrito: [], cliente: { ...CLIENTE_DEFAULT } }
+            return { carrito: [], cliente: { ...CLIENTE_DEFAULT }, ticketUid: crypto.randomUUID() }
           }
           return t
         })
@@ -1405,6 +1408,7 @@ const POS = () => {
         api.post('/api/pos/log-eliminacion', {
           usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
           cierre_id: cierreActivo?.id || null,
+          ticket_uid: ticketUidRef.current,
           items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
         }).catch(err => console.error('Error registrando eliminación:', err))
         return prev.filter(i => i.articulo.id !== articuloId)
@@ -1425,6 +1429,7 @@ const POS = () => {
         api.post('/api/pos/log-eliminacion', {
           usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
           cierre_id: cierreActivo?.id || null,
+          ticket_uid: ticketUidRef.current,
           items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
         }).catch(err => console.error('Error registrando eliminación:', err))
         return prev.filter(i => i.articulo.id !== articuloId)
@@ -1444,6 +1449,7 @@ const POS = () => {
         api.post('/api/pos/log-eliminacion', {
           usuario_nombre: cierreActivo?.empleado?.nombre || usuario?.nombre || 'Desconocido',
           cierre_id: cierreActivo?.id || null,
+          ticket_uid: ticketUidRef.current,
           items: [{ articulo_id: articuloId, nombre: item.articulo.nombre, cantidad: item.cantidad, precio, hora: new Date().toISOString() }],
         }).catch(err => console.error('Error registrando eliminación:', err))
       }
@@ -1661,6 +1667,13 @@ const POS = () => {
     setPedidoEnProceso(null)
     setGiftCardsEnVenta([])
     setMostrarAgregarGC(false)
+    // Regenerar ticketUid para el próximo ticket
+    setTickets(prev => {
+      const idx = ticketActivoRef.current
+      const nuevo = [...prev]
+      nuevo[idx] = { ...nuevo[idx], ticketUid: crypto.randomUUID() }
+      return nuevo
+    })
   }
 
   // --- Pedido Wizard Hook ---
@@ -2090,6 +2103,13 @@ const POS = () => {
     setBusquedaArt('')
     setPedidoEnProceso(null)
     setGiftCardsEnVenta([])
+    // Regenerar ticketUid para el próximo ticket
+    setTickets(prev => {
+      const idx = ticketActivoRef.current
+      const nuevo = [...prev]
+      nuevo[idx] = { ...nuevo[idx], ticketUid: crypto.randomUUID() }
+      return nuevo
+    })
     syncVentasPendientes().then(() => actualizarPendientes()).catch(err => console.error('Error syncing pending sales:', err.message))
   }
 
@@ -3502,6 +3522,7 @@ const POS = () => {
           carrito={carrito}
           cliente={cliente}
           promosAplicadas={promosAplicadas}
+          ticketUid={ticketUid}
           onConfirmar={handleVentaExitosa}
           onCerrar={() => {
             // Log cobro cancelado (F11 → Escape)

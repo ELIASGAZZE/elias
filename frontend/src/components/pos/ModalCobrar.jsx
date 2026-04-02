@@ -33,7 +33,7 @@ const redondearCentena = (monto) => {
 // Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
-const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
+const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, ticketUid, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
   const [montoFormaPago, setMontoFormaPago] = useState('')
@@ -736,6 +736,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
     if (saldoAplicado > 0) payload.saldo_aplicado = saldoAplicado
     if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
+    if (ticketUid) payload.ticket_uid = ticketUid
     if (canal && canal !== 'pos') payload.canal = canal
     if (giftCardsAplicadas.length > 0) {
       payload.gift_cards_aplicadas = giftCardsAplicadas.map(g => ({ codigo: g.codigo, monto: g.monto }))
