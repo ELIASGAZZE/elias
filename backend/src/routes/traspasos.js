@@ -254,10 +254,25 @@ router.get('/ordenes', verificarAuth, asyncHandler(async (req, res) => {
     const sucMap = {}
     for (const s of (sucursales || [])) sucMap[s.id] = s.nombre
 
+    // Traer nombres de preparadores
+    const preparadorIds = [...new Set((data || []).map(o => o.preparado_por).filter(Boolean))]
+    let prepMap = {}
+    if (preparadorIds.length > 0) {
+      const { data: perfiles } = await supabase
+        .from('perfiles')
+        .select('id, user_id, nombre')
+        .or(preparadorIds.map(id => `id.eq.${id}`).join(',') + ',' + preparadorIds.map(id => `user_id.eq.${id}`).join(','))
+      for (const p of (perfiles || [])) {
+        prepMap[p.id] = p.nombre
+        prepMap[p.user_id] = p.nombre
+      }
+    }
+
     const enriquecidas = (data || []).map(o => ({
       ...o,
       sucursal_origen_nombre: sucMap[o.sucursal_origen_id] || 'Desconocida',
       sucursal_destino_nombre: sucMap[o.sucursal_destino_id] || 'Desconocida',
+      preparado_por_nombre: o.preparado_por ? (prepMap[o.preparado_por] || null) : null,
     }))
 
     res.json(enriquecidas)
