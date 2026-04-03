@@ -191,9 +191,18 @@ const Preparacion = () => {
       }
       // Verificar que el usuario actual sea quien inició la preparación
       if (data.preparado_por && usuario?.id && data.preparado_por !== usuario.id) {
-        alert('Esta orden está siendo preparada por otro usuario')
-        navigate('/preparacion')
-        return
+        const tomar = window.confirm('Esta orden está siendo preparada por otro usuario. ¿Querés tomarla vos?')
+        if (!tomar) {
+          navigate('/preparacion')
+          return
+        }
+        try {
+          await api.put(`/api/traspasos/ordenes/${id}/tomar-preparacion`)
+        } catch (err) {
+          alert('Error al tomar la preparación: ' + (err.response?.data?.error || err.message))
+          navigate('/preparacion')
+          return
+        }
       }
       if (data.sucursal_origen_id) {
         api.get(`/api/traspasos/stock/${data.sucursal_origen_id}`)

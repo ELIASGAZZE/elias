@@ -475,6 +475,26 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
   }
 }))
 
+router.put('/ordenes/:id/tomar-preparacion', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('ordenes_traspaso')
+      .update({
+        preparado_por: req.perfil?.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .eq('estado', 'en_preparacion')
+      .select()
+
+    if (error) throw error
+    if (!data || data.length === 0) return res.status(400).json({ error: 'La orden no está en preparación' })
+    res.json(data[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}))
+
 router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase

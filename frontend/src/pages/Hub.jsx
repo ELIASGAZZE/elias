@@ -220,7 +220,7 @@ const Hub = () => {
       <nav className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <div>
           <h1 className="font-bold text-gray-800 text-lg">Padano SRL</h1>
-          <p className="text-xs text-gray-400">Gestiones Operativas</p>
+          <p className="text-xs text-gray-400">Gestiones Operativas <span className="text-gray-300">v{__APP_VERSION__}</span></p>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-500 hidden sm:block">{usuario?.nombre}</span>
