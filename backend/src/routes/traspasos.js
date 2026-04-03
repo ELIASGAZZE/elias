@@ -482,7 +482,7 @@ router.get('/asignar-preparacion', verificarAuth, asyncHandler(async (req, res) 
   }
 }))
 
-router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
+router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -503,7 +503,7 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, soloGestorOAdmin, 
   }
 }))
 
-router.put('/ordenes/:id/tomar-preparacion', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
+router.put('/ordenes/:id/tomar-preparacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ordenes_traspaso')
