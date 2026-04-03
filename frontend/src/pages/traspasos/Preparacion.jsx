@@ -219,6 +219,23 @@ const Preparacion = () => {
 
   useEffect(() => { cargar() }, [id])
 
+  // Polling: verificar que la orden sigue siendo mía
+  useEffect(() => {
+    if (!orden || orden.estado !== 'en_preparacion') return
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
+        if (data.preparado_por && !data.es_mi_preparacion) {
+          clearInterval(interval)
+          const quien = data.preparado_por_nombre || 'otro usuario'
+          alert(`${quien} tomó esta orden. Serás redirigido.`)
+          navigate('/preparacion')
+        }
+      } catch (_) {}
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [orden?.id, orden?.estado])
+
   // Persistir canasto y contenedores en servidor
   const prepStateRef = useRef({ canastoActivo: null, contenedores: [] })
   const prepStateLoaded = useRef(false)
