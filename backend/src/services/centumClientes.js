@@ -8,6 +8,24 @@ const API_KEY = process.env.CENTUM_API_KEY
 if (!API_KEY) logger.error('⚠ CENTUM_API_KEY no está configurada en variables de entorno')
 const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 
+// Obtener el siguiente número de código CLI- (soporta >4 dígitos)
+async function getMaxCodigoCliente(supabase) {
+  const { data: top4 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-____').order('codigo', { ascending: false }).limit(1)
+  const { data: top5 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-_____').order('codigo', { ascending: false }).limit(1)
+  const { data: top6 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-______').order('codigo', { ascending: false }).limit(1)
+  let maxNum = 0
+  for (const arr of [top4, top5, top6]) {
+    if (arr && arr.length > 0) {
+      const m = arr[0].codigo.match(/^CLI-(\d+)$/)
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
+    }
+  }
+  return maxNum + 1
+}
+
 /**
  * Obtiene una página de clientes activos desde Centum ERP.
  * @param {number} pagina - Número de página (1-based)
@@ -211,21 +229,10 @@ async function syncClientesRecientes(horasAtras = 2) {
 
   // Insertar nuevos
   if (nuevosBI.length > 0) {
-    const { data: ultimo } = await supabase
-      .from('clientes')
-      .select('codigo')
-      .like('codigo', 'CLI-%')
-      .order('codigo', { ascending: false })
-      .limit(1)
-
-    let siguiente = 1
-    if (ultimo && ultimo.length > 0) {
-      const match = ultimo[0].codigo.match(/CLI-(\d+)/)
-      if (match) siguiente = parseInt(match[1]) + 1
-    }
+    const siguiente = await getMaxCodigoCliente(supabase)
 
     const inserts = nuevosBI.map((r, i) => ({
-      codigo: `CLI-${String(siguiente + i).padStart(4, '0')}`,
+      codigo: `CLI-${String(siguiente + i).padStart(5, '0')}`,
       ...mapearCliente(r),
       id_centum: r.ClienteID,
       activo: true,
@@ -921,22 +928,11 @@ async function syncClientesFaltantes() {
     return 'CF'
   }
 
-  // Generar códigos CLI-XXXX
-  const { data: ultimo } = await supabase
-    .from('clientes')
-    .select('codigo')
-    .like('codigo', 'CLI-%')
-    .order('codigo', { ascending: false })
-    .limit(1)
-
-  let siguiente = 1
-  if (ultimo && ultimo.length > 0) {
-    const match = ultimo[0].codigo.match(/CLI-(\d+)/)
-    if (match) siguiente = parseInt(match[1]) + 1
-  }
+  // Generar códigos CLI-XXXXX
+  const siguiente = await getMaxCodigoCliente(supabase)
 
   const inserts = faltantes.map((r, i) => ({
-    codigo: `CLI-${String(siguiente + i).padStart(4, '0')}`,
+    codigo: `CLI-${String(siguiente + i).padStart(5, '0')}`,
     razon_social: r.RazonSocialCliente?.trim() || 'Sin nombre',
     cuit: r.CUITCliente?.trim() || null,
     direccion: r.DireccionCliente?.trim() || null,

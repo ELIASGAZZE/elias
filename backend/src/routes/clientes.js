@@ -13,6 +13,50 @@ const { validate } = require('../middleware/validate')
 const { crearClienteSchema } = require('../schemas/clientes')
 const asyncHandler = require('../middleware/asyncHandler')
 
+// Obtener el siguiente código CLI-XXXXX disponible
+async function getSiguienteCodigoCliente() {
+  // String sort falla cuando hay códigos de distinta longitud (CLI-9999 vs CLI-10000)
+  // Traemos los top de cada rango de longitud para cubrir el máximo real
+  const { data: top4 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-____').order('codigo', { ascending: false }).limit(1)
+  const { data: top5 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-_____').order('codigo', { ascending: false }).limit(1)
+  const { data: top6 } = await supabase.from('clientes').select('codigo')
+    .like('codigo', 'CLI-______').order('codigo', { ascending: false }).limit(1)
+
+  let maxNum = 0
+  for (const arr of [top4, top5, top6]) {
+    if (arr && arr.length > 0) {
+      const m = arr[0].codigo.match(/^CLI-(\d+)$/)
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1]))
+    }
+  }
+  return maxNum + 1
+}
+
+// Insertar cliente con retry ante duplicate key en codigo
+async function insertarClienteConRetry(datos, selectQuery = '*', maxRetries = 3) {
+  for (let intento = 0; intento < maxRetries; intento++) {
+    const siguiente = await getSiguienteCodigoCliente()
+    datos.codigo = `CLI-${String(siguiente + intento).padStart(5, '0')}`
+    const { data, error } = await supabase
+      .from('clientes')
+      .insert(datos)
+      .select(selectQuery)
+      .single()
+    if (!error) return { data, error: null }
+    const isDuplicate = (error.code === '23505' || error.code === 23505)
+      || error.message?.includes('duplicate key')
+      || error.message?.includes('clientes_codigo_key')
+    if (isDuplicate) {
+      logger.warn(`[Clientes] Código ${datos.codigo} duplicado (code=${error.code}), reintentando (${intento + 1}/${maxRetries})...`)
+      continue
+    }
+    return { data: null, error }
+  }
+  return { data: null, error: { message: 'No se pudo generar un código único después de varios intentos' } }
+}
+
 // Fallback: buscar cliente en Centum BI por CUIT/DNI y sincronizar a Supabase
 async function buscarEnCentumBI(soloDigitos) {
   const mapCondicionIVA = (id) => {
@@ -68,31 +112,10 @@ async function buscarEnCentumBI(soloDigitos) {
   }
 
   // No existe localmente → crear
-  const { data: ultimo } = await supabase
-    .from('clientes')
-    .select('codigo')
-    .like('codigo', 'CLI-%')
-    .order('codigo', { ascending: false })
-    .limit(1)
-
-  let siguiente = 1
-  if (ultimo && ultimo.length > 0) {
-    const match = ultimo[0].codigo.match(/CLI-(\d+)/)
-    if (match) siguiente = parseInt(match[1]) + 1
-  }
-
-  const nuevo = {
-    codigo: `CLI-${String(siguiente).padStart(4, '0')}`,
-    ...centumData,
-    id_centum: r.ClienteID,
-    activo: true,
-  }
-
-  const { data: insertado, error: errInsert } = await supabase
-    .from('clientes')
-    .insert(nuevo)
-    .select('*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))')
-    .single()
+  const { data: insertado, error: errInsert } = await insertarClienteConRetry(
+    { ...centumData, id_centum: r.ClienteID, activo: true },
+    '*, grupos_descuento(id, nombre, porcentaje, grupos_descuento_rubros(rubro, porcentaje))'
+  )
 
   if (errInsert) {
     logger.warn('[Clientes] Fallback BI: error insertando:', errInsert.message)
@@ -337,20 +360,9 @@ router.post('/importar-centum', verificarAuth, asyncHandler(async (req, res) => 
       }
     } catch (_) { /* BI no disponible, continuar sin codigo_centum */ }
 
-    // Generar código CLI-XXXX
-    const { data: ultimo } = await supabase
-      .from('clientes')
-      .select('codigo')
-      .like('codigo', 'CLI-%')
-      .order('codigo', { ascending: false })
-      .limit(1)
-
-    let siguiente = 1
-    if (ultimo && ultimo.length > 0) {
-      const match = ultimo[0].codigo.match(/CLI-(\d+)/)
-      if (match) siguiente = parseInt(match[1]) + 1
-    }
-    const codigo = `CLI-${String(siguiente).padStart(4, '0')}`
+    // Generar código CLI-XXXXX
+    const siguiente = await getSiguienteCodigoCliente()
+    const codigo = `CLI-${String(siguiente).padStart(5, '0')}`
 
     const { data, error } = await supabase
       .from('clientes')
@@ -475,42 +487,21 @@ router.post('/', verificarAuth, validate(crearClienteSchema), asyncHandler(async
       }
     }
 
-    // Generar código auto-incremental CLI-XXXX (una sola query)
-    const { data: topCodigos } = await supabase
-      .from('clientes')
-      .select('codigo')
-      .like('codigo', 'CLI-%')
-      .order('codigo', { ascending: false })
-      .limit(20)
-    let maxNum = 0
-    if (topCodigos) {
-      for (const row of topCodigos) {
-        const m = row.codigo.match(/^CLI-(\d+)$/)
-        if (m) { maxNum = Math.max(maxNum, parseInt(m[1])); break }
-      }
-    }
-    const siguiente = maxNum + 1
-    const codigo = `CLI-${String(siguiente).padStart(4, '0')}`
-
-    const { data, error } = await supabase
-      .from('clientes')
-      .insert({
-        codigo,
-        razon_social: razon_social.trim(),
-        cuit: cuit?.trim() || null,
-        direccion: direccion?.trim() || null,
-        localidad: localidad?.trim() || null,
-        codigo_postal: codigo_postal?.trim() || null,
-        provincia: provincia?.trim() || null,
-        telefono: telefono?.trim() || null,
-        email: email?.trim() || null,
-        celular: celular?.trim() || null,
-        condicion_iva: condicion_iva || 'CF',
-        grupo_descuento_id: grupo_descuento_id || null,
-        activo: true,
-      })
-      .select()
-      .single()
+    // Insertar con código auto-incremental CLI-XXXX (con retry ante race condition)
+    const { data, error } = await insertarClienteConRetry({
+      razon_social: razon_social.trim(),
+      cuit: cuit?.trim() || null,
+      direccion: direccion?.trim() || null,
+      localidad: localidad?.trim() || null,
+      codigo_postal: codigo_postal?.trim() || null,
+      provincia: provincia?.trim() || null,
+      telefono: telefono?.trim() || null,
+      email: email?.trim() || null,
+      celular: celular?.trim() || null,
+      condicion_iva: condicion_iva || 'CF',
+      grupo_descuento_id: grupo_descuento_id || null,
+      activo: true,
+    })
 
     if (error) throw error
 
