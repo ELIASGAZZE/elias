@@ -219,21 +219,51 @@ const Preparacion = () => {
 
   useEffect(() => { cargar() }, [id])
 
-  // Polling: verificar que la orden sigue siendo mía
+  // Heartbeat cada 2 min + polling de ownership cada 10s
+  const lastActivityRef = useRef(Date.now())
   useEffect(() => {
     if (!orden || orden.estado !== 'en_preparacion') return
-    const interval = setInterval(async () => {
+
+    // Enviar heartbeat inicial con actividad
+    api.put(`/api/traspasos/ordenes/${id}/heartbeat`, { es_accion: true }).catch(() => {})
+
+    // Registrar actividad del usuario (touch, click, scroll, keydown)
+    const marcarActividad = () => { lastActivityRef.current = Date.now() }
+    const eventos = ['touchstart', 'click', 'scroll', 'keydown']
+    eventos.forEach(e => window.addEventListener(e, marcarActividad, { passive: true }))
+
+    // Heartbeat cada 2 min
+    const hbInterval = setInterval(() => {
+      const esAccion = (Date.now() - lastActivityRef.current) < 120000 // activo en últimos 2 min
+      api.put(`/api/traspasos/ordenes/${id}/heartbeat`, { es_accion: esAccion }).catch(() => {})
+    }, 120000)
+
+    // Polling ownership cada 10s
+    const ownerInterval = setInterval(async () => {
       try {
         const { data } = await api.get(`/api/traspasos/ordenes/${id}`)
-        if (data.preparado_por && !data.es_mi_preparacion) {
-          clearInterval(interval)
+        if (!data.preparado_por || data.estado !== 'en_preparacion') {
+          clearInterval(ownerInterval)
+          clearInterval(hbInterval)
+          alert('Esta orden fue liberada. Serás redirigido.')
+          navigate('/preparacion')
+          return
+        }
+        if (!data.es_mi_preparacion) {
+          clearInterval(ownerInterval)
+          clearInterval(hbInterval)
           const quien = data.preparado_por_nombre || 'otro usuario'
           alert(`${quien} tomó esta orden. Serás redirigido.`)
           navigate('/preparacion')
         }
       } catch (_) {}
     }, 10000)
-    return () => clearInterval(interval)
+
+    return () => {
+      clearInterval(hbInterval)
+      clearInterval(ownerInterval)
+      eventos.forEach(e => window.removeEventListener(e, marcarActividad))
+    }
   }, [orden?.id, orden?.estado])
 
   // Persistir canasto y contenedores en servidor

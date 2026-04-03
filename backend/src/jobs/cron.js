@@ -198,6 +198,59 @@ async function iniciarCronJobs() {
     }
   })
 
+  // Liberar órdenes de traspaso abandonadas: cada 2 minutos
+  cron.schedule('*/2 * * * *', async () => {
+    await withLock('liberar-ordenes-traspaso', async () => {
+      try {
+        const supabase = require('../config/supabase')
+        const { data: ordenes } = await supabase
+          .from('ordenes_traspaso')
+          .select('id, preparacion_state, preparado_por')
+          .eq('estado', 'en_preparacion')
+
+        const now = Date.now()
+        const HEARTBEAT_TIMEOUT = 10 * 60 * 1000 // 10 minutos
+        const INACTIVITY_TIMEOUT = 3 * 60 * 60 * 1000 // 3 horas
+
+        for (const o of (ordenes || [])) {
+          const state = o.preparacion_state || {}
+          const lastHB = state.last_heartbeat ? new Date(state.last_heartbeat).getTime() : 0
+          const lastAct = state.last_activity ? new Date(state.last_activity).getTime() : lastHB
+
+          let liberar = false
+          let motivo = ''
+
+          // Sin heartbeat por más de 10 min → usuario salió de la pantalla
+          if (lastHB && (now - lastHB) > HEARTBEAT_TIMEOUT) {
+            liberar = true
+            motivo = 'sin heartbeat por 10+ min'
+          }
+          // Heartbeat reciente pero sin actividad por 3+ horas → idle
+          else if (lastAct && lastHB && (now - lastAct) > INACTIVITY_TIMEOUT) {
+            liberar = true
+            motivo = 'sin actividad por 3+ horas'
+          }
+
+          if (liberar) {
+            await supabase
+              .from('ordenes_traspaso')
+              .update({
+                estado: 'pendiente',
+                preparado_por: null,
+                preparacion_state: null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', o.id)
+              .eq('estado', 'en_preparacion')
+            logger.info(`[CRON] Orden traspaso ${o.id} liberada: ${motivo}`)
+          }
+        }
+      } catch (err) {
+        logger.error('[CRON] Error liberando órdenes traspaso:', err.message)
+      }
+    })
+  })
+
   logger.info('[CRON] Sincronización ERP programada: 06:00 UTC (03:00 Argentina) diariamente')
   logger.info('[CRON] Sincronización stock depósito programada: cada hora en punto')
   logger.info('[CRON] Keep-alive programado: cada 14 minutos')

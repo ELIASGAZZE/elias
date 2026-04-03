@@ -499,12 +499,14 @@ router.get('/asignar-preparacion', verificarAuth, asyncHandler(async (req, res) 
 
 router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('ordenes_traspaso')
       .update({
         estado: 'en_preparacion',
         preparado_por: req.perfil?.id,
-        updated_at: new Date().toISOString(),
+        preparacion_state: { last_heartbeat: now, last_activity: now },
+        updated_at: now,
       })
       .eq('id', req.params.id)
       .eq('estado', 'pendiente')
@@ -520,11 +522,13 @@ router.put('/ordenes/:id/iniciar-preparacion', verificarAuth, asyncHandler(async
 
 router.put('/ordenes/:id/tomar-preparacion', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('ordenes_traspaso')
       .update({
         preparado_por: req.perfil?.id,
-        updated_at: new Date().toISOString(),
+        preparacion_state: { last_heartbeat: now, last_activity: now },
+        updated_at: now,
       })
       .eq('id', req.params.id)
       .eq('estado', 'en_preparacion')
@@ -533,6 +537,36 @@ router.put('/ordenes/:id/tomar-preparacion', verificarAuth, asyncHandler(async (
     if (error) throw error
     if (!data || data.length === 0) return res.status(400).json({ error: 'La orden no está en preparación' })
     res.json(data[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}))
+
+// Heartbeat: el frontend lo llama cada 2 min para indicar que sigue en la pantalla
+router.put('/ordenes/:id/heartbeat', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const { es_accion } = req.body // true si el usuario hizo algo (scan, pick, etc.)
+    const now = new Date().toISOString()
+
+    // Leer orden actual para obtener preparacion_state
+    const { data: orden } = await supabase
+      .from('ordenes_traspaso')
+      .select('preparacion_state')
+      .eq('id', req.params.id)
+      .single()
+
+    const state = orden?.preparacion_state || {}
+    state.last_heartbeat = now
+    if (es_accion) state.last_activity = now
+
+    const { error } = await supabase
+      .from('ordenes_traspaso')
+      .update({ preparacion_state: state })
+      .eq('id', req.params.id)
+      .eq('estado', 'en_preparacion')
+
+    if (error) throw error
+    res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
