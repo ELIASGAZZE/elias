@@ -647,6 +647,26 @@ router.post('/:id/verificar', verificarAuth, soloGestorOAdmin, asyncHandler(asyn
   }
 }))
 
+// GET /api/cierres-pos/:id/guia-delivery — guía de delivery vinculada al cierre
+router.get('/:id/guia-delivery', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const { data: guia, error } = await supabase
+      .from('guias_delivery')
+      .select('*, guia_delivery_pedidos(*, pedido:pedidos_pos(id, numero, nombre_cliente, total, observaciones, items))')
+      .eq('cierre_pos_id', req.params.id)
+      .single()
+
+    if (error || !guia) {
+      return res.status(404).json({ error: 'No se encontró guía de delivery para este cierre' })
+    }
+
+    res.json(guia)
+  } catch (err) {
+    logger.error('Error al obtener guía delivery:', err)
+    res.status(500).json({ error: 'Error al obtener guía delivery' })
+  }
+}))
+
 // GET /api/cierres-pos/:id/pos-ventas — ventas POS en el rango de tiempo del cierre
 router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
   try {

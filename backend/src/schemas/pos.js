@@ -1,11 +1,10 @@
 const { z } = require('zod')
 
 const itemVentaSchema = z.object({
-  id: z.union([z.string(), z.number()]),
+  id_articulo: z.union([z.string(), z.number()]),
   nombre: z.string(),
-  precio: z.number(),
+  precio_unitario: z.number(),
   cantidad: z.number().positive(),
-  subtotal: z.number(),
 }).passthrough()
 
 const pagoSchema = z.object({

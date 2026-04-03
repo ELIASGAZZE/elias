@@ -75,6 +75,7 @@ const DetalleCierrePos = () => {
   const [cambiosPrecio, setCambiosPrecio] = useState([])
   const [cancelaciones, setCancelaciones] = useState([])
   const [eliminaciones, setEliminaciones] = useState([])
+  const [guiaDelivery, setGuiaDelivery] = useState(null)
   const [controlandoGasto, setControlandoGasto] = useState(null)
   const [retiroEmpleadoExpandido, setRetiroEmpleadoExpandido] = useState(null)
   const [cuponesExpanded, setCuponesExpanded] = useState(false)
@@ -123,13 +124,21 @@ const DetalleCierrePos = () => {
           )
         }
 
-        // Fetch POS ventas data (for admin/gestor, when cierre is not open)
+        // Fetch POS ventas data or guia delivery (for admin/gestor, when cierre is not open)
         if (usuario?.rol !== 'operario' && cierreData.estado !== 'abierta') {
-          promises.push(
-            api.get(`/api/cierres-pos/${id}/pos-ventas`)
-              .then(res => setPosVentas(res.data))
-              .catch(() => setPosNoEncontrado(true))
-          )
+          if (cierreData.tipo === 'delivery') {
+            promises.push(
+              api.get(`/api/cierres-pos/${id}/guia-delivery`)
+                .then(res => setGuiaDelivery(res.data))
+                .catch(() => setGuiaDelivery(null))
+            )
+          } else {
+            promises.push(
+              api.get(`/api/cierres-pos/${id}/pos-ventas`)
+                .then(res => setPosVentas(res.data))
+                .catch(() => setPosNoEncontrado(true))
+            )
+          }
         }
 
         // Cambios de precio, cancelaciones y eliminaciones (solo admin)
@@ -297,6 +306,7 @@ const DetalleCierrePos = () => {
             {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && <span>Cambio inicial: <strong className="text-gray-700">{formatMonto(cierre.fondo_fijo)}</strong></span>}
             {cierre.fondo_fijo > 0 && cierre.tipo === 'delivery' && <span className="text-amber-600 font-medium">Cambio entregado: <strong>{formatMonto(cierre.fondo_fijo)}</strong></span>}
             {posVentas && <span className="text-teal-600 font-medium">Ventas POS: {posVentas.cantidad_ventas} venta(s)</span>}
+            {guiaDelivery && <span className="text-purple-600 font-medium">Guía: {guiaDelivery.turno} · {guiaDelivery.cantidad_pedidos} pedido(s)</span>}
           </div>
         </div>
 
@@ -682,8 +692,174 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
-        {/* Seccion 3: Cuadro comparativo principal — Cajero vs Gestor vs Ventas POS */}
-        {!esBlind && cierre.estado !== 'abierta' && (
+        {/* Seccion 3a: Vista Delivery — reemplaza cuadro comparativo */}
+        {cierre.tipo === 'delivery' && cierre.estado !== 'abierta' && (() => {
+          if (!guiaDelivery) {
+            return (
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
+                <p className="text-sm text-gray-500">No se encontró guía de delivery vinculada a este cierre.</p>
+              </div>
+            )
+          }
+
+          const pedidos = guiaDelivery.guia_delivery_pedidos || []
+          const entregados = pedidos.filter(p => p.estado_entrega === 'entregado')
+          const noEntregados = pedidos.filter(p => p.estado_entrega === 'no_entregado' || p.estado_entrega === 'rechazado')
+          const revertidos = pedidos.filter(p => p.estado_entrega === 'revertido')
+
+          const efectivoCobrado = entregados.filter(p => p.forma_pago === 'efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+          const anticipadoEntregado = entregados.filter(p => p.forma_pago === 'anticipado').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+          const cambioEntregado = parseFloat(guiaDelivery.cambio_entregado) || 0
+          const totalADevolver = efectivoCobrado + cambioEntregado
+
+          const guiaCerrada = guiaDelivery.estado === 'cerrada' || guiaDelivery.estado === 'con_diferencia'
+          const efectivoRecibido = parseFloat(guiaDelivery.efectivo_recibido) || 0
+          const diferencia = parseFloat(guiaDelivery.diferencia) || 0
+
+          const ESTADO_GUIA = {
+            despachada: { label: 'Despachada', color: 'bg-purple-100 text-purple-700' },
+            cerrada: { label: 'Cerrada', color: 'bg-green-100 text-green-700' },
+            con_diferencia: { label: 'Con diferencia', color: 'bg-red-100 text-red-700' },
+          }
+          const estadoGuia = ESTADO_GUIA[guiaDelivery.estado] || { label: guiaDelivery.estado, color: 'bg-gray-100 text-gray-700' }
+
+          return (
+            <>
+              {/* Card resumen guía */}
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-purple-800">Guía de Delivery</h3>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${estadoGuia.color}`}>{estadoGuia.label}</span>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-600">
+                  <span>Turno: <strong className="text-purple-700">{guiaDelivery.turno}</strong></span>
+                  {guiaDelivery.cadete_nombre && <span>Cadete: <strong className="text-purple-700">{guiaDelivery.cadete_nombre}</strong></span>}
+                  <span>Pedidos: <strong className="text-purple-700">{pedidos.length}</strong></span>
+                  <span>Entregados: <strong className="text-green-700">{entregados.length}</strong></span>
+                  {noEntregados.length > 0 && <span>No entregados: <strong className="text-red-700">{noEntregados.length}</strong></span>}
+                </div>
+              </div>
+
+              {/* Grid de totales */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <span className="text-[11px] text-gray-500 block">Efectivo a cobrar</span>
+                  <span className="font-bold text-green-700">{formatMonto(efectivoCobrado)}</span>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                  <span className="text-[11px] text-gray-500 block">Anticipado</span>
+                  <span className="font-bold text-blue-700">{formatMonto(anticipadoEntregado)}</span>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <span className="text-[11px] text-gray-500 block">Cambio entregado</span>
+                  <span className="font-bold text-amber-700">{formatMonto(cambioEntregado)}</span>
+                </div>
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center">
+                  <span className="text-[11px] text-gray-500 block">Total a devolver</span>
+                  <span className="font-bold text-purple-700">{formatMonto(totalADevolver)}</span>
+                </div>
+              </div>
+
+              {/* Resultado del cierre */}
+              {guiaCerrada && (
+                <div className={`border rounded-xl p-4 space-y-2 ${diferencia === 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                  <h3 className="text-sm font-semibold text-gray-700">Resultado del cierre</h3>
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="bg-white rounded-lg p-2 border border-gray-100">
+                      <span className="text-[10px] text-gray-500 block">Total a devolver</span>
+                      <span className="font-bold text-gray-800">{formatMonto(totalADevolver)}</span>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 border border-gray-100">
+                      <span className="text-[10px] text-gray-500 block">Efectivo recibido</span>
+                      <span className="font-bold text-purple-700">{formatMonto(efectivoRecibido)}</span>
+                    </div>
+                    <div className={`bg-white rounded-lg p-2 border ${diferencia === 0 ? 'border-green-200' : 'border-red-200'}`}>
+                      <span className="text-[10px] text-gray-500 block">Diferencia</span>
+                      <span className={`font-bold ${diferencia === 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMonto(diferencia)}</span>
+                    </div>
+                  </div>
+                  {guiaDelivery.observaciones_cierre && (
+                    <p className="text-xs text-gray-500 pt-1 border-t border-gray-100">{guiaDelivery.observaciones_cierre}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Tabla de pedidos */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <h3 className="text-sm font-semibold text-gray-700">Pedidos ({pedidos.length})</h3>
+                </div>
+                <div className="hidden sm:flex items-center text-[11px] font-medium text-gray-400 uppercase tracking-wider px-4 py-2 border-b border-gray-100 bg-gray-50/50">
+                  <span className="w-16">#</span>
+                  <span className="flex-1 min-w-0">Cliente</span>
+                  <span className="w-24 text-center">Pago</span>
+                  <span className="w-28 text-center">Estado</span>
+                  <span className="w-24 text-right">Monto</span>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {pedidos.map(gp => {
+                    const pedido = gp.pedido || {}
+                    const esNoEntregado = gp.estado_entrega === 'no_entregado' || gp.estado_entrega === 'rechazado'
+                    const esRevertido = gp.estado_entrega === 'revertido'
+                    const bgClass = esNoEntregado ? 'bg-red-50/60' : esRevertido ? 'bg-amber-50/60' : ''
+
+                    const ESTADO_ENTREGA = {
+                      pendiente: { label: 'Pendiente', color: 'bg-gray-100 text-gray-600' },
+                      entregado: { label: 'Entregado', color: 'bg-green-100 text-green-700' },
+                      no_entregado: { label: 'No entregado', color: 'bg-red-100 text-red-700' },
+                      rechazado: { label: 'Rechazado', color: 'bg-red-100 text-red-700' },
+                      revertido: { label: 'Revertido', color: 'bg-amber-100 text-amber-700' },
+                    }
+                    const estadoEnt = ESTADO_ENTREGA[gp.estado_entrega] || { label: gp.estado_entrega, color: 'bg-gray-100 text-gray-600' }
+
+                    return (
+                      <div key={gp.id}>
+                        <div className={`flex items-center px-4 py-2.5 text-sm ${bgClass}`}>
+                          <span className="w-16 font-medium text-gray-700">#{pedido.numero || '—'}</span>
+                          <span className="flex-1 min-w-0 truncate text-gray-700">{pedido.nombre_cliente || '—'}</span>
+                          <span className="w-24 text-center">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${gp.forma_pago === 'anticipado' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                              {gp.forma_pago === 'anticipado' ? 'Anticipado' : 'Efectivo'}
+                            </span>
+                          </span>
+                          <span className="w-28 text-center">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${estadoEnt.color}`}>{estadoEnt.label}</span>
+                          </span>
+                          <span className="w-24 text-right font-medium text-gray-800">{formatMonto(gp.monto)}</span>
+                        </div>
+                        {esNoEntregado && gp.motivo_no_entrega && (
+                          <div className="px-4 pb-2 -mt-1">
+                            <p className="text-xs text-red-600 ml-16">Motivo: {gp.motivo_no_entrega}</p>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* Footer con sub-totales */}
+                <div className="px-4 py-3 border-t border-gray-200 bg-gray-50/50 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Efectivo cobrado ({entregados.filter(p => p.forma_pago === 'efectivo').length})</span>
+                    <span className="font-medium text-green-700">{formatMonto(efectivoCobrado)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Anticipado entregado ({entregados.filter(p => p.forma_pago === 'anticipado').length})</span>
+                    <span className="font-medium text-blue-700">{formatMonto(anticipadoEntregado)}</span>
+                  </div>
+                  {noEntregados.length > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-red-600">No entregados ({noEntregados.length})</span>
+                      <span className="font-medium text-red-600">{formatMonto(noEntregados.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0))}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )
+        })()}
+
+        {/* Seccion 3b: Cuadro comparativo principal — Cajero vs Gestor vs Ventas POS (solo POS normal) */}
+        {!esBlind && cierre.estado !== 'abierta' && cierre.tipo !== 'delivery' && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <h3 className="text-sm font-semibold text-gray-700">Cuadro comparativo</h3>
 
@@ -1463,7 +1639,7 @@ const DetalleCierrePos = () => {
             </button>
           )}
 
-          {!esBlind && cierre.estado === 'pendiente_gestor' && !verificacion && (
+          {!esBlind && cierre.estado === 'pendiente_gestor' && !verificacion && cierre.tipo !== 'delivery' && (
             <Link
               to={`/cajas-pos/cierre/${cierre.id}/editar?from=detalle`}
               className="flex-1 border border-amber-400 text-amber-700 hover:bg-amber-50 text-center py-2.5 rounded-xl font-medium transition-colors text-sm"
@@ -1472,7 +1648,16 @@ const DetalleCierrePos = () => {
             </Link>
           )}
 
-          {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && (
+          {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && cierre.tipo === 'delivery' && (
+            <Link
+              to={`/cajas-pos/cierre/${cierre.id}/verificar`}
+              className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
+            >
+              Verificar delivery
+            </Link>
+          )}
+
+          {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && cierre.tipo !== 'delivery' && (
             <button
               onClick={async () => {
                 try {
