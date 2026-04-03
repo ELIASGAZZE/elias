@@ -848,14 +848,15 @@ const Preparacion = () => {
       }
     }
 
-    // 0b. Si hay pieza esperando confirmación de scan
+    // 0b. Si hay pieza esperando confirmación de scan (código de barras del artículo)
     const eliminando = piezaEliminandoRef.current
-    if (eliminando?.esperandoScan && codigo.startsWith('CAN-')) {
-      if (eliminando.esperandoScan === codigo) {
-        ejecutarEliminarPieza(eliminando.pieza)
+    if (eliminando?.esperandoScan === 'barcode') {
+      const resultado = buscarArticuloPorCodigo(codigo)
+      if (resultado && resultado.item.articulo_id === eliminando.articuloId) {
+        ejecutarEliminarPieza(eliminando.pieza, eliminando.articuloId)
         return
       } else {
-        mostrarFeedback('Canasto incorrecto', false)
+        mostrarFeedback('Código no coincide con el artículo', false)
         return
       }
     }
@@ -992,13 +993,14 @@ const Preparacion = () => {
 
   // Handler de escaneo en fase detalle (artículo específico)
   const handleScanDetalle = (codigo) => {
-    // Si hay pieza esperando confirmación de scan para eliminar
+    // Si hay pieza esperando confirmación de scan para eliminar (código de barras del artículo)
     const eliminando = piezaEliminandoRef.current
-    if (eliminando?.esperandoScan) {
-      if (eliminando.esperandoScan === codigo) {
-        ejecutarEliminarPieza(eliminando.pieza)
+    if (eliminando?.esperandoScan === 'barcode') {
+      const resultado = buscarArticuloPorCodigo(codigo)
+      if (resultado && resultado.item.articulo_id === eliminando.articuloId) {
+        ejecutarEliminarPieza(eliminando.pieza, eliminando.articuloId)
       } else {
-        mostrarFeedback('Canasto incorrecto', false)
+        mostrarFeedback('Código no coincide con el artículo', false)
       }
       return
     }
@@ -1559,21 +1561,17 @@ const Preparacion = () => {
   const piezaEliminandoRef = useRef(null)
   const setPiezaEliminandoSync = (v) => { const val = typeof v === 'function' ? v(piezaEliminandoRef.current) : v; piezaEliminandoRef.current = val; setPiezaEliminando(val) }
 
-  // Confirmar eliminación de pieza escaneando canasto
-  const confirmarEliminarPieza = (pieza) => {
-    if (pieza.enCanastoActivo || pieza.tipo === 'bulto') {
-      // Canasto activo o bulto: eliminar directo sin pedir scan
-      ejecutarEliminarPieza(pieza)
-      return
-    }
-    // Canasto cerrado: pedir confirmación por scan
-    const precinto = contenedores[pieza.contenedorIdx]?.precinto
-    setPiezaEliminandoSync({ pieza, esperandoScan: precinto })
+  // Confirmar eliminación de pieza escaneando código de barras del artículo
+  const confirmarEliminarPieza = (pieza, articuloIdParam, nombreParam) => {
+    // Siempre pedir confirmación por scan del código de barras
+    const artId = articuloIdParam || itemDetalle?.articulo_id || pieza.articuloId
+    const nombre = nombreParam || itemDetalle?.nombre || pieza.nombre || ''
+    setPiezaEliminandoSync({ pieza, esperandoScan: 'barcode', articuloId: artId, nombre })
   }
 
-  const ejecutarEliminarPieza = (pieza) => {
-    if (!itemDetalle) return
-    const articuloId = itemDetalle.articulo_id
+  const ejecutarEliminarPieza = (pieza, articuloIdOverride) => {
+    const articuloId = articuloIdOverride || itemDetalle?.articulo_id
+    if (!articuloId) return
 
     let nuevosContenedores, nuevoCanasto
 
@@ -1636,6 +1634,7 @@ const Preparacion = () => {
     })
 
     setPiezaEliminandoSync(null)
+    setTecladoManualModal(false)
     mostrarFeedback('Artículo eliminado', true)
   }
 
@@ -1871,11 +1870,11 @@ const Preparacion = () => {
           if (piezas.length === 0) return null
 
           return (
-            <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null) }}>
+            <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null); setTecladoManualModal(false) }}>
               <div className="bg-white rounded-t-2xl max-h-[75vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
                   <h3 className="text-base font-semibold text-gray-800">Piezas validadas</h3>
-                  <button onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null) }} className="p-2 rounded-lg active:bg-gray-100">
+                  <button onClick={() => { setMostrarPiezas(false); setPiezaEliminandoSync(null); setTecladoManualModal(false) }} className="p-2 rounded-lg active:bg-gray-100">
                     <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -1884,36 +1883,69 @@ const Preparacion = () => {
                 {/* Confirmación de scan para eliminar */}
                 {piezaEliminando?.esperandoScan && (
                   <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 text-center">
-                    <div className="text-sm font-medium text-amber-800">Escaneá <span className="font-bold">{piezaEliminando.esperandoScan}</span> para confirmar</div>
-                    <button onClick={() => setPiezaEliminandoSync(null)} className="text-xs text-amber-600 mt-1 underline">Cancelar</button>
-                    <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
-                      value={scanInput}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        setScanInput(val)
-                        scanBufferRef.current = val
-                        clearTimeout(scanTimeoutRef.current)
-                        scanTimeoutRef.current = setTimeout(() => {
-                          const codigo = scanBufferRef.current.trim()
-                          scanBufferRef.current = ''
-                          setScanInput('')
-                          if (codigo) handleScanCodigoRef.current?.(codigo)
-                        }, 200)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
+                    <div className="text-sm font-medium text-amber-800">Escaneá el código de barras de <span className="font-bold">{piezaEliminando.nombre || 'este artículo'}</span> para confirmar</div>
+                    {!tecladoManualModal && (
+                      <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+                        value={scanInput}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setScanInput(val)
+                          scanBufferRef.current = val
                           clearTimeout(scanTimeoutRef.current)
-                          const codigo = scanBufferRef.current.trim()
-                          scanBufferRef.current = ''
-                          setScanInput('')
-                          if (codigo) handleScanCodigoRef.current?.(codigo)
-                        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                          scanBufferRef.current += e.key
-                          setScanInput(scanBufferRef.current)
-                        }
-                      }}
-                    />
+                          scanTimeoutRef.current = setTimeout(() => {
+                            const codigo = scanBufferRef.current.trim()
+                            scanBufferRef.current = ''
+                            setScanInput('')
+                            if (codigo) handleScanCodigoRef.current?.(codigo)
+                          }, 200)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            clearTimeout(scanTimeoutRef.current)
+                            const codigo = scanBufferRef.current.trim()
+                            scanBufferRef.current = ''
+                            setScanInput('')
+                            if (codigo) handleScanCodigoRef.current?.(codigo)
+                          } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                            scanBufferRef.current += e.key
+                            setScanInput(scanBufferRef.current)
+                          }
+                        }}
+                      />
+                    )}
+                    {tecladoManualModal && (
+                      <div className="flex gap-2 mt-2">
+                        <input autoFocus inputMode="numeric" className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-center text-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-300"
+                          value={codigoManualModal} placeholder="Código"
+                          onChange={(e) => setCodigoManualModal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              const codigo = codigoManualModal.trim()
+                              if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                            }
+                          }}
+                        />
+                        <button onClick={() => {
+                          const codigo = codigoManualModal.trim()
+                          if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                        }} className="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-medium active:bg-amber-600">
+                          OK
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-2 justify-center">
+                      <button onClick={() => { setPiezaEliminandoSync(null); setTecladoManualModal(false) }} className="text-xs text-amber-600 underline">Cancelar</button>
+                      {!tecladoManualModal && (
+                        <button onClick={() => { setTecladoManualModal(true); setCodigoManualModal('') }}
+                          className="py-1 px-3 rounded-lg border border-gray-300 text-gray-500 active:bg-gray-50">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
                 <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
@@ -2379,6 +2411,78 @@ const Preparacion = () => {
         </div>
       )}
 
+      {/* Banner confirmación eliminar pieza por scan */}
+      {piezaEliminando?.esperandoScan && fase === 'picking' && (
+        <div className="mx-3 mt-3 bg-amber-50 rounded-xl border-2 border-amber-300 p-3 text-center">
+          <div className="text-sm font-medium text-amber-800">Escaneá el código de barras de <span className="font-bold">{piezaEliminando.nombre || 'este artículo'}</span> para confirmar eliminación</div>
+          {!tecladoManualModal && (
+            <input autoFocus inputMode="none" className="opacity-0 absolute w-0 h-0"
+              value={scanInput}
+              onChange={(e) => {
+                const val = e.target.value
+                setScanInput(val)
+                scanBufferRef.current = val
+                clearTimeout(scanTimeoutRef.current)
+                scanTimeoutRef.current = setTimeout(() => {
+                  const codigo = scanBufferRef.current.trim()
+                  scanBufferRef.current = ''
+                  setScanInput('')
+                  if (codigo) handleScanCodigoRef.current?.(codigo)
+                }, 200)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  clearTimeout(scanTimeoutRef.current)
+                  const codigo = scanBufferRef.current.trim()
+                  scanBufferRef.current = ''
+                  setScanInput('')
+                  if (codigo) handleScanCodigoRef.current?.(codigo)
+                } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                  scanBufferRef.current += e.key
+                  setScanInput(scanBufferRef.current)
+                }
+              }}
+            />
+          )}
+          {tecladoManualModal && (
+            <div className="flex gap-2 mt-2">
+              <input autoFocus inputMode="numeric" className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-center text-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-300"
+                value={codigoManualModal} placeholder="Código"
+                onChange={(e) => setCodigoManualModal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const codigo = codigoManualModal.trim()
+                    if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+                  }
+                }}
+              />
+              <button onClick={() => {
+                const codigo = codigoManualModal.trim()
+                if (codigo) { setCodigoManualModal(''); handleScanCodigoRef.current?.(codigo) }
+              }} className="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-medium active:bg-amber-600">
+                OK
+              </button>
+            </div>
+          )}
+          <div className="flex gap-2 mt-2 justify-center">
+            <button onClick={() => { setPiezaEliminandoSync(null); setTecladoManualModal(false) }}
+              className="flex-1 max-w-[200px] py-2 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 active:bg-gray-50">
+              Cancelar
+            </button>
+            {!tecladoManualModal && (
+              <button onClick={() => { setTecladoManualModal(true); setCodigoManualModal('') }}
+                className="py-2 px-4 rounded-xl border border-gray-300 text-gray-500 active:bg-gray-50">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Canasto activo */}
       {canastoActivo && (
         <div className="mx-3 mt-3 bg-amber-50 rounded-xl border-2 border-amber-300 p-3 cursor-pointer active:bg-amber-100"
@@ -2393,11 +2497,31 @@ const Preparacion = () => {
           {canastoActivo.items.length > 0 && (
             <div className="mt-2 space-y-0.5">
               {canastoActivo.items.map((item, idx) => (
-                <div key={idx} className="text-xs text-amber-700 flex justify-between bg-amber-100/50 rounded px-2 py-1">
+                <div key={idx} className="text-xs text-amber-700 flex items-center justify-between bg-amber-100/50 rounded px-2 py-1">
                   <span className="truncate">{item.nombre}</span>
-                  <span className="font-medium ml-2 flex-shrink-0">
-                    {item.es_pesable ? `${item.cantidad} kg` : `${item.cantidad} u`}
-                  </span>
+                  <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                    <span className="font-medium">
+                      {item.es_pesable ? `${item.cantidad} kg` : `${item.cantidad} u`}
+                    </span>
+                    <button onClick={(e) => {
+                      e.stopPropagation()
+                      const pieza = {
+                        contenedorIdx: -1,
+                        contenedorNombre: canastoActivo.precinto,
+                        tipo: 'canasto',
+                        peso: item.es_pesable && item.pesos_escaneados?.length ? item.pesos_escaneados[item.pesos_escaneados.length - 1] : null,
+                        es_pesable: item.es_pesable,
+                        enCanastoActivo: true,
+                      }
+                      confirmarEliminarPieza(pieza, item.articulo_id, item.nombre)
+                    }}
+                      disabled={!!piezaEliminando}
+                      className="text-red-400 active:text-red-600 p-0.5 disabled:opacity-30">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -2612,6 +2736,24 @@ const Preparacion = () => {
                             : `x${ci.cantidad}`
                           }
                         </span>
+                        <button onClick={(e) => {
+                          e.stopPropagation()
+                          const pieza = {
+                            contenedorIdx: idx,
+                            contenedorNombre: c.tipo === 'canasto' ? c.precinto : c.nombre,
+                            tipo: c.tipo,
+                            peso: ci.es_pesable && ci.pesos_escaneados?.length ? ci.pesos_escaneados[ci.pesos_escaneados.length - 1] : null,
+                            es_pesable: ci.es_pesable,
+                            enCanastoActivo: false,
+                          }
+                          confirmarEliminarPieza(pieza, ci.articulo_id, ci.nombre)
+                        }}
+                          disabled={!!piezaEliminando}
+                          className="text-red-400 active:text-red-600 p-1 disabled:opacity-30 flex-shrink-0">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
                     ))}
                   </div>
