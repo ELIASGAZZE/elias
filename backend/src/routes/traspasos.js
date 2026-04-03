@@ -313,10 +313,16 @@ router.get('/ordenes/:id', verificarAuth, asyncHandler(async (req, res) => {
       }
     }
 
+    // Determinar si el usuario actual es quien prepara (comparar contra perfiles.id y user_id)
+    const esPreparador = data.preparado_por
+      ? (data.preparado_por === req.perfil?.id || data.preparado_por === req.usuario?.id)
+      : false
+
     res.json({
       ...data,
       canastos: canastos || [],
       preparado_por_nombre,
+      es_mi_preparacion: esPreparador,
       sucursal_origen_nombre: sucMap[data.sucursal_origen_id] || 'Desconocida',
       sucursal_destino_nombre: sucMap[data.sucursal_destino_id] || 'Desconocida',
     })

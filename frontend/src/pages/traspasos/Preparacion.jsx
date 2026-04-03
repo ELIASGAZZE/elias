@@ -190,7 +190,7 @@ const Preparacion = () => {
         return
       }
       // Verificar que el usuario actual sea quien inició la preparación
-      if (data.preparado_por && usuario?.id && data.preparado_por !== usuario.id) {
+      if (data.preparado_por && !data.es_mi_preparacion) {
         const quien = data.preparado_por_nombre || 'otro usuario'
         const tomar = window.confirm(`Esta orden está siendo preparada por ${quien}. ¿Querés tomarla vos?`)
         if (!tomar) {
