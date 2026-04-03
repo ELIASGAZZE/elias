@@ -53,7 +53,10 @@ const editarConfigSchema = z.object({
 const ejecutarTareaSchema = z.object({
   tarea_config_id: z.string().uuid('tarea_config_id es requerido'),
   empleados_ids: z.array(z.string().uuid()).optional(),
-  subtareas_completadas: z.array(z.string().uuid()).optional(),
+  subtareas_completadas: z.array(z.object({
+    subtarea_id: z.string().uuid(),
+    completada: z.boolean().optional(),
+  })).optional(),
   observaciones: z.string().max(2000).optional().nullable(),
   calificacion: z.union([z.number().int().min(1).max(5), z.string()]).optional().nullable(),
 }).passthrough()
