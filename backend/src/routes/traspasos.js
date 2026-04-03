@@ -292,7 +292,7 @@ router.get('/ordenes/:id', verificarAuth, asyncHandler(async (req, res) => {
     const sucMap = {}
     for (const s of (sucursales || [])) sucMap[s.id] = s.nombre
 
-    // Traer nombre de quien prepara
+    // Traer nombre de quien prepara (puede ser perfiles.id o auth user_id)
     let preparado_por_nombre = null
     if (data.preparado_por) {
       const { data: perfil } = await supabase
@@ -300,7 +300,17 @@ router.get('/ordenes/:id', verificarAuth, asyncHandler(async (req, res) => {
         .select('nombre')
         .eq('id', data.preparado_por)
         .single()
-      preparado_por_nombre = perfil?.nombre || null
+      if (perfil?.nombre) {
+        preparado_por_nombre = perfil.nombre
+      } else {
+        // Fallback: buscar por user_id (auth.users UUID)
+        const { data: perfil2 } = await supabase
+          .from('perfiles')
+          .select('nombre')
+          .eq('user_id', data.preparado_por)
+          .single()
+        preparado_por_nombre = perfil2?.nombre || null
+      }
     }
 
     res.json({
