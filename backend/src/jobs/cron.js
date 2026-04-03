@@ -205,7 +205,7 @@ async function iniciarCronJobs() {
         const supabase = require('../config/supabase')
         const { data: ordenes } = await supabase
           .from('ordenes_traspaso')
-          .select('id, preparacion_state, preparado_por')
+          .select('id, preparacion_state, preparado_por, updated_at')
           .eq('estado', 'en_preparacion')
 
         const now = Date.now()
@@ -216,12 +216,18 @@ async function iniciarCronJobs() {
           const state = o.preparacion_state || {}
           const lastHB = state.last_heartbeat ? new Date(state.last_heartbeat).getTime() : 0
           const lastAct = state.last_activity ? new Date(state.last_activity).getTime() : lastHB
+          const updatedAt = o.updated_at ? new Date(o.updated_at).getTime() : 0
 
           let liberar = false
           let motivo = ''
 
+          // Sin heartbeat registrado y más de 10 min desde última actualización → nunca envió heartbeat
+          if (!lastHB && updatedAt && (now - updatedAt) > HEARTBEAT_TIMEOUT) {
+            liberar = true
+            motivo = 'sin heartbeat registrado, inactiva por 10+ min'
+          }
           // Sin heartbeat por más de 10 min → usuario salió de la pantalla
-          if (lastHB && (now - lastHB) > HEARTBEAT_TIMEOUT) {
+          else if (lastHB && (now - lastHB) > HEARTBEAT_TIMEOUT) {
             liberar = true
             motivo = 'sin heartbeat por 10+ min'
           }

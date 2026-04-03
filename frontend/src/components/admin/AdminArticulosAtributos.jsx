@@ -7,6 +7,7 @@ const TABS = [
   { id: 'atributos', label: 'Atributos' },
   { id: 'combos', label: 'Combos' },
   { id: 'pesos', label: 'Pesos' },
+  { id: 'codigos', label: 'Códigos de Barra' },
 ]
 
 const formatPrecio = (n) => {
@@ -327,6 +328,9 @@ const AdminArticulosAtributos = () => {
           )}
         </div>
       )}
+
+      {/* ===== TAB CÓDIGOS DE BARRA ===== */}
+      {tab === 'codigos' && <TabCodigosBarras articulos={articulos} />}
     </div>
   )
 }
@@ -559,6 +563,103 @@ const TabPesos = ({ articulos, onUpdate }) => {
         {pesables.length === 0 && (
           <div className="text-center text-sm text-gray-400 py-8">
             No se encontraron artículos pesables
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Tab Códigos de Barra — una fila por artículo con todos sus códigos de barra
+const TabCodigosBarras = ({ articulos }) => {
+  const [busqueda, setBusqueda] = useState('')
+
+  const articulosConCodigos = useMemo(() => {
+    return articulos
+      .filter(a => (a.codigosBarras || []).length > 0)
+      .map(a => ({
+        ...a,
+        codigos: [...(a.codigosBarras || [])].sort((x, y) => x.factor - y.factor),
+      }))
+  }, [articulos])
+
+  const filtrados = useMemo(() => {
+    if (!busqueda.trim()) return articulosConCodigos
+    const terminos = busqueda.toLowerCase().trim().split(/\s+/)
+    return articulosConCodigos.filter(a => {
+      const texto = `${a.codigo} ${a.nombre} ${a.rubro?.nombre || ''} ${a.codigos.map(c => c.codigo).join(' ')}`.toLowerCase()
+      return terminos.every(t => texto.includes(t))
+    })
+  }, [articulosConCodigos, busqueda])
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={busqueda}
+        onChange={e => setBusqueda(e.target.value)}
+        placeholder="Buscar por código de barra, nombre o SKU..."
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 mb-3"
+      />
+
+      <div className="text-xs text-gray-400 mb-2">
+        {filtrados.length} artículos con códigos de barra
+        {busqueda ? ' (filtrados)' : ''} — {articulosConCodigos.reduce((s, a) => s + a.codigos.length, 0)} códigos totales
+      </div>
+
+      <div className="border rounded-lg overflow-hidden max-h-[60vh] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">SKU</th>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Artículo</th>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Rubro</th>
+              <th className="text-left px-3 py-2 font-medium text-gray-600">Códigos de Barra</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {filtrados.slice(0, 300).map(art => (
+              <tr key={art.id} className="hover:bg-gray-50 align-top">
+                <td className="px-3 py-2 text-gray-500 font-mono text-xs">{art.codigo}</td>
+                <td className="px-3 py-2 text-gray-800">{art.nombre}</td>
+                <td className="px-3 py-2 text-gray-500 text-xs">{art.rubro?.nombre || '—'}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {art.codigos.map((cb, i) => (
+                      <span
+                        key={i}
+                        className={`inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-md border ${
+                          cb.factor === 1
+                            ? 'bg-green-50 text-green-800 border-green-200'
+                            : 'bg-blue-50 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        <span>{cb.codigo}</span>
+                        <span className={`font-sans font-semibold text-[10px] px-1 py-0.5 rounded ${
+                          cb.factor === 1
+                            ? 'bg-green-200/60 text-green-700'
+                            : 'bg-blue-200/60 text-blue-700'
+                        }`}>
+                          {cb.factor === 1 ? 'x1' : `x${cb.factor}`}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtrados.length > 300 && (
+          <div className="text-center text-xs text-gray-400 py-2 bg-gray-50">
+            Mostrando 300 de {filtrados.length} — usá la búsqueda para acotar
+          </div>
+        )}
+        {filtrados.length === 0 && (
+          <div className="text-center text-sm text-gray-400 py-8">
+            {articulosConCodigos.length === 0
+              ? 'No hay códigos de barra sincronizados. Ejecutá la sincronización de artículos primero.'
+              : 'No se encontraron resultados'}
           </div>
         )}
       </div>

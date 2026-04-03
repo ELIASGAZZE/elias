@@ -114,6 +114,9 @@ const Preparacion = () => {
   const ordenRef = useRef(orden)
   useEffect(() => { ordenRef.current = orden }, [orden])
 
+  // Contador sincrónico de piezas — se incrementa INMEDIATAMENTE al escanear (sin esperar render)
+  const pickCountRef = useRef({})
+
   const mostrarFeedback = (msg, ok, tipo) => {
     setFeedback({ msg, ok })
     if (fase === 'detalle' || fase === 'picking') {
@@ -182,6 +185,21 @@ const Preparacion = () => {
           setOrden(prev => ({ ...prev, items: itemsSinc }))
           api.put(`/api/traspasos/ordenes/${id}/pick`, { items: itemsSinc, preparacion_state: ps }).catch(err => console.error('Error syncing pick state:', err.message))
         }
+        // Inicializar contador sincrónico desde contenedores reales
+        const counts = {}
+        const allCont = [...cont, ...(canasto ? [canasto] : [])]
+        for (const c of allCont) {
+          for (const ci of (c.items || [])) {
+            if (ci.es_pesable && Array.isArray(ci.pesos_escaneados) && ci.pesos_escaneados.length > 0) {
+              counts[ci.articulo_id] = (counts[ci.articulo_id] || 0) + ci.pesos_escaneados.length
+            } else {
+              counts[ci.articulo_id] = (counts[ci.articulo_id] || 0) + (ci.cantidad || 0)
+            }
+          }
+        }
+        pickCountRef.current = counts
+      } else {
+        pickCountRef.current = {}
       }
       prepStateLoaded.current = true
       if (data.estado !== 'en_preparacion') {
@@ -484,36 +502,38 @@ const Preparacion = () => {
     })
   }, [itemsEnriquecidos])
 
+  // Calcular progreso SIEMPRE desde contenedores reales (fuente de verdad)
   const pickeado = useMemo(() => {
     const map = {}
-    if (!orden) return map
-    for (const item of (orden.items || [])) {
-      const cp = item.cantidad_preparada || 0
-      if (cp <= 0) continue
-      if (item.es_pesable && Array.isArray(item.pesos_escaneados)) {
-        map[item.articulo_id] = { kg: cp, piezas: item.pesos_escaneados.length }
-      } else {
-        map[item.articulo_id] = { kg: 0, piezas: cp }
+    const fuentes = [...contenedores]
+    if (canastoActivo) fuentes.push(canastoActivo)
+    for (const c of fuentes) {
+      for (const ci of (c.items || [])) {
+        const prev = map[ci.articulo_id] || { kg: 0, piezas: 0 }
+        if (ci.es_pesable && Array.isArray(ci.pesos_escaneados) && ci.pesos_escaneados.length > 0) {
+          prev.kg += ci.pesos_escaneados.reduce((s, p) => s + p, 0)
+          prev.piezas += ci.pesos_escaneados.length
+        } else {
+          prev.piezas += ci.cantidad || 0
+        }
+        map[ci.articulo_id] = prev
       }
     }
     return map
-  }, [orden])
+  }, [contenedores, canastoActivo])
 
   const cantidadEnPiezas = (item) => {
-    if (!item.es_pesable || !item.pppOrden) return item.cantidad_solicitada
-    return Math.round(item.cantidad_solicitada / item.pppOrden)
+    const ppp = item.pppOrden || item.peso_promedio_pieza
+    if (!item.es_pesable || !ppp) return item.cantidad_solicitada
+    return Math.round(item.cantidad_solicitada / ppp)
   }
 
   const pickEnPiezas = (item) => pickeado[item.articulo_id]?.piezas || 0
   const pickEnKg = (item) => pickeado[item.articulo_id]?.kg || 0
 
-  // Versión "fresca" que lee del ref (para validaciones en handlers de escaneo rápido)
+  // Versión "fresca" — lee del contador sincrónico (actualizado INMEDIATAMENTE al escanear)
   const pickEnPiezasFresh = (articuloId) => {
-    const items = ordenRef.current?.items || []
-    const it = items.find(i => i.articulo_id === articuloId)
-    if (!it) return 0
-    if (it.es_pesable && Array.isArray(it.pesos_escaneados)) return it.pesos_escaneados.length
-    return it.cantidad_preparada || 0
+    return pickCountRef.current[articuloId] || 0
   }
 
   const getFactorCaja = (item) => {
@@ -675,6 +695,8 @@ const Preparacion = () => {
 
   // Revertir progreso (opuesto de actualizarProgresoOrden)
   const revertirProgresoOrden = (articuloId, cantQuitar) => {
+    // Decrementar contador sincrónico
+    pickCountRef.current = { ...pickCountRef.current, [articuloId]: Math.max(0, (pickCountRef.current[articuloId] || 0) - Math.ceil(cantQuitar)) }
     let nuevosItems
     setOrden(prev => {
       nuevosItems = (prev.items || []).map(i => {
@@ -686,7 +708,9 @@ const Preparacion = () => {
         }
         return updated
       })
-      return { ...prev, items: nuevosItems }
+      const newOrden = { ...prev, items: nuevosItems }
+      ordenRef.current = newOrden
+      return newOrden
     })
     setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
   }
@@ -716,6 +740,9 @@ const Preparacion = () => {
 
   // Actualizar progreso en orden.items (para persistencia y progress circles)
   const actualizarProgresoOrden = (articuloId, cantAgregar, balanza) => {
+    // Incrementar contador sincrónico INMEDIATAMENTE (antes de React render)
+    const piezasAgregar = balanza ? 1 : cantAgregar
+    pickCountRef.current = { ...pickCountRef.current, [articuloId]: (pickCountRef.current[articuloId] || 0) + piezasAgregar }
     if (balanza) actualizarPesoMinMax(articuloId, balanza.pesoKg)
     let nuevosItems
     setOrden(prev => {
@@ -730,9 +757,27 @@ const Preparacion = () => {
         }
         return updated
       })
-      return { ...prev, items: nuevosItems }
+      const newOrden = { ...prev, items: nuevosItems }
+      ordenRef.current = newOrden
+      return newOrden
     })
     setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
+  }
+
+  // Recalcular pickCountRef desde contenedores (tras eliminar/mover contenedores)
+  const resyncPickCount = (contList, canasto) => {
+    const counts = {}
+    const allCont = [...(contList || []), ...(canasto ? [canasto] : [])]
+    for (const c of allCont) {
+      for (const ci of (c.items || [])) {
+        if (ci.es_pesable && Array.isArray(ci.pesos_escaneados) && ci.pesos_escaneados.length > 0) {
+          counts[ci.articulo_id] = (counts[ci.articulo_id] || 0) + ci.pesos_escaneados.length
+        } else {
+          counts[ci.articulo_id] = (counts[ci.articulo_id] || 0) + (ci.cantidad || 0)
+        }
+      }
+    }
+    pickCountRef.current = counts
   }
 
   // === SINCRONIZAR PROGRESO DESDE CONTENEDORES ===
@@ -864,6 +909,12 @@ const Preparacion = () => {
     if (resultado) {
       const { item, factor, peso, balanza, cat } = resultado
 
+      // Pesables: solo permitir barcode de balanza (con peso) o pesaje manual
+      if (item.es_pesable && !balanza) {
+        mostrarFeedback(`${item.nombre} es pesable — usá código con peso o pesaje manual`, false)
+        return
+      }
+
       // Validar peso fuera de rango para pesables
       if (balanza && item.es_pesable) {
         const enriched = itemsEnriquecidos.find(i => i.articulo_id === item.articulo_id)
@@ -884,13 +935,18 @@ const Preparacion = () => {
       // Validar que no se exceda la cantidad pedida
       const piezasYa = pickEnPiezasFresh(item.articulo_id)
       const piezasPedidas = cantidadEnPiezas(item)
+      const piezasAAgregar = balanza ? 1 : factor
       if (piezasYa >= piezasPedidas) {
         mostrarFeedback(`${item.nombre} ya está completo`, false)
         return
       }
+      if (piezasYa + piezasAAgregar > piezasPedidas) {
+        mostrarFeedback(`${item.nombre}: faltan ${piezasPedidas - piezasYa}, no se puede agregar ${piezasAAgregar}`, false)
+        return
+      }
 
       setUltimoEscaneado(item.articulo_id)
-      const seCompletaCon = (piezasYa + (peso || factor)) >= piezasPedidas
+      const seCompletaCon = (piezasYa + piezasAAgregar) >= piezasPedidas
       if (!seCompletaCon) {
         setTimeout(() => {
           itemRefs.current[item.articulo_id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -960,6 +1016,7 @@ const Preparacion = () => {
     const balanza = parsearBarcodeBalanza(codigo)
     let coincide = false
     let cantAgregar = 1
+    let factorDetalle = 1
 
     if (balanza && itemActual.es_pesable) {
       const cat = todosArticulos.find(a => String(a.id) === itemActual.articulo_id)
@@ -982,6 +1039,11 @@ const Preparacion = () => {
         cantAgregar = balanza.pesoKg
       }
     } else {
+      // Pesables: no permitir código plano, solo barcode de balanza o pesaje manual
+      if (itemActual.es_pesable) {
+        mostrarFeedback('Artículo pesable — usá código con peso o pesaje manual', false)
+        return
+      }
       if (itemActual.codigo === codigo) {
         coincide = true
       } else {
@@ -996,6 +1058,7 @@ const Preparacion = () => {
             if (match) {
               coincide = true
               cantAgregar = typeof match === 'object' ? (match.factor || 1) : 1
+              factorDetalle = cantAgregar
             }
           }
         }
@@ -1004,6 +1067,13 @@ const Preparacion = () => {
 
     if (!coincide) {
       mostrarFeedback('Código no coincide con este artículo', false)
+      return
+    }
+
+    // Validar que no se exceda con este scan
+    const piezasAAgregar = balanza ? 1 : factorDetalle
+    if (piezasYa + piezasAAgregar > piezasPedidas) {
+      mostrarFeedback(`Faltan ${piezasPedidas - piezasYa}, no se puede agregar ${piezasAAgregar}`, false)
       return
     }
 
@@ -1030,6 +1100,65 @@ const Preparacion = () => {
 
   const confirmarPesoFueraDeRango = () => {
     if (!alertaPeso) return
+
+    // Si viene de pesaje manual, ejecutar la lógica completa de pesaje manual
+    if (alertaPeso.pesoManualData) {
+      const { cantidad, pesoTotal, promedio } = alertaPeso.pesoManualData
+      const item = alertaPeso.item
+      const nuevosPesos = Array.from({ length: cantidad }, () => promedio)
+
+      actualizarPesoMinMax(item.articulo_id, promedio)
+
+      // Incrementar contador sincrónico INMEDIATAMENTE
+      pickCountRef.current = { ...pickCountRef.current, [item.articulo_id]: (pickCountRef.current[item.articulo_id] || 0) + cantidad }
+
+      if (canastoActivo) {
+        for (let i = 0; i < cantidad; i++) {
+          agregarACanastoActivo(item, promedio, { pesoKg: promedio })
+        }
+      } else {
+        // Crear bulto con pesos_escaneados correctos para pesables
+        const bulto = {
+          tipo: 'bulto',
+          precinto: null,
+          nombre: `${item.nombre}${cantidad > 1 ? ` x${cantidad}` : ''}`,
+          peso_origen: null,
+          items: [{
+            articulo_id: item.articulo_id,
+            nombre: item.nombre,
+            codigo: item.codigo,
+            cantidad: pesoTotal,
+            es_pesable: true,
+            pesos_escaneados: nuevosPesos,
+          }],
+        }
+        setContenedores(prev => [...prev, bulto])
+      }
+
+      let nuevosItems
+      setOrden(prev => {
+        nuevosItems = (prev.items || []).map(i => {
+          if (i.articulo_id !== item.articulo_id) return i
+          return {
+            ...i,
+            cantidad_preparada: Math.round(((i.cantidad_preparada || 0) + pesoTotal) * 1000) / 1000,
+            pesos_escaneados: [...(i.pesos_escaneados || []), ...nuevosPesos],
+          }
+        })
+        const newOrden = { ...prev, items: nuevosItems }
+        ordenRef.current = newOrden
+        return newOrden
+      })
+      setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
+
+      mostrarFeedback(`+${cantidad} pzas (${pesoTotal}kg)`, true)
+      setAlertaPeso(null)
+      setPesoManualCantidad('')
+      setPesoManualPeso('')
+      setPesoManualError(null)
+      return
+    }
+
     const { balanza, item, factor } = alertaPeso
     const cantAgregar = balanza.pesoKg
 
@@ -1056,6 +1185,7 @@ const Preparacion = () => {
     setContenedores(nuevosContenedores)
     setCanastoActivo(null)
     setPesoCanasto('')
+    resyncPickCount(nuevosContenedores, null)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, null)
       setTimeout(() => persistirItems(itemsSinc), 0)
@@ -1177,7 +1307,7 @@ const Preparacion = () => {
     }
 
     setContenedores(nuevosContenedores)
-    // Recalcular progreso sincrónico
+    resyncPickCount(nuevosContenedores, canastoActivo)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
       persistirItems(itemsSinc)
@@ -1222,6 +1352,7 @@ const Preparacion = () => {
     setContenedorExpandido(null)
     const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
     setContenedores(nuevosContenedores)
+    resyncPickCount(nuevosContenedores, canastoActivo)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
       persistirItems(itemsSinc)
@@ -1280,6 +1411,7 @@ const Preparacion = () => {
     setContenedorExpandido(null)
     const nuevosContenedores = contenedores.filter((_, i) => i !== idx)
     setContenedores(nuevosContenedores)
+    resyncPickCount(nuevosContenedores, canastoActivo)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, canastoActivo)
       persistirItems(itemsSinc)
@@ -1296,7 +1428,39 @@ const Preparacion = () => {
     const pesoTotal = parseFloat(pesoManualPeso)
     if (!cantidad || cantidad <= 0 || !pesoTotal || pesoTotal <= 0) return
 
+    // Validar que no se exceda la cantidad de piezas pedidas
+    const piezasYa = pickEnPiezasFresh(itemDetalle.articulo_id)
+    const piezasPedidas = cantidadEnPiezas(itemDetalle)
+    const piezasDisponibles = piezasPedidas - piezasYa
+    if (piezasDisponibles <= 0) {
+      setPesoManualError(`Ya está completo (${piezasPedidas} pzas)`)
+      return
+    }
+    if (cantidad > piezasDisponibles) {
+      setPesoManualError(`Máximo ${piezasDisponibles} pza${piezasDisponibles !== 1 ? 's' : ''} (pedido ${piezasPedidas}, ya preparadas ${piezasYa})`)
+      return
+    }
+
     const promedio = Math.round((pesoTotal / cantidad) * 1000) / 1000
+
+    // Validar peso por pieza contra rango min/max
+    const enriched = itemsEnriquecidos.find(i => i.articulo_id === itemDetalle.articulo_id)
+    const pesoMin = enriched?.pesoMinimo
+    const pesoMax = enriched?.pesoMaximo
+    if ((pesoMin && promedio < pesoMin) || (pesoMax && promedio > pesoMax)) {
+      reproducirAlerta()
+      setMostrarPesoManual(false)
+      setAlertaPeso({
+        peso: promedio, min: pesoMin, max: pesoMax,
+        nombre: itemDetalle.nombre,
+        balanza: { pesoKg: pesoTotal },
+        item: itemDetalle, factor: 1,
+        // Guardar datos del pesaje manual para confirmar después
+        pesoManualData: { cantidad, pesoTotal, promedio },
+      })
+      return
+    }
+
     const nuevosPesos = Array.from({ length: cantidad }, () => promedio)
     const balanzaFake = { pesoKg: pesoTotal }
 
@@ -1308,8 +1472,26 @@ const Preparacion = () => {
         agregarACanastoActivo(itemDetalle, promedio, { pesoKg: promedio })
       }
     } else {
-      crearBulto(itemDetalle, pesoTotal, null)
+      // Crear bulto con pesos_escaneados correctos para pesables
+      const bulto = {
+        tipo: 'bulto',
+        precinto: null,
+        nombre: `${itemDetalle.nombre}${cantidad > 1 ? ` x${cantidad}` : ''}`,
+        peso_origen: null,
+        items: [{
+          articulo_id: itemDetalle.articulo_id,
+          nombre: itemDetalle.nombre,
+          codigo: itemDetalle.codigo,
+          cantidad: pesoTotal,
+          es_pesable: true,
+          pesos_escaneados: nuevosPesos,
+        }],
+      }
+      setContenedores(prev => [...prev, bulto])
     }
+
+    // Incrementar contador sincrónico INMEDIATAMENTE
+    pickCountRef.current = { ...pickCountRef.current, [itemDetalle.articulo_id]: (pickCountRef.current[itemDetalle.articulo_id] || 0) + cantidad }
 
     // Actualizar orden
     let nuevosItems
@@ -1322,7 +1504,9 @@ const Preparacion = () => {
           pesos_escaneados: [...(i.pesos_escaneados || []), ...nuevosPesos],
         }
       })
-      return { ...prev, items: nuevosItems }
+      const newOrden = { ...prev, items: nuevosItems }
+      ordenRef.current = newOrden
+      return newOrden
     })
     setTimeout(() => { if (nuevosItems) persistirItems(nuevosItems) }, 0)
 
@@ -1444,6 +1628,7 @@ const Preparacion = () => {
     }
 
     // Recalcular progreso directo con los datos ya calculados
+    resyncPickCount(nuevosContenedores, nuevoCanasto)
     setOrden(prev => {
       const itemsSinc = sincronizarProgreso(prev.items, nuevosContenedores, nuevoCanasto)
       persistirItems(itemsSinc)
@@ -1458,14 +1643,16 @@ const Preparacion = () => {
   const calcularPendientes = () => {
     return itemsEnriquecidos
       .map(item => {
-        const faltanteKg = Math.round(((item.cantidad_solicitada || 0) - (item.cantidad_preparada || 0)) * 1000) / 1000
+        const pick = pickeado[item.articulo_id] || { kg: 0, piezas: 0 }
+        const prepKg = item.es_pesable ? pick.kg : pick.piezas
+        const faltanteKg = Math.round(((item.cantidad_solicitada || 0) - prepKg) * 1000) / 1000
         if (item.es_pesable) {
           const piezasPedidas = cantidadEnPiezas(item)
-          const piezasPrep = pickEnPiezas(item)
+          const piezasPrep = pick.piezas
           const faltantePiezas = piezasPedidas - piezasPrep
-          return { ...item, cantidad_preparada_real: item.cantidad_preparada || 0, cantidad_faltante: faltanteKg, faltante_piezas: faltantePiezas }
+          return { ...item, cantidad_preparada_real: prepKg, cantidad_faltante: faltanteKg, faltante_piezas: faltantePiezas }
         }
-        return { ...item, cantidad_preparada_real: item.cantidad_preparada || 0, cantidad_faltante: faltanteKg }
+        return { ...item, cantidad_preparada_real: prepKg, cantidad_faltante: faltanteKg }
       })
       .filter(item => item.cantidad_faltante > 0)
   }
@@ -1767,31 +1954,49 @@ const Preparacion = () => {
           const peso = parseFloat(pesoManualPeso) || 0
           const promedio = cant > 0 && peso > 0 ? peso / cant : 0
           const valido = cant > 0 && peso > 0
+          const piezasYaPrep = pickEnPiezas(itemDetalle)
+          const piezasPedidasTotal = cantidadEnPiezas(itemDetalle)
+          const piezasRestantes = piezasPedidasTotal - piezasYaPrep
+          const enrichedModal = itemsEnriquecidos.find(i => i.articulo_id === itemDetalle.articulo_id)
+          const pesoMinModal = enrichedModal?.pesoMinimo
+          const pesoMaxModal = enrichedModal?.pesoMaximo
+          const pesoFueraRango = valido && ((pesoMinModal && promedio < pesoMinModal) || (pesoMaxModal && promedio > pesoMaxModal))
+          const excedePiezas = cant > piezasRestantes
           return (
             <div className="fixed inset-0 z-40 bg-black/40 flex flex-col justify-end" onClick={() => setMostrarPesoManual(false)}>
               <div className="bg-white rounded-t-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
                 <h3 className="text-base font-semibold text-gray-800">Pesaje manual — {itemDetalle.nombre}</h3>
+                <div className="text-xs text-gray-400">Pedido: {piezasPedidasTotal} pzas · Preparadas: {piezasYaPrep} · Faltan: {piezasRestantes}</div>
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs font-medium text-gray-500 mb-1 block">Cantidad de piezas</label>
-                    <input type="number" inputMode="numeric" min="1" step="1" autoFocus
-                      value={pesoManualCantidad} onChange={e => setPesoManualCantidad(e.target.value)}
-                      className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
+                    <input type="number" inputMode="numeric" min="1" max={piezasRestantes} step="1" autoFocus
+                      value={pesoManualCantidad} onChange={e => { setPesoManualCantidad(e.target.value); setPesoManualError(null) }}
+                      className={`w-full border-2 rounded-xl px-4 py-4 text-lg text-center outline-none ${excedePiezas ? 'border-red-400 focus:border-red-500' : 'border-gray-300 focus:border-sky-500'}`} />
+                    {excedePiezas && (
+                      <div className="text-xs text-red-500 mt-1 text-center">Máximo {piezasRestantes} pza{piezasRestantes !== 1 ? 's' : ''}</div>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-500 mb-1 block">Peso total (kg)</label>
                     <input type="number" inputMode="decimal" min="0.001" step="0.001"
-                      value={pesoManualPeso} onChange={e => setPesoManualPeso(e.target.value)}
+                      value={pesoManualPeso} onChange={e => { setPesoManualPeso(e.target.value); setPesoManualError(null) }}
                       className="w-full border-2 border-gray-300 rounded-xl px-4 py-4 text-lg text-center focus:border-sky-500 outline-none" />
                   </div>
                 </div>
                 {valido && (
-                  <div className="rounded-xl px-4 py-3 text-center bg-sky-50 border border-sky-200">
-                    <div className="text-2xl font-bold text-sky-700">{promedio.toFixed(3)} kg/pza</div>
+                  <div className={`rounded-xl px-4 py-3 text-center border ${pesoFueraRango ? 'bg-amber-50 border-amber-300' : 'bg-sky-50 border-sky-200'}`}>
+                    <div className={`text-2xl font-bold ${pesoFueraRango ? 'text-amber-600' : 'text-sky-700'}`}>{promedio.toFixed(3)} kg/pza</div>
+                    {pesoFueraRango && (
+                      <div className="text-xs text-amber-600 mt-1">Fuera de rango ({pesoMinModal || '—'} – {pesoMaxModal || '—'} kg)</div>
+                    )}
                   </div>
                 )}
-                <button onClick={confirmarPesoManual} disabled={!valido}
-                  className={`w-full py-4 rounded-xl text-base font-semibold ${valido ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                {pesoManualError && (
+                  <div className="text-sm text-red-500 text-center font-medium">{pesoManualError}</div>
+                )}
+                <button onClick={confirmarPesoManual} disabled={!valido || excedePiezas}
+                  className={`w-full py-4 rounded-xl text-base font-semibold ${valido && !excedePiezas ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
                   Confirmar {valido ? `· ${cant} pzas · ${peso}kg` : ''}
                 </button>
               </div>
@@ -1811,6 +2016,7 @@ const Preparacion = () => {
               <h2 className="text-xl font-bold text-amber-700">Peso fuera de rango</h2>
               <div className="text-3xl font-bold text-amber-600">{alertaPeso.peso} kg</div>
               <div className="text-sm text-gray-500">Rango: {alertaPeso.min || '—'} – {alertaPeso.max || '—'} kg</div>
+              <p className="text-base text-gray-700">El peso está fuera del rango, ¿seguro que el artículo que estás preparando es <span className="font-semibold">{alertaPeso.nombre}</span>?</p>
               <div className="flex gap-3 pt-2">
                 <button onPointerDown={() => setAlertaPeso(null)}
                   className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl text-lg font-semibold">No</button>
@@ -2135,9 +2341,9 @@ const Preparacion = () => {
   const itemsPendientes = []
   const itemsCompletos = []
   for (const item of itemsOrdenados) {
-    const piezas = item.es_pesable && Array.isArray(item.pesos_escaneados) ? item.pesos_escaneados.length : (item.cantidad_preparada || 0)
-    const pedidas = item.es_pesable && item.pppOrden ? Math.round(item.cantidad_solicitada / item.pppOrden) : item.cantidad_solicitada
-    if (piezas >= pedidas) {
+    const piezas = pickEnPiezas(item)
+    const pedidas = cantidadEnPiezas(item)
+    if (piezas > 0 && piezas >= pedidas) {
       itemsCompletos.push(item)
     } else {
       itemsPendientes.push(item)
@@ -2766,7 +2972,7 @@ const Preparacion = () => {
             <h2 className="text-xl font-bold text-amber-700">Peso fuera de rango</h2>
             <div className="text-3xl font-bold text-amber-600">{alertaPeso.peso} kg</div>
             <div className="text-sm text-gray-500">Rango: {alertaPeso.min || '—'} – {alertaPeso.max || '—'} kg</div>
-            <p className="text-base text-gray-700">¿Seguro que es <span className="font-semibold">{alertaPeso.nombre}</span>?</p>
+            <p className="text-base text-gray-700">El peso está fuera del rango, ¿seguro que el artículo que estás preparando es <span className="font-semibold">{alertaPeso.nombre}</span>?</p>
             <div className="flex gap-3 pt-2">
               <button onPointerDown={() => setAlertaPeso(null)}
                 className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl text-lg font-semibold">No</button>

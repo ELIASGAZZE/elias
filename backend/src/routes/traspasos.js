@@ -105,12 +105,26 @@ router.put('/articulos/:id/pesos', verificarAuth, asyncHandler(async (req, res) 
     if (!art) return res.status(404).json({ error: 'Artículo no encontrado' })
     if (!art.es_pesable) return res.status(400).json({ error: 'No es pesable' })
 
+    const ALPHA = 0.2
     const updates = {}
     const pesoMin = art.peso_minimo ? parseFloat(art.peso_minimo) : null
     const pesoMax = art.peso_maximo ? parseFloat(art.peso_maximo) : null
 
-    if (pesoMin === null || peso < pesoMin) updates.peso_minimo = peso
-    if (pesoMax === null || peso > pesoMax) updates.peso_maximo = peso
+    if (pesoMin === null) {
+      updates.peso_minimo = peso
+    } else if (peso < pesoMin) {
+      updates.peso_minimo = peso
+    } else if (peso > pesoMin) {
+      updates.peso_minimo = Math.round((pesoMin * (1 - ALPHA) + peso * ALPHA) * 1000) / 1000
+    }
+
+    if (pesoMax === null) {
+      updates.peso_maximo = peso
+    } else if (peso > pesoMax) {
+      updates.peso_maximo = peso
+    } else if (peso < pesoMax) {
+      updates.peso_maximo = Math.round((pesoMax * (1 - ALPHA) + peso * ALPHA) * 1000) / 1000
+    }
 
     if (Object.keys(updates).length === 0) return res.json({ updated: false })
 
@@ -236,6 +250,11 @@ router.get('/ordenes', verificarAuth, asyncHandler(async (req, res) => {
     if (sucursal) query = query.or(`sucursal_origen_id.eq.${sucursal},sucursal_destino_id.eq.${sucursal}`)
     if (desde) query = query.gte('created_at', desde)
     if (hasta) query = query.lte('created_at', hasta)
+
+    // Operarios solo ven órdenes de su sucursal de origen
+    if (req.perfil?.rol === 'operario' && req.perfil?.sucursal_id) {
+      query = query.eq('sucursal_origen_id', req.perfil.sucursal_id)
+    }
 
     const { data, error } = await query
     if (error) throw error
@@ -626,13 +645,16 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandl
           ? (promedioAnterior * muestrasAnteriores + nuevoPromedio * muestrasNuevas) / totalMuestras
           : nuevoPromedio
 
-        // Min/Max: expandir rango con datos reales
-        const minActualizado = art.peso_minimo
-          ? Math.min(parseFloat(art.peso_minimo), nuevoMin)
-          : nuevoMin
-        const maxActualizado = art.peso_maximo
-          ? Math.max(parseFloat(art.peso_maximo), nuevoMax)
-          : nuevoMax
+        // Min/Max: convergencia gradual (ALPHA = 0.2)
+        const ALPHA = 0.2
+        const viejoMin = art.peso_minimo ? parseFloat(art.peso_minimo) : null
+        const viejoMax = art.peso_maximo ? parseFloat(art.peso_maximo) : null
+        const minActualizado = viejoMin === null ? nuevoMin
+          : nuevoMin < viejoMin ? nuevoMin
+          : viejoMin * (1 - ALPHA) + nuevoMin * ALPHA
+        const maxActualizado = viejoMax === null ? nuevoMax
+          : nuevoMax > viejoMax ? nuevoMax
+          : viejoMax * (1 - ALPHA) + nuevoMax * ALPHA
 
         await supabase
           .from('articulos')
@@ -2212,8 +2234,15 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
         const promedioActualizado = muestrasAnteriores > 0
           ? (promedioAnterior * muestrasAnteriores + nuevoPromedio * muestrasNuevas) / totalMuestras
           : nuevoPromedio
-        const minActualizado = art.peso_minimo ? Math.min(parseFloat(art.peso_minimo), nuevoMin) : nuevoMin
-        const maxActualizado = art.peso_maximo ? Math.max(parseFloat(art.peso_maximo), nuevoMax) : nuevoMax
+        const ALPHA = 0.2
+        const viejoMin = art.peso_minimo ? parseFloat(art.peso_minimo) : null
+        const viejoMax = art.peso_maximo ? parseFloat(art.peso_maximo) : null
+        const minActualizado = viejoMin === null ? nuevoMin
+          : nuevoMin < viejoMin ? nuevoMin
+          : viejoMin * (1 - ALPHA) + nuevoMin * ALPHA
+        const maxActualizado = viejoMax === null ? nuevoMax
+          : nuevoMax > viejoMax ? nuevoMax
+          : viejoMax * (1 - ALPHA) + nuevoMax * ALPHA
         await supabase.from('articulos').update({
           peso_promedio_pieza: Math.round(promedioActualizado * 1000) / 1000,
           peso_minimo: Math.round(minActualizado * 1000) / 1000,
