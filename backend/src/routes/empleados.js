@@ -42,6 +42,35 @@ router.get('/', verificarAuth, asyncHandler(async (req, res) => {
   }
 }))
 
+// GET /api/empleados/cumpleanos-hoy
+// Devuelve empleados activos cuyo cumpleaños es hoy (compara mes y día)
+router.get('/cumpleanos-hoy', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const hoy = new Date()
+    const mes = String(hoy.getMonth() + 1).padStart(2, '0')
+    const dia = String(hoy.getDate()).padStart(2, '0')
+    const sufijo = `-${mes}-${dia}` // e.g. "-04-04"
+
+    const { data, error } = await supabase
+      .from('empleados')
+      .select('id, nombre, fecha_cumpleanos, empresa')
+      .eq('activo', true)
+      .not('fecha_cumpleanos', 'is', null)
+
+    if (error) throw error
+
+    // Filtrar en JS: fecha_cumpleanos es VARCHAR "YYYY-MM-DD", comparar mes-día
+    const cumpleaneros = (data || []).filter(emp =>
+      emp.fecha_cumpleanos && emp.fecha_cumpleanos.endsWith(sufijo)
+    )
+
+    res.json(cumpleaneros)
+  } catch (err) {
+    logger.error('Error al consultar cumpleaños:', err)
+    res.status(500).json({ error: 'Error al consultar cumpleaños' })
+  }
+}))
+
 // GET /api/empleados/por-codigo/:codigo
 // Busca empleado activo por código. Devuelve id + nombre + sucursal_id + tope/consumido mes.
 router.get('/por-codigo/:codigo', verificarAuth, asyncHandler(async (req, res) => {

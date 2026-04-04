@@ -544,6 +544,22 @@ const POS = () => {
     return () => { cancelled = true }
   }, [terminalConfig?.caja_id])
 
+  // Consultar cumpleaños del día
+  useEffect(() => {
+    const hoy = new Date().toDateString()
+    const yaVisto = sessionStorage.getItem('cumple_visto') === hoy
+    if (yaVisto) return
+    api.get('/api/empleados/cumpleanos-hoy')
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setCumpleaneros(data)
+          setMostrarCumple(true)
+          sessionStorage.setItem('cumple_visto', hoy)
+        }
+      })
+      .catch(() => {})
+  }, [cierreActivo])
+
   // Estado cliente
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [clienteIdx, setClienteIdx] = useState(-1)
@@ -553,6 +569,8 @@ const POS = () => {
   const [mostrarCrearClienteCaja, setMostrarCrearClienteCaja] = useState(false)
   const [mostrarEditarCliente, setMostrarEditarCliente] = useState(false)
   const [toastMsg, setToastMsg] = useState(null)
+  const [cumpleaneros, setCumpleaneros] = useState([])
+  const [mostrarCumple, setMostrarCumple] = useState(false)
   const [guardandoContacto, setGuardandoContacto] = useState(false)
   const CLIENTE_DEFAULT = { id_centum: 0, codigo: '', razon_social: 'Consumidor Final', lista_precio_id: 1, email: '', celular: '', condicion_iva: 'CF', grupo_descuento_id: null, grupo_descuento_nombre: null, grupo_descuento_porcentaje: 0 }
   const [descuentosGrupoRubros, setDescuentosGrupoRubros] = useState({}) // { rubroNombre: porcentaje }
@@ -3816,6 +3834,36 @@ const POS = () => {
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Anuncio de cumpleaños */}
+      {mostrarCumple && cumpleaneros.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40" onClick={() => setMostrarCumple(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className="text-6xl mb-4">🎂</div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              {cumpleaneros.length === 1 ? '¡Feliz cumpleaños!' : '¡Feliz cumpleaños!'}
+            </h2>
+            <div className="space-y-2 mb-6">
+              {cumpleaneros.map(emp => (
+                <p key={emp.id} className="text-xl font-semibold text-violet-700">
+                  {emp.nombre}
+                </p>
+              ))}
+            </div>
+            <p className="text-gray-500 text-sm mb-6">
+              {cumpleaneros.length === 1
+                ? `Hoy es el cumpleaños de ${cumpleaneros[0].nombre}. ¡Que tenga un gran día!`
+                : `Hoy cumplen años ${cumpleaneros.map(e => e.nombre).join(' y ')}. ¡Felicidades!`}
+            </p>
+            <button
+              onClick={() => setMostrarCumple(false)}
+              className="bg-violet-600 hover:bg-violet-700 text-white font-medium px-6 py-2.5 rounded-xl transition-colors"
+            >
+              ¡Genial!
+            </button>
           </div>
         </div>
       )}

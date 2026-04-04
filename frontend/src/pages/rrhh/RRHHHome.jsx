@@ -38,11 +38,11 @@ const TABS = [
 const TabEmpleados = () => {
   const [empleados, setEmpleados] = useState([])
   const [cargando, setCargando] = useState(true)
-  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', codigo: '', empresa: 'zaatar' })
+  const [nuevoEmpleado, setNuevoEmpleado] = useState({ nombre: '', codigo: '', empresa: 'zaatar', fecha_cumpleanos: '' })
   const [creando, setCreando] = useState(false)
   const [mensaje, setMensaje] = useState('')
   const [editandoId, setEditandoId] = useState(null)
-  const [editandoData, setEditandoData] = useState({ nombre: '', codigo: '', empresa: '' })
+  const [editandoData, setEditandoData] = useState({ nombre: '', codigo: '', empresa: '', fecha_cumpleanos: '' })
   const [mostrarForm, setMostrarForm] = useState(false)
 
   useEffect(() => { cargarEmpleados() }, [])
@@ -65,9 +65,9 @@ const TabEmpleados = () => {
     setCreando(true)
     setMensaje('')
     try {
-      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim(), empresa: nuevoEmpleado.empresa })
+      await api.post('/api/empleados', { nombre: nuevoEmpleado.nombre.trim(), codigo: nuevoEmpleado.codigo.trim(), empresa: nuevoEmpleado.empresa, fecha_cumpleanos: nuevoEmpleado.fecha_cumpleanos || null })
       setMensaje('ok:Empleado creado')
-      setNuevoEmpleado({ nombre: '', codigo: '', empresa: 'zaatar' })
+      setNuevoEmpleado({ nombre: '', codigo: '', empresa: 'zaatar', fecha_cumpleanos: '' })
       setMostrarForm(false)
       await cargarEmpleados()
       setTimeout(() => setMensaje(''), 3000)
@@ -80,13 +80,13 @@ const TabEmpleados = () => {
 
   const iniciarEdicion = (emp) => {
     setEditandoId(emp.id)
-    setEditandoData({ nombre: emp.nombre, codigo: emp.codigo || '', empresa: emp.empresa || 'zaatar' })
+    setEditandoData({ nombre: emp.nombre, codigo: emp.codigo || '', empresa: emp.empresa || 'zaatar', fecha_cumpleanos: emp.fecha_cumpleanos || '' })
   }
 
   const guardarEdicion = async (id) => {
     if (!editandoData.nombre.trim()) return
     try {
-      await api.put(`/api/empleados/${id}`, { nombre: editandoData.nombre.trim(), codigo: editandoData.codigo.trim(), empresa: editandoData.empresa })
+      await api.put(`/api/empleados/${id}`, { nombre: editandoData.nombre.trim(), codigo: editandoData.codigo.trim(), empresa: editandoData.empresa, fecha_cumpleanos: editandoData.fecha_cumpleanos || null })
       setEditandoId(null)
       await cargarEmpleados()
     } catch (err) {
@@ -162,6 +162,15 @@ const TabEmpleados = () => {
             <option value="produccion">Producción</option>
           </select>
           <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500 whitespace-nowrap">Fecha de nacimiento</label>
+            <input
+              type="date"
+              value={nuevoEmpleado.fecha_cumpleanos}
+              onChange={e => setNuevoEmpleado(prev => ({ ...prev, fecha_cumpleanos: e.target.value }))}
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-cyan-400 outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2">
             <button type="submit" disabled={creando} className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg">
               {creando ? 'Creando...' : 'Crear'}
             </button>
@@ -222,6 +231,13 @@ const TabEmpleados = () => {
                     <option value="padano">Padano</option>
                     <option value="produccion">Producción</option>
                   </select>
+                  <input
+                    type="date"
+                    value={editandoData.fecha_cumpleanos}
+                    onChange={e => setEditandoData(prev => ({ ...prev, fecha_cumpleanos: e.target.value }))}
+                    title="Fecha de nacimiento"
+                    className="w-36 border border-gray-200 rounded-lg px-2 py-1 text-sm focus:border-cyan-400 outline-none"
+                  />
                   <button onClick={() => guardarEdicion(emp.id)} className="text-xs bg-green-50 hover:bg-green-100 text-green-600 px-2.5 py-1.5 rounded-lg">OK</button>
                   <button onClick={() => setEditandoId(null)} className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-lg">X</button>
                 </div>
@@ -238,6 +254,11 @@ const TabEmpleados = () => {
                           'bg-purple-100 text-purple-700'
                         }`}>
                           {emp.empresa === 'produccion' ? 'Producción' : emp.empresa.charAt(0).toUpperCase() + emp.empresa.slice(1)}
+                        </span>
+                      )}
+                      {emp.fecha_cumpleanos && (
+                        <span className="text-xs ml-2 text-gray-400">
+                          {new Date(emp.fecha_cumpleanos + 'T12:00:00').toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })}
                         </span>
                       )}
                     </p>
