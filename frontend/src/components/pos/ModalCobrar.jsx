@@ -187,7 +187,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (!porcentajeDescEfectivo || porcentajeDescEfectivo <= 0 || modoDelivery || esVentaSoloGC) return null
     const restanteSinEfectivo = totalEfectivoConGC - pagosNoEfectivo
     if (restanteSinEfectivo <= 0) return 0
-    const totalDescontado = total * (1 - porcentajeDescEfectivo / 100)
+    const totalDescontado = totalParaDescuento * (1 - porcentajeDescEfectivo / 100)
     if (restanteSinEfectivo >= totalDescontado || (totalDescontado - restanteSinEfectivo) < 100) {
       const neto = totalDescontado - pagosNoEfectivo
       return neto > 0 ? redondearCentena(neto) : 0
@@ -812,14 +812,20 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       onCerrar()
       return
     }
-    // Enter = si hay monto en el input de efectivo → agregar, sino confirmar venta
+    // Enter = si hay monto en el input de efectivo → agregar, sino monto exacto
     if (e.key === 'Enter' && !enInput) {
       e.preventDefault()
       const montoNum = parseInt(montoEfectivoInput)
       if (montoNum > 0) {
         agregarEfectivo(montoNum)
-      } else if (montoSuficiente && !guardando) {
-        confirmarVenta()
+      } else {
+        // Monto exacto
+        const montoEfectivo = montoExactoRestante != null && montoExactoRestante > 0
+          ? montoExactoRestante
+          : restanteEfectivoRedondeado
+        if (montoEfectivo > 0) {
+          agregarEfectivo(Math.ceil(montoEfectivo * 100) / 100)
+        }
       }
       return
     }
