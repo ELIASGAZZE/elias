@@ -303,7 +303,7 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   // Descuentos forma de pago
   if (descuentosPorForma && descuentosPorForma.length > 0) {
     descuentosPorForma.forEach(d => {
-      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
     })
   }
 
@@ -409,7 +409,7 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
 
   if (descuentosPorForma && descuentosPorForma.length > 0) {
     descuentosPorForma.forEach(d => {
-      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
     })
   }
 
@@ -814,7 +814,7 @@ export function imprimirTicketsDeliveryBatch(ventas, puntoVenta) {
     if (descuentoTotal > 0) {
       const descDetalle = venta.descuento_forma_pago?.detalle || []
       descDetalle.forEach(d => {
-        html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%</span><span>-${formatMonto(d.descuento)}</span></div>`
+        html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
       })
       html += '<div class="line"></div>'
     }

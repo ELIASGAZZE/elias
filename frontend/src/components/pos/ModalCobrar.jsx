@@ -130,6 +130,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     return acc
   }, {})
 
+  // Saldo preliminar para ajustar base de descuento por forma de pago
+  const saldoPreliminar = (usarSaldo && saldoDisponible > 0) ? Math.min(saldoDisponible, total) : 0
+  const totalParaDescuento = total - saldoPreliminar
+
   // Calcular descuentos por forma de pago (desactivado en modo delivery y ventas solo GC)
   const esVentaSoloGC = giftCardsEnVenta && giftCardsEnVenta.length > 0 && carrito.length === 0
   const descuentosPorForma = (modoDelivery || esVentaSoloGC ? [] : promosPago).map(promo => {
@@ -140,15 +144,16 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (montoPagado <= 0 || porcentaje <= 0) return null
     // Si el efectivo cubre el total descontado → descuento completo sobre el total
     // Si no alcanza (pago mixto) → descuento solo sobre lo pagado en esta forma
-    const totalDescontado = total * (1 - porcentaje / 100)
+    const totalDescontado = totalParaDescuento * (1 - porcentaje / 100)
     // Tolerancia de $100 para cubrir diferencias por redondeo a centenas
-    const baseDescuento = (montoPagado >= totalDescontado || (totalDescontado - montoPagado) < 100) ? total : montoPagado
+    const baseDescuento = (montoPagado >= totalDescontado || (totalDescontado - montoPagado) < 100) ? totalParaDescuento : montoPagado
     return {
       promoId: promo.id,
       promoNombre: promo.nombre,
       formaCobro: nombreForma,
       porcentaje,
       montoPagado,
+      baseDescuento,
       descuento: Math.round(baseDescuento * porcentaje / 100 * 100) / 100,
     }
   }).filter(Boolean)
@@ -1285,7 +1290,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 <div className="border-t border-white/10 pt-1.5 mt-1.5 space-y-1">
                   {descuentosPorForma.map(d => (
                     <div key={d.promoId} className="flex justify-between items-center">
-                      <span className="text-cyan-400 text-xs">Desc. {d.formaCobro} {d.porcentaje}%</span>
+                      <span className="text-cyan-400 text-xs">Desc. {d.formaCobro} {d.porcentaje}% s/ {formatPrecio(d.baseDescuento)}</span>
                       <span className="text-cyan-400 font-semibold text-xs">-{formatPrecio(d.descuento)}</span>
                     </div>
                   ))}
@@ -1330,7 +1335,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 )}
                 {descuentosPorForma.map(d => (
                   <span key={d.promoId} className="text-cyan-300 text-xs font-medium">
-                    Desc. {d.formaCobro} {d.porcentaje}%: -{formatPrecio(d.descuento)}
+                    Desc. {d.formaCobro} {d.porcentaje}% s/ {formatPrecio(d.baseDescuento)}: -{formatPrecio(d.descuento)}
                   </span>
                 ))}
                 {saldoAplicado > 0 && (

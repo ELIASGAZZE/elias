@@ -941,9 +941,20 @@ const POS = () => {
           const { data } = await api.get('/api/clientes', {
             params: { buscar: busquedaCliente.trim(), limit: 10 }
           })
-          if (!cancelled) setClientesCentum(data.clientes || data.data || [])
+          let resultados = data.clientes || data.data || []
+          // Si busca por DNI (7-8 dígitos), filtrar solo Consumidor Final
+          // Buscar por DNI implica que quiere factura B, no mostrar clientes con CUIT (factura A)
+          const digitos = busquedaCliente.trim().replace(/\D/g, '')
+          if (digitos.length >= 7 && digitos.length <= 8) {
+            resultados = resultados.filter(c => !c.condicion_iva || c.condicion_iva === 'CF')
+          }
+          if (!cancelled) setClientesCentum(resultados)
         } else {
-          const cached = await getClientes(busquedaCliente.trim())
+          let cached = await getClientes(busquedaCliente.trim())
+          const digitos2 = busquedaCliente.trim().replace(/\D/g, '')
+          if (digitos2.length >= 7 && digitos2.length <= 8) {
+            cached = cached.filter(c => !c.condicion_iva || c.condicion_iva === 'CF')
+          }
           if (!cancelled) setClientesCentum(cached.slice(0, 10))
         }
       } catch (err) {
@@ -951,7 +962,11 @@ const POS = () => {
         // Fallback a IndexedDB si la API falla
         if (!cancelled && isNetworkError(err)) {
           try {
-            const cached = await getClientes(busquedaCliente.trim())
+            let cached = await getClientes(busquedaCliente.trim())
+            const digitos3 = busquedaCliente.trim().replace(/\D/g, '')
+            if (digitos3.length >= 7 && digitos3.length <= 8) {
+              cached = cached.filter(c => !c.condicion_iva || c.condicion_iva === 'CF')
+            }
             if (!cancelled) setClientesCentum(cached.slice(0, 10))
           } catch {}
         }

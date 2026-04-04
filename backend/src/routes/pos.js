@@ -891,6 +891,12 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       } else if (req.query.filtro_empleado === 'no_empleados') {
         query = query.not('nombre_cliente', 'ilike', 'Empleado:%')
       }
+      // Filtro por tipo (venta / nota_credito)
+      if (req.query.tipo === 'nota_credito') {
+        query = query.eq('tipo', 'nota_credito')
+      } else if (req.query.tipo === 'venta') {
+        query = query.neq('tipo', 'nota_credito')
+      }
       query = query.range(from, to)
     }
 
@@ -953,12 +959,28 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       }
     }
     const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+    // Para NCs: buscar datos de la venta original (pagos + condicion_iva al momento de venta)
+    const ncOrigenIds = [...new Set(ventas.filter(v => v.tipo === 'nota_credito' && v.venta_origen_id).map(v => v.venta_origen_id))]
+    let origenesMap = {}
+    if (ncOrigenIds.length > 0) {
+      const { data: origenes } = await supabase
+        .from('ventas_pos')
+        .select('id, pagos, condicion_iva')
+        .in('id', ncOrigenIds)
+      if (origenes) origenes.forEach(o => { origenesMap[o.id] = o })
+    }
     ventas = ventas.map(v => {
-      const condIva = condicionesIva[v.id_cliente_centum] || 'CF'
+      let condIva = condicionesIva[v.id_cliente_centum] || 'CF'
+      let pagosClasif = Array.isArray(v.pagos) ? v.pagos : []
+      // NCs: usar condicion_iva y pagos de la venta original
+      if (v.tipo === 'nota_credito' && v.venta_origen_id && origenesMap[v.venta_origen_id]) {
+        const origen = origenesMap[v.venta_origen_id]
+        if (origen.condicion_iva) condIva = origen.condicion_iva
+        pagosClasif = Array.isArray(origen.pagos) ? origen.pagos : []
+      }
       const esFacturaA = condIva === 'RI' || condIva === 'MT'
       if (esFacturaA) return { ...v, condicion_iva: condIva, clasificacion: 'EMPRESA' }
-      const pagos = Array.isArray(v.pagos) ? v.pagos : []
-      const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+      const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
       return { ...v, condicion_iva: condIva, clasificacion: soloEfectivo ? 'PRUEBA' : 'EMPRESA' }
     })
 
@@ -1034,12 +1056,24 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
           let totalVentasR = 0, totalNCR = 0, totalEmpresaR = 0, totalPruebaR = 0, cantVentas = 0, cantNC = 0
           const desgloseMediosR = {}
           const filtroClasif = req.query.clasificacion?.toUpperCase() || ''
+          // Pre-fetch origenes de NCs para clasificación correcta
+          const ncOrigenIdsR = [...new Set(allVentas.filter(v => v.tipo === 'nota_credito' && v.venta_origen_id).map(v => v.venta_origen_id))]
+          let origenesMapR = {}
+          if (ncOrigenIdsR.length > 0) {
+            const { data: origenesR } = await supabase.from('ventas_pos').select('id, pagos, condicion_iva').in('id', ncOrigenIdsR)
+            if (origenesR) origenesR.forEach(o => { origenesMapR[o.id] = o })
+          }
           allVentas.forEach(v => {
             const total = parseFloat(v.total) || 0
-            const condIva = allCondiciones[v.id_cliente_centum] || 'CF'
+            let condIva = allCondiciones[v.id_cliente_centum] || 'CF'
+            let pagosClasif = Array.isArray(v.pagos) ? v.pagos : []
+            if (v.tipo === 'nota_credito' && v.venta_origen_id && origenesMapR[v.venta_origen_id]) {
+              const origen = origenesMapR[v.venta_origen_id]
+              if (origen.condicion_iva) condIva = origen.condicion_iva
+              pagosClasif = Array.isArray(origen.pagos) ? origen.pagos : []
+            }
             const esFacturaA = condIva === 'RI' || condIva === 'MT'
-            const pagos = Array.isArray(v.pagos) ? v.pagos : []
-            const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+            const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
             const clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
             if (filtroClasif && clasificacion !== filtroClasif) return
             if (v.tipo === 'nota_credito') { totalNCR += total; cantNC++ }
@@ -1539,15 +1573,30 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
 
     // Clasificar: EMPRESA o PRUEBA
     let condIva = 'CF'
-    if (data.id_cliente_centum) {
-      const { data: cli } = await supabase.from('clientes').select('condicion_iva, email').eq('id_centum', data.id_cliente_centum).single()
-      condIva = cli?.condicion_iva || 'CF'
+    let idClienteCentum = data.id_cliente_centum
+    let pagosClasif = Array.isArray(data.pagos) ? data.pagos : []
+    // NCs: usar condicion_iva, pagos e id_cliente de la venta original si la NC no tiene
+    if (data.tipo === 'nota_credito' && data.venta_origen_id) {
+      const { data: ventaOrigen } = await supabase.from('ventas_pos').select('pagos, condicion_iva, id_cliente_centum').eq('id', data.venta_origen_id).maybeSingle()
+      if (ventaOrigen) {
+        if (ventaOrigen.condicion_iva) condIva = ventaOrigen.condicion_iva
+        pagosClasif = Array.isArray(ventaOrigen.pagos) ? ventaOrigen.pagos : []
+        if (!idClienteCentum && ventaOrigen.id_cliente_centum) idClienteCentum = ventaOrigen.id_cliente_centum
+      }
+    }
+    if (idClienteCentum) {
+      const { data: cli } = await supabase.from('clientes').select('condicion_iva, email, cuit, razon_social, direccion, localidad, telefono, codigo').eq('id_centum', idClienteCentum).single()
+      if (data.tipo !== 'nota_credito') condIva = cli?.condicion_iva || 'CF'
       if (cli?.email) data.email_cliente = cli.email
+      if (cli) data.cliente_info = {
+        cuit: cli.cuit, razon_social: cli.razon_social, direccion: cli.direccion,
+        localidad: cli.localidad, telefono: cli.telefono, email: cli.email,
+        condicion_iva: cli.condicion_iva, codigo: cli.codigo,
+      }
     }
     const esFacturaA = condIva === 'RI' || condIva === 'MT'
-    const pagos = Array.isArray(data.pagos) ? data.pagos : []
     const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
-    const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+    const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
     data.clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
 
     // Lookup caja (no hay FK)
@@ -1623,6 +1672,19 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
           }
           data.items = typeof data.items === 'string' ? JSON.stringify(itemsParsed) : itemsParsed
         }
+      }
+    }
+
+    // Buscar saldo aplicado en esta venta (movimiento negativo con motivo "Aplicado en venta")
+    if (!data.saldo_aplicado && data.tipo !== 'nota_credito') {
+      const { data: movSaldo } = await supabase
+        .from('movimientos_saldo_pos')
+        .select('monto')
+        .eq('venta_pos_id', data.id)
+        .lt('monto', 0)
+        .maybeSingle()
+      if (movSaldo) {
+        data.saldo_aplicado = Math.abs(movSaldo.monto)
       }
     }
 

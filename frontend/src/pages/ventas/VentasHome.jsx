@@ -76,7 +76,7 @@ const VentasHome = () => {
 
   useEffect(() => {
     setPage(1)
-  }, [fecha, fechaHasta, filtroEmpleado])
+  }, [fecha, fechaHasta, filtroEmpleado, filtroTipo])
 
   // Debounce para búsqueda por factura
   const [facturaDebounced, setFacturaDebounced] = useState(busquedaFactura)
@@ -94,7 +94,7 @@ const VentasHome = () => {
 
   useEffect(() => {
     cargarVentas()
-  }, [fecha, fechaHasta, page, filtroCentum, filtroEmpleado, filtroSucursales, filtroClasificacion, facturaDebounced, busquedaDebounced])
+  }, [fecha, fechaHasta, page, filtroCentum, filtroEmpleado, filtroSucursales, filtroClasificacion, filtroTipo, facturaDebounced, busquedaDebounced])
 
   // Auto-refresh cada 15s si hay ventas pendientes de sync
   useEffect(() => {
@@ -153,6 +153,7 @@ const VentasHome = () => {
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
       if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
+      if (filtroTipo) params.append('tipo', filtroTipo)
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
@@ -520,7 +521,7 @@ const VentasHome = () => {
                     return (
                       <tr
                         key={v.id}
-                        onClick={() => window.location.href = `/ventas/${v.id}`}
+                        onClick={() => window.open(`/ventas/${v.id}`, '_blank')}
                         className="hover:bg-rose-50 cursor-pointer transition-colors"
                       >
                         <td className="px-3 py-2 font-bold text-blue-600 whitespace-nowrap">

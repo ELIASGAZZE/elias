@@ -191,6 +191,7 @@ router.get('/', verificarAuth, asyncHandler(async (req, res) => {
       if (esNumerico) {
         // Búsqueda por CUIT/DNI: usar ilike con el patrón numérico
         // También buscar sin guiones para matchear ambos formatos
+        const esDNI = soloDigitos.length >= 7 && soloDigitos.length <= 8
         const conGuiones = soloDigitos.length === 11
           ? `${soloDigitos.slice(0,2)}-${soloDigitos.slice(2,10)}-${soloDigitos.slice(10)}`
           : null
@@ -211,8 +212,15 @@ router.get('/', verificarAuth, asyncHandler(async (req, res) => {
         const { data: cuitData, error: cuitError, count: cuitCount } = await cuitQuery
         if (cuitError) throw cuitError
 
-        // Fallback a Centum BI si no hay resultados locales
-        if ((!cuitData || cuitData.length === 0) && soloDigitos.length >= 7) {
+        // Si busca por DNI (7-8 dígitos), filtrar solo Consumidor Final
+        // Buscar por DNI implica que quiere factura B, no mostrar clientes RI/MT
+        let filteredData = cuitData
+        if (esDNI && cuitData) {
+          filteredData = cuitData.filter(c => !c.condicion_iva || c.condicion_iva === 'CF')
+        }
+
+        // Fallback a Centum BI solo si NO es búsqueda por DNI (para DNI se ofrece crear nuevo)
+        if ((!filteredData || filteredData.length === 0) && soloDigitos.length >= 7 && !esDNI) {
           try {
             const clienteBI = await buscarEnCentumBI(soloDigitos)
             if (clienteBI) {
@@ -223,7 +231,7 @@ router.get('/', verificarAuth, asyncHandler(async (req, res) => {
           }
         }
 
-        return res.json({ clientes: cuitData, total: cuitCount })
+        return res.json({ clientes: filteredData, total: filteredData?.length || 0 })
       }
 
       // Búsqueda por texto (razon_social, codigo, cuit)

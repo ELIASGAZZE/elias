@@ -5,7 +5,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { getTabsParaRol } from './navTabs'
 import api from '../../services/api'
 
-const Navbar = ({ titulo, sinTabs, volverA }) => {
+const Navbar = ({ titulo, sinTabs, volverA, onVolver }) => {
   const { usuario, logout, esAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -31,17 +31,29 @@ const Navbar = ({ titulo, sinTabs, volverA }) => {
     <div>
       <nav className="bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-3">
-          {/* Botón volver (a ruta específica o al Hub) */}
-          {volverA && (
-            <Link
-              to={volverA}
-              className="bg-blue-700 hover:bg-blue-800 p-2 rounded-lg transition-colors"
-              title="Volver"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-              </svg>
-            </Link>
+          {/* Botón volver (callback, ruta específica o al Hub) */}
+          {(volverA || onVolver) && (
+            onVolver ? (
+              <button
+                onClick={onVolver}
+                className="bg-blue-700 hover:bg-blue-800 p-2 rounded-lg transition-colors"
+                title="Volver"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                </svg>
+              </button>
+            ) : (
+              <Link
+                to={volverA}
+                className="bg-blue-700 hover:bg-blue-800 p-2 rounded-lg transition-colors"
+                title="Volver"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                </svg>
+              </Link>
+            )
           )}
           {/* Botón volver al Hub */}
           <Link

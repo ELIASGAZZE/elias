@@ -47,6 +47,11 @@ const DetalleVenta = () => {
   const [emailInput, setEmailInput] = useState('')
   const [mostrarEmailForm, setMostrarEmailForm] = useState(false)
 
+  const handleVolver = () => {
+    if (window.history.length > 1) navigate(-1)
+    else navigate('/ventas')
+  }
+
   useEffect(() => {
     const cargar = async () => {
       try {
@@ -64,7 +69,7 @@ const DetalleVenta = () => {
   if (cargando) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar sinTabs titulo="Detalle Venta" volverA="/ventas" />
+        <Navbar sinTabs titulo="Detalle Venta" onVolver={handleVolver} />
         <div className="text-center text-gray-400 py-20">Cargando...</div>
       </div>
     )
@@ -73,7 +78,7 @@ const DetalleVenta = () => {
   if (error || !venta) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar sinTabs titulo="Detalle Venta" volverA="/ventas" />
+        <Navbar sinTabs titulo="Detalle Venta" onVolver={handleVolver} />
         <div className="text-center text-red-500 py-20">{error || 'Venta no encontrada'}</div>
       </div>
     )
@@ -106,8 +111,9 @@ const DetalleVenta = () => {
   const tieneGCVendidas = giftCardsVendidas.length > 0
 
   // Calcular redondeo de efectivo (centenas)
+  const saldoAplicadoNum = parseFloat(venta.saldo_aplicado) || 0
   const totalEsperado = Math.round(
-    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0)) * 100
+    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0) - saldoAplicadoNum) * 100
   ) / 100
   const redondeoEfectivo = Math.round((parseFloat(venta.total) - totalEsperado) * 100) / 100
 
@@ -148,7 +154,7 @@ const DetalleVenta = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar sinTabs titulo="Detalle Venta" volverA="/ventas" />
+      <Navbar sinTabs titulo={`Detalle Venta #${venta.numero_venta || venta.id}`} onVolver={handleVolver} />
 
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
 
@@ -219,6 +225,47 @@ const DetalleVenta = () => {
             )}
           </div>
 
+          {/* Info del cliente (solo si no es Consumidor Final) */}
+          {venta.cliente_info && venta.nombre_cliente && venta.nombre_cliente !== 'Consumidor Final' && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Datos del cliente</h3>
+              <div className="grid grid-cols-2 gap-y-1.5 text-sm">
+                {venta.cliente_info.condicion_iva && (
+                  <>
+                    <span className="text-gray-500">Cond. IVA</span>
+                    <span className="text-gray-800 font-medium">
+                      {{ RI: 'Responsable Inscripto', MT: 'Monotributo', EX: 'Exento', CF: 'Consumidor Final' }[venta.cliente_info.condicion_iva] || venta.cliente_info.condicion_iva}
+                    </span>
+                  </>
+                )}
+                {venta.cliente_info.cuit && (
+                  <>
+                    <span className="text-gray-500">CUIT / DNI</span>
+                    <span className="text-gray-800 font-medium">{venta.cliente_info.cuit}</span>
+                  </>
+                )}
+                {venta.cliente_info.direccion && (
+                  <>
+                    <span className="text-gray-500">Domicilio</span>
+                    <span className="text-gray-800">{venta.cliente_info.direccion}{venta.cliente_info.localidad ? `, ${venta.cliente_info.localidad}` : ''}</span>
+                  </>
+                )}
+                {venta.cliente_info.email && (
+                  <>
+                    <span className="text-gray-500">Email</span>
+                    <span className="text-gray-800">{venta.cliente_info.email}</span>
+                  </>
+                )}
+                {venta.cliente_info.telefono && (
+                  <>
+                    <span className="text-gray-500">Teléfono</span>
+                    <span className="text-gray-800">{venta.cliente_info.telefono}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Botón reintentar Centum */}
           {esAdmin && !venta.centum_sync && !venta.centum_comprobante && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
@@ -265,6 +312,8 @@ const DetalleVenta = () => {
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Venta original</h2>
             <Link
               to={`/ventas/${venta.venta_origen.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
             >
               <div>
@@ -295,14 +344,21 @@ const DetalleVenta = () => {
                 <span className="text-xs text-gray-500 uppercase">Motivo</span>
                 <p className="text-sm text-gray-800 mt-0.5">{movSaldo.motivo}</p>
               </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-100">
-                <div>
-                  <span className="text-xs text-emerald-600 uppercase font-medium">Saldo generado</span>
-                  <p className="text-sm text-gray-700 mt-0.5">
-                    A favor de: <span className="font-medium">{movSaldo.nombre_cliente || 'Cliente'}</span>
-                  </p>
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-emerald-600 uppercase font-medium">Saldo generado</span>
+                    <p className="text-sm text-gray-700 mt-0.5">
+                      A favor de: <span className="font-medium">{movSaldo.nombre_cliente || 'Cliente'}</span>
+                    </p>
+                  </div>
+                  <span className="text-lg font-bold text-emerald-700">{formatPrecio(movSaldo.monto)}</span>
                 </div>
-                <span className="text-lg font-bold text-emerald-700">{formatPrecio(movSaldo.monto)}</span>
+                {parseFloat(venta.descuento_total) < 0 && (
+                  <p className="text-xs text-emerald-600/70 mt-2 border-t border-emerald-100 pt-2">
+                    El saldo difiere del precio de lista porque la venta original tuvo descuento por forma de pago (efectivo)
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -518,6 +574,14 @@ const DetalleVenta = () => {
           </div>
         )}
 
+        {/* Subtotal antes de descuentos (solo si hay descuento forma pago) */}
+        {descFormaPago && descFormaPago.total > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex justify-between items-center">
+            <span className="text-sm font-semibold text-gray-500 uppercase">Subtotal</span>
+            <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.subtotal)}</span>
+          </div>
+        )}
+
         {/* Descuento por forma de pago */}
         {descFormaPago && descFormaPago.total > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -526,7 +590,8 @@ const DetalleVenta = () => {
               <div key={i} className="flex items-center justify-between text-sm">
                 <span className="text-gray-700">
                   {MEDIOS_LABELS[d.formaCobro?.toLowerCase()] || d.formaCobro}
-                  {d.porcentaje ? ` (${d.porcentaje}%)` : ''}
+                  {d.porcentaje ? ` (${d.porcentaje}%` : ''}
+                  {d.porcentaje && d.baseDescuento ? ` s/ ${formatPrecio(d.baseDescuento)})` : d.porcentaje ? ')' : ''}
                 </span>
                 <span className="text-green-600 font-medium">-{formatPrecio(d.descuento || 0)}</span>
               </div>
@@ -538,7 +603,7 @@ const DetalleVenta = () => {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Resumen de pago</h2>
           <div className="space-y-2 text-sm">
-            {parseFloat(venta.subtotal) !== parseFloat(venta.total) && (
+            {parseFloat(venta.subtotal) !== parseFloat(venta.total) && !(descFormaPago && descFormaPago.total > 0) && (
               <div className="flex justify-between">
                 <span className="text-gray-500">Subtotal</span>
                 <span className="text-gray-700">{formatPrecio(venta.subtotal)}</span>
@@ -550,10 +615,27 @@ const DetalleVenta = () => {
                 <span className="text-green-600">-{formatPrecio(venta.descuento_total)}</span>
               </div>
             )}
+            {esNC && parseFloat(venta.descuento_total) < 0 && (
+              <div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Desc. forma de pago (venta original)</span>
+                  <span className="text-gray-500">{formatPrecio(venta.descuento_total)}</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  La venta original incluyó descuento por pago en efectivo, se devuelve el monto proporcional
+                </p>
+              </div>
+            )}
             {parseFloat(venta.descuento_grupo_cliente) > 0 && (
               <div className="flex justify-between">
                 <span className="text-gray-500">Desc. {venta.grupo_descuento_nombre || 'grupo'}</span>
                 <span className="text-green-600">-{formatPrecio(venta.descuento_grupo_cliente)}</span>
+              </div>
+            )}
+            {saldoAplicadoNum > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Saldo a favor aplicado</span>
+                <span className="text-green-600">-{formatPrecio(saldoAplicadoNum)}</span>
               </div>
             )}
             {redondeoEfectivo !== 0 && (
@@ -566,14 +648,6 @@ const DetalleVenta = () => {
               <span className="text-gray-800">Total</span>
               <span className="text-gray-800">{formatPrecio(venta.total)}</span>
             </div>
-
-            {/* Saldo aplicado (separado de medios de pago) */}
-            {parseFloat(venta.saldo_aplicado) > 0 && (
-              <div className="flex justify-between text-green-600">
-                <span>Saldo a favor</span>
-                <span>-{formatPrecio(venta.saldo_aplicado)}</span>
-              </div>
-            )}
 
             {/* Medios de pago - agrupados (filtrar saldo de ventas viejas) */}
             {pagos.length > 0 && (() => {
