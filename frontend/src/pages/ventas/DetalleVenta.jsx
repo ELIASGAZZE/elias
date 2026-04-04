@@ -198,6 +198,20 @@ const DetalleVenta = () => {
               </>
             )}
 
+            {venta.cierre_id && (
+              <>
+                <span className="text-gray-500">Cierre</span>
+                <a
+                  href={`/cajas-pos/cierre/${venta.cierre_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-600 font-medium hover:underline cursor-pointer"
+                >
+                  #{venta.cierre_numero || '—'}
+                </a>
+              </>
+            )}
+
             {venta.pedido && (
               <>
                 <span className="text-gray-500">Origen</span>

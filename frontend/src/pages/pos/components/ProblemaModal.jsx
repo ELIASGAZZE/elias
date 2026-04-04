@@ -1070,6 +1070,7 @@ export default function ProblemaModal(props) {
                         venta_id: problemaVentaSel.id,
                         id_cliente_centum: problemaCliente.id_centum,
                         nombre_cliente: problemaCliente.razon_social,
+                        caja_id: terminalConfig?.caja_id || null,
                       })
                       alert(`Correccion realizada:\n\u2022 Nota de credito generada para ${problemaVentaSel.nombre_cliente || 'Consumidor Final'}\n\u2022 Nueva venta generada para ${problemaCliente.razon_social}`)
                       cerrarModalProblema()
