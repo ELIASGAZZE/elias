@@ -796,7 +796,7 @@ router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyn
     if (cajaIdsPromo.length > 0) {
       const { data: cierresPromo } = await supabase
         .from('cierres_pos')
-        .select('id, caja_id, created_at, cerrado_at, empleado:empleados!empleado_id(nombre)')
+        .select('id, caja_id, created_at, cierre_at, empleado:empleados!empleado_id(nombre)')
         .in('caja_id', cajaIdsPromo)
         .gte('created_at', `${desde}T00:00:00`)
         .order('created_at', { ascending: false })
@@ -809,7 +809,7 @@ router.get('/ventas/reportes/promociones', verificarAuth, soloGestorOAdmin, asyn
         const cierre = cierresMapPromo.find(c =>
           c.caja_id === v.caja_id &&
           c.created_at <= v.created_at &&
-          (!c.cerrado_at || c.cerrado_at >= v.created_at)
+          (!c.cierre_at || c.cierre_at >= v.created_at)
         )
         if (cierre?.empleado?.nombre) empleadoNombre = cierre.empleado.nombre
       }
@@ -1555,19 +1555,23 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
       return res.status(403).json({ error: 'No tenés permiso para ver esta venta' })
     }
 
-    // Resolver empleado del cierre activo (más relevante que el usuario logueado)
+    // Resolver empleado y cierre activo (más relevante que el usuario logueado)
     if (data.caja_id && data.created_at) {
       const { data: cierre } = await supabase
         .from('cierres_pos')
-        .select('empleado:empleados!empleado_id(id, nombre)')
+        .select('id, numero, empleado:empleados!empleado_id(id, nombre)')
         .eq('caja_id', data.caja_id)
         .lte('created_at', data.created_at)
-        .or('cerrado_at.is.null,cerrado_at.gte.' + data.created_at)
+        .or('cierre_at.is.null,cierre_at.gte.' + data.created_at)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (cierre?.empleado?.nombre) {
         data.empleado_nombre = cierre.empleado.nombre
+      }
+      if (cierre?.id) {
+        data.cierre_id = cierre.id
+        data.cierre_numero = cierre.numero
       }
     }
 
@@ -2091,13 +2095,13 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
       // Buscar empleado del cierre activo
       const { data: cierreAbierto } = await supabase
         .from('cierres_pos')
-        .select('empleado_nombre')
+        .select('empleado:empleados!empleado_id(nombre)')
         .eq('cajero_id', req.perfil.id)
-        .is('cerrado_at', null)
-        .order('abierto_at', { ascending: false })
+        .is('cierre_at', null)
+        .order('apertura_at', { ascending: false })
         .limit(1)
-      if (cierreAbierto?.[0]?.empleado_nombre) {
-        insertData.cajero_nombre = cierreAbierto[0].empleado_nombre
+      if (cierreAbierto?.[0]?.empleado?.nombre) {
+        insertData.cajero_nombre = cierreAbierto[0].empleado.nombre
       }
     }
 
@@ -3867,7 +3871,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: sucursalNC || venta.sucursal_id,
-        caja_id: venta.caja_id || caja_id || null,
+        caja_id: caja_id || venta.caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -subtotalDevuelto,
@@ -4008,10 +4012,17 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
 // POST /api/pos/correccion-cliente — NC de venta original + nueva venta al cliente correcto
 router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const { venta_id, id_cliente_centum, nombre_cliente } = req.body
+    const { venta_id, id_cliente_centum, nombre_cliente, caja_id } = req.body
 
     if (!venta_id || !id_cliente_centum || !nombre_cliente) {
       return res.status(400).json({ error: 'Datos incompletos' })
+    }
+
+    // Determinar sucursal desde la caja actual (donde se procesa la corrección)
+    let sucursalNC = null
+    if (caja_id) {
+      const { data: cajaData } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalNC = cajaData?.sucursal_id || null
     }
 
     // Obtener venta original
@@ -4034,8 +4045,8 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: venta.sucursal_id,
-        caja_id: venta.caja_id || null,
+        sucursal_id: sucursalNC || venta.sucursal_id,
+        caja_id: caja_id || venta.caja_id || null,
         id_cliente_centum: venta.id_cliente_centum,
         nombre_cliente: venta.nombre_cliente,
         subtotal: -Math.abs(parseFloat(venta.subtotal) || 0),
@@ -4058,8 +4069,8 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
       .from('ventas_pos')
       .insert({
         cajero_id: req.perfil.id,
-        sucursal_id: venta.sucursal_id,
-        caja_id: venta.caja_id || null,
+        sucursal_id: sucursalNC || venta.sucursal_id,
+        caja_id: caja_id || venta.caja_id || null,
         id_cliente_centum,
         nombre_cliente,
         subtotal: parseFloat(venta.subtotal) || 0,
@@ -4297,7 +4308,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
       .insert({
         cajero_id: req.perfil.id,
         sucursal_id: sucursalNC || venta.sucursal_id,
-        caja_id: venta.caja_id || caja_id || null,
+        caja_id: caja_id || venta.caja_id || null,
         id_cliente_centum,
         nombre_cliente: nombre_cliente || 'Cliente',
         subtotal: -diferenciaTotal,
