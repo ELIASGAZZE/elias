@@ -230,6 +230,7 @@ const AdminPromociones = () => {
     setEditandoId(promo.id)
     setMostrarForm(true)
     setMensaje('')
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50)
   }
 
   const construirReglas = () => {
@@ -443,29 +444,11 @@ const AdminPromociones = () => {
     }))
   }
 
-  if (cargando) {
-    return (
-      <div className="flex justify-center py-6">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600" />
-      </div>
-    )
-  }
+  // Ref para scroll al formulario inline
+  const formRef = React.useRef(null)
 
-  return (
-    <div className="pt-4">
-      {/* Botón nueva */}
-      <div className="flex justify-end mb-3">
-        <button
-          onClick={abrirNueva}
-          className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          + Nueva promoción
-        </button>
-      </div>
-
-      {/* Formulario */}
-      {mostrarForm && (
-        <form onSubmit={guardar} className="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-4 space-y-3">
+  const renderFormulario = () => (
+    <form onSubmit={guardar} className="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-4 space-y-3" ref={formRef}>
           <h3 className="font-semibold text-gray-700 text-sm">
             {editandoId ? 'Editar promoción' : 'Nueva promoción'}
           </h3>
@@ -878,7 +861,7 @@ const AdminPromociones = () => {
                         {ab.tipo === 'atributo' && <span className="px-1.5 py-0.5 rounded text-xs bg-violet-100 text-violet-600 font-medium">ATR</span>}
                         {ab.tipo === 'marca' && <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-600 font-medium">MRC</span>}
                         <span className="flex-1 text-sm text-gray-700">{ab.nombre}</span>
-                        <input type="number" min="1" value={ab.cantidad || ''} placeholder="∞"
+                        <input type="number" min="1" value={ab.cantidad || ''} placeholder="&#8734;"
                           onChange={e => {
                             const val = e.target.value ? parseInt(e.target.value) : undefined
                             setForm(prev => ({ ...prev, articulos_beneficio: prev.articulos_beneficio.map((b, i) => i === idx ? { ...b, cantidad: val } : b) }))
@@ -1187,7 +1170,31 @@ const AdminPromociones = () => {
             </button>
           </div>
         </form>
-      )}
+  )
+
+  if (cargando) {
+    return (
+      <div className="flex justify-center py-6">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="pt-4">
+      {/* Botón nueva */}
+      <div className="flex justify-end mb-3">
+        <button
+          onClick={abrirNueva}
+          className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+        >
+          + Nueva promoción
+        </button>
+      </div>
+
+      {/* Formulario — solo arriba cuando es nueva promoción */}
+      {mostrarForm && !editandoId && renderFormulario()}
+
 
       {/* Lista de promociones */}
       {promociones.length === 0 ? (
@@ -1226,35 +1233,38 @@ const AdminPromociones = () => {
               : (reglas.aplicar_a || []).map(a => a.tipo === 'todos' ? 'Todos' : a.nombre).join(', ')
 
             return (
-              <div key={promo.id} className="flex items-center justify-between gap-2 py-2.5">
-                <div className="min-w-0 flex-1 cursor-pointer" onClick={() => abrirEditar(promo)}>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-800 truncate">{promo.nombre}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TIPO_BADGE_COLORS[promo.tipo] || 'bg-gray-100 text-gray-600'}`}>
-                      {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo === 'forma_pago' ? 'F. Pago' : promo.tipo === 'condicional' ? 'A→B' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
-                    </span>
+              <React.Fragment key={promo.id}>
+                <div className="flex items-center justify-between gap-2 py-2.5">
+                  <div className="min-w-0 flex-1 cursor-pointer" onClick={() => abrirEditar(promo)}>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-800 truncate">{promo.nombre}</p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TIPO_BADGE_COLORS[promo.tipo] || 'bg-gray-100 text-gray-600'}`}>
+                        {promo.tipo === 'monto_fijo' ? '$ Fijo' : promo.tipo === 'nxm' ? 'NxM' : promo.tipo === 'forma_pago' ? 'F. Pago' : promo.tipo === 'condicional' ? 'A→B' : promo.tipo.charAt(0).toUpperCase() + promo.tipo.slice(1)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 truncate">{detalle} — {entidades || 'Sin destino'}</p>
+                    {(promo.fecha_desde || promo.fecha_hasta) && (
+                      <p className="text-[10px] text-gray-300">
+                        {promo.fecha_desde && `Desde: ${promo.fecha_desde}`}
+                        {promo.fecha_desde && promo.fecha_hasta && ' · '}
+                        {promo.fecha_hasta && `Hasta: ${promo.fecha_hasta}`}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-xs text-gray-400 truncate">{detalle} — {entidades || 'Sin destino'}</p>
-                  {(promo.fecha_desde || promo.fecha_hasta) && (
-                    <p className="text-[10px] text-gray-300">
-                      {promo.fecha_desde && `Desde: ${promo.fecha_desde}`}
-                      {promo.fecha_desde && promo.fecha_hasta && ' · '}
-                      {promo.fecha_hasta && `Hasta: ${promo.fecha_hasta}`}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => toggleActiva(promo)}
+                      className={`text-xs px-2 py-1 rounded-lg font-medium transition-colors ${
+                        promo.activa ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
+                      }`}
+                    >
+                      {promo.activa ? 'Activa' : 'Inactiva'}
+                    </button>
+                    <button onClick={() => eliminar(promo)} className="text-gray-300 hover:text-red-500 text-lg">&times;</button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => toggleActiva(promo)}
-                    className={`text-xs px-2 py-1 rounded-lg font-medium transition-colors ${
-                      promo.activa ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
-                    }`}
-                  >
-                    {promo.activa ? 'Activa' : 'Inactiva'}
-                  </button>
-                  <button onClick={() => eliminar(promo)} className="text-gray-300 hover:text-red-500 text-lg">&times;</button>
-                </div>
-              </div>
+                {mostrarForm && editandoId === promo.id && renderFormulario()}
+              </React.Fragment>
             )
           })}
         </div>

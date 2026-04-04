@@ -24,6 +24,9 @@ const SeccionClientes = () => {
   // Duplicados
   const [duplicados, setDuplicados] = useState(null)
   const [dupExpandido, setDupExpandido] = useState(false)
+  const [modalResolver, setModalResolver] = useState(null) // grupo de clientes a resolver
+  const [resolviendo, setResolviendo] = useState(false)
+  const [winnerSeleccionado, setWinnerSeleccionado] = useState(null)
 
   // Grupos descuento
   const [gruposDescuento, setGruposDescuento] = useState([])
@@ -67,16 +70,48 @@ const SeccionClientes = () => {
       .catch(err => console.error('Error loading discount groups:', err.message))
   }, [])
 
-  // Verificar duplicados al montar
-  useEffect(() => {
+  // Verificar duplicados
+  const cargarDuplicados = useCallback(() => {
     api.get('/api/clientes/duplicados')
       .then(({ data }) => {
         if (data.total_id_centum > 0 || data.total_cuit > 0) {
           setDuplicados(data)
+        } else {
+          setDuplicados(null)
         }
       })
       .catch(err => console.error('Error checking duplicates:', err.message))
   }, [])
+
+  useEffect(() => {
+    cargarDuplicados()
+  }, [cargarDuplicados])
+
+  const abrirResolver = (grupo) => {
+    setModalResolver(grupo)
+    setWinnerSeleccionado(null)
+  }
+
+  const confirmarResolver = async () => {
+    if (!winnerSeleccionado || !modalResolver) return
+    setResolviendo(true)
+    try {
+      const loser_ids = modalResolver.filter(c => c.id !== winnerSeleccionado.id).map(c => c.id)
+      const { data } = await api.post('/api/clientes/duplicados/resolver', {
+        winner_id: winnerSeleccionado.id,
+        loser_ids,
+      })
+      alert(`Resuelto: ${data.losers_desactivados.length} cliente(s) desactivado(s), ${data.ventas_reasignadas} ventas y ${data.pedidos_reasignados} pedidos reasignados.`)
+      setModalResolver(null)
+      setWinnerSeleccionado(null)
+      cargarDuplicados()
+      cargar()
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setResolviendo(false)
+    }
+  }
 
   // Debounce búsqueda
   const [inputBuscar, setInputBuscar] = useState('')
@@ -156,17 +191,33 @@ const SeccionClientes = () => {
             </button>
           </div>
           {dupExpandido && (
-            <div className="mt-2 text-xs text-red-600 space-y-1 max-h-40 overflow-y-auto">
+            <div className="mt-2 text-xs text-red-600 space-y-1.5 max-h-60 overflow-y-auto">
               {duplicados.duplicados_id_centum.map((grupo, i) => (
-                <div key={`id-${i}`}>
-                  <span className="font-medium">ID Centum {grupo[0].id_centum}:</span>{' '}
-                  {grupo.map(c => `${c.codigo} (${c.razon_social})`).join(' / ')}
+                <div key={`id-${i}`} className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <span className="font-medium">ID Centum {grupo[0].id_centum}:</span>{' '}
+                    {grupo.map(c => `${c.codigo} (${c.razon_social}) [${c.total_ventas || 0}v/${c.total_pedidos || 0}p]`).join(' / ')}
+                  </div>
+                  <button
+                    onClick={() => abrirResolver(grupo)}
+                    className="shrink-0 px-2 py-0.5 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition-colors"
+                  >
+                    Resolver
+                  </button>
                 </div>
               ))}
               {duplicados.duplicados_cuit.map((grupo, i) => (
-                <div key={`cuit-${i}`}>
-                  <span className="font-medium">CUIT {grupo[0].cuit}:</span>{' '}
-                  {grupo.map(c => `${c.codigo} (${c.razon_social})`).join(' / ')}
+                <div key={`cuit-${i}`} className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <span className="font-medium">CUIT {grupo[0].cuit}:</span>{' '}
+                    {grupo.map(c => `${c.codigo} (${c.razon_social}) [${c.total_ventas || 0}v/${c.total_pedidos || 0}p]`).join(' / ')}
+                  </div>
+                  <button
+                    onClick={() => abrirResolver(grupo)}
+                    className="shrink-0 px-2 py-0.5 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition-colors"
+                  >
+                    Resolver
+                  </button>
                 </div>
               ))}
             </div>
@@ -295,6 +346,77 @@ const SeccionClientes = () => {
           >
             Siguiente
           </button>
+        </div>
+      )}
+
+      {/* Modal Resolver Duplicados */}
+      {modalResolver && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setModalResolver(null); setWinnerSeleccionado(null) }}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-800">Resolver duplicados — CUIT {modalResolver[0]?.cuit || 'N/A'}</h3>
+              <button onClick={() => { setModalResolver(null); setWinnerSeleccionado(null) }} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
+              <p className="text-sm text-gray-500">Seleccioná el cliente que querés mantener. Los demás serán desactivados y sus ventas/pedidos reasignados.</p>
+              {modalResolver.map(c => {
+                const isWinner = winnerSeleccionado?.id === c.id
+                return (
+                  <div
+                    key={c.id}
+                    className={`border rounded-xl p-3 transition-all cursor-pointer ${
+                      isWinner ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200' : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                    onClick={() => setWinnerSeleccionado(c)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-medium text-gray-800">{c.codigo}</span>
+                        {c.id_centum && (
+                          <span className="bg-green-100 text-green-700 text-xs font-medium px-1.5 py-0.5 rounded">
+                            Centum #{c.id_centum}
+                          </span>
+                        )}
+                        {c.codigo_centum && (
+                          <span className="bg-blue-100 text-blue-700 text-xs font-medium px-1.5 py-0.5 rounded">
+                            {c.codigo_centum}
+                          </span>
+                        )}
+                        {!c.id_centum && (
+                          <span className="bg-gray-100 text-gray-500 text-xs px-1.5 py-0.5 rounded">Sin Centum</span>
+                        )}
+                      </div>
+                      {isWinner && (
+                        <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Mantener</span>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium text-gray-700">{c.razon_social}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500">
+                      <span>IVA: {c.condicion_iva || 'CF'}</span>
+                      <span>Ventas: <strong className="text-gray-700">{c.total_ventas || 0}</strong></span>
+                      <span>Pedidos: <strong className="text-gray-700">{c.total_pedidos || 0}</strong></span>
+                      <span>Creado: {c.created_at ? new Date(c.created_at).toLocaleDateString('es-AR') : '—'}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-100">
+              <button
+                onClick={() => { setModalResolver(null); setWinnerSeleccionado(null) }}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarResolver}
+                disabled={!winnerSeleccionado || resolviendo}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {resolviendo ? 'Resolviendo...' : `Confirmar — desactivar ${modalResolver.length - (winnerSeleccionado ? 1 : 0)} cliente(s)`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

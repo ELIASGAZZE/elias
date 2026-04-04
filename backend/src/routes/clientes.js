@@ -409,13 +409,13 @@ router.post('/importar-centum', verificarAuth, asyncHandler(async (req, res) => 
 }))
 
 // GET /api/clientes/duplicados
-// Admin: detecta clientes duplicados por id_centum o CUIT
+// Admin: detecta clientes duplicados por id_centum o CUIT, con conteo de ventas/pedidos
 router.get('/duplicados', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
     // Una sola query para todos los clientes activos (en vez de 2 queries completas)
     const { data: todos } = await supabase
       .from('clientes')
-      .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, activo, created_at')
+      .select('id, codigo, codigo_centum, razon_social, cuit, id_centum, condicion_iva, activo, created_at')
       .eq('activo', true)
       .order('id_centum', { ascending: true })
 
@@ -441,15 +441,152 @@ router.get('/duplicados', verificarAuth, soloAdmin, asyncHandler(async (req, res
     }
     const duplicados_cuit = [...porCuit.values()].filter(arr => arr.length > 1)
 
+    // Enriquecer con conteo de ventas y pedidos por id_centum
+    const allIdCentum = new Set()
+    const allClienteIds = new Set()
+    for (const grupo of [...duplicados_id_centum, ...duplicados_cuit]) {
+      for (const c of grupo) {
+        if (c.id_centum) allIdCentum.add(c.id_centum)
+        allClienteIds.add(c.id)
+      }
+    }
+
+    // Contar ventas por id_cliente_centum
+    const ventasPorIdCentum = new Map()
+    if (allIdCentum.size > 0) {
+      const { data: ventas } = await supabase
+        .from('ventas_pos')
+        .select('id_cliente_centum')
+        .in('id_cliente_centum', [...allIdCentum])
+      for (const v of (ventas || [])) {
+        ventasPorIdCentum.set(v.id_cliente_centum, (ventasPorIdCentum.get(v.id_cliente_centum) || 0) + 1)
+      }
+    }
+
+    // Contar pedidos por id_cliente_centum
+    const pedidosPorIdCentum = new Map()
+    if (allIdCentum.size > 0) {
+      const { data: pedidos } = await supabase
+        .from('pedidos_pos')
+        .select('id_cliente_centum')
+        .in('id_cliente_centum', [...allIdCentum])
+      for (const p of (pedidos || [])) {
+        pedidosPorIdCentum.set(p.id_cliente_centum, (pedidosPorIdCentum.get(p.id_cliente_centum) || 0) + 1)
+      }
+    }
+
+    // Agregar conteos a cada cliente
+    const enriquecer = (grupo) => grupo.map(c => ({
+      ...c,
+      total_ventas: c.id_centum ? (ventasPorIdCentum.get(c.id_centum) || 0) : 0,
+      total_pedidos: c.id_centum ? (pedidosPorIdCentum.get(c.id_centum) || 0) : 0,
+    }))
+
     res.json({
-      duplicados_id_centum,
-      duplicados_cuit,
+      duplicados_id_centum: duplicados_id_centum.map(enriquecer),
+      duplicados_cuit: duplicados_cuit.map(enriquecer),
       total_id_centum: duplicados_id_centum.length,
       total_cuit: duplicados_cuit.length,
     })
   } catch (err) {
     logger.error('Error buscando duplicados:', err)
     res.status(500).json({ error: 'Error al buscar duplicados' })
+  }
+}))
+
+// POST /api/clientes/duplicados/resolver
+// Admin: resuelve un grupo de duplicados manteniendo un winner y desactivando losers
+router.post('/duplicados/resolver', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { winner_id, loser_ids } = req.body
+
+  if (!winner_id || !Array.isArray(loser_ids) || loser_ids.length === 0) {
+    return res.status(400).json({ error: 'Se requiere winner_id y loser_ids (array)' })
+  }
+
+  try {
+    // Obtener winner
+    const { data: winner } = await supabase
+      .from('clientes')
+      .select('id, id_centum, codigo, razon_social, activo')
+      .eq('id', winner_id)
+      .single()
+
+    if (!winner || !winner.activo) {
+      return res.status(400).json({ error: 'El cliente ganador no existe o no está activo' })
+    }
+
+    // Obtener losers
+    const { data: losers } = await supabase
+      .from('clientes')
+      .select('id, id_centum, codigo, razon_social, activo')
+      .in('id', loser_ids)
+
+    if (!losers || losers.length !== loser_ids.length) {
+      return res.status(400).json({ error: 'Algunos clientes perdedores no existen' })
+    }
+
+    const resumen = {
+      winner: { id: winner.id, codigo: winner.codigo, razon_social: winner.razon_social },
+      losers_desactivados: [],
+      ventas_reasignadas: 0,
+      pedidos_reasignados: 0,
+      movimientos_reasignados: 0,
+      direcciones_reasignadas: 0,
+    }
+
+    for (const loser of losers) {
+      if (!loser.activo) continue
+
+      // Reasignar ventas_pos por id_cliente_centum
+      if (loser.id_centum && winner.id_centum) {
+        const { data: ventasActualizadas } = await supabase
+          .from('ventas_pos')
+          .update({ id_cliente_centum: winner.id_centum })
+          .eq('id_cliente_centum', loser.id_centum)
+          .select('id')
+        resumen.ventas_reasignadas += (ventasActualizadas || []).length
+      }
+
+      // Reasignar pedidos_pos por id_cliente_centum
+      if (loser.id_centum && winner.id_centum) {
+        const { data: pedidosActualizados } = await supabase
+          .from('pedidos_pos')
+          .update({ id_cliente_centum: winner.id_centum })
+          .eq('id_cliente_centum', loser.id_centum)
+          .select('id')
+        resumen.pedidos_reasignados += (pedidosActualizados || []).length
+      }
+
+      // Reasignar movimientos_saldo_pos por cliente_id (UUID)
+      const { data: movActualizados } = await supabase
+        .from('movimientos_saldo_pos')
+        .update({ cliente_id: winner.id })
+        .eq('cliente_id', loser.id)
+        .select('id')
+      resumen.movimientos_reasignados += (movActualizados || []).length
+
+      // Reasignar direcciones_entrega por cliente_id (UUID)
+      const { data: dirActualizadas } = await supabase
+        .from('direcciones_entrega')
+        .update({ cliente_id: winner.id })
+        .eq('cliente_id', loser.id)
+        .select('id')
+      resumen.direcciones_reasignadas += (dirActualizadas || []).length
+
+      // Desactivar loser
+      await supabase
+        .from('clientes')
+        .update({ activo: false, id_centum: null })
+        .eq('id', loser.id)
+
+      resumen.losers_desactivados.push({ id: loser.id, codigo: loser.codigo, razon_social: loser.razon_social })
+    }
+
+    logger.info(`Duplicados resueltos: winner=${winner.codigo}, losers=${resumen.losers_desactivados.map(l => l.codigo).join(',')}`)
+    res.json(resumen)
+  } catch (err) {
+    logger.error('Error resolviendo duplicados:', err)
+    res.status(500).json({ error: 'Error al resolver duplicados' })
   }
 }))
 

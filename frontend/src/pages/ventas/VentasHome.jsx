@@ -508,16 +508,13 @@ const VentasHome = () => {
                     <th className="px-3 py-2.5">Caja</th>
                     {esAdmin && <th className="px-3 py-2.5">Empleado</th>}
                     <th className="px-3 py-2.5">Comprobante</th>
-                    <th className="px-3 py-2.5">Medios</th>
+                    <th className="px-3 py-2.5">CAE</th>
                     <th className="px-3 py-2.5 text-right">Total</th>
                     <th className="px-3 py-2.5 text-center">Acc.</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {ventasFiltradas.map(v => {
-                    const pagos = v.pagos || []
-                    const mediosUsados = [...new Set(pagos.map(p => MEDIOS_LABELS[p.medio] || p.medio))]
-
                     return (
                       <tr
                         key={v.id}
@@ -596,13 +593,13 @@ const VentasHome = () => {
                           ) : '—'}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          {mediosUsados.length > 0 ? (
-                            <div className="flex flex-wrap gap-0.5">
-                              {mediosUsados.map(m => (
-                                <span key={m} className="text-[10px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">{m}</span>
-                              ))}
-                            </div>
-                          ) : '—'}
+                          {v.clasificacion === 'EMPRESA' ? (
+                            v.numero_cae ? (
+                              <span className="text-xs text-teal-700 font-mono">{v.numero_cae}</span>
+                            ) : (
+                              <span className="text-xs text-gray-400">—</span>
+                            )
+                          ) : ''}
                         </td>
                         <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>
                           {formatPrecio(v.total)}
