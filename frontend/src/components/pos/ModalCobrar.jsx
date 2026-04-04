@@ -180,7 +180,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   const montoSuficiente = totalOperativo <= 0 || totalPagado >= totalOperativo
   const vuelto = Math.max(0, totalPagado - totalOperativo)
   const pagosNoEfectivo = pagos.filter(p => p.tipo !== 'Efectivo').reduce((s, p) => s + p.monto, 0)
-  const restanteParaEfectivo = Math.max(0, totalEfectivoConGC - pagosNoEfectivo - efectivoPagado)
+  // Usar totalOperativo (redondeado) cuando ya hay efectivo, para evitar residuos por redondeo
+  const baseParaRestante = efectivoPagado > 0 ? totalOperativo : totalEfectivoConGC
+  const restanteParaEfectivo = Math.max(0, baseParaRestante - pagosNoEfectivo - efectivoPagado)
   const restanteEfectivoRedondeado = restanteParaEfectivo > 0 ? redondearCentena(restanteParaEfectivo) : 0
   // Monto exacto en efectivo con descuento: si hay promo efectivo, calcular post-descuento redondeado
   const montoExactoEnEfectivo = (() => {
