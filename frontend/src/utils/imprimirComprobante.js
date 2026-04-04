@@ -31,20 +31,22 @@ const PRINT_STYLES = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Courier New', Courier, monospace;
-    font-size: 22px;
+    font-size: 15px;
     width: 302px;
-    padding: 8px;
-    line-height: 1.4;
+    padding: 4px;
+    line-height: 1.15;
   }
   .center { text-align: center; }
   .bold { font-weight: bold; }
-  .titulo { font-size: 28px; font-weight: bold; }
-  .total { font-size: 26px; font-weight: bold; }
-  .seccion { font-size: 20px; font-weight: bold; margin-top: 4px; }
-  .line { border-top: 1px dashed #000; margin: 6px 0; }
-  .line-double { border-top: 2px solid #000; margin: 6px 0; }
+  .titulo { font-size: 20px; font-weight: bold; }
+  .total { font-size: 18px; font-weight: bold; }
+  .seccion { font-size: 15px; font-weight: bold; margin-top: 2px; }
+  .line { border-top: 1px dashed #000; margin: 2px 0; }
+  .line-double { border-top: 2px solid #000; margin: 2px 0; }
   .row { display: flex; justify-content: space-between; }
-  .firma { margin-top: 24px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 20px; }
+  .item-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item-detail { font-size: 14px; display: flex; justify-content: space-between; padding-left: 4px; }
+  .firma { margin-top: 12px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 2px; text-align: center; font-size: 14px; }
 `
 
 function abrirVentanaImpresion(html) {
@@ -241,11 +243,11 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   let html = ''
 
   // Header: FACTURA DE VENTA + letra B
-  html += '<div class="center" style="font-size:20px;font-weight:bold;margin-bottom:0">FACTURA DE VENTA</div>'
-  html += '<div class="center" style="font-size:22px;font-weight:bold;text-decoration:underline;margin-bottom:3px">B</div>'
+  html += '<div class="center" style="font-size:16px;font-weight:bold;margin-bottom:0">FACTURA DE VENTA</div>'
+  html += '<div class="center" style="font-size:18px;font-weight:bold;text-decoration:underline;margin-bottom:1px">B</div>'
 
   // Datos empresa
-  html += '<div style="font-size:14px;line-height:1.3">'
+  html += '<div style="font-size:11px;line-height:1.2">'
   html += '<div>Comercial padano s.r.l</div>'
   html += '<div>30-71885278-8</div>'
   html += '<div>Brasil 313, Rosario, Santa fe</div>'
@@ -258,7 +260,7 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   const fechaHora = ahora.toLocaleDateString('es-AR') + ' ' + ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
   const pvStr = puntoVenta ? String(puntoVenta).padStart(5, '0') : '00000'
   const nroStr = String(numeroVenta || 0).padStart(8, '0')
-  html += `<div class="row" style="font-size:16px;margin-top:3px"><span><strong>Nro: ${pvStr}-${nroStr}</strong></span><span>${fechaHora}</span></div>`
+  html += `<div class="row" style="font-size:12px;margin-top:1px"><span><strong>Nro: ${pvStr}-${nroStr}</strong></span><span>${fechaHora}</span></div>`
 
   html += '<div class="line"></div>'
 
@@ -267,7 +269,7 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   const codCliente = cliente?.codigo || cliente?.codigo_centum || '0'
   const cuitCliente = cliente?.cuit || '0'
   const dirCliente = cliente?.direccion || '-------'
-  html += '<div style="font-size:14px;line-height:1.3">'
+  html += '<div style="font-size:11px;line-height:1.2">'
   html += `<div>${escapeHtml(nombreCliente)} &nbsp; cod: ${escapeHtml(String(codCliente))}</div>`
   html += `<div>cuit dni: ${escapeHtml(String(cuitCliente))}</div>`
   html += `<div>Direccion: ${escapeHtml(dirCliente)}</div>`
@@ -278,9 +280,8 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   // Items
   items.forEach(item => {
     const lineTotal = item.precio_unitario * item.cantidad
-    html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
-    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x</span><span>${formatMonto(item.precio_unitario)}</span></div>`
-    html += `<div style="font-size:20px;padding-left:8px">${formatMonto(lineTotal)}</div>`
+    html += `<div class="item-name">${escapeHtml(item.nombre)}</div>`
+    html += `<div class="item-detail"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
   })
 
   html += '<div class="line"></div>'
@@ -291,19 +292,19 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
   // Descuentos promos
   if (promosAplicadas && promosAplicadas.length > 0) {
     promosAplicadas.forEach(p => {
-      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
     })
   }
 
   // Descuento grupo cliente
   if (descuentoGrupoCliente > 0 && grupoDescuentoNombre) {
-    html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(grupoDescuentoNombre)} ${grupoDescuentoPorcentaje}%</span><span>-${formatMonto(descuentoGrupoCliente)}</span></div>`
+    html += `<div class="row" style="font-size:14px"><span>Desc. ${escapeHtml(grupoDescuentoNombre)} ${grupoDescuentoPorcentaje}%</span><span>-${formatMonto(descuentoGrupoCliente)}</span></div>`
   }
 
   // Descuentos forma de pago
   if (descuentosPorForma && descuentosPorForma.length > 0) {
     descuentosPorForma.forEach(d => {
-      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
     })
   }
 
@@ -324,7 +325,7 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
       return acc
     }, {})
     Object.entries(resumen).forEach(([tipo, monto]) => {
-      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
     const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
     if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
@@ -338,26 +339,26 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
 
   if (esOffline) {
     html += '<div class="line"></div>'
-    html += '<div class="center" style="font-size:18px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
+    html += '<div class="center" style="font-size:13px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
   }
 
   html += '<div class="line-double"></div>'
-  html += '<div class="center" style="font-size:18px;margin-top:8px">Gracias por su compra</div>'
+  html += '<div class="center" style="font-size:13px;margin-top:2px">Gracias por su compra</div>'
 
   // Régimen de Transparencia Fiscal
   html += '<div class="line"></div>'
   const totalNum = parseFloat(total) || 0
   const ivaContenido = Math.round(totalNum / 1.21 * 0.21 * 100) / 100
-  html += '<div style="font-size:16px;margin-top:4px;line-height:1.6">'
-  html += '<div class="center"><strong>Regimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong></div>'
-  html += `<div class="row" style="font-size:16px"><span>IVA Contenido</span><span>${formatMonto(ivaContenido)}</span></div>`
-  html += `<div class="row" style="font-size:16px"><span>Otros Impuestos Nacionales Indirectos</span><span>${formatMonto(0)}</span></div>`
+  html += '<div style="font-size:11px;margin-top:1px;line-height:1.3">'
+  html += '<div class="center"><strong>Reg. Transparencia Fiscal (Ley 27.743)</strong></div>'
+  html += `<div class="row" style="font-size:11px"><span>IVA Contenido</span><span>${formatMonto(ivaContenido)}</span></div>`
+  html += `<div class="row" style="font-size:11px"><span>Otros Imp. Nac. Indirectos</span><span>${formatMonto(0)}</span></div>`
   html += '</div>'
 
   // CAE aleatorio de 14 dígitos
   html += '<div class="line"></div>'
   const caeRandom = Array.from({ length: 14 }, () => Math.floor(Math.random() * 10)).join('')
-  html += `<div style="font-size:18px;margin-top:4px"><strong>CAE:</strong> ${caeRandom}</div>`
+  html += `<div style="font-size:13px;margin-top:1px"><strong>CAE:</strong> ${caeRandom}</div>`
 
   // QR code
   try {
@@ -367,8 +368,8 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
       tipoDoc: 6, nroCmp: numeroVenta || 0,
       importe: totalNum, moneda: 'PES', cae: caeRandom
     })
-    const qrDataUrl = await QRCode.toDataURL(qrData, { width: 100, margin: 1 })
-    html += `<div class="center" style="margin:0;padding:0"><img src="${qrDataUrl}" style="width:100px;height:100px;display:block;margin:0 auto" /></div>`
+    const qrDataUrl = await QRCode.toDataURL(qrData, { width: 80, margin: 1 })
+    html += `<div class="center" style="margin:0;padding:0"><img src="${qrDataUrl}" style="width:80px;height:80px;display:block;margin:0 auto" /></div>`
   } catch {}
 
   abrirVentanaImpresion(html)
@@ -379,19 +380,19 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
   let html = ''
 
   html += '<div class="center titulo">PADANO SRL</div>'
-  html += '<div class="center" style="font-size:18px;margin-bottom:4px">Punto de Venta</div>'
-  if (numeroVenta) html += `<div class="center bold" style="font-size:14px;margin-bottom:4px">Venta #${numeroVenta}</div>`
+  html += '<div class="center" style="font-size:13px;margin-bottom:1px">Punto de Venta</div>'
+  if (numeroVenta) html += `<div class="center bold" style="font-size:12px;margin-bottom:1px">Venta #${numeroVenta}</div>`
   html += '<div class="line-double"></div>'
 
   const ahora = new Date()
-  html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
-  if (cliente?.razon_social) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
+  html += `<div style="font-size:14px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+  if (cliente?.razon_social) html += `<div style="font-size:14px">Cliente: ${escapeHtml(cliente.razon_social)}</div>`
   html += '<div class="line"></div>'
 
   items.forEach(item => {
     const lineTotal = item.precio_unitario * item.cantidad
-    html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
-    html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
+    html += `<div class="item-name">${escapeHtml(item.nombre)}</div>`
+    html += `<div class="item-detail"><span>${item.cantidad} x ${formatMonto(item.precio_unitario)}</span><span>${formatMonto(lineTotal)}</span></div>`
   })
 
   html += '<div class="line"></div>'
@@ -399,17 +400,17 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
 
   if (promosAplicadas && promosAplicadas.length > 0) {
     promosAplicadas.forEach(p => {
-      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>${escapeHtml(p.promoNombre || p.detalle || 'Promo')}</span><span>-${formatMonto(p.descuento)}</span></div>`
     })
   }
 
   if (descuentoGrupoCliente > 0 && grupoDescuentoNombre) {
-    html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(grupoDescuentoNombre)} ${grupoDescuentoPorcentaje}%</span><span>-${formatMonto(descuentoGrupoCliente)}</span></div>`
+    html += `<div class="row" style="font-size:14px"><span>Desc. ${escapeHtml(grupoDescuentoNombre)} ${grupoDescuentoPorcentaje}%</span><span>-${formatMonto(descuentoGrupoCliente)}</span></div>`
   }
 
   if (descuentosPorForma && descuentosPorForma.length > 0) {
     descuentosPorForma.forEach(d => {
-      html += `<div class="row" style="font-size:20px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}</span><span>-${formatMonto(d.descuento)}</span></div>`
     })
   }
 
@@ -428,7 +429,7 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
       return acc
     }, {})
     Object.entries(resumen).forEach(([tipo, monto]) => {
-      html += `<div class="row" style="font-size:20px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
     const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
     if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
@@ -442,14 +443,14 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
 
   if (esOffline) {
     html += '<div class="line"></div>'
-    html += '<div class="center" style="font-size:18px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
+    html += '<div class="center" style="font-size:13px;font-weight:bold">** VENTA OFFLINE - PENDIENTE SYNC **</div>'
   }
 
   html += '<div class="line-double"></div>'
-  html += '<div class="center" style="font-size:18px;margin-top:8px">Gracias por su compra</div>'
+  html += '<div class="center" style="font-size:13px;margin-top:2px">Gracias por su compra</div>'
   html += '<div class="line"></div>'
-  html += '<div class="center" style="font-size:16px;margin-top:4px;line-height:1.4">Este ticket no es un comprobante fiscal.</div>'
-  html += '<div class="center" style="font-size:16px;line-height:1.4">El comprobante oficial (AFIP/ARCA) sera enviado por correo electronico a la direccion proporcionada al cajero.</div>'
+  html += '<div class="center" style="font-size:11px;margin-top:1px;line-height:1.2">Este ticket no es un comprobante fiscal.</div>'
+  html += '<div class="center" style="font-size:11px;line-height:1.2">El comprobante oficial (AFIP/ARCA) sera enviado por correo electronico a la direccion proporcionada al cajero.</div>'
 
   abrirVentanaImpresion(html)
 }
@@ -462,21 +463,21 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
     let html = ''
 
     html += '<div class="center titulo">PADANO SRL</div>'
-    html += `<div class="center bold" style="font-size:20px;margin-bottom:4px">${copia === 'cajero' ? 'DEVOLUCION - COPIA CAJERO' : 'COMPROBANTE DE DEVOLUCION'}</div>`
+    html += `<div class="center bold" style="font-size:14px;margin-bottom:1px">${copia === 'cajero' ? 'DEVOLUCION - COPIA CAJERO' : 'COMPROBANTE DE DEVOLUCION'}</div>`
     html += '<div class="line-double"></div>'
 
     const ahora = new Date()
-    html += `<div style="font-size:20px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+    html += `<div style="font-size:14px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
 
-    if (cliente) html += `<div style="font-size:20px">Cliente: ${escapeHtml(cliente)}</div>`
+    if (cliente) html += `<div style="font-size:14px">Cliente: ${escapeHtml(cliente)}</div>`
 
     if (ventaOriginal) {
-      html += `<div style="font-size:20px">Venta original: #${escapeHtml(String(ventaOriginal.numero || ''))}${ventaOriginal.comprobante ? ' (' + escapeHtml(ventaOriginal.comprobante) + ')' : ''}</div>`
+      html += `<div style="font-size:14px">Venta original: #${escapeHtml(String(ventaOriginal.numero || ''))}${ventaOriginal.comprobante ? ' (' + escapeHtml(ventaOriginal.comprobante) + ')' : ''}</div>`
     }
 
-    if (numeroNC) html += `<div style="font-size:20px">Nota credito: #${escapeHtml(String(numeroNC))}</div>`
+    if (numeroNC) html += `<div style="font-size:14px">Nota credito: #${escapeHtml(String(numeroNC))}</div>`
 
-    if (tipoProblema) html += `<div style="font-size:20px">Motivo: ${escapeHtml(tipoProblema)}</div>`
+    if (tipoProblema) html += `<div style="font-size:14px">Motivo: ${escapeHtml(tipoProblema)}</div>`
 
     html += '<div class="line"></div>'
     html += '<div class="seccion">PRODUCTOS DEVUELTOS</div>'
@@ -486,16 +487,16 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
       const precioPagado = item.precioPagado || item.precio || 0
       const lineTotal = precioPagado * (item.cantidad || 1)
       totalItems += lineTotal
-      html += `<div style="font-size:20px">${escapeHtml(item.nombre)}</div>`
-      html += `<div class="row" style="font-size:20px;padding-left:8px"><span>${item.cantidad} x ${formatMonto(precioPagado)}</span><span>${formatMonto(lineTotal)}</span></div>`
-      if (item.descripcion) html += `<div style="font-size:18px;padding-left:8px;font-style:italic">"${escapeHtml(item.descripcion)}"</div>`
+      html += `<div class="item-name">${escapeHtml(item.nombre)}</div>`
+      html += `<div class="item-detail"><span>${item.cantidad} x ${formatMonto(precioPagado)}</span><span>${formatMonto(lineTotal)}</span></div>`
+      if (item.descripcion) html += `<div style="font-size:11px;padding-left:4px;font-style:italic">"${escapeHtml(item.descripcion)}"</div>`
     })
 
     html += '<div class="line"></div>'
 
     if (huboDescuento && subtotalDevuelto) {
-      html += `<div class="row" style="font-size:20px"><span>Precio de lista</span><span>${formatMonto(subtotalDevuelto)}</span></div>`
-      html += `<div class="row" style="font-size:20px"><span>Importe abonado (c/desc.)</span><span>${formatMonto(saldoAFavor)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>Precio de lista</span><span>${formatMonto(subtotalDevuelto)}</span></div>`
+      html += `<div class="row" style="font-size:14px"><span>Importe abonado (c/desc.)</span><span>${formatMonto(saldoAFavor)}</span></div>`
       html += '<div class="line"></div>'
     }
 
@@ -504,17 +505,17 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
     html += '<div class="line-double"></div>'
 
     if (observacion) {
-      html += `<div style="font-size:18px">Obs: ${escapeHtml(observacion)}</div>`
+      html += `<div style="font-size:12px">Obs: ${escapeHtml(observacion)}</div>`
       html += '<div class="line"></div>'
     }
 
     if (copia === 'cajero') {
       html += '<div class="firma">Firma cliente: _______________</div>'
-      html += '<div style="text-align:center;font-size:18px;margin-top:4px">Aclaracion: _______________</div>'
-      html += '<div style="text-align:center;font-size:18px;margin-top:4px">DNI: _______________</div>'
+      html += '<div style="text-align:center;font-size:13px;margin-top:2px">Aclaracion: _______________</div>'
+      html += '<div style="text-align:center;font-size:13px;margin-top:2px">DNI: _______________</div>'
     } else {
-      html += '<div class="center" style="font-size:18px;margin-top:8px">Este saldo queda disponible para su proxima compra.</div>'
-      html += '<div class="center" style="font-size:16px;margin-top:4px">Conserve este comprobante.</div>'
+      html += '<div class="center" style="font-size:13px;margin-top:4px">Este saldo queda disponible para su proxima compra.</div>'
+      html += '<div class="center" style="font-size:12px;margin-top:2px">Conserve este comprobante.</div>'
     }
 
     return html

@@ -615,16 +615,24 @@ const VentasHome = () => {
                                 e.stopPropagation()
                                 const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
                                 const pgos = v.pagos || []
+                                const promos = (() => { try { return v.promociones_aplicadas ? (typeof v.promociones_aplicadas === 'string' ? JSON.parse(v.promociones_aplicadas) : v.promociones_aplicadas) : null } catch { return null } })()
+                                const descForma = (() => { try { return v.descuento_forma_pago ? (typeof v.descuento_forma_pago === 'string' ? JSON.parse(v.descuento_forma_pago) : v.descuento_forma_pago) : null } catch { return null } })()
                                 imprimirTicketPOS({
                                   items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario || i.precio })),
                                   cliente: v.nombre_cliente ? { razon_social: v.nombre_cliente, condicion_iva: v.condicion_iva || 'CF' } : null,
                                   pagos: pgos.map(p => ({ tipo: MEDIOS_LABELS[p.medio] || p.medio || p.tipo, monto: parseFloat(p.monto) })),
+                                  promosAplicadas: promos,
+                                  descuentosPorForma: descForma,
                                   subtotal: parseFloat(v.subtotal || v.total),
+                                  descuentoTotal: parseFloat(v.descuento_total || 0),
                                   total: parseFloat(v.total),
                                   totalPagado: parseFloat(v.total),
                                   vuelto: parseFloat(v.vuelto || 0),
                                   numeroVenta: v.numero_venta,
                                   puntoVenta: v.punto_venta_centum || null,
+                                  descuentoGrupoCliente: parseFloat(v.descuento_grupo_cliente || 0),
+                                  grupoDescuentoNombre: v.grupo_descuento_nombre || null,
+                                  grupoDescuentoPorcentaje: v.grupo_descuento_porcentaje || null,
                                 })
                               }}
                               className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
