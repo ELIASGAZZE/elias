@@ -897,7 +897,13 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       } else if (req.query.tipo === 'venta') {
         query = query.neq('tipo', 'nota_credito')
       }
-      query = query.range(from, to)
+      // Si hay filtro por artículo, traer más resultados para filtrar en JS
+      const articuloFilter = req.query.articulo?.trim()
+      if (articuloFilter) {
+        query = query.range(0, 999) // traer hasta 1000 para filtrar en JS
+      } else {
+        query = query.range(from, to)
+      }
     }
 
     // No-admin solo ve sus ventas (excepto al reportar problema, que necesita ver todas)
@@ -924,11 +930,13 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
 
     // Filtro por artículo en JS (items es JSONB, no soporta ilike)
     const articulo = req.query.articulo?.trim()?.toLowerCase()
+    let articuloFilterApplied = false
     if (articulo) {
       ventas = ventas.filter(v => {
         const items = (() => { try { return typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []) } catch { return [] } })()
         return items.some(i => (i.nombre || '').toLowerCase().includes(articulo))
       })
+      articuloFilterApplied = true
     }
 
     // Lookup nombres de cajas (no hay FK en Supabase)
@@ -1019,8 +1027,14 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       ventas = ventas.filter(v => v.clasificacion === req.query.clasificacion.toUpperCase())
     }
 
-    const totalCount = count ?? ventas.length
+    // Si se filtró por artículo en JS, el count de Supabase no aplica — usar el largo real
+    const totalCount = articuloFilterApplied ? ventas.length : (count ?? ventas.length)
     const totalPages = Math.ceil(totalCount / pageSize)
+
+    // Paginación manual post-filtro cuando se filtró por artículo
+    if (articuloFilterApplied) {
+      ventas = ventas.slice(from, from + pageSize)
+    }
 
     // --- Resumen del período completo (sin paginación) ---
     let resumen = null
