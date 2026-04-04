@@ -14,6 +14,9 @@ const { crearVentaSchema } = require('../schemas/pos')
 const asyncHandler = require('../middleware/asyncHandler')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
+// Lock en memoria para prevenir ventas duplicadas por doble-submit concurrente
+const ventaTicketLock = new Set()
+
 // Token HMAC para links de descarga de comprobantes (no requiere auth)
 const COMPROBANTE_SECRET = process.env.COMPROBANTE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'comprobante-secret'
 function generarTokenDescarga(ventaId) {
@@ -465,6 +468,36 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
   try {
     const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
+    // === IDEMPOTENCIA: prevenir ventas duplicadas por doble-submit ===
+    if (ticket_uid) {
+      // Capa 1: lock en memoria — bloquea requests concurrentes con mismo ticket_uid
+      if (ventaTicketLock.has(ticket_uid)) {
+        logger.warn(`[POS] Venta duplicada bloqueada (lock) — ticket_uid ${ticket_uid} ya está siendo procesado`)
+        return res.status(409).json({ error: 'Esta venta ya se está procesando', duplicada: true })
+      }
+      ventaTicketLock.add(ticket_uid)
+
+      // Capa 2: check en DB — por si el lock se perdió (restart del server, etc)
+      try {
+        const { data: ventaExistente } = await supabase
+          .from('ventas_pos')
+          .select('id, numero_venta')
+          .eq('ticket_uid', ticket_uid)
+          .maybeSingle()
+        if (ventaExistente) {
+          ventaTicketLock.delete(ticket_uid)
+          logger.warn(`[POS] Venta duplicada bloqueada (DB) — ticket_uid ${ticket_uid} ya existe como venta #${ventaExistente.numero_venta}`)
+          return res.json({ venta: ventaExistente, duplicada: true })
+        }
+      } catch (dbCheckErr) {
+        // Si la columna ticket_uid no existe aún, ignorar el check de DB (no bloquear la venta)
+        if (!dbCheckErr.message?.includes('ticket_uid')) {
+          ventaTicketLock.delete(ticket_uid)
+          throw dbCheckErr
+        }
+      }
+    }
+
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
     const totalItemsSolo = Math.round((total - totalGCActivar) * 100) / 100
@@ -545,6 +578,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         })),
         centum_sync: true, // No enviar a Centum
         condicion_iva: condicion_iva || null,
+        ticket_uid: ticket_uid || null,
       }
       if (created_at_offline) insertGCOnly.created_at = created_at_offline
 
@@ -585,6 +619,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
           comprador: gc.comprador_nombre || null,
         }))
       }
+      if (ticket_uid) insertData.ticket_uid = ticket_uid
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
       if (created_at_offline) insertData.created_at = created_at_offline
@@ -789,8 +824,10 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       }
     }
 
+    if (ticket_uid) ventaTicketLock.delete(ticket_uid)
     res.status(201).json({ venta: data, mensaje: tieneItems ? 'Venta registrada correctamente' : 'Gift card activada correctamente' })
   } catch (err) {
+    if (ticket_uid) ventaTicketLock.delete(ticket_uid)
     logger.error('[POS] Error al guardar venta:', err.message)
     res.status(500).json({ error: 'Error al guardar venta: ' + err.message })
   }
@@ -917,11 +954,11 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
         const hasta = `${req.query.fecha_hasta}T23:59:59-03:00`
         query = query.lte('created_at', hasta)
       }
-      // Filtro "Sin Centum": solo ventas no sincronizadas y sin comprobante
+      // Filtro "Sin Centum": ventas que no fueron creadas en Centum
       if (req.query.sin_centum === '1') {
-        query = query.or('centum_sync.eq.false,centum_sync.is.null').is('centum_comprobante', null)
+        query = query.is('centum_comprobante', null)
       }
-      // Filtro "Sin CAE": ventas sin número de CAE
+      // Filtro "Sin CAE": ventas sin número de CAE (clasificacion EMPRESA se filtra en JS)
       if (req.query.sin_cae === '1') {
         query = query.is('numero_cae', null)
       }
@@ -937,9 +974,9 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       } else if (req.query.tipo === 'venta') {
         query = query.neq('tipo', 'nota_credito')
       }
-      // Si hay filtro por artículo, traer más resultados para filtrar en JS
+      // Si hay filtro por artículo o sin_cae, traer más resultados para filtrar en JS
       const articuloFilter = req.query.articulo?.trim()
-      if (articuloFilter) {
+      if (articuloFilter || req.query.sin_cae === '1') {
         query = query.range(0, 999) // traer hasta 1000 para filtrar en JS
       } else {
         query = query.range(from, to)
@@ -1066,13 +1103,18 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
     if (req.query.clasificacion) {
       ventas = ventas.filter(v => v.clasificacion === req.query.clasificacion.toUpperCase())
     }
+    // Sin CAE: solo mostrar ventas EMPRESA (prueba nunca tiene CAE)
+    if (req.query.sin_cae === '1') {
+      ventas = ventas.filter(v => v.clasificacion === 'EMPRESA')
+    }
 
-    // Si se filtró por artículo en JS, el count de Supabase no aplica — usar el largo real
-    const totalCount = articuloFilterApplied ? ventas.length : (count ?? ventas.length)
+    // Si se filtró en JS (artículo o sin_cae), el count de Supabase no aplica — usar el largo real
+    const jsFilterApplied = articuloFilterApplied || req.query.sin_cae === '1'
+    const totalCount = jsFilterApplied ? ventas.length : (count ?? ventas.length)
     const totalPages = Math.ceil(totalCount / pageSize)
 
-    // Paginación manual post-filtro cuando se filtró por artículo
-    if (articuloFilterApplied) {
+    // Paginación manual post-filtro cuando se filtró en JS
+    if (jsFilterApplied) {
       ventas = ventas.slice(from, from + pageSize)
     }
 
@@ -1085,7 +1127,7 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
           .select('total, tipo, pagos, id_cliente_centum')
         if (req.query.fecha) qResumen = qResumen.gte('created_at', `${req.query.fecha}T00:00:00-03:00`)
         if (req.query.fecha_hasta) qResumen = qResumen.lte('created_at', `${req.query.fecha_hasta}T23:59:59-03:00`)
-        if (req.query.sin_centum === '1') qResumen = qResumen.or('centum_sync.eq.false,centum_sync.is.null').is('centum_comprobante', null)
+        if (req.query.sin_centum === '1') qResumen = qResumen.is('centum_comprobante', null)
         if (req.query.sin_cae === '1') qResumen = qResumen.is('numero_cae', null)
         if (req.query.filtro_empleado === 'empleados') qResumen = qResumen.ilike('nombre_cliente', 'Empleado:%')
         else if (req.query.filtro_empleado === 'no_empleados') qResumen = qResumen.not('nombre_cliente', 'ilike', 'Empleado:%')

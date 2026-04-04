@@ -694,6 +694,7 @@ const POS = () => {
   const inputDniClienteRef = useRef(null)
 
   function handleCobrar() {
+    if (mostrarCobrar) return // Prevenir doble apertura del modal
     const clienteIdentificado = (cliente.id_centum && cliente.id_centum !== 0) || (cliente.razon_social && cliente.razon_social !== 'Consumidor Final')
     if (totalConGiftCards > MONTO_LIMITE_DNI && !clienteIdentificado) {
       setBusquedaDniCliente('')
@@ -1558,8 +1559,8 @@ const POS = () => {
         e.preventDefault()
         handleEsPedido()
       }
-      // F11 = Cobrar
-      if (e.key === 'F11' && tieneItems) {
+      // F11 = Cobrar (solo si el modal de cobro no está abierto)
+      if (e.key === 'F11' && tieneItems && !mostrarCobrar) {
         e.preventDefault()
         handleCobrar()
       }
