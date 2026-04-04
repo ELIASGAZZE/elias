@@ -25,6 +25,30 @@ function generarLinkDescarga(ventaId) {
   return `${backendUrl}/api/pos/ventas/${ventaId}/comprobante.pdf?token=${token}`
 }
 
+// Calcular desglose de forma_pago_origen proporcional al monto del saldo
+function calcularFormaPagoOrigen(pagos, montoSaldo, totalVenta) {
+  if (!Array.isArray(pagos) || pagos.length === 0 || !totalVenta || totalVenta <= 0) return null
+  const desglose = {}
+  for (const p of pagos) {
+    const tipo = p.tipo || 'Efectivo'
+    const monto = parseFloat(p.monto) || 0
+    if (monto <= 0) continue
+    const proporcion = monto / totalVenta
+    const montoOrigen = Math.round(proporcion * montoSaldo * 100) / 100
+    if (montoOrigen > 0) {
+      desglose[tipo] = (desglose[tipo] || 0) + montoOrigen
+    }
+  }
+  // Ajustar redondeo para que sume exactamente montoSaldo
+  const sumaDesglose = Object.values(desglose).reduce((s, v) => s + v, 0)
+  const diff = Math.round((montoSaldo - sumaDesglose) * 100) / 100
+  if (diff !== 0 && Object.keys(desglose).length > 0) {
+    const primerKey = Object.keys(desglose)[0]
+    desglose[primerKey] = Math.round((desglose[primerKey] + diff) * 100) / 100
+  }
+  return Object.keys(desglose).length > 0 ? desglose : null
+}
+
 // GET /api/pos/articulos
 // Lee artículos con precios minoristas desde la tabla local (sincronizada 1x/día)
 router.get('/articulos', verificarAuth, asyncHandler(async (req, res) => {
@@ -439,7 +463,7 @@ router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, asyncHandler(
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
@@ -644,16 +668,26 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
 
     // Registrar movimiento negativo de saldo si se aplicó
     if (saldoApl > 0 && id_cliente_centum) {
+      const insertSaldo = {
+        id_cliente_centum,
+        nombre_cliente: nombre_cliente || 'Cliente',
+        monto: -saldoApl,
+        motivo: 'Aplicado en venta',
+        venta_pos_id: ventaId,
+        created_by: req.perfil.id,
+      }
+      // Guardar desglose de forma de pago del saldo consumido (enviado por frontend)
+      if (saldo_forma_pago_origen && typeof saldo_forma_pago_origen === 'object') {
+        // Negar los valores para reflejar consumo
+        const consumido = {}
+        for (const [k, v] of Object.entries(saldo_forma_pago_origen)) {
+          if (v > 0) consumido[k] = -Math.round(v * 100) / 100
+        }
+        insertSaldo.forma_pago_origen = consumido
+      }
       const { error: saldoError } = await supabase
         .from('movimientos_saldo_pos')
-        .insert({
-          id_cliente_centum,
-          nombre_cliente: nombre_cliente || 'Cliente',
-          monto: -saldoApl,
-          motivo: 'Aplicado en venta',
-          venta_pos_id: ventaId,
-          created_by: req.perfil.id,
-        })
+        .insert(insertSaldo)
       if (saldoError) {
         logger.error('[POS] Error al registrar movimiento de saldo:', saldoError.message)
       }
@@ -1703,6 +1737,49 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
         .maybeSingle()
       if (movSaldo) {
         data.saldo_aplicado = Math.abs(movSaldo.monto)
+      }
+    }
+
+    // Si la venta usó saldo, buscar la(s) NC que generaron ese saldo
+    const saldoAplicadoFinal = parseFloat(data.saldo_aplicado) || 0
+    if (saldoAplicadoFinal > 0 && data.id_cliente_centum) {
+      // Buscar movimientos positivos (NCs) del mismo cliente que tienen venta_pos_id (la NC)
+      const { data: movsPositivos } = await supabase
+        .from('movimientos_saldo_pos')
+        .select('venta_pos_id, monto, motivo, created_at')
+        .eq('id_cliente_centum', data.id_cliente_centum)
+        .gt('monto', 0)
+        .not('venta_pos_id', 'is', null)
+        .order('created_at', { ascending: false })
+      if (movsPositivos && movsPositivos.length > 0) {
+        // Obtener las NCs referenciadas
+        const ncIds = [...new Set(movsPositivos.map(m => m.venta_pos_id))]
+        const { data: ncs } = await supabase
+          .from('ventas_pos')
+          .select('id, numero_venta, total, created_at, venta_origen_id, centum_comprobante')
+          .in('id', ncIds)
+          .eq('tipo', 'nota_credito')
+          .order('created_at', { ascending: false })
+        if (ncs && ncs.length > 0) {
+          // Para cada NC, obtener la venta origen (factura original)
+          const origenIds = [...new Set(ncs.filter(nc => nc.venta_origen_id).map(nc => nc.venta_origen_id))]
+          let ventasOrigen = []
+          if (origenIds.length > 0) {
+            const { data: origenes } = await supabase
+              .from('ventas_pos')
+              .select('id, numero_venta, total, created_at, centum_comprobante, nombre_cliente')
+              .in('id', origenIds)
+            ventasOrigen = origenes || []
+          }
+          data.saldo_notas_credito = ncs.map(nc => ({
+            id: nc.id,
+            numero_venta: nc.numero_venta,
+            total: nc.total,
+            centum_comprobante: nc.centum_comprobante,
+            created_at: nc.created_at,
+            venta_origen: ventasOrigen.find(v => v.id === nc.venta_origen_id) || null,
+          }))
+        }
       }
     }
 
@@ -2784,15 +2861,19 @@ router.put('/guias-delivery/:id/cerrar', verificarAuth, asyncHandler(async (req,
     for (const pe of (pedidos_no_entregados || [])) {
       const gp = guia.guia_delivery_pedidos.find(g => g.pedido_pos_id === pe.id && g.forma_pago === 'anticipado')
       if (gp) {
-        const { data: pedidoData } = await supabase.from('pedidos_pos').select('id_cliente_centum, nombre_cliente, numero').eq('id', pe.id).single()
+        const { data: pedidoData } = await supabase.from('pedidos_pos').select('id_cliente_centum, nombre_cliente, numero, pagos, total_pagado, total').eq('id', pe.id).single()
         if (pedidoData && pedidoData.id_cliente_centum) {
+          const montoSaldo = parseFloat(gp.monto) || 0
+          const pagosArr = Array.isArray(pedidoData.pagos) ? pedidoData.pagos : []
+          const totalPedido = parseFloat(pedidoData.total_pagado) || parseFloat(pedidoData.total) || 0
           await supabase.from('movimientos_saldo_pos').insert({
             id_cliente_centum: pedidoData.id_cliente_centum,
             nombre_cliente: pedidoData.nombre_cliente || 'Cliente',
-            monto: parseFloat(gp.monto) || 0,
+            monto: montoSaldo,
             motivo: `No entregado - Pedido #${pedidoData.numero || pe.id}`,
             pedido_pos_id: pe.id,
             created_by: req.perfil.id,
+            forma_pago_origen: calcularFormaPagoOrigen(pagosArr, montoSaldo, totalPedido),
           })
         }
       }
@@ -2951,6 +3032,8 @@ router.put('/pedidos/:id', verificarAuth, asyncHandler(async (req, res) => {
       updateData.total_pagado = nuevoTotal
 
       if (pedidoActual.id_cliente_centum) {
+        const pagosArr = Array.isArray(pedidoActual.pagos) ? pedidoActual.pagos : []
+        const totalPedido = parseFloat(pedidoActual.total_pagado) || parseFloat(pedidoActual.total) || 0
         const { data: mov } = await supabase
           .from('movimientos_saldo_pos')
           .insert({
@@ -2960,6 +3043,7 @@ router.put('/pedidos/:id', verificarAuth, asyncHandler(async (req, res) => {
             motivo: `Edición pedido #${pedidoActual.numero || pedidoActual.id} (bajó de ${pedidoActual.total} a ${nuevoTotal})`,
             pedido_pos_id: pedidoActual.id,
             created_by: req.perfil.id,
+            forma_pago_origen: calcularFormaPagoOrigen(pagosArr, diferencia, totalPedido),
           })
           .select()
           .single()
@@ -3146,6 +3230,7 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
     let saldoGenerado = null
     const totalPagado = parseFloat(pedidoActual.total_pagado) || 0
     if (estado === 'cancelado' && totalPagado > 0 && pedidoActual.id_cliente_centum) {
+      const pagosArr = Array.isArray(pedidoActual.pagos) ? pedidoActual.pagos : []
       const { data: mov } = await supabase
         .from('movimientos_saldo_pos')
         .insert({
@@ -3155,6 +3240,7 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
           motivo: `Cancelación pedido #${pedidoActual.numero || pedidoActual.id}`,
           pedido_pos_id: pedidoActual.id,
           created_by: req.perfil.id,
+          forma_pago_origen: calcularFormaPagoOrigen(pagosArr, totalPagado, totalPagado),
         })
         .select()
         .single()
@@ -3605,7 +3691,22 @@ router.get('/saldo/:idClienteCentum', verificarAuth, asyncHandler(async (req, re
 
     const saldo = (movimientos || []).reduce((s, m) => s + parseFloat(m.monto), 0)
 
-    res.json({ saldo: Math.round(saldo * 100) / 100, movimientos: movimientos || [] })
+    // Calcular desglose acumulado de forma_pago_origen para el saldo vigente
+    const desglose_forma_pago = {}
+    for (const m of (movimientos || [])) {
+      if (m.forma_pago_origen && typeof m.forma_pago_origen === 'object') {
+        for (const [tipo, monto] of Object.entries(m.forma_pago_origen)) {
+          desglose_forma_pago[tipo] = (desglose_forma_pago[tipo] || 0) + parseFloat(monto)
+        }
+      }
+    }
+    // Redondear valores
+    for (const k of Object.keys(desglose_forma_pago)) {
+      desglose_forma_pago[k] = Math.round(desglose_forma_pago[k] * 100) / 100
+      if (desglose_forma_pago[k] === 0) delete desglose_forma_pago[k]
+    }
+
+    res.json({ saldo: Math.round(saldo * 100) / 100, desglose_forma_pago, movimientos: movimientos || [] })
   } catch (err) {
     logger.error('[POS] Error al obtener saldo:', err.message)
     res.status(500).json({ error: 'Error al obtener saldo' })
@@ -3711,20 +3812,24 @@ router.get('/saldos/buscar-cuit', verificarAuth, asyncHandler(async (req, res) =
 // POST /api/pos/saldos/ajuste — ajuste manual de saldo (solo admin)
 router.post('/saldos/ajuste', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, monto, motivo } = req.body
+    const { id_cliente_centum, nombre_cliente, monto, motivo, forma_pago_origen } = req.body
     if (!id_cliente_centum) return res.status(400).json({ error: 'id_cliente_centum requerido' })
     if (!monto || parseFloat(monto) === 0) return res.status(400).json({ error: 'Monto requerido y distinto de 0' })
     if (!motivo || !motivo.trim()) return res.status(400).json({ error: 'Motivo requerido' })
 
+    const insertData = {
+      id_cliente_centum,
+      nombre_cliente: nombre_cliente || 'Sin nombre',
+      monto: parseFloat(monto),
+      motivo: `Ajuste manual: ${motivo.trim()}`,
+      created_by: req.perfil.id,
+    }
+    if (forma_pago_origen && typeof forma_pago_origen === 'object') {
+      insertData.forma_pago_origen = forma_pago_origen
+    }
     const { data, error } = await supabase
       .from('movimientos_saldo_pos')
-      .insert({
-        id_cliente_centum,
-        nombre_cliente: nombre_cliente || 'Sin nombre',
-        monto: parseFloat(monto),
-        motivo: `Ajuste manual: ${motivo.trim()}`,
-        created_by: req.perfil.id,
-      })
+      .insert(insertData)
       .select()
       .single()
 
@@ -3891,6 +3996,8 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
 
     // Crear movimiento de saldo a favor
     const motivo = items_devueltos.map(d => `${d.cantidad}x ${d.nombre}: ${d.descripcion}`).join(' | ')
+    const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+    const totalMontoPagado = parseFloat(venta.monto_pagado) || parseFloat(venta.total) || 0
     const { error: saldoErr } = await supabase
       .from('movimientos_saldo_pos')
       .insert({
@@ -3900,6 +4007,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
         motivo: `Devolución - ${tipo_problema || 'Producto en mal estado'}. ${motivo}${observacion ? '. Obs: ' + observacion : ''}`,
         venta_pos_id: notaCredito.id,
         created_by: req.perfil.id,
+        forma_pago_origen: calcularFormaPagoOrigen(pagosVenta, saldoAFavor, totalMontoPagado),
       })
 
     if (saldoErr) throw saldoErr
@@ -4328,6 +4436,8 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
 
     // Crear movimiento de saldo
     const motivo = items_corregidos.map(ic => `${ic.cantidad}x ${ic.nombre}: cobrado ${ic.precio_cobrado} → góndola ${ic.precio_correcto}`).join(' | ')
+    const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+    const totalMontoPagado = parseFloat(venta.monto_pagado) || parseFloat(venta.total) || 0
     const { error: saldoErr } = await supabase
       .from('movimientos_saldo_pos')
       .insert({
@@ -4337,6 +4447,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
         motivo: `Diferencia de precio. ${motivo}${observacion ? '. Obs: ' + observacion : ''}`,
         venta_pos_id: notaCredito.id,
         created_by: req.perfil.id,
+        forma_pago_origen: calcularFormaPagoOrigen(pagosVenta, saldoAFavor, totalMontoPagado),
       })
 
     if (saldoErr) throw saldoErr

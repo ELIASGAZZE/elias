@@ -647,9 +647,44 @@ const DetalleVenta = () => {
               </div>
             )}
             {saldoAplicadoNum > 0 && (
-              <div className="flex justify-between">
-                <span className="text-gray-500">Saldo a favor aplicado</span>
-                <span className="text-green-600">-{formatPrecio(saldoAplicadoNum)}</span>
+              <div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Saldo a favor aplicado</span>
+                  <span className="text-green-600">-{formatPrecio(saldoAplicadoNum)}</span>
+                </div>
+                {venta.saldo_notas_credito?.length > 0 && (
+                  <div className="mt-1.5 ml-2 space-y-1">
+                    {venta.saldo_notas_credito.map(nc => (
+                      <div key={nc.id} className="text-xs text-gray-500 flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-red-500 font-medium">NC</span>
+                          <a
+                            href={`/ventas/${nc.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-600 hover:underline font-medium"
+                          >
+                            #{nc.numero_venta}{nc.centum_comprobante ? ` — ${nc.centum_comprobante}` : ''}
+                          </a>
+                          <span className="text-green-600">{formatPrecio(nc.total)}</span>
+                        </div>
+                        {nc.venta_origen && (
+                          <div className="flex items-center gap-1.5 ml-3">
+                            <span className="text-gray-400">origen:</span>
+                            <a
+                              href={`/ventas/${nc.venta_origen.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-600 hover:underline font-medium"
+                            >
+                              #{nc.venta_origen.numero_venta}{nc.venta_origen.centum_comprobante ? ` — ${nc.venta_origen.centum_comprobante}` : ''}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {redondeoEfectivo !== 0 && (
