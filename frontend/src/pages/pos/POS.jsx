@@ -780,6 +780,7 @@ const POS = () => {
 
   // Saldo a favor del cliente seleccionado
   const [saldoCliente, setSaldoCliente] = useState(0)
+  const [saldoDesglose, setSaldoDesglose] = useState({})
 
   // Vista activa: tabs estilo Chrome (venta vs pedidos vs saldos)
   const [vistaActiva, setVistaActiva] = useState('venta')
@@ -1019,12 +1020,18 @@ const POS = () => {
   useEffect(() => {
     if (!cliente.id_centum || cliente.id_centum === 0) {
       setSaldoCliente(0)
+      setSaldoDesglose({})
       return
     }
     let cancelled = false
     api.get(`/api/pos/saldo/${cliente.id_centum}`)
-      .then(({ data }) => { if (!cancelled) setSaldoCliente(data.saldo || 0) })
-      .catch(() => { if (!cancelled) setSaldoCliente(0) })
+      .then(({ data }) => {
+        if (!cancelled) {
+          setSaldoCliente(data.saldo || 0)
+          setSaldoDesglose(data.desglose_forma_pago || {})
+        }
+      })
+      .catch(() => { if (!cancelled) { setSaldoCliente(0); setSaldoDesglose({}) } })
     return () => { cancelled = true }
   }, [cliente.id_centum])
 
@@ -3559,6 +3566,7 @@ const POS = () => {
           onVentaOffline={actualizarPendientes}
           pedidoPosId={pedidoEnProceso?.id || null}
           saldoCliente={saldoCliente}
+          saldoDesglose={saldoDesglose}
           canal={modoDelivery ? 'delivery' : 'pos'}
           modoDelivery={modoDelivery}
           giftCardsEnVenta={giftCardsEnVenta}

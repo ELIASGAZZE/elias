@@ -33,7 +33,7 @@ const redondearCentena = (monto) => {
 // Mapeo de F-keys fijo (fuera del componente para evitar recrear en cada render)
 const FKEY_FORMAS = { F10: 'Transferencia', F11: 'Payway', F12: 'Rappi / PedidosYa' }
 
-const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, ticketUid, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
+const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, cliente, promosAplicadas, ticketUid, onConfirmar, onCerrar, isOnline, onVentaOffline, soloPago, pedidoPosId, saldoCliente: saldoProp, saldoDesglose = {}, giftCardsEnVenta, canal, modoDelivery, descuentoGrupoCliente = 0, grupoDescuentoNombre, grupoDescuentoPorcentaje }) => {
   const [formasCobro, setFormasCobro] = useState([])
   const [pagos, setPagos] = useState([])
   const [montoFormaPago, setMontoFormaPago] = useState('')
@@ -132,17 +132,28 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   // Saldo preliminar para ajustar base de descuento por forma de pago
   const saldoPreliminar = (usarSaldo && saldoDisponible > 0) ? Math.min(saldoDisponible, total) : 0
-  const totalParaDescuento = total - saldoPreliminar
+
+  // Desglose del saldo por forma de pago original (ej: { Efectivo: 26100, Transferencia: 5000 })
+  const saldoEfectivoOrigen = usarSaldo ? Math.min(parseFloat(saldoDesglose['Efectivo']) || 0, saldoPreliminar) : 0
+
+  // Descuento separado por saldo proveniente de efectivo (se calcula primero, es fijo)
+  const esVentaSoloGC = giftCardsEnVenta && giftCardsEnVenta.length > 0 && carrito.length === 0
+  const promoEfectivoForSaldo = (!modoDelivery && !esVentaSoloGC) ? promosPago.find(p => (p.reglas?.forma_cobro_nombre || '').toLowerCase() === 'efectivo') : null
+  const porcentajeSaldoEf = promoEfectivoForSaldo?.reglas?.valor || 0
+  const descuentoSaldoEfectivo = saldoEfectivoOrigen > 0 && porcentajeSaldoEf > 0
+    ? Math.round(saldoEfectivoOrigen * porcentajeSaldoEf / 100 * 100) / 100 : 0
+
+  // totalParaDescuento: base para descuentos de efectivo nuevo = remanente después de saldo + desc saldo
+  const totalParaDescuento = total - saldoPreliminar - descuentoSaldoEfectivo
 
   // Calcular descuentos por forma de pago (desactivado en modo delivery y ventas solo GC)
-  const esVentaSoloGC = giftCardsEnVenta && giftCardsEnVenta.length > 0 && carrito.length === 0
   const descuentosPorForma = (modoDelivery || esVentaSoloGC ? [] : promosPago).map(promo => {
     const reglas = promo.reglas || {}
     const nombreForma = reglas.forma_cobro_nombre
     const porcentaje = reglas.valor || 0
     const montoPagado = resumenPagos[nombreForma] || 0
     if (montoPagado <= 0 || porcentaje <= 0) return null
-    // Si el efectivo cubre el total descontado → descuento completo sobre el total
+    // Si el efectivo cubre el total descontado → descuento completo sobre el remanente
     // Si no alcanza (pago mixto) → descuento solo sobre lo pagado en esta forma
     const totalDescontado = totalParaDescuento * (1 - porcentaje / 100)
     // Tolerancia de $100 para cubrir diferencias por redondeo a centenas
@@ -158,7 +169,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     }
   }).filter(Boolean)
 
-  const totalDescuentoPagos = descuentosPorForma.reduce((s, d) => s + d.descuento, 0)
+  // Total descuentos = descuento por forma de pago nuevo + descuento fijo por saldo de efectivo
+  const totalDescuentoPagos = descuentosPorForma.reduce((s, d) => s + d.descuento, 0) + descuentoSaldoEfectivo
 
   // Saldo aplicado: min(saldoDisponible, total después de descuentos forma pago)
   const totalConDescFormaPago = Math.round((total - totalDescuentoPagos) * 100) / 100
@@ -728,7 +740,10 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       descuento_total: descuentoTotal,
       descuento_forma_pago: totalDescuentoPagos > 0 ? {
         total: totalDescuentoPagos,
-        detalle: descuentosPorForma,
+        detalle: [
+          ...(descuentoSaldoEfectivo > 0 ? [{ formaCobro: 'Saldo Efectivo', porcentaje: porcentajeSaldoEf, baseDescuento: saldoEfectivoOrigen, descuento: descuentoSaldoEfectivo }] : []),
+          ...descuentosPorForma,
+        ],
       } : null,
       total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
       monto_pagado: totalPagado,
@@ -741,7 +756,32 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       payload.descuento_grupo_cliente = descuentoGrupoCliente
       payload.grupo_descuento_nombre = grupoDescuentoNombre
     }
-    if (saldoAplicado > 0) payload.saldo_aplicado = saldoAplicado
+    if (saldoAplicado > 0) {
+      payload.saldo_aplicado = saldoAplicado
+      // Enviar desglose de forma de pago del saldo consumido
+      if (saldoDesglose && Object.keys(saldoDesglose).length > 0) {
+        const consumido = {}
+        let restante = saldoAplicado
+        // Distribuir el saldo aplicado proporcionalmente al desglose disponible
+        const totalDesglose = Object.values(saldoDesglose).reduce((s, v) => s + Math.max(0, v), 0)
+        if (totalDesglose > 0) {
+          for (const [tipo, monto] of Object.entries(saldoDesglose)) {
+            if (monto <= 0) continue
+            const porcion = Math.min(Math.round(monto / totalDesglose * saldoAplicado * 100) / 100, restante)
+            if (porcion > 0) {
+              consumido[tipo] = porcion
+              restante -= porcion
+            }
+          }
+          // Ajustar redondeo
+          if (restante > 0.01 && Object.keys(consumido).length > 0) {
+            const pk = Object.keys(consumido)[0]
+            consumido[pk] = Math.round((consumido[pk] + restante) * 100) / 100
+          }
+          payload.saldo_forma_pago_origen = consumido
+        }
+      }
+    }
     if (pedidoPosId) payload.pedido_pos_id = pedidoPosId
     if (ticketUid) payload.ticket_uid = ticketUid
     if (canal && canal !== 'pos') payload.canal = canal
@@ -1294,8 +1334,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 </div>
               ) : null)}
               {/* Descuentos por forma de pago */}
-              {descuentosPorForma.length > 0 && (
+              {(descuentosPorForma.length > 0 || descuentoSaldoEfectivo > 0) && (
                 <div className="border-t border-white/10 pt-1.5 mt-1.5 space-y-1">
+                  {descuentoSaldoEfectivo > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-cyan-400 text-xs">Desc. Saldo efvo. {porcentajeSaldoEf}% s/ {formatPrecio(saldoEfectivoOrigen)}</span>
+                      <span className="text-cyan-400 font-semibold text-xs">-{formatPrecio(descuentoSaldoEfectivo)}</span>
+                    </div>
+                  )}
                   {descuentosPorForma.map(d => (
                     <div key={d.promoId} className="flex justify-between items-center">
                       <span className="text-cyan-400 text-xs">Desc. {d.formaCobro} {d.porcentaje}% s/ {formatPrecio(d.baseDescuento)}</span>
@@ -1339,6 +1385,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
                 {descuentoGrupoCliente > 0 && (
                   <span className="text-violet-300 text-xs font-medium">
                     {grupoDescuentoNombre}: -{formatPrecio(descuentoGrupoCliente)}
+                  </span>
+                )}
+                {descuentoSaldoEfectivo > 0 && (
+                  <span className="text-cyan-300 text-xs font-medium">
+                    Desc. Saldo efvo. {porcentajeSaldoEf}% s/ {formatPrecio(saldoEfectivoOrigen)}: -{formatPrecio(descuentoSaldoEfectivo)}
                   </span>
                 )}
                 {descuentosPorForma.map(d => (

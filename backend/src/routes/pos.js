@@ -899,7 +899,13 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
     else {
       const buscar = req.query.buscar?.trim()
       if (buscar) {
-        query = query.ilike('nombre_cliente', `%${buscar}%`)
+        const esNumero = /^\d+$/.test(buscar)
+        if (esNumero) {
+          // Si es número, buscar por numero_venta O nombre_cliente
+          query = query.or(`numero_venta.eq.${buscar},nombre_cliente.ilike.%${buscar}%`)
+        } else {
+          query = query.ilike('nombre_cliente', `%${buscar}%`)
+        }
       }
       // Aplicar fecha "desde" si viene (horario Argentina UTC-3)
       if (req.query.fecha) {
