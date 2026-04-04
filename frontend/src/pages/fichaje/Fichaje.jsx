@@ -14,6 +14,7 @@ const Fichaje = () => {
   const [tokenError, setTokenError] = useState(null)
   const feedbackTimer = useRef(null)
   const inputRef = useRef(null)
+  const submittingRef = useRef(false)
 
   // Resolver token de sucursal desde URL (?s=TOKEN)
   useEffect(() => {
@@ -72,8 +73,8 @@ const Fichaje = () => {
   }
 
   const handleSubmit = async () => {
-    if (pin.length < 1) return
-
+    if (pin.length < 1 || submittingRef.current) return
+    submittingRef.current = true
     setCargando(true)
     try {
       const body = { pin }
@@ -89,11 +90,24 @@ const Fichaje = () => {
       cargarUltimos()
       limpiarFeedback()
     } catch (err) {
-      setFeedback({ error: err.response?.data?.error || 'Error al fichar' })
-      setPin('')
-      limpiarFeedback(2000)
+      // 409 = fichaje reciente (debounce server-side) — mostrar como éxito
+      if (err.response?.status === 409 && err.response?.data?.fichaje) {
+        const d = err.response.data
+        setFeedback({
+          tipo: d.tipo,
+          nombre: '',
+          hora: new Date(d.fichaje.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+        })
+        setPin('')
+        limpiarFeedback()
+      } else {
+        setFeedback({ error: err.response?.data?.error || 'Error al fichar' })
+        setPin('')
+        limpiarFeedback(2000)
+      }
     } finally {
       setCargando(false)
+      submittingRef.current = false
     }
   }
 
@@ -102,7 +116,7 @@ const Fichaje = () => {
     const handler = (e) => {
       if (e.key >= '0' && e.key <= '9') handleDigit(e.key)
       else if (e.key === 'Backspace') handleBackspace()
-      else if (e.key === 'Enter') handleSubmit()
+      else if (e.key === 'Enter' && !submittingRef.current) handleSubmit()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)

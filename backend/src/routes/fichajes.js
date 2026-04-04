@@ -9,6 +9,21 @@ const { validate } = require('../middleware/validate')
 const { fichajesPinSchema, fichajeManualSchema, autorizacionSchema } = require('../schemas/fichajes')
 const asyncHandler = require('../middleware/asyncHandler')
 
+// Argentina es siempre UTC-3 (no tiene DST)
+function getRangoDiaArgentina() {
+  const ahora = new Date()
+  const ahoraEnAR = new Date(ahora.getTime() - 3 * 60 * 60 * 1000)
+  const inicioDelDia = new Date(Date.UTC(
+    ahoraEnAR.getUTCFullYear(), ahoraEnAR.getUTCMonth(), ahoraEnAR.getUTCDate(),
+    3, 0, 0, 0
+  )).toISOString()
+  const finDelDia = new Date(Date.UTC(
+    ahoraEnAR.getUTCFullYear(), ahoraEnAR.getUTCMonth(), ahoraEnAR.getUTCDate() + 1,
+    2, 59, 59, 999
+  )).toISOString()
+  return { inicioDelDia, finDelDia }
+}
+
 // ── Fichaje público (solo requiere PIN, no JWT) ─────────────────────────────
 
 // POST /api/fichajes/pin — Fichar con código de empleado (entrada o salida automática)
@@ -31,10 +46,8 @@ router.post('/pin', validate(fichajesPinSchema), asyncHandler(async (req, res) =
     }
 
     // Determinar si es entrada o salida
-    // Buscar último fichaje del día
-    const hoy = new Date()
-    const inicioDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
-    const finDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59).toISOString()
+    // Buscar último fichaje del día (hora Argentina UTC-3)
+    const { inicioDelDia, finDelDia } = getRangoDiaArgentina()
 
     const { data: fichajesHoy, error: fichError } = await supabase
       .from('fichajes')
@@ -48,6 +61,19 @@ router.post('/pin', validate(fichajesPinSchema), asyncHandler(async (req, res) =
     if (fichError) throw fichError
 
     const ultimoFichaje = fichajesHoy?.[0]
+
+    // Anti-duplicado: rechazar si el último fichaje fue hace menos de 60 segundos
+    if (ultimoFichaje) {
+      const diffMs = Date.now() - new Date(ultimoFichaje.fecha_hora).getTime()
+      if (diffMs < 60000) {
+        return res.status(409).json({
+          error: 'Fichaje ya registrado hace menos de 1 minuto',
+          fichaje: ultimoFichaje,
+          tipo: ultimoFichaje.tipo
+        })
+      }
+    }
+
     const tipoNuevo = (!ultimoFichaje || ultimoFichaje.tipo === 'salida') ? 'entrada' : 'salida'
 
     // Registrar fichaje
@@ -79,9 +105,7 @@ router.post('/pin', validate(fichajesPinSchema), asyncHandler(async (req, res) =
 router.get('/estado/:empleadoId', asyncHandler(async (req, res) => {
   try {
     const { empleadoId } = req.params
-    const hoy = new Date()
-    const inicioDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
-    const finDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59).toISOString()
+    const { inicioDelDia, finDelDia } = getRangoDiaArgentina()
 
     const { data: fichajesHoy, error } = await supabase
       .from('fichajes')
@@ -202,8 +226,7 @@ router.delete('/:id', verificarAuth, soloAdmin, asyncHandler(async (req, res) =>
 router.get('/dashboard', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
     const hoy = new Date()
-    const inicioDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()
-    const finDelDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59).toISOString()
+    const { inicioDelDia, finDelDia } = getRangoDiaArgentina()
     const diaSemana = hoy.getDay()
 
     // Fichajes de hoy
