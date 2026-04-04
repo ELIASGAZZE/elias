@@ -1,7 +1,8 @@
 // Hub principal — menú de aplicaciones estilo Odoo
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import api from '../services/api'
 
 // Definición de las aplicaciones disponibles
 const APPS = [
@@ -200,6 +201,13 @@ const APPS_ADMIN = [
 
 const Hub = () => {
   const { usuario, logout, esAdmin } = useAuth()
+  const [cumpleaneros, setCumpleaneros] = useState([])
+
+  useEffect(() => {
+    api.get('/api/empleados/cumpleanos-hoy')
+      .then(({ data }) => setCumpleaneros(data || []))
+      .catch(() => {})
+  }, [])
 
   const showDev = import.meta.env.VITE_SHOW_DEV_APPS === 'true'
   const appsBase = showDev ? APPS : APPS.filter(a => !a.dev)
@@ -232,6 +240,21 @@ const Hub = () => {
           </button>
         </div>
       </nav>
+
+      {/* Banner de cumpleaños */}
+      {cumpleaneros.length > 0 && (
+        <div className="bg-gradient-to-r from-violet-500 to-pink-500 text-white px-4 py-3">
+          <div className="max-w-4xl mx-auto flex items-center justify-center gap-2 text-sm font-medium">
+            <span className="text-lg">🎂</span>
+            <span>
+              {cumpleaneros.length === 1
+                ? `¡Hoy es el cumpleaños de ${cumpleaneros[0].nombre}! ¡Felicidades!`
+                : `¡Hoy cumplen años ${cumpleaneros.map(e => e.nombre).join(' y ')}! ¡Felicidades!`}
+            </span>
+            <span className="text-lg">🎉</span>
+          </div>
+        </div>
+      )}
 
       {/* Grid de aplicaciones */}
       <div className="max-w-4xl mx-auto px-4 py-10">
