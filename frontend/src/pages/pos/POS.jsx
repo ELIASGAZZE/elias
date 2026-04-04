@@ -546,15 +546,12 @@ const POS = () => {
 
   // Consultar cumpleaños del día
   useEffect(() => {
-    const hoy = new Date().toDateString()
-    const yaVisto = sessionStorage.getItem('cumple_visto') === hoy
-    if (yaVisto) return
+    if (!cierreActivo) return
     api.get('/api/empleados/cumpleanos-hoy')
       .then(({ data }) => {
         if (data && data.length > 0) {
           setCumpleaneros(data)
           setMostrarCumple(true)
-          sessionStorage.setItem('cumple_visto', hoy)
         }
       })
       .catch(() => {})
