@@ -138,7 +138,7 @@ function calcularPromoCondicional(reglas, carrito) {
     }).filter(Boolean)
     if (benefMatches.length === 0) continue
     // Usar la cantidad del BENEFICIO (no de la condición) para limitar unidades descontadas
-    const cantBenefPorVez = benefMatches[0].ab.cantidad || 1
+    const cantBenefPorVez = benefMatches[0].ab.cantidad || Infinity
     const maxDesc = group.isOr
       ? (vecesPromo - orDescontados) * cantBenefPorVez
       : vecesPromo * cantBenefPorVez
@@ -163,7 +163,7 @@ function calcularPromoCondicional(reglas, carrito) {
   // Beneficios no-condición: buscar items del carrito que matchean beneficios pero no fueron usados como condición
   const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
   for (const ab of listaBenef) {
-    const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : vecesPromo
+    const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : Infinity
     let benefRestante = cantLimiteBenef
     const matchingItems = carrito.filter(i => itemMatchesBenef(i, ab) && !descontados.has(i.articulo.id) && !condItemIds.has(i.articulo.id))
     for (const found of matchingItems) {
@@ -453,7 +453,7 @@ function calcularPromocionesLocales(carrito, promociones) {
           const abMatch = listaBenef.find(ab => itemMatchesBenefLocal(item, ab))
           if (!abMatch) continue
           // Usar cantidad del beneficio para limitar cuántas unidades se descuentan
-          const cantBenefPorVez = abMatch.cantidad || 1
+          const cantBenefPorVez = abMatch.cantidad || Infinity
           if (isOr) {
             const orDisponible = vecesPromo - orDescontados
             if (orDisponible <= 0) continue
@@ -488,7 +488,7 @@ function calcularPromocionesLocales(carrito, promociones) {
         // 2) Beneficios que NO son parte de ningún grupo condición → descuento limitado por vecesPromo * cantidad beneficio
         const condItemIds = new Set(itemsCondicion.map(ic => ic.item.articulo.id))
         for (const ab of listaBenef) {
-          const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : vecesPromo
+          const cantLimiteBenef = ab.cantidad ? ab.cantidad * vecesPromo : Infinity
           let benefRestante = cantLimiteBenef
           // Find matching items not already discounted and not condition items
           const matchingItems = carrito.filter(i =>
