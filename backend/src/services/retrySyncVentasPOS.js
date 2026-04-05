@@ -76,7 +76,12 @@ async function retrySyncVentasPOS() {
       const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
       const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+      let idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+      // GC aplicada como pago → forzar B PRUEBA (división 2)
+      if (parseFloat(venta.gc_aplicada_monto) > 0) {
+        idDivisionEmpresa = 2
+      }
 
       const operadorMovilUser = idDivisionEmpresa === 2
         ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
@@ -85,6 +90,19 @@ async function retrySyncVentasPOS() {
       let resultado
 
       if (venta.tipo === 'nota_credito') {
+        // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+        if (venta.nc_concepto_tipo === 'gift_card') {
+          const comprobanteRef = venta.centum_comprobante || null
+          const idClienteNC = venta.id_cliente_centum || 2
+          const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+          resultado = await crearNotaCreditoConceptoPOS({
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
+            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+            descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
+            operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
+            concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+          })
+        } else {
         const itemsPositivos = items.map(it => ({
           ...it,
           precio_unitario: Math.abs(parseFloat(it.precio_unitario || it.precioUnitario || it.precio || 0)),
@@ -156,6 +174,7 @@ async function retrySyncVentasPOS() {
             operadorMovilUser: operadorNC,
             comprobanteOriginal,
           })
+        }
         }
       } else {
         resultado = await crearVentaPOS({

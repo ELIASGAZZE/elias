@@ -86,93 +86,117 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
   // Factura B (CF y otros): Centum espera precios FINALES (con IVA incluido)
   const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
 
-  // Armar artículos para Centum
-  const ventaArticulos = items.map(item => {
-    const precioConIva = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
-    const ivaTasa = parseFloat(item.iva_tasa || item.iva || item.ivaTasa || 21)
-    // Para Factura A: enviar precio neto (sin IVA). Para Factura B: enviar precio final (con IVA)
-    // Factura B: Centum descompone internamente a neto+IVA. Para evitar CobroNoBalanceaException,
-    // asegurar que el precio sobreviva el round-trip neto→bruto (round(round(P/1.21)*1.21) == P)
-    const neto = Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100
-    const precio = esFacturaA ? neto : Math.round(neto * (1 + ivaTasa / 100) * 100) / 100
-
-    return {
-      IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
-      Codigo: item.codigo || '',
-      Nombre: item.nombre || '',
-      Cantidad: redondearCantidad(item.cantidad),
-      Precio: precio,
-      PorcentajeDescuento1: 0,
-      PorcentajeDescuento2: 0,
-      PorcentajeDescuento3: 0,
-      PorcentajeDescuentoMaximo: 100,
-      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: ivaTasa },
-      ClaseDescuento: { IdClaseDescuento: 0 },
-      Comision: { IdComision: 6089, Calculada: 0 },
-      ImpuestoInterno: 0,
-    }
-  })
-
-  // Calcular subtotal ORIGINAL (siempre con IVA, desde items fuente) para detectar descuentos.
-  // Necesario porque para Factura A los precios en ventaArticulos son neto (sin IVA),
-  // pero total POS es con IVA. El ratio debe calcularse con la misma base.
-  let subtotalOriginal = 0
-  for (const item of items) {
-    const precio = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
-    const cantidad = redondearCantidad(item.cantidad)
-    subtotalOriginal += precio * cantidad
-  }
-  subtotalOriginal = Math.round(subtotalOriginal * 100) / 100
-
-  // Si hay descuento (total POS < subtotal original), aplicar descuento proporcional a items.
-  // Centum valida que sum(items) == sum(pagos) exactamente (CobroNoBalanceaException).
-  // El ratio se calcula sobre precios originales (con IVA) porque total POS también incluye IVA.
-  if (total < subtotalOriginal && subtotalOriginal > 0) {
-    const ratio = total / subtotalOriginal
-    logger.info(`[Centum POS] Descuento detectado: total=${total}, subtotalOriginal=${subtotalOriginal}, ratio=${ratio.toFixed(6)}`)
-    for (const art of ventaArticulos) {
-      art.Precio = Math.round(art.Precio * ratio * 100) / 100
-    }
-  }
-
-  // Calcular importeValor simulando el cálculo interno de Centum:
-  // Centum descompone cada línea en neto + IVA por separado.
-  // Siempre calcular desde los items para garantizar que items == pago.
-  let totalCentum = 0
-  for (const art of ventaArticulos) {
-    const ivaTasa = art.CategoriaImpuestoIVA?.Tasa || 21
-    if (esFacturaA) {
-      // Factura A: precio ya es neto, Centum suma IVA
-      const netoLinea = Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
-      const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
-      totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
-    } else {
-      // Factura B: precio es final, Centum descompone a neto+IVA internamente
-      const netoUnit = Math.round(art.Precio / (1 + ivaTasa / 100) * 100) / 100
-      const netoLinea = Math.round(netoUnit * (art.Cantidad || 0) * 100) / 100
-      const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
-      totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
-    }
-  }
-  const importeValor = Math.round(totalCentum * 100) / 100
+  // Detectar si todos los items son gift cards → enviar como concepto
+  const esVentaGiftCard = items.length > 0 && items.every(it => it.es_gift_card === true)
 
   // Determinar IdValor según medio de pago principal
   const medioPrincipal = pagos && pagos.length > 0 ? (pagos[0].tipo || 'efectivo').toLowerCase() : 'efectivo'
   const idValor = MEDIO_A_ID_VALOR[medioPrincipal] || 1
 
-  // Validar que todos los artículos tengan IdArticulo válido
-  const articulosSinId = ventaArticulos.filter(a => !a.IdArticulo || a.IdArticulo === 0)
-  if (articulosSinId.length > 0) {
-    throw new Error(`No se puede crear venta en Centum: ${articulosSinId.length} artículo(s) sin IdArticulo válido: ${articulosSinId.map(a => a.Codigo || a.Nombre || 'sin código').join(', ')}`)
-  }
+  let ventaArticulos = []
+  let ventaConceptos = []
+  let importeValor
 
-  // Validar que los precios de artículos no sean todos 0
-  const preciosTodosZero = ventaArticulos.every(a => a.Precio === 0)
-  if (preciosTodosZero) {
-    throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
-  }
+  if (esVentaGiftCard) {
+    // Gift cards: enviar como concepto VENTA GIFT CARD (IdConcepto 20)
+    const importeConcepto = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
+    importeValor = total
 
-  logger.info(`[Centum POS] esFacturaA=${esFacturaA}, subtotalOrig=${subtotalOriginal}, importeValor=${importeValor}, total=${total}`)
+    ventaConceptos = [{
+      IdConcepto: 20,
+      Codigo: 'GIFTCARD',
+      Nombre: 'VENTA GIFT CARD',
+      Cantidad: 1,
+      Precio: importeConcepto,
+      CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
+    }]
+
+    logger.info(`[Centum POS] Venta Gift Card como concepto: esFacturaA=${esFacturaA}, importeConcepto=${importeConcepto}, importeValor=${importeValor}`)
+  } else {
+    // Armar artículos para Centum
+    ventaArticulos = items.map(item => {
+      const precioConIva = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
+      const ivaTasa = parseFloat(item.iva_tasa || item.iva || item.ivaTasa || 21)
+      // Para Factura A: enviar precio neto (sin IVA). Para Factura B: enviar precio final (con IVA)
+      // Factura B: Centum descompone internamente a neto+IVA. Para evitar CobroNoBalanceaException,
+      // asegurar que el precio sobreviva el round-trip neto→bruto (round(round(P/1.21)*1.21) == P)
+      const neto = Math.round(precioConIva / (1 + ivaTasa / 100) * 100) / 100
+      const precio = esFacturaA ? neto : Math.round(neto * (1 + ivaTasa / 100) * 100) / 100
+
+      return {
+        IdArticulo: item.id_articulo || item.id || item.idArticulo || item.id_centum,
+        Codigo: item.codigo || '',
+        Nombre: item.nombre || '',
+        Cantidad: redondearCantidad(item.cantidad),
+        Precio: precio,
+        PorcentajeDescuento1: 0,
+        PorcentajeDescuento2: 0,
+        PorcentajeDescuento3: 0,
+        PorcentajeDescuentoMaximo: 100,
+        CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: ivaTasa },
+        ClaseDescuento: { IdClaseDescuento: 0 },
+        Comision: { IdComision: 6089, Calculada: 0 },
+        ImpuestoInterno: 0,
+      }
+    })
+
+    // Calcular subtotal ORIGINAL (siempre con IVA, desde items fuente) para detectar descuentos.
+    // Necesario porque para Factura A los precios en ventaArticulos son neto (sin IVA),
+    // pero total POS es con IVA. El ratio debe calcularse con la misma base.
+    let subtotalOriginal = 0
+    for (const item of items) {
+      const precio = parseFloat(item.precio_unitario || item.precioUnitario || item.precioFinal || item.precio || 0)
+      const cantidad = redondearCantidad(item.cantidad)
+      subtotalOriginal += precio * cantidad
+    }
+    subtotalOriginal = Math.round(subtotalOriginal * 100) / 100
+
+    // Si hay descuento (total POS < subtotal original), aplicar descuento proporcional a items.
+    // Centum valida que sum(items) == sum(pagos) exactamente (CobroNoBalanceaException).
+    // El ratio se calcula sobre precios originales (con IVA) porque total POS también incluye IVA.
+    if (total < subtotalOriginal && subtotalOriginal > 0) {
+      const ratio = total / subtotalOriginal
+      logger.info(`[Centum POS] Descuento detectado: total=${total}, subtotalOriginal=${subtotalOriginal}, ratio=${ratio.toFixed(6)}`)
+      for (const art of ventaArticulos) {
+        art.Precio = Math.round(art.Precio * ratio * 100) / 100
+      }
+    }
+
+    // Calcular importeValor simulando el cálculo interno de Centum:
+    // Centum descompone cada línea en neto + IVA por separado.
+    // Siempre calcular desde los items para garantizar que items == pago.
+    let totalCentum = 0
+    for (const art of ventaArticulos) {
+      const ivaTasa = art.CategoriaImpuestoIVA?.Tasa || 21
+      if (esFacturaA) {
+        // Factura A: precio ya es neto, Centum suma IVA
+        const netoLinea = Math.round(art.Precio * (art.Cantidad || 0) * 100) / 100
+        const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
+        totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
+      } else {
+        // Factura B: precio es final, Centum descompone a neto+IVA internamente
+        const netoUnit = Math.round(art.Precio / (1 + ivaTasa / 100) * 100) / 100
+        const netoLinea = Math.round(netoUnit * (art.Cantidad || 0) * 100) / 100
+        const ivaLinea = Math.round(netoLinea * ivaTasa / 100 * 100) / 100
+        totalCentum += Math.round((netoLinea + ivaLinea) * 100) / 100
+      }
+    }
+    importeValor = Math.round(totalCentum * 100) / 100
+
+    // Validar que todos los artículos tengan IdArticulo válido
+    const articulosSinId = ventaArticulos.filter(a => !a.IdArticulo || a.IdArticulo === 0)
+    if (articulosSinId.length > 0) {
+      throw new Error(`No se puede crear venta en Centum: ${articulosSinId.length} artículo(s) sin IdArticulo válido: ${articulosSinId.map(a => a.Codigo || a.Nombre || 'sin código').join(', ')}`)
+    }
+
+    // Validar que los precios de artículos no sean todos 0
+    const preciosTodosZero = ventaArticulos.every(a => a.Precio === 0)
+    if (preciosTodosZero) {
+      throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
+    }
+
+    logger.info(`[Centum POS] esFacturaA=${esFacturaA}, subtotalOrig=${subtotalOriginal}, importeValor=${importeValor}, total=${total}`)
+  }
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -185,7 +209,9 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     Vendedor: { IdVendedor: 2 },
     CondicionVenta: { IdCondicionVenta: 14 },
     Bonificacion: { IdBonificacion: 6235 },
-    VentaArticulos: ventaArticulos,
+    ...(esVentaGiftCard
+      ? { VentaConceptos: ventaConceptos }
+      : { VentaArticulos: ventaArticulos }),
     VentaValoresEfectivos: [{
       IdValor: idValor,
       Cotizacion: 1,
@@ -300,7 +326,13 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
     const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
     const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-    const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+    let idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+    // GC aplicada como pago → forzar B PRUEBA (división 2)
+    if (parseFloat(ventaLocal.gc_aplicada_monto) > 0) {
+      idDivisionEmpresa = 2
+      logger.info(`[Centum POS] GC aplicada ($${ventaLocal.gc_aplicada_monto}) → forzando B PRUEBA`)
+    }
 
     // Obtener operador móvil de la sucursal según división
     const operadorMovilUser = idDivisionEmpresa === 2
@@ -321,6 +353,37 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       operadorMovilUser,
       ventaPosId: ventaLocal.id,
     })
+
+    // GC aplicada como pago → crear NC concepto por el monto de GC
+    if (parseFloat(ventaLocal.gc_aplicada_monto) > 0 && resultado) {
+      try {
+        const numDoc = resultado.NumeroDocumento
+        const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
+        await supabase.from('ventas_pos').insert({
+          sucursal_id: ventaLocal.sucursal_id,
+          cajero_id: ventaLocal.cajero_id,
+          caja_id: ventaLocal.caja_id,
+          id_cliente_centum: ventaLocal.id_cliente_centum || 2,
+          nombre_cliente: ventaLocal.nombre_cliente || null,
+          tipo: 'nota_credito',
+          venta_origen_id: ventaLocal.id,
+          total: parseFloat(ventaLocal.gc_aplicada_monto),
+          subtotal: parseFloat(ventaLocal.gc_aplicada_monto),
+          descuento_total: 0,
+          monto_pagado: 0,
+          vuelto: 0,
+          items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(ventaLocal.gc_aplicada_monto), precio_final: parseFloat(ventaLocal.gc_aplicada_monto) }]),
+          pagos: [],
+          centum_sync: false,
+          nc_concepto_tipo: 'gift_card',
+
+          centum_comprobante: comprobante, // referencia a la factura de artículos
+        })
+        logger.info(`[Centum POS] NC Gift Card creada para venta ${ventaLocal.id}: monto=$${ventaLocal.gc_aplicada_monto}, ref=${comprobante}`)
+      } catch (ncErr) {
+        logger.error(`[Centum POS] Error al crear NC Gift Card para venta ${ventaLocal.id}:`, ncErr.message)
+      }
+    }
 
     return resultado
   } catch (err) {
@@ -483,19 +546,22 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
  * @param {string} [params.descripcion] - Descripción adicional del concepto
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal }) {
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal, concepto = {} }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
   const fechaHoy = new Date().toISOString().split('T')[0] + 'T00:00:00'
   const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
 
+  // Parámetros del concepto (con defaults para backwards compat)
+  const { idConcepto = 25, codigoConcepto = '23', nombreConcepto = 'DIFERENCIA EN PRECIO DE GONDOLA' } = concepto
+
   // Para NC por concepto: el importe del concepto
   // Factura A: Centum espera neto, Factura B: importe final
   const importeConcepto = esFacturaA ? Math.round(total / 1.21 * 100) / 100 : total
   const importeValor = total // El valor efectivo siempre es el total con IVA
 
-  logger.info(`[Centum POS NC Concepto] Preparando NC concepto: condicionIva=${condicionIva}, total=${total}, importeConcepto=${importeConcepto}, PV=${puntoVenta}`)
+  logger.info(`[Centum POS NC Concepto] Preparando NC concepto: condicionIva=${condicionIva}, total=${total}, importeConcepto=${importeConcepto}, PV=${puntoVenta}, concepto=${nombreConcepto}`)
 
   const body = {
     FechaImputacion: fechaHoy,
@@ -523,9 +589,9 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
   }
 
   body.VentaConceptos = [{
-    IdConcepto: 25, // DIFERENCIA EN PRECIO DE GONDOLA
-    Codigo: '23',
-    Nombre: 'DIFERENCIA EN PRECIO DE GONDOLA',
+    IdConcepto: idConcepto,
+    Codigo: codigoConcepto,
+    Nombre: nombreConcepto,
     Cantidad: 1,
     Precio: importeConcepto,
     CategoriaImpuestoIVA: { IdCategoriaImpuestoIVA: 4, Tasa: 21 },
@@ -884,7 +950,7 @@ async function retrySyncVentasCentum() {
   // Incluye centum_intentos y centum_ultimo_intento para la máquina de estados
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento, gc_aplicada_monto, nc_concepto_tipo, sucursal_id, cajero_id, centum_comprobante, condicion_iva')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
@@ -962,21 +1028,6 @@ async function retrySyncVentasCentum() {
   for (let i = 0; i < ventasReady.length; i++) {
     const venta = ventasReady[i]
     const intentos = venta.centum_intentos || 0
-
-    // ============ GIFT CARD SKIP: no se sincronizan a Centum ============
-    const itemsParsed = (() => {
-      try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) }
-      catch { return [] }
-    })()
-    if (itemsParsed.length > 0 && itemsParsed.every(it => it.es_gift_card === true)) {
-      await supabase.from('ventas_pos').update({
-        centum_sync: true,
-        centum_error: null,
-      }).eq('id', venta.id)
-      logger.info(`[RetryCentumVentas] Venta ${venta.id} es gift card, marcada como synced`)
-      exitosas++
-      continue
-    }
 
     // ============ ATOMIC CLAIM: lock a nivel de base de datos ============
     // Previene que múltiples instancias (ej: durante deploy Render) procesen la misma venta.
@@ -1098,7 +1149,13 @@ async function retrySyncVentasCentum() {
       const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
       const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      const idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+      let idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+
+      // GC aplicada como pago → forzar B PRUEBA (división 2)
+      if (parseFloat(venta.gc_aplicada_monto) > 0) {
+        idDivisionEmpresa = 2
+        logger.info(`[RetryCentumVentas] GC aplicada ($${venta.gc_aplicada_monto}) → forzando B PRUEBA`)
+      }
 
       const operadorMovilUser = idDivisionEmpresa === 2
         ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
@@ -1108,6 +1165,20 @@ async function retrySyncVentasCentum() {
       let resultado
 
       if (venta.tipo === 'nota_credito') {
+        // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+        if (venta.nc_concepto_tipo === 'gift_card') {
+          // centum_comprobante almacena la referencia a la factura de artículos
+          const comprobanteRef = venta.centum_comprobante || null
+          const idClienteNC = venta.id_cliente_centum || 2
+          const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+          resultado = await crearNotaCreditoConceptoPOS({
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
+            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+            descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
+            operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
+            concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+          })
+        } else {
         // NC: valores positivos
         const itemsPositivos = items.map(it => ({
           ...it,
@@ -1166,6 +1237,7 @@ async function retrySyncVentasCentum() {
             condicionIva: condicionIvaNC, operadorMovilUser: operadorNC, comprobanteOriginal,
           })
         }
+        }
       } else {
         // ============ VERIFICACIÓN OBLIGATORIA EN BI (si hay intentos previos) ============
         if (intentos > 0) {
@@ -1186,6 +1258,25 @@ async function retrySyncVentasCentum() {
               numero_cae: check.data.CAE || null,
             }).eq('id', venta.id)
             fetchAndSaveCAE(venta.id, check.data.IdVenta)
+            // GC aplicada → crear NC si no existe ya
+            if (parseFloat(venta.gc_aplicada_monto) > 0) {
+              try {
+                const { data: ncExiste } = await supabase.from('ventas_pos')
+                  .select('id').eq('venta_origen_id', venta.id).eq('nc_concepto_tipo', 'gift_card').maybeSingle()
+                if (!ncExiste) {
+                  await supabase.from('ventas_pos').insert({
+                    sucursal_id: venta.sucursal_id, cajero_id: venta.cajero_id, caja_id: venta.caja_id,
+                    id_cliente_centum: venta.id_cliente_centum || 2, nombre_cliente: venta.nombre_cliente || null,
+                    tipo: 'nota_credito', venta_origen_id: venta.id, total: parseFloat(venta.gc_aplicada_monto),
+                    subtotal: parseFloat(venta.gc_aplicada_monto), descuento_total: 0, monto_pagado: 0, vuelto: 0,
+                    items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(venta.gc_aplicada_monto), precio_final: parseFloat(venta.gc_aplicada_monto) }]),
+                    pagos: [], centum_sync: false, nc_concepto_tipo: 'gift_card', clasificacion: 'NC-B_PRUEBA',
+                    centum_comprobante: comprobanteEx,
+                  })
+                  logger.info(`[RetryCentumVentas] NC Gift Card creada (BI found) para venta ${venta.id}: monto=$${venta.gc_aplicada_monto}`)
+                }
+              } catch (ncErr) { logger.error(`[RetryCentumVentas] Error NC GC (BI found) venta ${venta.id}:`, ncErr.message) }
+            }
             exitosas++
             continue
           }
@@ -1272,6 +1363,35 @@ async function retrySyncVentasCentum() {
           updateData.centum_error = `ALERTA: Total POS=$${resultado._totalPOS} vs Centum=$${resultado._totalCentum}`
         }
         await supabase.from('ventas_pos').update(updateData).eq('id', venta.id)
+
+        // GC aplicada como pago → crear NC concepto por el monto de GC
+        if (parseFloat(venta.gc_aplicada_monto) > 0 && venta.tipo !== 'nota_credito') {
+          try {
+            await supabase.from('ventas_pos').insert({
+              sucursal_id: venta.sucursal_id,
+              cajero_id: venta.cajero_id,
+              caja_id: venta.caja_id,
+              id_cliente_centum: venta.id_cliente_centum || 2,
+              nombre_cliente: venta.nombre_cliente || null,
+              tipo: 'nota_credito',
+              venta_origen_id: venta.id,
+              total: parseFloat(venta.gc_aplicada_monto),
+              subtotal: parseFloat(venta.gc_aplicada_monto),
+              descuento_total: 0,
+              monto_pagado: 0,
+              vuelto: 0,
+              items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(venta.gc_aplicada_monto), precio_final: parseFloat(venta.gc_aplicada_monto) }]),
+              pagos: [],
+              centum_sync: false,
+              nc_concepto_tipo: 'gift_card',
+    
+              centum_comprobante: comprobante, // referencia a la factura de artículos
+            })
+            logger.info(`[RetryCentumVentas] NC Gift Card creada para venta ${venta.id}: monto=$${venta.gc_aplicada_monto}, ref=${comprobante}`)
+          } catch (ncErr) {
+            logger.error(`[RetryCentumVentas] Error al crear NC Gift Card para venta ${venta.id}:`, ncErr.message)
+          }
+        }
       } else {
         // No confirmada → UNVERIFIED (se verificará en BI en el próximo ciclo)
         const nuevoIntentos = (venta.centum_intentos || 0) + (venta.tipo !== 'nota_credito' ? 0 : 1)
@@ -1308,6 +1428,47 @@ async function retrySyncVentasCentum() {
     if (i < ventasReady.length - 1) {
       await new Promise(r => setTimeout(r, 2000))
     }
+  }
+
+  // ============ SAFETY NET: crear NCs faltantes para ventas con GC aplicada ya sincronizadas ============
+  // Cubre el caso en que otra instancia (ej: Render producción) sincronizó la venta sin crear la NC
+  try {
+    const { data: ventasSinNC } = await supabase
+      .from('ventas_pos')
+      .select('id, sucursal_id, cajero_id, caja_id, id_cliente_centum, nombre_cliente, gc_aplicada_monto, centum_comprobante')
+      .eq('centum_sync', true)
+      .eq('tipo', 'venta')
+      .gt('gc_aplicada_monto', 0)
+      .gte('created_at', hace30d)
+      .limit(20)
+
+    if (ventasSinNC?.length > 0) {
+      // Buscar cuáles ya tienen NC gift_card creada
+      const ids = ventasSinNC.map(v => v.id)
+      const { data: ncsExistentes } = await supabase
+        .from('ventas_pos')
+        .select('venta_origen_id')
+        .in('venta_origen_id', ids)
+        .eq('nc_concepto_tipo', 'gift_card')
+
+      const idsConNC = new Set((ncsExistentes || []).map(nc => nc.venta_origen_id))
+      const faltantes = ventasSinNC.filter(v => !idsConNC.has(v.id))
+
+      for (const v of faltantes) {
+        await supabase.from('ventas_pos').insert({
+          sucursal_id: v.sucursal_id, cajero_id: v.cajero_id, caja_id: v.caja_id,
+          id_cliente_centum: v.id_cliente_centum || 2, nombre_cliente: v.nombre_cliente || null,
+          tipo: 'nota_credito', venta_origen_id: v.id, total: parseFloat(v.gc_aplicada_monto),
+          subtotal: parseFloat(v.gc_aplicada_monto), descuento_total: 0, monto_pagado: 0, vuelto: 0,
+          items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(v.gc_aplicada_monto), precio_final: parseFloat(v.gc_aplicada_monto) }]),
+          pagos: [], centum_sync: false, nc_concepto_tipo: 'gift_card',
+          centum_comprobante: v.centum_comprobante,
+        })
+        logger.info(`[RetryCentumVentas] NC Gift Card (safety net) creada para venta ${v.id}: monto=$${v.gc_aplicada_monto}`)
+      }
+    }
+  } catch (safetyErr) {
+    logger.error('[RetryCentumVentas] Error en safety net NC GC:', safetyErr.message)
   }
 
   registrarLlamada({

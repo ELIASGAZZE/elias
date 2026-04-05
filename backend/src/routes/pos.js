@@ -510,9 +510,11 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     const saldoApl = parseFloat(saldo_aplicado) || 0
     const totalACobrar = total - saldoApl
     const montoPagadoNum = parseFloat(monto_pagado) || 0
+    const totalGCAplicadas = (gift_cards_aplicadas && Array.isArray(gift_cards_aplicadas))
+      ? gift_cards_aplicadas.reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0) : 0
 
-    // Validar que monto_pagado + saldo >= total
-    if (montoPagadoNum + saldoApl < total - 0.01) {
+    // Validar que monto_pagado + saldo + gift cards >= total
+    if (montoPagadoNum + saldoApl + totalGCAplicadas < total - 0.01) {
       return res.status(400).json({ error: 'monto_pagado + saldo_aplicado debe ser >= total' })
     }
 
@@ -576,7 +578,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         gift_cards_vendidas: gift_cards_a_activar.map(gc => ({
           codigo: gc.codigo.trim(), monto_nominal: gc.monto, comprador: gc.comprador_nombre || null,
         })),
-        centum_sync: true, // No enviar a Centum
+        centum_sync: false, // Gift cards SÍ se sincronizan a Centum como concepto
         condicion_iva: condicion_iva || null,
         ticket_uid: ticket_uid || null,
       }
@@ -623,6 +625,11 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
       if (created_at_offline) insertData.created_at = created_at_offline
+      // GC aplicada como pago: guardar monto para forzar B PRUEBA + NC concepto en Centum
+      if (gift_cards_aplicadas && Array.isArray(gift_cards_aplicadas) && gift_cards_aplicadas.length > 0) {
+        const totalGCMonto = gift_cards_aplicadas.reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
+        if (totalGCMonto > 0) insertData.gc_aplicada_monto = totalGCMonto
+      }
 
       const { data: ventaData, error } = await supabase
         .from('ventas_pos')
@@ -4672,7 +4679,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
       .single()
 
     if (error || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
-    if (venta.centum_sync) return res.status(400).json({ error: 'Esta venta ya fue sincronizada con Centum' })
+    if (venta.centum_sync && venta.centum_comprobante) return res.status(400).json({ error: 'Esta venta ya fue sincronizada con Centum' })
 
     // Buscar config de caja/sucursal
     let puntoVenta, sucursalFisicaId, centumOperadorEmpresa, centumOperadorPrueba
@@ -4759,7 +4766,12 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
     const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
     const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-    const idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+    let idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+
+    // GC aplicada como pago → forzar B PRUEBA (división 2)
+    if (parseFloat(venta.gc_aplicada_monto) > 0) {
+      idDivisionEmpresa = 2
+    }
 
     // Obtener operador móvil según división
     const operadorMovilUser = idDivisionEmpresa === 2
@@ -4803,6 +4815,19 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
 
     let resultado
     if (venta.tipo === 'nota_credito') {
+      // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+      if (venta.nc_concepto_tipo === 'gift_card') {
+        const comprobanteRef = venta.centum_comprobante || null
+        const idClienteNC = venta.id_cliente_centum || 2
+        const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+        resultado = await crearNotaCreditoConceptoPOS({
+          idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
+          total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+          descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
+          operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
+          concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+        })
+      } else {
       // NC: enviar con valores positivos (abs), Centum maneja el signo por tipo comprobante
       const itemsPositivos = items.map(it => ({
         ...it,
@@ -4883,6 +4908,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           operadorMovilUser: operadorNC,
           comprobanteOriginal,
         })
+      }
       }
     } else {
       resultado = await crearVentaPOS({

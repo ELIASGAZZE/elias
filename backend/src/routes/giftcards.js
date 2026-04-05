@@ -63,7 +63,7 @@ router.post('/activar', verificarAuth, validate(activarGiftCardSchema), asyncHan
       items: JSON.stringify([{ nombre: `Gift Card ${codigo.trim()}`, cantidad: 1, precio_unitario: monto, precio_final: monto, es_gift_card: true }]),
       pagos: pagos || [],
       gift_cards_vendidas: [{ codigo: codigo.trim(), monto_nominal: monto, comprador: comprador_nombre || null }],
-      centum_sync: true, // Gift cards no se sincronizan a Centum
+      centum_sync: false, // Gift cards SÍ se sincronizan a Centum como concepto
     }
 
     const { data: venta, error: ventaErr } = await supabase
