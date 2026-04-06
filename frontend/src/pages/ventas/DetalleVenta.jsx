@@ -112,8 +112,9 @@ const DetalleVenta = () => {
 
   // Calcular redondeo de efectivo (centenas)
   const saldoAplicadoNum = parseFloat(venta.saldo_aplicado) || 0
+  const gcAplicadaMonto = parseFloat(venta.gc_aplicada_monto) || 0
   const totalEsperado = Math.round(
-    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0) - saldoAplicadoNum) * 100
+    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0) - saldoAplicadoNum - gcAplicadaMonto) * 100
   ) / 100
   const redondeoEfectivo = Math.round((parseFloat(venta.total) - totalEsperado) * 100) / 100
 
@@ -154,7 +155,7 @@ const DetalleVenta = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar sinTabs titulo={`Detalle Venta #${venta.numero_venta || venta.id}`} onVolver={handleVolver} />
+      <Navbar sinTabs titulo={`Detalle Venta #${venta.numero_venta || venta.id}${venta.centum_comprobante ? ` — ${venta.centum_comprobante}` : venta.centum_error ? ' — ⚠ Error Centum' : ' — Sin Centum'}${venta.clasificacion === 'EMPRESA' ? (venta.numero_cae ? ` — CAE: ${venta.numero_cae}` : ' — ⚠ Sin CAE') : ''}`} onVolver={handleVolver} />
 
       <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
 
@@ -221,20 +222,42 @@ const DetalleVenta = () => {
               </>
             )}
 
-            {venta.centum_comprobante && (
-              <>
-                <span className="text-gray-500">Centum</span>
-                <span className="text-green-600 font-medium">
-                  {venta.centum_comprobante}
+            <span className="text-gray-500">División</span>
+            {(() => {
+              const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+              const pagosList = venta.pagos || []
+              const soloEfectivo = pagosList.length === 0 || pagosList.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+              const condIva = venta.condicion_iva || 'CF'
+              const esFactA = condIva === 'RI' || condIva === 'MT'
+              const esPrueba = !esFactA && soloEfectivo
+              return (
+                <span className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
+                  esPrueba ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
+                }`}>
+                  {esPrueba ? 'PRUEBA' : 'EMPRESA'}
                 </span>
-              </>
+              )
+            })()}
+
+            <span className="text-gray-500">Centum</span>
+            {venta.centum_comprobante ? (
+              <span className="text-green-600 font-medium">{venta.centum_comprobante}</span>
+            ) : venta.centum_error ? (
+              <span className="text-red-600 font-medium text-sm">Error: {venta.centum_error}</span>
+            ) : (
+              <span className="text-orange-500 font-medium text-sm">
+                Sin enviar{venta.centum_intentos > 0 ? ` (${venta.centum_intentos} intento${venta.centum_intentos > 1 ? 's' : ''}${venta.centum_ultimo_intento ? `, último: ${formatFechaHora(venta.centum_ultimo_intento)}` : ''})` : ' — 0 intentos'}
+              </span>
             )}
-            {!venta.centum_sync && venta.centum_error && (
+
+            {venta.clasificacion === 'EMPRESA' && (
               <>
-                <span className="text-gray-500">Centum</span>
-                <span className="text-red-600 font-medium text-sm">
-                  Error: {venta.centum_error}
-                </span>
+                <span className="text-gray-500">CAE</span>
+                {venta.numero_cae ? (
+                  <span className="text-green-600 font-medium">{venta.numero_cae}</span>
+                ) : (
+                  <span className="text-orange-500 font-medium text-sm">Sin CAE</span>
+                )}
               </>
             )}
           </div>
@@ -281,7 +304,7 @@ const DetalleVenta = () => {
           )}
 
           {/* Botón reintentar Centum */}
-          {esAdmin && !venta.centum_sync && !venta.centum_comprobante && (
+          {esAdmin && !venta.centum_comprobante && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
               <button
                 onClick={reenviarCentum}
@@ -294,27 +317,6 @@ const DetalleVenta = () => {
                 <p className={`text-xs mt-2 ${reenvioMsg.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
                   {reenvioMsg}
                 </p>
-              )}
-              {esAdmin && (
-                <button
-                  onClick={async () => {
-                    if (!confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) return
-                    setEliminando(true)
-                    try {
-                      await api.delete(`/api/pos/ventas/${id}`)
-                      alert('Venta eliminada')
-                      navigate('/ventas')
-                    } catch (err) {
-                      alert('Error: ' + (err.response?.data?.error || err.message))
-                    } finally {
-                      setEliminando(false)
-                    }
-                  }}
-                  disabled={eliminando}
-                  className="w-full text-sm font-medium py-2 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 transition-colors"
-                >
-                  {eliminando ? 'Eliminando...' : 'Eliminar venta'}
-                </button>
               )}
             </div>
           )}
@@ -525,8 +527,8 @@ const DetalleVenta = () => {
           <div className="bg-gray-50 rounded-xl border border-gray-300 p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-gray-600 uppercase">Gift Cards ({giftCardsVendidas.length})</h2>
-              <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-medium border border-gray-300">
-                No se envía a Centum
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200">
+                Concepto en Centum
               </span>
             </div>
             <div className="divide-y divide-gray-200">
@@ -685,6 +687,12 @@ const DetalleVenta = () => {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+            {gcAplicadaMonto > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Gift Card aplicada</span>
+                <span className="text-green-600">-{formatPrecio(gcAplicadaMonto)}</span>
               </div>
             )}
             {redondeoEfectivo !== 0 && (
