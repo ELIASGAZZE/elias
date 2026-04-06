@@ -469,6 +469,9 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
     // === IDEMPOTENCIA: prevenir ventas duplicadas por doble-submit ===
+    if (!ticket_uid) {
+      logger.warn(`[POS] Venta SIN ticket_uid — sin protección anti-duplicado. Cliente: ${nombre_cliente}, Total: ${total}, Cajero: ${req.perfil?.id}`)
+    }
     if (ticket_uid) {
       // Capa 1: lock en memoria — bloquea requests concurrentes con mismo ticket_uid
       if (ventaTicketLock.has(ticket_uid)) {

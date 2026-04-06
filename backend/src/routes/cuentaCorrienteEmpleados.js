@@ -9,6 +9,9 @@ const { validate } = require('../middleware/validate')
 const { guardarDescuentosSchema, actualizarTopeSchema, registrarVentaSchema, registrarPagoSchema } = require('../schemas/cuentaEmpleados')
 const asyncHandler = require('../middleware/asyncHandler')
 
+// Lock en memoria para prevenir requests concurrentes con mismo nonce
+const ventaEmpleadoNonceLock = new Set()
+
 // ─── RUBROS DISPONIBLES (desde artículos) ──────────────────────────────────────
 
 // GET /api/cuenta-empleados/rubros — lista rubros distintos de los artículos
@@ -138,10 +141,19 @@ router.put('/topes/:empleadoId', verificarAuth, soloAdmin, validate(actualizarTo
 
 // POST /api/cuenta-empleados/ventas — registrar venta a cta cte
 router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandler(async (req, res) => {
-  try {
-    const { codigo_empleado, items, total, sucursal_id, caja_id, nonce } = req.body
+  const { codigo_empleado, items, total, sucursal_id, caja_id, nonce } = req.body
 
-    // Si viene nonce, verificar que no exista ya (previene duplicados por retry)
+  // ── CAPA 1: Lock en memoria (previene requests concurrentes con mismo nonce) ──
+  if (nonce) {
+    if (ventaEmpleadoNonceLock.has(nonce)) {
+      logger.warn(`[CuentaEmpleados] Venta duplicada bloqueada (lock) — nonce ${nonce} ya se está procesando`)
+      return res.status(409).json({ error: 'Esta venta ya se está procesando', duplicado: true })
+    }
+    ventaEmpleadoNonceLock.add(nonce)
+  }
+
+  try {
+    // ── CAPA 2: Check en DB por nonce (previene duplicados por retry) ──
     if (nonce) {
       const { data: existente } = await supabase
         .from('ventas_empleados')
@@ -149,12 +161,12 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
         .eq('nonce', nonce)
         .maybeSingle()
       if (existente) {
-        // Ya se procesó este request — devolver la venta existente sin insertar
         const { data: ventaExistente } = await supabase
           .from('ventas_empleados')
           .select('*')
           .eq('id', existente.id)
           .single()
+        logger.warn(`[CuentaEmpleados] Venta duplicada bloqueada (DB) — nonce ${nonce} ya existe como venta #${existente.id}`)
         return res.json({ ...ventaExistente, duplicado: true })
       }
     }
@@ -173,6 +185,27 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Debe haber al menos un artículo' })
+    }
+
+    // ── CAPA 3: Safety net por ventana temporal (mismo empleado + monto en 2 min) ──
+    {
+      const hace2min = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+      const { data: ventaReciente } = await supabase
+        .from('ventas_empleados')
+        .select('id, created_at, total')
+        .eq('empleado_id', empleado.id)
+        .eq('total', total)
+        .gte('created_at', hace2min)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (ventaReciente) {
+        logger.warn(`[CuentaEmpleados] Venta duplicada bloqueada (ventana temporal) — empleado ${empleado.id}, total ${total}, venta reciente #${ventaReciente.id} de ${ventaReciente.created_at}`)
+        return res.status(409).json({
+          error: 'Se detectó una venta idéntica registrada hace menos de 2 minutos. Si querés registrar otra, esperá un momento.',
+          duplicado: true,
+        })
+      }
     }
 
     // Validar tope mensual
@@ -215,6 +248,7 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
         empleado_id: empleado.id,
         sucursal_id: sucursalDeCaja,
         cajero_id: req.perfil.id,
+        caja_id: caja_id || null,
         items,
         total,
         ...(nonce ? { nonce } : {}),
@@ -360,6 +394,8 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
   } catch (err) {
     logger.error('Error al crear venta empleado:', err)
     res.status(500).json({ error: err.message })
+  } finally {
+    if (nonce) ventaEmpleadoNonceLock.delete(nonce)
   }
 }))
 
@@ -453,8 +489,38 @@ router.get('/:empleadoId/movimientos', verificarAuth, soloGestorOAdmin, asyncHan
     if (ventasRes.error) throw ventasRes.error
     if (pagosRes.error) throw pagosRes.error
 
+    // Para cada venta con caja_id, buscar qué empleado tenía la caja abierta en ese momento
+    const ventas = ventasRes.data || []
+    const ventasConCajasIds = ventas.filter(v => v.caja_id).map(v => v.caja_id)
+
+    if (ventasConCajasIds.length > 0) {
+      // Buscar cierres que estaban abiertos para esas cajas
+      const uniqueCajaIds = [...new Set(ventasConCajasIds)]
+      const { data: cierres } = await supabase
+        .from('cierres_pos')
+        .select('id, caja_id, empleado_id, apertura_at, cierre_at, empleado:empleados!empleado_id(id, nombre)')
+        .in('caja_id', uniqueCajaIds)
+        .order('apertura_at', { ascending: false })
+
+      if (cierres && cierres.length > 0) {
+        for (const venta of ventas) {
+          if (!venta.caja_id) continue
+          // Buscar el cierre que estaba abierto cuando se hizo la venta
+          const ventaFecha = new Date(venta.created_at)
+          const cierreActivo = cierres.find(c =>
+            c.caja_id === venta.caja_id &&
+            new Date(c.apertura_at) <= ventaFecha &&
+            (!c.cierre_at || new Date(c.cierre_at) >= ventaFecha)
+          )
+          if (cierreActivo?.empleado) {
+            venta.empleado_caja = cierreActivo.empleado
+          }
+        }
+      }
+    }
+
     res.json({
-      ventas: ventasRes.data || [],
+      ventas,
       pagos: pagosRes.data || [],
     })
   } catch (err) {

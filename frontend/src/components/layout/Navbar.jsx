@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { getTabsParaRol } from './navTabs'
 import api from '../../services/api'
+import NotificacionesBell from './NotificacionesBell'
 
 const Navbar = ({ titulo, sinTabs, volverA, onVolver }) => {
   const { usuario, logout, esAdmin } = useAuth()
@@ -81,6 +82,8 @@ const Navbar = ({ titulo, sinTabs, volverA, onVolver }) => {
               {esAdmin ? 'Administrador' : usuario?.rol === 'gestor' ? 'Gestor' : 'Operario'}
             </p>
           </div>
+
+          {esAdmin && <NotificacionesBell />}
 
           <button
             onClick={handleLogout}

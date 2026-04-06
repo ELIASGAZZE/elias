@@ -586,7 +586,7 @@ const TabCuentaCorriente = () => {
                         </p>
                         <p className="text-xs text-gray-400">
                           {formatFechaHora(mov._fecha)}
-                          {mov._tipo === 'venta' && mov.cajero && ` · Cajero: ${mov.cajero.nombre || mov.cajero.username}`}
+                          {mov._tipo === 'venta' && (mov.empleado_caja || mov.cajero) && ` · Cajero: ${mov.empleado_caja?.nombre || mov.cajero?.nombre || mov.cajero?.username}`}
                           {mov._tipo === 'pago' && mov.concepto && ` · ${mov.concepto}`}
                           {mov._tipo === 'pago' && mov.registrado && ` · Por: ${mov.registrado.nombre || mov.registrado.username}`}
                         </p>

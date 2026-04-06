@@ -3,7 +3,7 @@
 // Si falla, graba el error y no las vuelve a tocar
 
 const supabase = require('../config/supabase')
-const { crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS } = require('./centumVentasPOS')
+const { crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, fetchAndSaveCAE } = require('./centumVentasPOS')
 const logger = require('../config/logger')
 
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
@@ -207,6 +207,7 @@ async function retrySyncVentasPOS() {
         .eq('id', venta.id)
 
       logger.info(`[RetrySyncVentasPOS] ✓ Venta ${venta.id} (POS #${venta.numero_venta}) enviada: ${comprobante}`)
+      if (resultado.IdVenta) fetchAndSaveCAE(venta.id, resultado.IdVenta)
       exitosas++
 
     } catch (err) {

@@ -150,6 +150,9 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
   }
 
   const submittingRef = useRef(false)
+  // Nonce generado UNA VEZ al montar el modal — persiste entre reintentos
+  // para que el backend detecte duplicados si el request se reintenta
+  const nonceRef = useRef(crypto.randomUUID())
 
   const confirmarVenta = async () => {
     if (submittingRef.current) return
@@ -173,8 +176,7 @@ const ModalVentaEmpleado = ({ mode, carrito, empleadoActivo, descuentosEmpleado,
     submittingRef.current = true
     setGuardando(true)
     try {
-      // Generar nonce único para evitar duplicados por retry del interceptor 401
-      const nonce = crypto.randomUUID()
+      const nonce = nonceRef.current
       const { data } = await api.post('/api/cuenta-empleados/ventas', {
         codigo_empleado: empleadoActivo.codigo,
         items: itemsResumen,

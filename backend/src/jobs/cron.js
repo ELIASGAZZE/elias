@@ -7,6 +7,7 @@ const { syncClientesRecientes, retrySyncCentum, syncClientesFaltantes } = requir
 const { retrySyncVentasCentum, retrySyncCAE, retryEmailsPendientes } = require('../services/centumVentasPOS')
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
+const { detectarVentasDuplicadas } = require('../services/detectarDuplicados')
 
 // Lock simple para evitar ejecución paralela de crons en múltiples instancias
 const cronLocks = {}
@@ -269,6 +270,21 @@ async function iniciarCronJobs() {
   logger.info('[CRON] Stock multi-sucursal: cada 30 minutos')
   logger.info('[CRON] Presencia imágenes: 06:10 UTC diariamente')
   logger.info('[CRON] Análisis batch IA: 08:00 UTC (05:00 Argentina) diariamente')
+
+  // Detección de ventas duplicadas: todos los días a las 09:00 UTC (06:00 Argentina)
+  cron.schedule('0 9 * * *', async () => {
+    await withLock('detectarDuplicados', async () => {
+      try {
+        const resultado = await detectarVentasDuplicadas()
+        if (resultado.sospechosas > 0) {
+          logger.warn(`[DetectarDuplicados] ${resultado.sospechosas} ventas sospechosas encontradas`)
+        }
+      } catch (err) {
+        logger.error('[DetectarDuplicados] Error:', err.message)
+      }
+    })
+  })
+  logger.info('[CRON] Detección duplicados: 09:00 UTC (06:00 Argentina) diariamente')
 }
 
 module.exports = { iniciarCronJobs }
