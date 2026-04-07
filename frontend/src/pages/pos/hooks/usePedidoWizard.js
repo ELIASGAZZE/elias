@@ -305,11 +305,12 @@ export function usePedidoWizard({
         try {
           const { data: linkData } = await api.post(`/api/pos/pedidos/${pedidoId}/link-pago`)
           if (linkData.link) {
+            const textoCompleto = `Importante!! por favor transferir al cbu que figura en el link y el importe del link para que su pago se regitre de forma correcta. Si usted realiza la transferencia a un cbu viejo el pago no impactara.\n${linkData.link}`
             try {
-              await navigator.clipboard.writeText(linkData.link)
+              await navigator.clipboard.writeText(textoCompleto)
             } catch {
               const ta = document.createElement('textarea')
-              ta.value = linkData.link
+              ta.value = textoCompleto
               ta.style.position = 'fixed'
               ta.style.opacity = '0'
               document.body.appendChild(ta)

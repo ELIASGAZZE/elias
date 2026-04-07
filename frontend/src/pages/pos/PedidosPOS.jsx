@@ -199,11 +199,12 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     try {
       const { data } = await api.post(`/api/pos/pedidos/${pedidoId}/link-pago`)
       if (data.link) {
+        const textoCompleto = `Importante!! por favor transferir al cbu que figura en el link y el importe del link para que su pago se regitre de forma correcta. Si usted realiza la transferencia a un cbu viejo el pago no impactara.\n${data.link}`
         try {
-          await navigator.clipboard.writeText(data.link)
+          await navigator.clipboard.writeText(textoCompleto)
         } catch {
           const ta = document.createElement('textarea')
-          ta.value = data.link
+          ta.value = textoCompleto
           ta.style.position = 'fixed'
           ta.style.opacity = '0'
           document.body.appendChild(ta)
