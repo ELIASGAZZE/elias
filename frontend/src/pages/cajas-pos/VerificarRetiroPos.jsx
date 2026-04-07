@@ -1,5 +1,5 @@
 // Verificacion ciega de un retiro POS — gestor cuenta sin ver montos del cajero
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
@@ -14,6 +14,7 @@ const VerificarRetiroPos = () => {
   const [retiro, setRetiro] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
+  const submittingRef = useRef(false)
   const [error, setError] = useState('')
 
   const [denomBilletes, setDenomBilletes] = useState([])
@@ -58,6 +59,8 @@ const VerificarRetiroPos = () => {
   const totalVerificacion = totalBilletes + totalMonedas
 
   const enviarVerificacion = async () => {
+    if (submittingRef.current) return
+    submittingRef.current = true
     setEnviando(true)
     setError('')
     try {
@@ -73,6 +76,7 @@ const VerificarRetiroPos = () => {
       navigate(`/cajas-pos/cierre/${cierreId}`)
     } catch (err) {
       setError(err.response?.data?.error || 'Error al enviar verificacion')
+      submittingRef.current = false
     } finally {
       setEnviando(false)
     }

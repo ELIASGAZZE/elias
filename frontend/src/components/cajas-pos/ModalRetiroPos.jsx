@@ -1,5 +1,5 @@
 // Modal para crear un retiro de alivio de efectivo (POS)
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import ContadorDenominacion from '../cajas/ContadorDenominacion'
 import api from '../../services/api'
 import { imprimirRetiro } from '../../utils/imprimirComprobante'
@@ -16,6 +16,7 @@ const ModalRetiroPos = ({ cierreId, cierre, onClose, onRetiroCreado }) => {
   const [errorEmpleado, setErrorEmpleado] = useState('')
   const [validandoEmpleado, setValidandoEmpleado] = useState(false)
   const [enviando, setEnviando] = useState(false)
+  const submittingRef = useRef(false)
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(true)
 
@@ -61,6 +62,7 @@ const ModalRetiroPos = ({ cierreId, cierre, onClose, onRetiroCreado }) => {
   }
 
   const confirmarRetiro = async () => {
+    if (submittingRef.current) return
     if (!empleadoResuelto) {
       setError('Ingresa un codigo de empleado valido')
       return
@@ -69,6 +71,7 @@ const ModalRetiroPos = ({ cierreId, cierre, onClose, onRetiroCreado }) => {
       setError('El retiro debe tener un monto mayor a $0')
       return
     }
+    submittingRef.current = true
     setEnviando(true)
     setError('')
     try {
@@ -93,6 +96,7 @@ const ModalRetiroPos = ({ cierreId, cierre, onClose, onRetiroCreado }) => {
       onClose()
     } catch (err) {
       setError(err.response?.data?.error || 'Error al crear retiro')
+      submittingRef.current = false
     } finally {
       setEnviando(false)
     }

@@ -10,6 +10,9 @@ const asyncHandler = require('../middleware/asyncHandler')
 
 const SELECT_RETIRO = '*, empleado:empleados!empleado_id(id, nombre, codigo)'
 
+// Lock en memoria para evitar retiros duplicados por doble-click
+const retirosEnProceso = new Set()
+
 // POST /api/cierres-pos/:cierreId/retiros — crear retiro
 router.post('/cierres-pos/:cierreId/retiros', verificarAuth, validate(crearRetiroSchema), asyncHandler(async (req, res) => {
   try {
@@ -18,6 +21,13 @@ router.post('/cierres-pos/:cierreId/retiros', verificarAuth, validate(crearRetir
       return res.status(403).json({ error: 'Los gestores no pueden crear retiros' })
     }
 
+    // Anti-duplicado: lock por cierre + cajero
+    const lockKey = `${req.params.cierreId}_${req.perfil.id}`
+    if (retirosEnProceso.has(lockKey)) {
+      return res.status(409).json({ error: 'Ya hay un retiro en proceso para esta caja' })
+    }
+    retirosEnProceso.add(lockKey)
+
     const { data: cierre, error: errorCierre } = await supabase
       .from('cierres_pos')
       .select('id, cajero_id, estado, caja_id')
@@ -25,14 +35,17 @@ router.post('/cierres-pos/:cierreId/retiros', verificarAuth, validate(crearRetir
       .single()
 
     if (errorCierre || !cierre) {
+      retirosEnProceso.delete(lockKey)
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
     if (cierre.estado !== 'abierta') {
+      retirosEnProceso.delete(lockKey)
       return res.status(400).json({ error: 'Solo se pueden crear retiros con la caja abierta' })
     }
 
     if (rol === 'operario' && cierre.cajero_id !== req.perfil.id) {
+      retirosEnProceso.delete(lockKey)
       return res.status(403).json({ error: 'Solo podés crear retiros en tu propia caja' })
     }
 
@@ -83,14 +96,17 @@ router.post('/cierres-pos/:cierreId/retiros', verificarAuth, validate(crearRetir
       .single()
 
     if (error) {
+      retirosEnProceso.delete(lockKey)
       if (error.code === '23505') {
         return res.status(409).json({ error: 'Ya existe un retiro con ese número' })
       }
       throw error
     }
 
+    retirosEnProceso.delete(lockKey)
     res.status(201).json(data)
   } catch (err) {
+    retirosEnProceso.delete(lockKey)
     logger.error('Error al crear retiro:', err)
     res.status(500).json({ error: 'Error al crear retiro' })
   }

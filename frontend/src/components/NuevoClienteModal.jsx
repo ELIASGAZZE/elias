@@ -25,6 +25,8 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
   const [error, setError] = useState(null)
   const [consultandoAfip, setConsultandoAfip] = useState(false)
   const [datosAfip, setDatosAfip] = useState(null)
+  const [duplicadosCuit, setDuplicadosCuit] = useState([])
+  const [confirmarDuplicado, setConfirmarDuplicado] = useState(false)
 
   // Focus en input al abrir
   useEffect(() => {
@@ -188,6 +190,23 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
     const condicionFinal = (!esCuit && (form.condicion_iva === 'RI' || form.condicion_iva === 'MT'))
       ? 'CF'
       : form.condicion_iva
+
+    // Verificar CUIT duplicado antes de crear (si no se confirmó ya)
+    if (!confirmarDuplicado) {
+      try {
+        const { data: check } = await api.get('/api/clientes', {
+          params: { buscar: form.cuit.replace(/\D/g, ''), solo_dni: 'true', limit: 5 }
+        })
+        const existentes = (check.clientes || []).filter(c => {
+          const cuitNorm = (c.cuit || '').replace(/\D/g, '')
+          return cuitNorm === form.cuit.replace(/\D/g, '')
+        })
+        if (existentes.length > 0) {
+          setDuplicadosCuit(existentes)
+          return // No continuar - mostrar warning
+        }
+      } catch (_) { /* Si falla la verificación, continuar */ }
+    }
 
     setGuardando(true)
     setError(null)
@@ -457,8 +476,38 @@ const NuevoClienteModal = ({ onClose, onCreado, cuitInicial }) => {
           )}
         </div>
 
+        {/* Warning de CUIT duplicado */}
+        {duplicadosCuit.length > 0 && (
+          <div className="px-4 py-3 bg-amber-50 border-t border-amber-200">
+            <p className="text-sm font-medium text-amber-800 mb-2">Ya existen clientes con este CUIT:</p>
+            <div className="space-y-1 mb-3">
+              {duplicadosCuit.map(c => (
+                <div key={c.id} className="text-xs bg-white rounded px-2 py-1.5 border border-amber-200">
+                  <span className="font-medium">{c.razon_social}</span>
+                  <span className="text-gray-400 ml-1">({c.codigo})</span>
+                  {c.condicion_iva && <span className="text-gray-400 ml-1">{c.condicion_iva}</span>}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setDuplicadosCuit([]); onCreado?.(duplicadosCuit[0]); onClose() }}
+                className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-700"
+              >
+                Usar existente
+              </button>
+              <button
+                onClick={() => { setConfirmarDuplicado(true); setDuplicadosCuit([]) }}
+                className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700"
+              >
+                Crear de todas formas
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Footer - solo en paso 2 */}
-        {paso === 2 && (
+        {paso === 2 && duplicadosCuit.length === 0 && (
           <div className="flex gap-3 p-4 border-t border-gray-100">
             <button
               onClick={onClose}

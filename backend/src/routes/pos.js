@@ -1061,7 +1061,9 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       if (origenes) origenes.forEach(o => { origenesMap[o.id] = o })
     }
     ventas = ventas.map(v => {
-      // Prioridad: condicion_iva guardada en la venta > fallback CF
+      // Si ya tiene clasificacion guardada de Centum, usarla directamente
+      if (v.clasificacion) return v
+      // Fallback: calcular para ventas no sincronizadas
       let condIva = v.condicion_iva || 'CF'
       let pagosClasif = Array.isArray(v.pagos) ? v.pagos : []
       // NCs: usar condicion_iva y pagos de la venta original
@@ -3426,6 +3428,7 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
                     centum_comprobante: comprobante,
                     centum_sync: true,
                     numero_cae: centumNC.CAE || null,
+                    clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
                   }).eq('id', nc.id)
 
                   logger.info(`[POS] NC Centum por reversión pedido #${pedido.numero}: ${comprobante}`)
@@ -4109,6 +4112,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
           centum_comprobante: comprobante,
           centum_sync: true,
           numero_cae: centumNC.CAE || null,
+          clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
         }).eq('id', notaCredito.id)
 
         logger.info(`[POS] NC Centum creada para devolución: ${comprobante}`)
@@ -4169,6 +4173,18 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
     const pagosOriginal = (() => { try { return typeof venta.pagos === 'string' ? JSON.parse(venta.pagos) : (venta.pagos || []) } catch { return [] } })()
     const promosOriginal = (() => { try { return venta.promociones_aplicadas ? (typeof venta.promociones_aplicadas === 'string' ? JSON.parse(venta.promociones_aplicadas) : venta.promociones_aplicadas) : null } catch { return null } })()
 
+    // Obtener condicion_iva de ambos clientes para clasificación correcta
+    let condicionIvaOrig = venta.condicion_iva || 'CF'
+    if (!venta.condicion_iva && venta.id_cliente_centum) {
+      const { data: cliOrig } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', venta.id_cliente_centum).single()
+      condicionIvaOrig = cliOrig?.condicion_iva || 'CF'
+    }
+    let condicionIvaNuevo = 'CF'
+    if (id_cliente_centum) {
+      const { data: cliNuevo } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', id_cliente_centum).single()
+      condicionIvaNuevo = cliNuevo?.condicion_iva || 'CF'
+    }
+
     // 1. Crear nota de crédito (anula la venta original)
     const { data: notaCredito, error: ncErr } = await supabase
       .from('ventas_pos')
@@ -4187,6 +4203,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
         pagos: [],
         tipo: 'nota_credito',
         venta_origen_id: venta_id,
+        condicion_iva: condicionIvaOrig,
       })
       .select()
       .single()
@@ -4202,6 +4219,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
         caja_id: caja_id || venta.caja_id || null,
         id_cliente_centum,
         nombre_cliente,
+        condicion_iva: condicionIvaNuevo,
         subtotal: parseFloat(venta.subtotal) || 0,
         descuento_total: parseFloat(venta.descuento_total) || 0,
         total: parseFloat(venta.total) || 0,
@@ -4253,13 +4271,6 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
       if (pvOriginal && sucursalFisicaId) {
         // 1. NC al cliente original
         try {
-          let condicionIvaOrig = 'CF'
-          if (venta.id_cliente_centum) {
-            const { data: cli } = await supabase
-              .from('clientes').select('condicion_iva')
-              .eq('id_centum', venta.id_cliente_centum).single()
-            condicionIvaOrig = cli?.condicion_iva || 'CF'
-          }
           const esFacturaAOrig = condicionIvaOrig === 'RI' || condicionIvaOrig === 'MT'
           const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
           const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
@@ -4295,6 +4306,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             numero_cae: centumNC.CAE || null,
             centum_intentos: 1,
             centum_ultimo_intento: new Date().toISOString(),
+            clasificacion: idDivOrig === 3 ? 'EMPRESA' : 'PRUEBA',
           }).eq('id', notaCredito.id)
           centumNCOk = true
           logger.info(`[POS] NC Centum corrección cliente: ${comprobanteNC}`)
@@ -4316,13 +4328,6 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             centum_ultimo_intento: new Date().toISOString(),
           }).eq('id', nuevaVenta.id)
 
-          let condicionIvaNuevo = 'CF'
-          if (id_cliente_centum) {
-            const { data: cli } = await supabase
-              .from('clientes').select('condicion_iva')
-              .eq('id_centum', id_cliente_centum).single()
-            condicionIvaNuevo = cli?.condicion_iva || 'CF'
-          }
           const esFacturaANuevo = condicionIvaNuevo === 'RI' || condicionIvaNuevo === 'MT'
           const tiposEfectivo2 = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
           const soloEfectivoNuevo = pagosOriginal.length === 0 || pagosOriginal.every(p => tiposEfectivo2.includes((p.tipo || '').toLowerCase()))
@@ -4355,6 +4360,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             centum_sync: true,
             centum_error: null,
             numero_cae: centumFCV.CAE || null,
+            clasificacion: idDivNuevo === 3 ? 'EMPRESA' : 'PRUEBA',
           }).eq('id', nuevaVenta.id)
           centumFCVOk = true
           logger.info(`[POS] FCV Centum corrección cliente: ${comprobanteFCV}`)
@@ -4552,6 +4558,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
           centum_comprobante: comprobante,
           centum_sync: true,
           numero_cae: centumNC.CAE || null,
+          clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
         }).eq('id', notaCredito.id)
 
         logger.info(`[POS] NC Concepto Centum creada para dif. precio: ${comprobante}`)

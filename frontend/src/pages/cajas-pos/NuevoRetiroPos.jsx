@@ -1,5 +1,5 @@
 // Nuevo retiro de efectivo POS — solo billetes + monedas + empleado + observaciones
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import Navbar from '../../components/layout/Navbar'
 import ContadorDenominacion from '../../components/cajas/ContadorDenominacion'
@@ -24,6 +24,7 @@ const NuevoRetiroPos = () => {
   const [cierre, setCierre] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [enviando, setEnviando] = useState(false)
+  const submittingRef = useRef(false)
   const [error, setError] = useState('')
 
   const [denomBilletes, setDenomBilletes] = useState([])
@@ -99,6 +100,7 @@ const NuevoRetiroPos = () => {
   }
 
   const confirmarRetiro = async () => {
+    if (submittingRef.current) return
     if (!empleadoResuelto) {
       setError('Ingresa un codigo de empleado valido')
       return
@@ -107,6 +109,7 @@ const NuevoRetiroPos = () => {
       setError('El retiro debe tener un monto mayor a $0')
       return
     }
+    submittingRef.current = true
     setEnviando(true)
     setError('')
     try {
@@ -136,6 +139,7 @@ const NuevoRetiroPos = () => {
       navigate(`/cajas-pos/cierre/${id}`)
     } catch (err) {
       setError(err.response?.data?.error || 'Error al crear retiro')
+      submittingRef.current = false
     } finally {
       setEnviando(false)
     }

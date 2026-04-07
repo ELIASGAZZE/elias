@@ -2712,16 +2712,41 @@ const POS = () => {
                   )}
                   {(clientesCentum.length > 0 || (busquedaCliente.trim().length >= 2 && !buscandoClientes)) && (
                     <div className="absolute z-20 w-full bg-white border rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
-                      {clientesCentum.map((cli, idx) => (
-                        <button
-                          key={cli.id || cli.id_centum}
-                          onClick={() => { seleccionarCliente(cli); setClienteIdx(-1) }}
-                          className={`w-full text-left px-2 py-1.5 text-xs border-b last:border-b-0 ${idx === clienteIdx ? 'bg-violet-100' : 'hover:bg-violet-50'}`}
-                        >
-                          <span className="font-medium">{cli.razon_social}</span>
-                          {cli.cuit && <span className="text-gray-500 ml-1">CUIT: {cli.cuit}</span>}
-                        </button>
-                      ))}
+                      {(() => {
+                        // Detectar CUITs duplicados en los resultados
+                        const cuitCount = {}
+                        clientesCentum.forEach(c => {
+                          const cuit = (c.cuit || '').replace(/\D/g, '')
+                          if (cuit.length >= 7) cuitCount[cuit] = (cuitCount[cuit] || 0) + 1
+                        })
+                        return clientesCentum.map((cli, idx) => {
+                          const cuitNorm = (cli.cuit || '').replace(/\D/g, '')
+                          const esDuplicado = cuitNorm.length >= 7 && cuitCount[cuitNorm] > 1
+                          return (
+                            <button
+                              key={cli.id || cli.id_centum}
+                              onClick={() => { seleccionarCliente(cli); setClienteIdx(-1) }}
+                              className={`w-full text-left px-2 py-1.5 text-xs border-b last:border-b-0 ${esDuplicado ? 'bg-amber-50 border-l-2 border-l-amber-400' : ''} ${idx === clienteIdx ? 'bg-violet-100' : 'hover:bg-violet-50'}`}
+                            >
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium">{cli.razon_social}</span>
+                                {cli.codigo && <span className="text-gray-400 text-[10px]">({cli.codigo})</span>}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {cli.cuit && <span className="text-gray-500">CUIT: {cli.cuit}</span>}
+                                {cli.condicion_iva && cli.condicion_iva !== 'CF' && (
+                                  <span className={`text-[10px] px-1 rounded ${cli.condicion_iva === 'RI' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                                    {cli.condicion_iva}
+                                  </span>
+                                )}
+                                {esDuplicado && (
+                                  <span className="text-[10px] px-1 rounded bg-amber-200 text-amber-800 font-medium">CUIT duplicado</span>
+                                )}
+                              </div>
+                            </button>
+                          )
+                        })
+                      })()}
                       <button
                         onClick={() => { setMostrarCrearClienteCaja(true); setClientesCentum([]); setClienteIdx(-1) }}
                         className={`w-full text-left px-2 py-2 text-xs border-t border-dashed border-gray-300 text-violet-600 font-medium flex items-center gap-1.5 ${clienteIdx === clientesCentum.length ? 'bg-violet-100' : 'hover:bg-violet-50'}`}
@@ -3488,24 +3513,41 @@ const POS = () => {
             )}
             {!buscandoDniCliente && clientesDni.length > 0 && (
               <div className="space-y-1 max-h-60 overflow-y-auto">
-                {clientesDni.map(c => (
-                  <button
-                    key={c.id || c.id_centum}
-                    onClick={() => seleccionarClienteDni(c)}
-                    className="w-full text-left p-3 rounded-lg border transition-colors border-gray-100 hover:border-green-300 hover:bg-green-50/50"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-800 truncate">{c.razon_social}</span>
-                      {!c.id_centum && (
-                        <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">Sin Centum</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      {c.cuit && <span>{c.cuit}</span>}
-                      {c.condicion_iva && <span> · {c.condicion_iva}</span>}
-                    </div>
-                  </button>
-                ))}
+                {(() => {
+                  const cuitCount = {}
+                  clientesDni.forEach(c => {
+                    const cuit = (c.cuit || '').replace(/\D/g, '')
+                    if (cuit.length >= 7) cuitCount[cuit] = (cuitCount[cuit] || 0) + 1
+                  })
+                  return clientesDni.map(c => {
+                    const cuitNorm = (c.cuit || '').replace(/\D/g, '')
+                    const esDup = cuitNorm.length >= 7 && cuitCount[cuitNorm] > 1
+                    return (
+                      <button
+                        key={c.id || c.id_centum}
+                        onClick={() => seleccionarClienteDni(c)}
+                        className={`w-full text-left p-3 rounded-lg border transition-colors ${esDup ? 'border-amber-300 bg-amber-50/50 hover:bg-amber-100/50' : 'border-gray-100 hover:border-green-300 hover:bg-green-50/50'}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-800 truncate">{c.razon_social}</span>
+                          <div className="flex gap-1">
+                            {esDup && (
+                              <span className="text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-medium">CUIT duplicado</span>
+                            )}
+                            {!c.id_centum && (
+                              <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">Sin Centum</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {c.codigo && <span>{c.codigo} · </span>}
+                          {c.cuit && <span>{c.cuit}</span>}
+                          {c.condicion_iva && <span> · {c.condicion_iva}</span>}
+                        </div>
+                      </button>
+                    )
+                  })
+                })()}
               </div>
             )}
             {!buscandoDniCliente && busquedaDniCliente.trim().length >= 7 && busquedaDniCliente.trim().length !== 9 && busquedaDniCliente.trim().length !== 10 && clientesDni.length === 0 && (
