@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin } = require('../middleware/auth')
-const { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum } = require('../services/centumClientes')
+const { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, desactivarClienteEnCentum, agregarContactoEnvioCentum } = require('../services/centumClientes')
 const { registrarLlamada } = require('../services/apiLogger')
 const { getPool } = require('../config/centum')
 const sql = require('mssql')
@@ -12,6 +12,7 @@ const logger = require('../config/logger')
 const { validate } = require('../middleware/validate')
 const { crearClienteSchema } = require('../schemas/clientes')
 const asyncHandler = require('../middleware/asyncHandler')
+const { registrarAuditoria, calcularCambios, obtenerSnapshot, obtenerSnapshotPorCentum } = require('../services/auditoriaClientes')
 
 // Obtener el siguiente código CLI-XXXXX disponible
 async function getSiguienteCodigoCliente() {
@@ -401,6 +402,16 @@ router.post('/importar-centum', verificarAuth, asyncHandler(async (req, res) => 
       throw error
     }
 
+    // Auditoría
+    registrarAuditoria({
+      cliente_id: data.id,
+      accion: 'importar',
+      origen: 'admin',
+      usuario: req.perfil?.username || req.usuario?.email,
+      cambios: {},
+      detalle: `Importado desde Centum (ID ${id_centum})`,
+    })
+
     res.status(201).json(data)
   } catch (err) {
     logger.error('Error al importar cliente de Centum:', err)
@@ -573,16 +584,40 @@ router.post('/duplicados/resolver', verificarAuth, soloAdmin, asyncHandler(async
         .select('id')
       resumen.direcciones_reasignadas += (dirActualizadas || []).length
 
-      // Desactivar loser
+      // Desactivar loser en Centum si tiene id_centum
+      if (loser.id_centum) {
+        try {
+          await desactivarClienteEnCentum(loser.id_centum)
+          logger.info(`[Duplicados] Cliente ${loser.codigo} desactivado en Centum (id_centum: ${loser.id_centum})`)
+        } catch (errCentum) {
+          logger.warn(`[Duplicados] No se pudo desactivar ${loser.codigo} en Centum: ${errCentum.message}`)
+        }
+      }
+
+      // Desactivar loser localmente
       await supabase
         .from('clientes')
-        .update({ activo: false, id_centum: null })
+        .update({ activo: false })
         .eq('id', loser.id)
 
       resumen.losers_desactivados.push({ id: loser.id, codigo: loser.codigo, razon_social: loser.razon_social })
     }
 
     logger.info(`Duplicados resueltos: winner=${winner.codigo}, losers=${resumen.losers_desactivados.map(l => l.codigo).join(',')}`)
+
+    // Auditoría para cada loser desactivado
+    const usuario = req.perfil?.username || req.usuario?.email
+    for (const loser of resumen.losers_desactivados) {
+      registrarAuditoria({
+        cliente_id: loser.id,
+        accion: 'resolver_duplicado',
+        origen: 'admin',
+        usuario,
+        cambios: { activo: { antes: true, despues: false } },
+        detalle: `Desactivado como duplicado. Ganador: ${winner.codigo} (${winner.razon_social})`,
+      })
+    }
+
     res.json(resumen)
   } catch (err) {
     logger.error('Error resolviendo duplicados:', err)
@@ -702,6 +737,16 @@ router.post('/', verificarAuth, validate(crearClienteSchema), asyncHandler(async
       }
     }
 
+    // Auditoría: registrar creación
+    registrarAuditoria({
+      cliente_id: clienteResponse.id,
+      accion: 'crear',
+      origen: 'admin',
+      usuario: req.perfil?.username || req.usuario?.email,
+      cambios: {},
+      detalle: `Cliente creado: ${clienteResponse.razon_social} (${clienteResponse.codigo})`,
+    })
+
     const respuesta = { ...clienteResponse }
     if (warningCentum) respuesta.warning_centum = warningCentum
     res.status(201).json(respuesta)
@@ -728,10 +773,27 @@ router.put('/contacto/:idCentum', verificarAuth, asyncHandler(async (req, res) =
     if (celular !== undefined) updates.celular = celular?.trim() || null
 
     if (Object.keys(updates).length > 0) {
+      // Snapshot antes del cambio
+      const antes = await obtenerSnapshotPorCentum(idCentum)
+
       await supabase
         .from('clientes')
         .update(updates)
         .eq('id_centum', idCentum)
+
+      // Auditoría
+      if (antes) {
+        const cambios = calcularCambios(antes, updates)
+        if (Object.keys(cambios).length > 0) {
+          registrarAuditoria({
+            cliente_id: antes.id,
+            accion: 'contacto',
+            origen: 'pos',
+            usuario: req.perfil?.username || req.usuario?.email,
+            cambios,
+          })
+        }
+      }
     }
 
     res.json({ ok: true, email: email?.trim() || null, celular: celular?.trim() || null })
@@ -766,7 +828,18 @@ router.get('/refresh/:idCentum', verificarAuth, asyncHandler(async (req, res) =>
 
     // Si el cliente está inactivo en Centum, desactivarlo localmente y avisar
     if (result.recordset[0].ActivoCliente === 0 || result.recordset[0].ActivoCliente === false) {
+      const snap = await obtenerSnapshotPorCentum(idCentum)
       await supabase.from('clientes').update({ activo: false }).eq('id_centum', idCentum)
+      if (snap) {
+        registrarAuditoria({
+          cliente_id: snap.id,
+          accion: 'desactivar',
+          origen: 'centum_bi',
+          usuario: req.perfil?.username || req.usuario?.email,
+          cambios: { activo: { antes: true, despues: false } },
+          detalle: 'Desactivado por estar inactivo en Centum',
+        })
+      }
       return res.status(410).json({ error: 'Cliente desactivado en Centum', desactivado: true })
     }
 
@@ -804,6 +877,9 @@ router.get('/refresh/:idCentum', verificarAuth, asyncHandler(async (req, res) =>
       }
     }
 
+    // Snapshot antes del refresh para auditoría
+    const snapAntes = await obtenerSnapshotPorCentum(idCentum)
+
     const { data, error } = await supabase
       .from('clientes')
       .update(updates)
@@ -812,6 +888,22 @@ router.get('/refresh/:idCentum', verificarAuth, asyncHandler(async (req, res) =>
       .single()
 
     if (error) throw error
+
+    // Auditoría del refresh
+    if (snapAntes && data) {
+      const cambios = calcularCambios(snapAntes, updates)
+      if (Object.keys(cambios).length > 0) {
+        registrarAuditoria({
+          cliente_id: data.id,
+          accion: 'sync_centum',
+          origen: 'centum_bi',
+          usuario: req.perfil?.username || req.usuario?.email,
+          cambios,
+          detalle: 'Refresh manual desde Centum BI',
+        })
+      }
+    }
+
     res.json(data)
   } catch (err) {
     logger.error('Error refrescando cliente:', err.message)
@@ -911,6 +1003,9 @@ router.put('/:id', verificarAuth, asyncHandler(async (req, res) => {
       return res.status(400).json({ error: 'No hay campos para actualizar' })
     }
 
+    // Snapshot antes del cambio para auditoría
+    const antes = await obtenerSnapshot(req.params.id)
+
     const { data, error } = await supabase
       .from('clientes')
       .update(updates)
@@ -919,6 +1014,20 @@ router.put('/:id', verificarAuth, asyncHandler(async (req, res) => {
       .single()
 
     if (error) throw error
+
+    // Auditoría
+    if (antes) {
+      const cambios = calcularCambios(antes, updates)
+      if (Object.keys(cambios).length > 0) {
+        registrarAuditoria({
+          cliente_id: req.params.id,
+          accion: 'editar',
+          origen: 'admin',
+          usuario: req.perfil?.username || req.usuario?.email,
+          cambios,
+        })
+      }
+    }
 
     // Auto-sync to Centum if client is linked
     let warningCentum = null
@@ -1298,6 +1407,31 @@ router.post('/fix-condicion-iva', verificarAuth, soloAdmin, asyncHandler(async (
   } catch (err) {
     logger.error('Error en fix-condicion-iva:', err.message)
     res.status(500).json({ error: err.message })
+  }
+}))
+
+// GET /api/clientes/:id/auditoria
+// Historial de cambios de un cliente
+router.get('/:id/auditoria', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 50), 100)
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+
+    const { data, error, count } = await supabase
+      .from('clientes_auditoria')
+      .select('*', { count: 'exact' })
+      .eq('cliente_id', req.params.id)
+      .order('created_at', { ascending: false })
+      .range(from, to)
+
+    if (error) throw error
+
+    res.json({ registros: data || [], total: count || 0 })
+  } catch (err) {
+    logger.error('Error obteniendo auditoría de cliente:', err)
+    res.status(500).json({ error: 'Error al obtener auditoría' })
   }
 }))
 

@@ -11,6 +11,8 @@ const asyncHandler = require('../middleware/asyncHandler')
 
 // Lock en memoria para prevenir requests concurrentes con mismo nonce
 const ventaEmpleadoNonceLock = new Set()
+// Lock por empleado — serializa requests concurrentes del mismo empleado
+const ventaEmpleadoLock = new Map() // codigo_empleado -> Promise
 
 // ─── RUBROS DISPONIBLES (desde artículos) ──────────────────────────────────────
 
@@ -151,6 +153,22 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
     }
     ventaEmpleadoNonceLock.add(nonce)
   }
+
+  // ── CAPA 1.5: Lock por empleado — serializa requests concurrentes del mismo empleado ──
+  // Esto previene la race condition donde 2 requests con distinto nonce pasan
+  // la ventana temporal simultáneamente porque ninguno hizo INSERT aún
+  const empLockKey = codigo_empleado?.trim()?.toUpperCase()
+  if (empLockKey) {
+    const existing = ventaEmpleadoLock.get(empLockKey)
+    if (existing) {
+      // Esperar a que termine el request anterior del mismo empleado
+      try { await existing } catch {}
+    }
+  }
+
+  let resolveLock
+  const lockPromise = new Promise(resolve => { resolveLock = resolve })
+  if (empLockKey) ventaEmpleadoLock.set(empLockKey, lockPromise)
 
   try {
     // ── CAPA 2: Check en DB por nonce (previene duplicados por retry) ──
@@ -396,6 +414,8 @@ router.post('/ventas', verificarAuth, validate(registrarVentaSchema), asyncHandl
     res.status(500).json({ error: err.message })
   } finally {
     if (nonce) ventaEmpleadoNonceLock.delete(nonce)
+    if (empLockKey) ventaEmpleadoLock.delete(empLockKey)
+    if (resolveLock) resolveLock()
   }
 }))
 

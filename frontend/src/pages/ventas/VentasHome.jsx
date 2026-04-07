@@ -35,8 +35,11 @@ const VentasHome = () => {
   // Leer filtros iniciales desde URL
   const [ventas, setVentas] = useState([])
   const hoy = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD local
-  const [fecha, setFecha] = useState(searchParams.get('fecha') || hoy)
-  const [fechaHasta, setFechaHasta] = useState(searchParams.get('fecha_hasta') || hoy)
+  const initDesde = searchParams.get('fecha') || hoy
+  const initHasta = searchParams.get('fecha_hasta') || hoy
+  // Si el rango viene invertido (desde > hasta), usar desde como ambos extremos
+  const [fecha, setFecha] = useState(initDesde > initHasta ? initHasta : initDesde)
+  const [fechaHasta, setFechaHasta] = useState(initDesde > initHasta ? initDesde : initHasta)
   const [busqueda, setBusqueda] = useState(searchParams.get('busqueda') || '')
   const [busquedaFactura, setBusquedaFactura] = useState(searchParams.get('factura') || '')
   const [filtroClasificacion, setFiltroClasificacion] = useState(searchParams.get('clasificacion') || '')
@@ -142,14 +145,16 @@ const VentasHome = () => {
       const params = new URLSearchParams({ page })
       if (facturaDebounced.trim()) {
         params.append('numero_factura', facturaDebounced.trim())
-      } else if (busquedaDebounced.trim()) {
-        params.append('buscar', busquedaDebounced.trim())
       } else {
+        if (busquedaDebounced.trim()) {
+          params.append('buscar', busquedaDebounced.trim())
+        }
         params.append('fecha', fecha)
         if (fechaHasta) params.append('fecha_hasta', fechaHasta)
       }
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
       if (filtroCentum === 'sin_cae') params.append('sin_cae', '1')
+      if (filtroCentum === 'sin_email') params.append('sin_email', '1')
       if (filtroEmpleado) params.append('filtro_empleado', filtroEmpleado)
       if (filtroSucursales.length > 0) params.append('sucursales', filtroSucursales.join(','))
       if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
@@ -181,6 +186,7 @@ const VentasHome = () => {
       if (filtroClasificacion) params.append('clasificacion', filtroClasificacion)
       if (filtroCentum === 'sin_centum') params.append('sin_centum', '1')
       if (filtroCentum === 'sin_cae') params.append('sin_cae', '1')
+      if (filtroCentum === 'sin_email') params.append('sin_email', '1')
       const { data } = await api.get(`/api/pos/ventas?${params}`)
       setVentas(data.ventas || [])
       setTotalPages(data.totalPages || 1)
@@ -266,7 +272,11 @@ const VentasHome = () => {
             <input
               type="date"
               value={fecha}
-              onChange={e => setFecha(e.target.value)}
+              onChange={e => {
+                const v = e.target.value
+                setFecha(v)
+                if (v > fechaHasta) setFechaHasta(v)
+              }}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
             />
           </div>
@@ -275,7 +285,11 @@ const VentasHome = () => {
             <input
               type="date"
               value={fechaHasta}
-              onChange={e => setFechaHasta(e.target.value)}
+              onChange={e => {
+                const v = e.target.value
+                setFechaHasta(v)
+                if (v < fecha) setFecha(v)
+              }}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500 focus:border-transparent"
             />
           </div>
@@ -403,6 +417,16 @@ const VentasHome = () => {
           >
             Sin CAE
           </button>
+          <button
+            onClick={() => setFiltroCentum(filtroCentum === 'sin_email' ? '' : 'sin_email')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              filtroCentum === 'sin_email'
+                ? 'bg-amber-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Sin Email
+          </button>
         </div>
 
         {/* Resumen del período: POS vs Centum BI */}
@@ -474,8 +498,8 @@ const VentasHome = () => {
           </div>
         ) : (
           <div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5 mb-2">
+            <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-2.5 mb-2">
+              {totalPages > 1 ? (
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page <= 1}
@@ -483,9 +507,11 @@ const VentasHome = () => {
                 >
                   &larr; Anterior
                 </button>
-                <span className="text-sm text-gray-500">
-                  Página {page} de {totalPages} ({totalCount} ventas)
-                </span>
+              ) : <div />}
+              <span className="text-sm text-gray-500">
+                {totalPages > 1 ? `Página ${page} de ${totalPages} (${totalCount} comprobantes)` : `${totalCount} comprobantes`}
+              </span>
+              {totalPages > 1 ? (
                 <button
                   onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
@@ -493,8 +519,8 @@ const VentasHome = () => {
                 >
                   Siguiente &rarr;
                 </button>
-              </div>
-            )}
+              ) : <div />}
+            </div>
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <table className="w-full text-sm">
                 <thead>

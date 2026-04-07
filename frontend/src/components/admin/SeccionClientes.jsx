@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import api from '../../services/api'
+import ModalAuditoriaCliente from './ModalAuditoriaCliente'
 
 const CONDICIONES_IVA = [
   { value: '', label: 'Todas' },
@@ -30,6 +31,9 @@ const SeccionClientes = () => {
 
   // Grupos descuento
   const [gruposDescuento, setGruposDescuento] = useState([])
+
+  // Auditoría
+  const [clienteAuditoria, setClienteAuditoria] = useState(null)
 
   // Modal
   const [modal, setModal] = useState(null) // null | 'crear' | 'editar'
@@ -264,15 +268,16 @@ const SeccionClientes = () => {
               <th className="text-left py-2 px-3 font-medium text-gray-500">IVA</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Grupo Desc.</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Cód. Centum</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Origen</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Actualizado</th>
               <th className="py-2 px-3"></th>
             </tr>
           </thead>
           <tbody>
             {cargando ? (
-              <tr><td colSpan={8} className="text-center py-8 text-gray-400">Cargando...</td></tr>
+              <tr><td colSpan={9} className="text-center py-8 text-gray-400">Cargando...</td></tr>
             ) : clientes.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
+              <tr><td colSpan={9} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
             ) : clientes.map(c => (
               <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="py-2 px-3 font-mono text-xs text-gray-600">{c.codigo}</td>
@@ -306,21 +311,39 @@ const SeccionClientes = () => {
                     <span className="text-gray-300">—</span>
                   )}
                 </td>
+                <td className="py-2 px-3">
+                  {c.id_centum ? (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Centum</span>
+                  ) : (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">POS</span>
+                  )}
+                </td>
                 <td className="py-2 px-3 text-xs text-gray-400">
                   {c.updated_at || c.created_at
                     ? new Date(c.updated_at || c.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
                     : '—'}
                 </td>
                 <td className="py-2 px-3 text-right">
-                  <button
-                    onClick={() => abrirEditar(c)}
-                    className="text-gray-400 hover:text-emerald-600 transition-colors"
-                    title="Editar"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                    </svg>
-                  </button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => setClienteAuditoria(c)}
+                      className="text-gray-400 hover:text-amber-600 transition-colors"
+                      title="Auditoría"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => abrirEditar(c)}
+                      className="text-gray-400 hover:text-emerald-600 transition-colors"
+                      title="Editar"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                      </svg>
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -418,6 +441,14 @@ const SeccionClientes = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Auditoría */}
+      {clienteAuditoria && (
+        <ModalAuditoriaCliente
+          cliente={clienteAuditoria}
+          onClose={() => setClienteAuditoria(null)}
+        />
       )}
 
       {/* Modal Crear/Editar */}

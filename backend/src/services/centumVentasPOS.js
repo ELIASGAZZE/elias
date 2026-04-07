@@ -341,6 +341,13 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
 
     logger.info(`[Centum POS] División=${idDivisionEmpresa}, operador=${operadorMovilUser}, sucursalFisica=${config.sucursalFisicaId}, PV=${config.puntoVenta}, configEmpresa=${config.centum_operador_empresa}, configPrueba=${config.centum_operador_prueba}`)
 
+    // Guardar clasificación para que retries del cron usen la misma división
+    if (ventaLocal.id) {
+      supabase.from('ventas_pos').update({
+        clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
+      }).eq('id', ventaLocal.id).then(() => {}).catch(() => {})
+    }
+
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,
       sucursalFisicaId: config.sucursalFisicaId,
@@ -404,7 +411,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
  * @param {string} params.condicionIva - Condición IVA del cliente (CF, RI, MT)
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser, comprobanteOriginal }) {
+async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser, comprobanteOriginal, ventaPosId }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -474,6 +481,11 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
       Cotizacion: 1,
       Importe: importeValor,
     }],
+  }
+
+  // Anti-duplicación: marcar NC con UUID de la venta POS
+  if (ventaPosId) {
+    body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
   // Agregar referencia al comprobante original (requerido para NC en Centum)
@@ -546,7 +558,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
  * @param {string} [params.descripcion] - Descripción adicional del concepto
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal, concepto = {} }) {
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal, concepto = {}, ventaPosId }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -581,6 +593,11 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
     if (ref) {
       body.Referencia = String(ref.numero)
     }
+  }
+
+  // Anti-duplicación: marcar NC con UUID de la venta POS
+  if (ventaPosId) {
+    body.ObservacionInterna = `POS:${ventaPosId}`
   }
 
   // Nombre fijo, detalle de artículos en Observaciones
@@ -950,7 +967,7 @@ async function retrySyncVentasCentum() {
   // Incluye centum_intentos y centum_ultimo_intento para la máquina de estados
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento, gc_aplicada_monto, nc_concepto_tipo, sucursal_id, cajero_id, centum_comprobante, condicion_iva')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento, gc_aplicada_monto, nc_concepto_tipo, sucursal_id, cajero_id, centum_comprobante, condicion_iva, clasificacion')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
@@ -1035,7 +1052,10 @@ async function retrySyncVentasCentum() {
     // (PostgREST re-aplica WHERE al RETURNING). Por eso hacemos UPDATE sin .select() y
     // verificamos con un SELECT separado usando el timestamp exacto como "claim token".
     const ahoraClaim = new Date().toISOString()
-    const hace60s = new Date(Date.now() - 60000).toISOString()
+    // Ventana de 5 minutos: previene que una nueva instancia (deploy Render) reclame
+    // una venta que la instancia vieja está procesando. El POST timeout es 30s, pero
+    // durante deploy ambas instancias corren en paralelo ~30-90s + BI replication lag.
+    const hace5min = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
     // Paso 1: UPDATE condicional (sin .select para evitar el bug de PostgREST)
     await supabase
@@ -1043,7 +1063,7 @@ async function retrySyncVentasCentum() {
       .update({ centum_ultimo_intento: ahoraClaim })
       .eq('id', venta.id)
       .eq('centum_sync', false)
-      .or(`centum_ultimo_intento.is.null,centum_ultimo_intento.lt.${hace60s}`)
+      .or(`centum_ultimo_intento.is.null,centum_ultimo_intento.lt.${hace5min}`)
 
     // Paso 2: Verificar si NUESTRO claim ganó (nuestro timestamp exacto quedó escrito)
     const { data: claimed } = await supabase
@@ -1149,12 +1169,23 @@ async function retrySyncVentasCentum() {
       const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
       const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
       const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-      let idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+      let idDivisionEmpresa
 
-      // GC aplicada como pago → forzar B PRUEBA (división 2)
-      if (parseFloat(venta.gc_aplicada_monto) > 0) {
+      // Fix anti-duplicación: si ya se calculó la clasificación en un intento previo, reutilizarla.
+      // Esto previene que retries determinen una división diferente (ej: PRUEBA vs EMPRESA).
+      if (venta.clasificacion === 'EMPRESA') {
+        idDivisionEmpresa = 3
+      } else if (venta.clasificacion === 'PRUEBA') {
         idDivisionEmpresa = 2
-        logger.info(`[RetryCentumVentas] GC aplicada ($${venta.gc_aplicada_monto}) → forzando B PRUEBA`)
+      } else {
+        // Primera vez: calcular normalmente
+        idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
+
+        // GC aplicada como pago → forzar B PRUEBA (división 2)
+        if (parseFloat(venta.gc_aplicada_monto) > 0) {
+          idDivisionEmpresa = 2
+          logger.info(`[RetryCentumVentas] GC aplicada ($${venta.gc_aplicada_monto}) → forzando B PRUEBA`)
+        }
       }
 
       const operadorMovilUser = idDivisionEmpresa === 2
@@ -1165,6 +1196,43 @@ async function retrySyncVentasCentum() {
       let resultado
 
       if (venta.tipo === 'nota_credito') {
+        // ============ VERIFICACIÓN BI PARA NCs (anti-duplicación) ============
+        {
+          const checkNC = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, Math.abs(parseFloat(venta.total) || 0))
+
+          if (checkNC.found) {
+            logger.info(`[RetryCentumVentas] NC ${venta.id} ENCONTRADA en BI (intento ${intentos}): IdVenta=${checkNC.data.IdVenta}`)
+            const numDocEx = checkNC.data.NumeroDocumento
+            const comprobanteEx = numDocEx
+              ? `${numDocEx.LetraDocumento || ''} PV${numDocEx.PuntoVenta}-${numDocEx.Numero}`
+              : null
+            await supabase.from('ventas_pos').update({
+              id_venta_centum: checkNC.data.IdVenta || null,
+              centum_comprobante: comprobanteEx,
+              centum_sync: true,
+              centum_error: null,
+              numero_cae: checkNC.data.CAE || null,
+            }).eq('id', venta.id)
+            fetchAndSaveCAE(venta.id, checkNC.data.IdVenta)
+            exitosas++
+            continue
+          }
+
+          if (checkNC.biDown) {
+            logger.warn(`[RetryCentumVentas] NC ${venta.id}: BI CAÍDO, abortando`)
+            fallidas++
+            continue
+          }
+
+          logger.info(`[RetryCentumVentas] NC ${venta.id}: verificada en BI, NO encontrada → seguro ${intentos > 0 ? 'reintentar' : 'crear'}`)
+        }
+
+        // Pre-write para NC: registrar intento ANTES del POST
+        await supabase.from('ventas_pos').update({
+          centum_intentos: (venta.centum_intentos || 0) + 1,
+          centum_ultimo_intento: new Date().toISOString(),
+        }).eq('id', venta.id)
+
         // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
         if (venta.nc_concepto_tipo === 'gift_card') {
           // centum_comprobante almacena la referencia a la factura de artículos
@@ -1177,6 +1245,7 @@ async function retrySyncVentasCentum() {
             descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
             operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
             concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+            ventaPosId: venta.id,
           })
         } else {
         // NC: valores positivos
@@ -1229,18 +1298,23 @@ async function retrySyncVentasCentum() {
             total: Math.abs(parseFloat(venta.total) || 0), condicionIva: condicionIvaNC,
             descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
             operadorMovilUser: operadorNC, comprobanteOriginal,
+            ventaPosId: venta.id,
           })
         } else {
           resultado = await crearNotaCreditoPOS({
             idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: idDivisionNC, puntoVenta,
             items: itemsPositivos, total: Math.abs(parseFloat(venta.total) || 0),
             condicionIva: condicionIvaNC, operadorMovilUser: operadorNC, comprobanteOriginal,
+            ventaPosId: venta.id,
           })
         }
         }
       } else {
-        // ============ VERIFICACIÓN OBLIGATORIA EN BI (si hay intentos previos) ============
-        if (intentos > 0) {
+        // ============ VERIFICACIÓN OBLIGATORIA EN BI (SIEMPRE, incluso primer intento) ============
+        // Antes se verificaba solo si intentos > 0, pero durante deploys de Render la
+        // instancia vieja puede haber posteado la venta antes de que esta instancia arranque.
+        // También protege contra IIFEs (pedidos/delivery) que postearon pero no guardaron el resultado.
+        {
           const check = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
 
           if (check.found) {
@@ -1282,23 +1356,28 @@ async function retrySyncVentasCentum() {
           }
 
           if (check.biDown) {
-            // BI caído → NO reintentar, esperar al próximo ciclo
-            logger.warn(`[RetryCentumVentas] Venta ${venta.id}: BI CAÍDO, abortando reintento (${check.error})`)
-            // No modificar intentos ni error — simplemente esperar
+            // BI caído → NO crear la venta, esperar al próximo ciclo
+            logger.warn(`[RetryCentumVentas] Venta ${venta.id}: BI CAÍDO, abortando (${check.error})`)
             fallidas++
             continue
           }
 
-          // check.found === false → no existe en BI, seguro reintentar
-          logger.info(`[RetryCentumVentas] Venta ${venta.id}: verificada en BI, NO encontrada → seguro reintentar (intento ${intentos + 1})`)
+          // check.found === false → no existe en BI, seguro crear/reintentar
+          logger.info(`[RetryCentumVentas] Venta ${venta.id}: verificada en BI, NO encontrada → seguro ${intentos > 0 ? 'reintentar' : 'crear'} (intento ${intentos + 1})`)
         }
 
         // ============ PRE-WRITE: registrar intento ANTES del POST ============
         const nuevoIntentos = intentos + 1
-        await supabase.from('ventas_pos').update({
+        const clasificacionCalculada = idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA'
+        const preWriteData = {
           centum_intentos: nuevoIntentos,
           centum_ultimo_intento: new Date().toISOString(),
-        }).eq('id', venta.id)
+        }
+        // Guardar clasificación para que retries futuros usen la misma división
+        if (!venta.clasificacion) {
+          preWriteData.clasificacion = clasificacionCalculada
+        }
+        await supabase.from('ventas_pos').update(preWriteData).eq('id', venta.id)
 
         // ============ POST a Centum ============
         try {
@@ -1367,6 +1446,12 @@ async function retrySyncVentasCentum() {
         // GC aplicada como pago → crear NC concepto por el monto de GC
         if (parseFloat(venta.gc_aplicada_monto) > 0 && venta.tipo !== 'nota_credito') {
           try {
+            // Anti-dup: verificar que no exista ya una NC GC para esta venta
+            const { data: ncGcExiste } = await supabase.from('ventas_pos')
+              .select('id').eq('venta_origen_id', venta.id).eq('nc_concepto_tipo', 'gift_card').maybeSingle()
+            if (ncGcExiste) {
+              logger.info(`[RetryCentumVentas] NC Gift Card ya existe para venta ${venta.id} (id=${ncGcExiste.id}), saltando`)
+            } else {
             await supabase.from('ventas_pos').insert({
               sucursal_id: venta.sucursal_id,
               cajero_id: venta.cajero_id,
@@ -1388,6 +1473,7 @@ async function retrySyncVentasCentum() {
               centum_comprobante: comprobante, // referencia a la factura de artículos
             })
             logger.info(`[RetryCentumVentas] NC Gift Card creada para venta ${venta.id}: monto=$${venta.gc_aplicada_monto}, ref=${comprobante}`)
+            }
           } catch (ncErr) {
             logger.error(`[RetryCentumVentas] Error al crear NC Gift Card para venta ${venta.id}:`, ncErr.message)
           }

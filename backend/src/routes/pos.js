@@ -972,6 +972,10 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       if (req.query.sin_cae === '1') {
         query = query.is('numero_cae', null)
       }
+      // Filtro "Sin Email": facturas A donde no se envió email (se filtra por centum_comprobante ^A en JS)
+      if (req.query.sin_email === '1') {
+        query = query.or('email_enviado.is.null,email_enviado.eq.false')
+      }
       // Filtro empleados: solo ventas de empleados o solo no-empleados
       if (req.query.filtro_empleado === 'empleados') {
         query = query.ilike('nombre_cliente', 'Empleado:%')
@@ -984,10 +988,12 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       } else if (req.query.tipo === 'venta') {
         query = query.neq('tipo', 'nota_credito')
       }
-      // Si hay filtro por artículo o sin_cae, traer más resultados para filtrar en JS
+      // Admin siempre trae todo para calcular resumen exacto de lo filtrado
+      // Non-admin pagina en SQL si no hay filtros JS
       const articuloFilter = req.query.articulo?.trim()
-      if (articuloFilter || req.query.sin_cae === '1') {
-        query = query.range(0, 999) // traer hasta 1000 para filtrar en JS
+      const needsJSFilter = articuloFilter || req.query.sin_cae === '1' || req.query.sin_email === '1' || req.query.clasificacion
+      if (needsJSFilter || req.perfil.rol === 'admin') {
+        query = query.range(0, 9999)
       } else {
         query = query.range(from, to)
       }
@@ -1039,20 +1045,10 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
     })
 
     // Clasificar ventas: EMPRESA o PRUEBA
+    // Usa condicion_iva guardada en la venta (momento de la venta), no la actual del cliente
     // RI/MT (Factura A) → siempre EMPRESA
     // CF + solo efectivo/saldo/gift_card/cta_cte → PRUEBA
     // CF + pago electrónico → EMPRESA
-    const clienteIds = [...new Set(ventas.map(v => v.id_cliente_centum).filter(Boolean))]
-    let condicionesIva = {}
-    if (clienteIds.length > 0) {
-      const { data: clientes } = await supabase
-        .from('clientes')
-        .select('id_centum, condicion_iva')
-        .in('id_centum', clienteIds)
-      if (clientes) {
-        clientes.forEach(c => { condicionesIva[c.id_centum] = c.condicion_iva })
-      }
-    }
     const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
     // Para NCs: buscar datos de la venta original (pagos + condicion_iva al momento de venta)
     const ncOrigenIds = [...new Set(ventas.filter(v => v.tipo === 'nota_credito' && v.venta_origen_id).map(v => v.venta_origen_id))]
@@ -1065,7 +1061,8 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       if (origenes) origenes.forEach(o => { origenesMap[o.id] = o })
     }
     ventas = ventas.map(v => {
-      let condIva = condicionesIva[v.id_cliente_centum] || 'CF'
+      // Prioridad: condicion_iva guardada en la venta > fallback CF
+      let condIva = v.condicion_iva || 'CF'
       let pagosClasif = Array.isArray(v.pagos) ? v.pagos : []
       // NCs: usar condicion_iva y pagos de la venta original
       if (v.tipo === 'nota_credito' && v.venta_origen_id && origenesMap[v.venta_origen_id]) {
@@ -1117,85 +1114,50 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
     if (req.query.sin_cae === '1') {
       ventas = ventas.filter(v => v.clasificacion === 'EMPRESA')
     }
+    // Sin Email: solo facturas A cuyo cliente SÍ tiene email (excluir los que no tienen email cargado)
+    if (req.query.sin_email === '1') {
+      ventas = ventas.filter(v => v.centum_comprobante && /^A\s/.test(v.centum_comprobante))
+      // Obtener ids de clientes para verificar cuáles tienen email
+      const clienteIds = [...new Set(ventas.map(v => v.id_cliente_centum).filter(Boolean))]
+      if (clienteIds.length > 0) {
+        const { data: clientes } = await supabase.from('clientes')
+          .select('id_centum, email')
+          .in('id_centum', clienteIds)
+        const clientesConEmail = new Set(
+          (clientes || []).filter(c => c.email && c.email.trim()).map(c => c.id_centum)
+        )
+        ventas = ventas.filter(v => v.id_cliente_centum && clientesConEmail.has(v.id_cliente_centum))
+      }
+    }
 
-    // Si se filtró en JS (artículo o sin_cae), el count de Supabase no aplica — usar el largo real
-    const jsFilterApplied = articuloFilterApplied || req.query.sin_cae === '1'
+    // Admin siempre trae todo para resumen; JS filters también requieren conteo manual
+    const jsFilterApplied = articuloFilterApplied || req.query.sin_cae === '1' || req.query.sin_email === '1' || req.query.clasificacion || req.perfil.rol === 'admin'
     const totalCount = jsFilterApplied ? ventas.length : (count ?? ventas.length)
     const totalPages = Math.ceil(totalCount / pageSize)
+
+    // --- Resumen calculado de TODAS las ventas filtradas (ANTES de paginar) ---
+    let resumen = null
+    if (req.perfil.rol === 'admin' && !numFactura) {
+      let totalVentasR = 0, totalNCR = 0, totalEmpresaR = 0, totalPruebaR = 0, cantVentas = 0, cantNC = 0
+      const desgloseMediosR = {}
+      ventas.forEach(v => {
+        const total = parseFloat(v.total) || 0
+        if (v.tipo === 'nota_credito') { totalNCR += total; cantNC++ }
+        else { totalVentasR += total; cantVentas++ }
+        if (v.clasificacion === 'EMPRESA') totalEmpresaR += total
+        else totalPruebaR += total
+        const pagos = Array.isArray(v.pagos) ? v.pagos : []
+        pagos.forEach(p => {
+          const medio = p.medio || 'efectivo'
+          desgloseMediosR[medio] = (desgloseMediosR[medio] || 0) + (parseFloat(p.monto) || 0)
+        })
+      })
+      resumen = { totalVentas: totalVentasR, totalNC: totalNCR, totalEmpresa: totalEmpresaR, totalPrueba: totalPruebaR, cantVentas, cantNC, desgloseMedios: desgloseMediosR }
+    }
 
     // Paginación manual post-filtro cuando se filtró en JS
     if (jsFilterApplied) {
       ventas = ventas.slice(from, from + pageSize)
-    }
-
-    // --- Resumen del período completo (sin paginación) ---
-    let resumen = null
-    if (req.perfil.rol === 'admin' && !numFactura) {
-      try {
-        let qResumen = supabase
-          .from('ventas_pos')
-          .select('total, tipo, pagos, id_cliente_centum')
-        if (req.query.fecha) qResumen = qResumen.gte('created_at', `${req.query.fecha}T00:00:00-03:00`)
-        if (req.query.fecha_hasta) qResumen = qResumen.lte('created_at', `${req.query.fecha_hasta}T23:59:59-03:00`)
-        if (req.query.sin_centum === '1') qResumen = qResumen.is('centum_comprobante', null)
-        if (req.query.sin_cae === '1') qResumen = qResumen.is('numero_cae', null)
-        if (req.query.filtro_empleado === 'empleados') qResumen = qResumen.ilike('nombre_cliente', 'Empleado:%')
-        else if (req.query.filtro_empleado === 'no_empleados') qResumen = qResumen.not('nombre_cliente', 'ilike', 'Empleado:%')
-        const buscar = req.query.buscar?.trim()
-        if (buscar) qResumen = qResumen.ilike('nombre_cliente', `%${buscar}%`)
-        if (req.query.sucursales) {
-          const sucIds = req.query.sucursales.split(',').filter(Boolean)
-          if (sucIds.length === 1) qResumen = qResumen.eq('sucursal_id', sucIds[0])
-          else if (sucIds.length > 1) qResumen = qResumen.in('sucursal_id', sucIds)
-        }
-
-        const { data: allVentas } = await qResumen
-        if (allVentas) {
-          // Lookup condiciones IVA
-          const allClienteIds = [...new Set(allVentas.map(v => v.id_cliente_centum).filter(Boolean))]
-          let allCondiciones = {}
-          if (allClienteIds.length > 0) {
-            const { data: cls } = await supabase.from('clientes').select('id_centum, condicion_iva').in('id_centum', allClienteIds)
-            if (cls) cls.forEach(c => { allCondiciones[c.id_centum] = c.condicion_iva })
-          }
-          // Clasificar y calcular
-          let totalVentasR = 0, totalNCR = 0, totalEmpresaR = 0, totalPruebaR = 0, cantVentas = 0, cantNC = 0
-          const desgloseMediosR = {}
-          const filtroClasif = req.query.clasificacion?.toUpperCase() || ''
-          // Pre-fetch origenes de NCs para clasificación correcta
-          const ncOrigenIdsR = [...new Set(allVentas.filter(v => v.tipo === 'nota_credito' && v.venta_origen_id).map(v => v.venta_origen_id))]
-          let origenesMapR = {}
-          if (ncOrigenIdsR.length > 0) {
-            const { data: origenesR } = await supabase.from('ventas_pos').select('id, pagos, condicion_iva').in('id', ncOrigenIdsR)
-            if (origenesR) origenesR.forEach(o => { origenesMapR[o.id] = o })
-          }
-          allVentas.forEach(v => {
-            const total = parseFloat(v.total) || 0
-            let condIva = allCondiciones[v.id_cliente_centum] || 'CF'
-            let pagosClasif = Array.isArray(v.pagos) ? v.pagos : []
-            if (v.tipo === 'nota_credito' && v.venta_origen_id && origenesMapR[v.venta_origen_id]) {
-              const origen = origenesMapR[v.venta_origen_id]
-              if (origen.condicion_iva) condIva = origen.condicion_iva
-              pagosClasif = Array.isArray(origen.pagos) ? origen.pagos : []
-            }
-            const esFacturaA = condIva === 'RI' || condIva === 'MT'
-            const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
-            const clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
-            if (filtroClasif && clasificacion !== filtroClasif) return
-            if (v.tipo === 'nota_credito') { totalNCR += total; cantNC++ }
-            else { totalVentasR += total; cantVentas++ }
-            if (clasificacion === 'EMPRESA') totalEmpresaR += total
-            else totalPruebaR += total
-            pagos.forEach(p => {
-              const medio = p.medio || 'efectivo'
-              desgloseMediosR[medio] = (desgloseMediosR[medio] || 0) + (parseFloat(p.monto) || 0)
-            })
-          })
-          resumen = { totalVentas: totalVentasR, totalNC: totalNCR, totalEmpresa: totalEmpresaR, totalPrueba: totalPruebaR, cantVentas, cantNC, desgloseMedios: desgloseMediosR }
-        }
-      } catch (e) {
-        logger.error('[POS] Error al calcular resumen:', e.message)
-      }
     }
 
     res.json({ ventas, page, totalPages, totalCount, resumen })
@@ -1681,8 +1643,8 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
       return res.json({ venta: data })
     }
 
-    // Clasificar: EMPRESA o PRUEBA
-    let condIva = 'CF'
+    // Clasificar: EMPRESA o PRUEBA — usar condicion_iva guardada en la venta
+    let condIva = data.condicion_iva || 'CF'
     let idClienteCentum = data.id_cliente_centum
     let pagosClasif = Array.isArray(data.pagos) ? data.pagos : []
     // NCs: usar condicion_iva, pagos e id_cliente de la venta original si la NC no tiene
@@ -1696,7 +1658,6 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
     }
     if (idClienteCentum) {
       const { data: cli } = await supabase.from('clientes').select('condicion_iva, email, cuit, razon_social, direccion, localidad, telefono, codigo').eq('id_centum', idClienteCentum).single()
-      if (data.tipo !== 'nota_credito') condIva = cli?.condicion_iva || 'CF'
       if (cli?.email) data.email_cliente = cli.email
       if (cli) data.cliente_info = {
         cuit: cli.cuit, razon_social: cli.razon_social, direccion: cli.direccion,
@@ -3453,6 +3414,7 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
                     condicionIva,
                     operadorMovilUser,
                     comprobanteOriginal: venta.centum_comprobante,
+                    ventaPosId: nc.id,
                   })
 
                   const numDoc = centumNC.NumeroDocumento
@@ -4134,6 +4096,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
           condicionIva,
           operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
+          ventaPosId: notaCredito.id,
         })
 
         // Guardar info de NC Centum en la nota de crédito local
@@ -4317,6 +4280,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             condicionIva: condicionIvaOrig,
             operadorMovilUser,
             comprobanteOriginal: venta.centum_comprobante,
+            ventaPosId: notaCredito.id,
           })
 
           const numDocNC = centumNC.NumeroDocumento
@@ -4576,6 +4540,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
           descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
           operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
+          ventaPosId: notaCredito.id,
         })
 
         const numDoc = centumNC.NumeroDocumento
@@ -4684,6 +4649,27 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
     if (error || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
     if (venta.centum_sync && venta.centum_comprobante) return res.status(400).json({ error: 'Esta venta ya fue sincronizada con Centum' })
 
+    // ATOMIC CLAIM: prevenir procesamiento concurrente con el cron
+    const ahoraClaim = new Date().toISOString()
+    const hace5min = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+
+    await supabase
+      .from('ventas_pos')
+      .update({ centum_ultimo_intento: ahoraClaim })
+      .eq('id', ventaId)
+      .eq('centum_sync', false)
+      .or(`centum_ultimo_intento.is.null,centum_ultimo_intento.lt.${hace5min}`)
+
+    const { data: claimed } = await supabase
+      .from('ventas_pos')
+      .select('id')
+      .eq('id', ventaId)
+      .eq('centum_ultimo_intento', ahoraClaim)
+
+    if (!claimed || claimed.length === 0) {
+      return res.status(409).json({ error: 'Esta venta está siendo procesada por otro proceso. Reintente en unos minutos.' })
+    }
+
     // Buscar config de caja/sucursal
     let puntoVenta, sucursalFisicaId, centumOperadorEmpresa, centumOperadorPrueba
 
@@ -4781,9 +4767,12 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
       ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
       : (centumOperadorEmpresa || null)
 
-    // --- Anti-duplicación: verificar en BI antes de crear ---
-    if (venta.tipo !== 'nota_credito') {
-      const check = await verificarEnBI(ventaId, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+    // --- Anti-duplicación: verificar en BI antes de crear (ventas Y NCs) ---
+    {
+      const totalParaBI = venta.tipo === 'nota_credito'
+        ? Math.abs(parseFloat(venta.total) || 0)
+        : (parseFloat(venta.total) || 0)
+      const check = await verificarEnBI(ventaId, sucursalFisicaId, puntoVenta, totalParaBI)
 
       if (check.found) {
         logger.info(`[Centum POS] Venta ${ventaId} ya existe en Centum (IdVenta=${check.data.IdVenta}). Vinculando sin crear duplicado.`)
@@ -4829,6 +4818,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
           operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
           concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+          ventaPosId: ventaId,
         })
       } else {
       // NC: enviar con valores positivos (abs), Centum maneja el signo por tipo comprobante
@@ -4898,6 +4888,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
           operadorMovilUser: operadorNC,
           comprobanteOriginal,
+          ventaPosId: ventaId,
         })
       } else {
         resultado = await crearNotaCreditoPOS({
@@ -4910,6 +4901,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           condicionIva: condicionIvaNC,
           operadorMovilUser: operadorNC,
           comprobanteOriginal,
+          ventaPosId: ventaId,
         })
       }
       }
@@ -5210,7 +5202,7 @@ router.get('/ventas/:id/comprobante.pdf', asyncHandler(async (req, res) => {
         .select('razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo')
         .eq('id_centum', venta.id_cliente_centum).single()
       if (cli) {
-        const condIva = venta.condicion_iva || cli.condicion_iva || 'CF'
+        const condIva = cli.condicion_iva || venta.condicion_iva || 'CF'
         caeData.esFacturaA = condIva === 'RI' || condIva === 'MT'
         caeData.cliente = cli
       }

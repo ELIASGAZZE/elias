@@ -2,6 +2,7 @@
 const { generateAccessToken } = require('./syncERP')
 const { registrarLlamada } = require('./apiLogger')
 const logger = require('../config/logger')
+const { registrarAuditoria, calcularCambios } = require('./auditoriaClientes')
 
 const BASE_URL = process.env.CENTUM_BASE_URL || 'https://plataforma5.centum.com.ar:23990/BL7'
 const API_KEY = process.env.CENTUM_API_KEY
@@ -165,7 +166,7 @@ async function syncClientesRecientes(horasAtras = 2) {
       const localPorCuit = cuit.length >= 7 ? cuitMap.get(cuit) : null
       if (localPorCuit && !localPorCuit.id_centum) {
         // Linkear id_centum al existente
-        await supabase.from('clientes').update({ id_centum: r.ClienteID, ...mapearCliente(r) }).eq('id', localPorCuit.id)
+        await supabase.from('clientes').update({ id_centum: r.ClienteID, ...mapearCliente(r), updated_at: new Date().toISOString() }).eq('id', localPorCuit.id)
         logger.info(`[SyncClientes] Linkeado ${r.RazonSocialCliente} (CUIT ${cuit}) → id_centum ${r.ClienteID}`)
       } else if (!localPorCuit) {
         nuevosBI.push(r)
@@ -218,7 +219,17 @@ async function syncClientesRecientes(horasAtras = 2) {
         const normalize = v => (v === undefined || v === '' ? null : v)
         const cambio = Object.keys(updateData).some(k => normalize(updateData[k]) !== normalize(local[k]))
         if (cambio) {
-          await supabase.from('clientes').update(updateData).eq('id', local.id)
+          const cambiosAudit = calcularCambios(local, updateData)
+          await supabase.from('clientes').update({ ...updateData, updated_at: new Date().toISOString() }).eq('id', local.id)
+          if (Object.keys(cambiosAudit).length > 0) {
+            registrarAuditoria({
+              cliente_id: local.id,
+              accion: 'sync_centum',
+              origen: 'cron',
+              cambios: cambiosAudit,
+              detalle: 'Sync automático desde Centum BI',
+            })
+          }
         }
       }
     }
@@ -243,13 +254,18 @@ async function syncClientesRecientes(horasAtras = 2) {
     nuevosCount = inserts.length
   }
 
-  // Actualizar existentes
+  // Actualizar existentes (solo si hay cambios reales)
+  const normalize = v => (v === undefined || v === '' ? null : v)
   for (const r of existentesBI) {
     const local = existentesMap.get(r.ClienteID)
     if (!local) continue
+    const centumData = mapearCliente(r)
+    delete centumData._centum_email
+    const cambio = Object.keys(centumData).some(k => normalize(centumData[k]) !== normalize(local[k]))
+    if (!cambio) continue
     const { error } = await supabase
       .from('clientes')
-      .update(mapearCliente(r))
+      .update({ ...centumData, updated_at: new Date().toISOString() })
       .eq('id', local.id)
     if (error) logger.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
     else actualizadosCount++
@@ -285,7 +301,7 @@ async function syncClientesRecientes(horasAtras = 2) {
           if (cli) {
             const { error: errDesact } = await supabase
               .from('clientes')
-              .update({ activo: false })
+              .update({ activo: false, updated_at: new Date().toISOString() })
               .eq('id', cli.id)
             if (!errDesact) desactivadosCount++
           }
@@ -328,7 +344,7 @@ async function syncClientesRecientes(horasAtras = 2) {
           if (cli) {
             const { error: errReact } = await supabase
               .from('clientes')
-              .update({ activo: true })
+              .update({ activo: true, updated_at: new Date().toISOString() })
               .eq('id', cli.id)
             if (!errReact) reactivadosCount++
           }
@@ -440,7 +456,7 @@ async function retrySyncCentum() {
       if (idCentum) {
         await supabase
           .from('clientes')
-          .update({ id_centum: idCentum })
+          .update({ id_centum: idCentum, updated_at: new Date().toISOString() })
           .eq('id', cliente.id)
 
         // Intentar agregar contacto de envío si tiene email/celular
@@ -905,7 +921,7 @@ async function syncClientesFaltantes() {
       // Ya existe por CUIT pero sin id_centum — linkear en vez de crear
       const local = locales.find(l => l.cuit && l.cuit.replace(/\D/g, '') === cuit && !l.id_centum)
       if (local) {
-        supabase.from('clientes').update({ id_centum: r.ClienteID }).eq('id', local.id).then(() => {})
+        supabase.from('clientes').update({ id_centum: r.ClienteID, updated_at: new Date().toISOString() }).eq('id', local.id).then(() => {})
       }
       return false
     }
@@ -950,7 +966,7 @@ async function syncClientesFaltantes() {
   let insertados = 0
   for (let i = 0; i < inserts.length; i += 200) {
     const lote = inserts.slice(i, i + 200)
-    const { data: upserted, error } = await supabase.from('clientes').upsert(lote, { onConflict: 'id_centum', ignoreDuplicates: true })
+    const { error } = await supabase.from('clientes').insert(lote)
     if (error) {
       logger.warn(`[SyncFaltantes] Error insertando lote ${i}:`, error.message)
     } else {
@@ -969,4 +985,56 @@ async function syncClientesFaltantes() {
   return { faltantes_encontrados: faltantes.length, insertados }
 }
 
-module.exports = { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, syncClientesFaltantes, crearPedidoVentaCentum }
+/**
+ * Desactiva un cliente en Centum ERP (Activo = false).
+ * Usa POST /Clientes/Actualizar (PUT da 405).
+ * @param {number} idCliente - ID del cliente en Centum
+ * @returns {Promise<Object>}
+ */
+async function desactivarClienteEnCentum(idCliente) {
+  const accessToken = generateAccessToken(API_KEY)
+  const url = `${BASE_URL}/Clientes/Actualizar`
+  const inicio = Date.now()
+
+  const body = { IdCliente: idCliente, Activo: false }
+
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
+        'CentumSuiteAccessToken': accessToken,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    registrarLlamada({
+      servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
+      estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'manual',
+    })
+    throw err
+  }
+
+  if (!response.ok) {
+    const texto = await response.text()
+    registrarLlamada({
+      servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
+      estado: 'error', status_code: response.status, duracion_ms: Date.now() - inicio,
+      error_mensaje: `HTTP ${response.status}: ${texto.slice(0, 500)}`, origen: 'manual',
+    })
+    throw new Error(`Error al desactivar cliente en Centum (${response.status}): ${texto.slice(0, 500)}`)
+  }
+
+  const data = await response.json().catch(() => ({}))
+  registrarLlamada({
+    servicio: 'centum_clientes', endpoint: url, metodo: 'POST',
+    estado: 'ok', status_code: response.status, duracion_ms: Date.now() - inicio,
+    items_procesados: 1, origen: 'manual',
+  })
+  return data
+}
+
+module.exports = { fetchClientesCentum, crearClienteEnCentum, actualizarClienteEnCentum, desactivarClienteEnCentum, agregarContactoEnvioCentum, syncClientesRecientes, retrySyncCentum, syncClientesFaltantes, crearPedidoVentaCentum }
