@@ -240,9 +240,10 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
     }
   }
 
-  // Sincronizar códigos de barra con factor de unidad desde Centum BI (SQL Server) — skip en sync rápida
+  // Sincronizar códigos de barra con factor de unidad desde Centum BI (SQL Server)
+  // Siempre se ejecuta (tanto en sync rápida como completa) para mantener barcodes actualizados
   let barcodesSincronizados = 0
-  if (!skipBarcodes) try {
+  try {
     const { getPool } = require('../config/centum')
     const db = await getPool()
 
@@ -277,8 +278,25 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
       barcodeMap[id].push({ codigo: row.CodigoBarras.trim(), factor })
     }
 
-    // Actualizar artículos que tienen barcodes (en paralelo, lotes de 50)
+    // Leer barcodes actuales de Supabase para comparar y solo actualizar los que cambiaron
+    const barcodesActuales = {}
+    let bcOffset = 0
+    while (true) {
+      const { data: bcData, error: bcErr } = await supabase
+        .from('articulos')
+        .select('id_centum, codigos_barras')
+        .eq('tipo', 'automatico')
+        .not('id_centum', 'is', null)
+        .range(bcOffset, bcOffset + BATCH_SIZE - 1)
+      if (bcErr || !bcData || bcData.length === 0) break
+      for (const a of bcData) barcodesActuales[a.id_centum] = JSON.stringify(a.codigos_barras || [])
+      if (bcData.length < BATCH_SIZE) break
+      bcOffset += BATCH_SIZE
+    }
+
+    // Filtrar solo artículos cuyos barcodes cambiaron
     const entries = Object.entries(barcodeMap)
+      .filter(([idCentum, codigos]) => JSON.stringify(codigos) !== barcodesActuales[parseInt(idCentum)])
     const BC_BATCH = 50
     for (let i = 0; i < entries.length; i += BC_BATCH) {
       const lote = entries.slice(i, i + BC_BATCH)
@@ -290,7 +308,7 @@ async function sincronizarERP(origen = 'cron', { skipBarcodes = false, skipSucur
           .then(() => barcodesSincronizados++)
       ))
     }
-    logger.info(`[Sync] ${barcodesSincronizados} artículos con códigos de barra sincronizados`)
+    logger.info(`[Sync] ${barcodesSincronizados} artículos con códigos de barra actualizados (${entries.length} con cambios de ${Object.keys(barcodeMap).length} en BI)`)
   } catch (err) {
     logger.error('[Sync] Error al sincronizar códigos de barra:', err.message)
   }
