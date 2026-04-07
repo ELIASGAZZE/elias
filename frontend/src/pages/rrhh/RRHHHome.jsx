@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import api from '../../services/api'
 import Navbar from '../../components/layout/Navbar'
 import { imprimirCierreCuentaEmpleado } from '../../utils/imprimirComprobante'
@@ -298,6 +298,7 @@ const TabCuentaCorriente = () => {
   const [ejecutandoCierre, setEjecutandoCierre] = useState(false)
   const [confirmandoCierre, setConfirmandoCierre] = useState(false)
   const [reimprimiendo, setReimprimiendo] = useState(false)
+  const empleadoRefs = useRef({})
 
   useEffect(() => { cargarSaldos() }, [])
 
@@ -317,6 +318,9 @@ const TabCuentaCorriente = () => {
 
   const verDetalle = async (emp) => {
     setSeleccionado(emp)
+    setTimeout(() => {
+      empleadoRefs.current[emp.id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
     setCargandoMov(true)
     setVentaExpandida(null)
     try {
@@ -470,155 +474,160 @@ const TabCuentaCorriente = () => {
         )}
       </div>
 
-      <div className="flex gap-6">
-      {/* Lista empleados */}
-      <div className={`${seleccionado ? 'w-1/3' : 'w-full'} transition-all`}>
+      <div>
         <p className="text-sm text-gray-500 mb-3">{empleados.length} empleado{empleados.length !== 1 ? 's' : ''} con cuenta</p>
         {empleados.length === 0 ? (
           <p className="text-gray-400 text-sm text-center py-10">No hay empleados activos</p>
         ) : (
           <div className="space-y-2">
             {empleados.map(emp => (
-              <div
-                key={emp.id}
-                onClick={() => verDetalle(emp)}
-                className={`bg-white rounded-xl border p-3 cursor-pointer transition-all hover:shadow-md ${
-                  seleccionado?.id === emp.id ? 'border-cyan-400 ring-2 ring-cyan-100' : 'border-gray-100'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">{emp.nombre}</p>
-                    <p className="text-xs text-gray-400">
-                      {emp.codigo}
-                      {emp.sucursales && ` · ${emp.sucursales.nombre}`}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-sm font-bold ${emp.saldo > 0 ? 'text-red-600' : emp.saldo < 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                      {emp.saldo > 0 ? `Debe ${formatPrecio(emp.saldo)}` : emp.saldo < 0 ? `A favor ${formatPrecio(Math.abs(emp.saldo))}` : '$0'}
-                    </p>
-                    {emp.tope_mensual != null && (
-                      <p className="text-[10px] text-gray-400">
-                        Mes: {formatPrecio(emp.consumido_mes)} / {formatPrecio(emp.tope_mensual)}
+              <div key={emp.id} ref={el => empleadoRefs.current[emp.id] = el}>
+                <div
+                  onClick={() => seleccionado?.id === emp.id ? setSeleccionado(null) : verDetalle(emp)}
+                  className={`bg-white rounded-xl border p-3 cursor-pointer transition-all hover:shadow-md ${
+                    seleccionado?.id === emp.id ? 'border-cyan-400 ring-2 ring-cyan-100 rounded-b-none' : 'border-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">{emp.nombre}</p>
+                      <p className="text-xs text-gray-400">
+                        {emp.codigo}
+                        {emp.sucursales && ` · ${emp.sucursales.nombre}`}
                       </p>
-                    )}
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-sm font-bold ${emp.saldo > 0 ? 'text-red-600' : emp.saldo < 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                        {emp.saldo > 0 ? `Debe ${formatPrecio(emp.saldo)}` : emp.saldo < 0 ? `A favor ${formatPrecio(Math.abs(emp.saldo))}` : '$0'}
+                      </p>
+                      {emp.tope_mensual != null && (
+                        <p className="text-[10px] text-gray-400">
+                          Mes: {formatPrecio(emp.consumido_mes)} / {formatPrecio(emp.tope_mensual)}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                {/* Panel detalle inline */}
+                {seleccionado?.id === emp.id && (
+                  <div className="bg-white border border-t-0 border-cyan-400 ring-2 ring-cyan-100 rounded-b-xl overflow-hidden mb-2">
+                    {/* Header con saldo */}
+                    <div className="bg-cyan-50 border-b border-cyan-100 px-4 py-3 flex items-center justify-between">
+                      <p className="text-xs font-medium text-gray-500">Saldo pendiente</p>
+                      <p className={`text-lg font-bold ${seleccionado.saldo > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                        {formatPrecio(seleccionado.saldo)}
+                      </p>
+                    </div>
+
+                    {/* Registrar pago */}
+                    <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+                      <p className="text-xs font-medium text-gray-500 mb-2">Registrar pago / descuento de sueldo</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          step="100"
+                          value={montoPago}
+                          onChange={e => setMontoPago(e.target.value)}
+                          placeholder="Monto"
+                          className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:border-cyan-400 outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={conceptoPago}
+                          onChange={e => setConceptoPago(e.target.value)}
+                          placeholder="Concepto (ej: Desc. sueldo Marzo)"
+                          className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:border-cyan-400 outline-none"
+                        />
+                        <button
+                          onClick={registrarPago}
+                          disabled={guardandoPago}
+                          className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-1.5 rounded-lg"
+                        >
+                          {guardandoPago ? '...' : 'Registrar'}
+                        </button>
+                      </div>
+                      {mensajePago && (
+                        <p className={`text-xs mt-1 ${mensajePago.includes('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                          {mensajePago}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Timeline */}
+                    <div className="px-4 py-3 overflow-y-auto max-h-[400px]">
+                      {cargandoMov ? (
+                        <div className="flex justify-center py-6">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-cyan-600" />
+                        </div>
+                      ) : timeline.length === 0 ? (
+                        <p className="text-gray-400 text-sm text-center py-6">Sin movimientos</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {(() => {
+                            let saldoAcum = seleccionado?.saldo || 0
+                            return timeline.map((mov, idx) => {
+                              const saldoDespues = saldoAcum
+                              const montoMov = mov._tipo === 'venta' ? mov.total : (mov.monto < 0 ? Math.abs(mov.monto) : -mov.monto)
+                              saldoAcum = saldoAcum - montoMov
+                              return (
+                            <div key={idx}>
+                              <div
+                                className={`flex items-center justify-between py-2 px-3 rounded-lg ${
+                                  mov._tipo === 'venta' ? 'bg-red-50 cursor-pointer hover:bg-red-100' : mov.monto < 0 ? 'bg-red-50' : 'bg-green-50'
+                                }`}
+                                onClick={() => mov._tipo === 'venta' && setVentaExpandida(ventaExpandida === mov.id ? null : mov.id)}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-700">
+                                    {mov._tipo === 'venta' ? 'Retiro de mercadería' : 'Pago'}
+                                  </p>
+                                  <p className="text-xs text-gray-400">
+                                    {formatFechaHora(mov._fecha)}
+                                    {mov._tipo === 'venta' && (mov.empleado_caja || mov.cajero) && ` · Cajero: ${mov.empleado_caja?.nombre || mov.cajero?.nombre || mov.cajero?.username}`}
+                                    {mov._tipo === 'pago' && mov.concepto && ` · ${mov.concepto}`}
+                                    {mov._tipo === 'pago' && mov.registrado && ` · Por: ${mov.registrado.nombre || mov.registrado.username}`}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : mov.monto < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    {mov._tipo === 'venta' ? '+' : mov.monto < 0 ? '+' : '-'}{formatPrecio(Math.abs(mov._tipo === 'venta' ? mov.total : mov.monto))}
+                                  </span>
+                                  <span className="text-xs text-gray-400 font-medium w-24 text-right">
+                                    Saldo: {formatPrecio(saldoDespues)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {mov._tipo === 'venta' && ventaExpandida === mov.id && mov.items && (
+                                <div className="ml-3 mt-1 mb-2 bg-white border border-gray-100 rounded-lg p-2 space-y-1">
+                                  {(typeof mov.items === 'string' ? JSON.parse(mov.items) : mov.items).map((item, i) => (
+                                    <div key={i} className="flex items-center justify-between text-xs">
+                                      <span className="text-gray-600 truncate flex-1">
+                                        {item.nombre}
+                                        {item.descuento_pct > 0 && <span className="text-cyan-500 ml-1">(-{item.descuento_pct}%)</span>}
+                                      </span>
+                                      <span className="text-gray-500 ml-2">
+                                        {item.cantidad} x {formatPrecio(item.precio_final || item.precio_original)} = {formatPrecio(item.subtotal)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                              )
+                            })
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
-
-      {/* Panel detalle */}
-      {seleccionado && (
-        <div className="flex-1 bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          {/* Header */}
-          <div className="bg-cyan-50 border-b border-cyan-100 px-4 py-3 flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-gray-800">{seleccionado.nombre}</h3>
-              <p className="text-xs text-gray-500">{seleccionado.codigo} · {seleccionado.sucursales?.nombre || ''}</p>
-            </div>
-            <div className="text-right">
-              <p className={`text-lg font-bold ${seleccionado.saldo > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                {formatPrecio(seleccionado.saldo)}
-              </p>
-              <p className="text-[10px] text-gray-400">saldo pendiente</p>
-            </div>
-          </div>
-
-          {/* Registrar pago */}
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-            <p className="text-xs font-medium text-gray-500 mb-2">Registrar pago / descuento de sueldo</p>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                step="100"
-                value={montoPago}
-                onChange={e => setMontoPago(e.target.value)}
-                placeholder="Monto"
-                className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:border-cyan-400 outline-none"
-              />
-              <input
-                type="text"
-                value={conceptoPago}
-                onChange={e => setConceptoPago(e.target.value)}
-                placeholder="Concepto (ej: Desc. sueldo Marzo)"
-                className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:border-cyan-400 outline-none"
-              />
-              <button
-                onClick={registrarPago}
-                disabled={guardandoPago}
-                className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-1.5 rounded-lg"
-              >
-                {guardandoPago ? '...' : 'Registrar'}
-              </button>
-            </div>
-            {mensajePago && (
-              <p className={`text-xs mt-1 ${mensajePago.includes('Error') ? 'text-red-600' : 'text-green-600'}`}>
-                {mensajePago}
-              </p>
-            )}
-          </div>
-
-          {/* Timeline */}
-          <div className="px-4 py-3 overflow-y-auto max-h-[500px]">
-            {cargandoMov ? (
-              <div className="flex justify-center py-6">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-cyan-600" />
-              </div>
-            ) : timeline.length === 0 ? (
-              <p className="text-gray-400 text-sm text-center py-6">Sin movimientos</p>
-            ) : (
-              <div className="space-y-2">
-                {timeline.map((mov, idx) => (
-                  <div key={idx}>
-                    <div
-                      className={`flex items-center justify-between py-2 px-3 rounded-lg ${
-                        mov._tipo === 'venta' ? 'bg-red-50 cursor-pointer hover:bg-red-100' : mov.monto < 0 ? 'bg-red-50' : 'bg-green-50'
-                      }`}
-                      onClick={() => mov._tipo === 'venta' && setVentaExpandida(ventaExpandida === mov.id ? null : mov.id)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-700">
-                          {mov._tipo === 'venta' ? 'Retiro de mercadería' : 'Pago'}
-                        </p>
-                        <p className="text-xs text-gray-400">
-                          {formatFechaHora(mov._fecha)}
-                          {mov._tipo === 'venta' && (mov.empleado_caja || mov.cajero) && ` · Cajero: ${mov.empleado_caja?.nombre || mov.cajero?.nombre || mov.cajero?.username}`}
-                          {mov._tipo === 'pago' && mov.concepto && ` · ${mov.concepto}`}
-                          {mov._tipo === 'pago' && mov.registrado && ` · Por: ${mov.registrado.nombre || mov.registrado.username}`}
-                        </p>
-                      </div>
-                      <span className={`text-sm font-bold ${mov._tipo === 'venta' ? 'text-red-600' : mov.monto < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {mov._tipo === 'venta' ? '+' : mov.monto < 0 ? '+' : '-'}{formatPrecio(Math.abs(mov._tipo === 'venta' ? mov.total : mov.monto))}
-                      </span>
-                    </div>
-
-                    {mov._tipo === 'venta' && ventaExpandida === mov.id && mov.items && (
-                      <div className="ml-3 mt-1 mb-2 bg-white border border-gray-100 rounded-lg p-2 space-y-1">
-                        {(typeof mov.items === 'string' ? JSON.parse(mov.items) : mov.items).map((item, i) => (
-                          <div key={i} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-600 truncate flex-1">
-                              {item.nombre}
-                              {item.descuento_pct > 0 && <span className="text-cyan-500 ml-1">(-{item.descuento_pct}%)</span>}
-                            </span>
-                            <span className="text-gray-500 ml-2">
-                              {item.cantidad} x {formatPrecio(item.precio_final || item.precio_original)} = {formatPrecio(item.subtotal)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
     </div>
   )
 }
