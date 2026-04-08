@@ -808,7 +808,7 @@ async function getVentasCentumByFecha(fechaDesde, fechaHasta) {
  * @param {number[]} [sucursalIds] - IDs de sucursales físicas Centum (opcional)
  * @returns {Object} { totalVentas, totalNC, totalEmpresa, totalPrueba, cantVentas, cantNC }
  */
-async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, divisionId) {
+async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, divisionId, usuarioId) {
   const inicio = Date.now()
   try {
     const db = await getPool()
@@ -832,6 +832,11 @@ async function getResumenVentasCentumBI(fechaDesde, fechaHasta, sucursalIds, div
     if (divisionId) {
       request.input('divId', sql.Int, divisionId)
       whereExtra += ` AND v.DivisionEmpresaGrupoEconomicoID = @divId`
+    }
+
+    if (usuarioId) {
+      request.input('usuarioId', sql.Int, usuarioId)
+      whereExtra += ` AND v.UsuarioID = @usuarioId`
     }
 
     const result = await request.query(`
@@ -1018,8 +1023,152 @@ async function getVentasPOSParaDuplicados(ventaIds) {
   }
 }
 
+/**
+ * Lista paginada de ventas de Centum BI por Usuario Api (1301).
+ */
+async function getVentasCentumPaginado(fechaDesde, fechaHasta, options = {}) {
+  const { sucursalIds, divisionId, tiposComprobante, buscarCliente, buscarNumero, page = 1, pageSize = 50 } = options
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+    const request = db.request()
+      .input('fechaDesde', sql.VarChar, fechaDesde)
+      .input('fechaHasta', sql.VarChar, fechaHasta + 'T23:59:59')
+      .input('offset', sql.Int, (page - 1) * pageSize)
+      .input('pageSize', sql.Int, pageSize)
+
+    let whereExtra = ''
+
+    if (sucursalIds && sucursalIds.length > 0) {
+      const placeholders = sucursalIds.map((id, i) => {
+        request.input(`suc${i}`, sql.Int, id)
+        return `@suc${i}`
+      }).join(',')
+      whereExtra += ` AND v.SucursalFisicaID IN (${placeholders})`
+    }
+
+    if (divisionId) {
+      request.input('divId', sql.Int, divisionId)
+      whereExtra += ` AND v.DivisionEmpresaGrupoEconomicoID = @divId`
+    }
+
+    if (tiposComprobante && tiposComprobante.length > 0) {
+      const ph = tiposComprobante.map((id, i) => {
+        request.input(`tc${i}`, sql.Int, id)
+        return `@tc${i}`
+      }).join(',')
+      whereExtra += ` AND v.TipoComprobanteID IN (${ph})`
+    }
+
+    if (buscarCliente) {
+      request.input('buscarCliente', sql.VarChar, `%${buscarCliente}%`)
+      whereExtra += ` AND c.RazonSocialCliente LIKE @buscarCliente`
+    }
+
+    if (buscarNumero) {
+      request.input('buscarNumero', sql.VarChar, `%${buscarNumero}%`)
+      whereExtra += ` AND v.NumeroDocumento LIKE @buscarNumero`
+    }
+
+    const result = await request.query(`
+      SELECT v.VentaID, v.NumeroDocumento, v.FechaDocumento, v.FechaCreacion,
+             v.Total, v.SubTotal, v.IVA, v.ClienteID, v.TipoComprobanteID,
+             v.SucursalFisicaID, v.DivisionEmpresaGrupoEconomicoID,
+             c.RazonSocialCliente, s.NombreSucursalFisica,
+             COUNT(*) OVER() AS _totalCount
+      FROM Ventas_VIEW v
+      LEFT JOIN Clientes_VIEW c ON c.ClienteID = v.ClienteID
+      LEFT JOIN SucursalesFisicas_VIEW s ON s.SucursalFisicaID = v.SucursalFisicaID
+      WHERE v.UsuarioID = 1301
+        AND v.FechaDocumento >= @fechaDesde
+        AND v.FechaDocumento <= @fechaHasta
+        AND v.Anulado = 0
+        ${whereExtra}
+      ORDER BY v.FechaDocumento DESC, v.VentaID DESC
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+    `)
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumPaginado',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: result.recordset.length, origen: 'auditoria',
+    })
+
+    const totalCount = result.recordset[0]?._totalCount || 0
+    const ventas = result.recordset.map(({ _totalCount, ...rest }) => rest)
+
+    return { ventas, totalCount }
+  } catch (err) {
+    logger.error('[Centum BI] Error en getVentasCentumPaginado:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentasCentumPaginado',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'auditoria',
+    })
+    throw err
+  }
+}
+
+/**
+ * Detalle completo de una venta de Centum BI: datos cabecera + items.
+ */
+async function getVentaCentumDetalle(ventaId) {
+  const inicio = Date.now()
+  try {
+    const db = await getPool()
+
+    const [ventaResult, itemsResult] = await Promise.all([
+      db.request()
+        .input('ventaId', sql.Int, ventaId)
+        .query(`
+          SELECT v.*,
+                 c.RazonSocialCliente, c.CUITCliente, c.CodigoCliente,
+                 c.CondicionIVAClienteID, c.DireccionCliente, c.LocalidadCliente,
+                 s.NombreSucursalFisica,
+                 u.NombreUsuario,
+                 vend.NombreVendedor
+          FROM Ventas_VIEW v
+          LEFT JOIN Clientes_VIEW c ON c.ClienteID = v.ClienteID
+          LEFT JOIN SucursalesFisicas_VIEW s ON s.SucursalFisicaID = v.SucursalFisicaID
+          LEFT JOIN Usuarios_VIEW u ON u.UsuarioID = v.UsuarioID
+          LEFT JOIN Vendedores_VIEW vend ON vend.VendedorID = v.VendedorID
+          WHERE v.VentaID = @ventaId
+        `),
+      db.request()
+        .input('ventaId', sql.Int, ventaId)
+        .query(`
+          SELECT vi.*, a.NombreArticulo, a.CodigoArticulo
+          FROM Venta_Items_VIEW vi
+          LEFT JOIN Articulos_VIEW a ON a.ArticuloID = vi.ArticuloID
+          WHERE vi.VentaID = @ventaId
+          ORDER BY vi.VentaItemID
+        `),
+    ])
+
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentaCentumDetalle',
+      metodo: 'QUERY', estado: 'ok', duracion_ms: Date.now() - inicio,
+      items_procesados: itemsResult.recordset.length, origen: 'auditoria',
+    })
+
+    const venta = ventaResult.recordset[0] || null
+    if (venta) venta.items = itemsResult.recordset
+
+    return venta
+  } catch (err) {
+    logger.error('[Centum BI] Error en getVentaCentumDetalle:', err.message)
+    registrarLlamada({
+      servicio: 'centum_bi', endpoint: 'VentaCentumDetalle',
+      metodo: 'QUERY', estado: 'error', duracion_ms: Date.now() - inicio,
+      error_mensaje: err.message, origen: 'auditoria',
+    })
+    throw err
+  }
+}
+
 module.exports = {
   getPool, getPlanillaData, validarPlanilla, getVentasSinConfirmar, getComprobantesData,
   getTransaccionesDetalle, buscarComprobantesPorMonto, getFacturasTurno, getVentasCentumByFecha,
   getResumenVentasCentumBI, getVentasCentumDetallado, getVentasPOSParaDuplicados,
+  getVentasCentumPaginado, getVentaCentumDetalle,
 }

@@ -56,8 +56,8 @@ const RRHHHome = lazy(() => import('./pages/rrhh/RRHHHome'))
 const VentasHome = lazy(() => import('./pages/ventas/VentasHome'))
 const DetalleVenta = lazy(() => import('./pages/ventas/DetalleVenta'))
 const ReportesPromociones = lazy(() => import('./pages/ventas/ReportesPromociones'))
-const ConciliacionVentas = lazy(() => import('./pages/ventas/ConciliacionVentas'))
-const DuplicadosCentum = lazy(() => import('./pages/ventas/DuplicadosCentum'))
+const VentasAuditoriaCentum = lazy(() => import('./pages/ventas/VentasAuditoriaCentum'))
+const DetalleVentaCentum = lazy(() => import('./pages/ventas/DetalleVentaCentum'))
 
 // Tareas
 const TareasHome = lazy(() => import('./pages/tareas/TareasHome'))
@@ -263,16 +263,8 @@ const App = () => {
               <ReportesPromociones />
             </RutaProtegida>
           } />
-          <Route path="/ventas/conciliacion" element={
-            <RutaProtegida rolesPermitidos={['admin']}>
-              <ConciliacionVentas />
-            </RutaProtegida>
-          } />
-          <Route path="/ventas/duplicados-centum" element={
-            <RutaProtegida rolesPermitidos={['admin']}>
-              <DuplicadosCentum />
-            </RutaProtegida>
-          } />
+          <Route path="/ventas/auditoria" element={<RutaProtegida soloAdmin><VentasAuditoriaCentum /></RutaProtegida>} />
+          <Route path="/ventas/auditoria/:ventaId" element={<RutaProtegida soloAdmin><DetalleVentaCentum /></RutaProtegida>} />
           <Route path="/ventas/:id" element={
             <RutaProtegida>
               <DetalleVenta />

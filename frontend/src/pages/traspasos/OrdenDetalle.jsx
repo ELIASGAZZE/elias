@@ -8,6 +8,7 @@ const ESTADO_BADGE = {
   pendiente: 'bg-gray-100 text-gray-600',
   en_preparacion: 'bg-amber-100 text-amber-600',
   preparado: 'bg-blue-100 text-blue-600',
+  despacho_parcial: 'bg-orange-100 text-orange-600',
   despachado: 'bg-purple-100 text-purple-600',
   recibido: 'bg-green-100 text-green-600',
   con_diferencia: 'bg-red-100 text-red-600',
@@ -18,6 +19,7 @@ const ESTADO_LABEL = {
   pendiente: 'Pendiente',
   en_preparacion: 'En preparación',
   preparado: 'Preparado',
+  despacho_parcial: 'Despacho parcial',
   despachado: 'Despachado',
   recibido: 'Recibido',
   con_diferencia: 'Con diferencia',
@@ -204,6 +206,18 @@ const OrdenDetalle = () => {
                 className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                 Despachar
               </button>
+              <button onClick={cancelar} disabled={accionando}
+                className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                Cancelar Orden
+              </button>
+            </>
+          )}
+          {orden.estado === 'despacho_parcial' && (
+            <>
+              <Link to={`/traspasos/recibir/${id}`}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Ir a Recepción
+              </Link>
               <button onClick={cancelar} disabled={accionando}
                 className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                 Cancelar Orden

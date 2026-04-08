@@ -9,6 +9,7 @@ const ESTADO_BADGE = {
   pendiente: 'bg-gray-100 text-gray-600',
   en_preparacion: 'bg-amber-100 text-amber-600',
   preparado: 'bg-blue-100 text-blue-600',
+  despacho_parcial: 'bg-orange-100 text-orange-600',
   despachado: 'bg-purple-100 text-purple-600',
   recibido: 'bg-green-100 text-green-600',
   con_diferencia: 'bg-red-100 text-red-600',
@@ -19,6 +20,7 @@ const ESTADO_LABEL = {
   pendiente: 'Pendiente',
   en_preparacion: 'En preparación',
   preparado: 'Preparado',
+  despacho_parcial: 'Despacho parcial',
   despachado: 'Despachado',
   recibido: 'Recibido',
   con_diferencia: 'Con diferencia',
@@ -138,7 +140,7 @@ const TraspasosHome = () => {
         {tab === 'ordenes' && (
           <>
             {/* KPIs clickeables como filtro */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-2">
               {[
                 { key: 'pendiente', label: 'Creadas', value: dashboard?.pendientes || 0,
                   textColor: 'text-gray-600', activeBorder: 'border-gray-400 bg-gray-50 ring-2 ring-gray-200' },
@@ -146,17 +148,27 @@ const TraspasosHome = () => {
                   textColor: 'text-amber-600', activeBorder: 'border-amber-400 bg-amber-50 ring-2 ring-amber-200' },
                 { key: 'preparado', label: 'Preparadas', value: dashboard?.preparados || 0,
                   textColor: 'text-blue-600', activeBorder: 'border-blue-400 bg-blue-50 ring-2 ring-blue-200' },
+                { key: 'despacho_parcial', label: 'Despacho parcial', value: dashboard?.despacho_parcial || 0,
+                  textColor: 'text-orange-600', activeBorder: 'border-orange-400 bg-orange-50 ring-2 ring-orange-200' },
+                { key: 'despachado', label: 'Despachadas', value: dashboard?.despachados || 0,
+                  textColor: 'text-purple-600', activeBorder: 'border-purple-400 bg-purple-50 ring-2 ring-purple-200' },
+                { key: 'recibido', label: 'Recibidas hoy', value: dashboard?.recibidos_hoy || 0,
+                  textColor: 'text-green-600', activeBorder: 'border-green-400 bg-green-50 ring-2 ring-green-200' },
+                { key: 'con_diferencia', label: 'Con diferencia', value: dashboard?.con_diferencia || 0,
+                  textColor: 'text-red-600', activeBorder: 'border-red-400 bg-red-50 ring-2 ring-red-200' },
+                { key: 'cancelado', label: 'Canceladas', value: dashboard?.cancelados || 0,
+                  textColor: 'text-red-400', activeBorder: 'border-red-300 bg-red-50 ring-2 ring-red-100' },
               ].map(kpi => (
                 <button key={kpi.key}
                   onClick={() => setFiltroEstado(filtroEstado === kpi.key ? '' : kpi.key)}
-                  className={`rounded-xl border-2 p-4 text-center transition-all cursor-pointer ${
+                  className={`rounded-xl border-2 p-3 text-center transition-all cursor-pointer ${
                     filtroEstado === kpi.key
                       ? kpi.activeBorder
                       : 'border-gray-200 bg-white hover:border-gray-300'
                   }`}
                 >
-                  <div className={`text-2xl font-bold ${kpi.textColor}`}>{kpi.value}</div>
-                  <div className="text-xs text-gray-500 mt-1">{kpi.label}</div>
+                  <div className={`text-xl font-bold ${kpi.textColor}`}>{kpi.value}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{kpi.label}</div>
                 </button>
               ))}
             </div>

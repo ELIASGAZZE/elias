@@ -4,7 +4,7 @@ const router = express.Router()
 const supabase = require('../config/supabase')
 const { verificarAuth, soloAdmin, soloGestorOAdmin } = require('../middleware/auth')
 const { sincronizarERP } = require('../services/syncERP')
-const { getVentasCentumByFecha, getResumenVentasCentumBI, getVentasCentumDetallado, getVentasPOSParaDuplicados } = require('../config/centum')
+const { getVentasCentumByFecha, getResumenVentasCentumBI, getVentasCentumDetallado, getVentasPOSParaDuplicados, getVentasCentumPaginado, getVentaCentumDetalle } = require('../config/centum')
 const { registrarVentaPOSEnCentum, crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, fetchAndSaveCAE, retrySyncCAE } = require('../services/centumVentasPOS')
 const { crearClienteEnCentum } = require('../services/centumClientes')
 const crypto = require('crypto')
@@ -1594,12 +1594,94 @@ router.get('/ventas/resumen-centum', verificarAuth, soloAdmin, asyncHandler(asyn
   }
 }))
 
+// GET /api/pos/ventas/auditoria-centum — Lista paginada de ventas Centum BI (Usuario Api)
+router.get('/ventas/auditoria-centum', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  try {
+    const { fecha, fecha_hasta, sucursales: sucursalesParam, clasificacion, tipo, buscar, numero_factura, page: pageParam } = req.query
+    if (!fecha) return res.status(400).json({ error: 'Falta parámetro fecha' })
+    const hasta = fecha_hasta || fecha
+    const page = parseInt(pageParam) || 1
+
+    // Resolver sucursales POS → centum_sucursal_id
+    let sucursalIds = null
+    const sucFiltro = sucursalesParam ? sucursalesParam.split(',').filter(Boolean) : []
+    if (sucFiltro.length > 0) {
+      const { data: sucs } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .in('id', sucFiltro)
+        .not('centum_sucursal_id', 'is', null)
+      if (sucs?.length) sucursalIds = sucs.map(s => s.centum_sucursal_id).filter(Boolean)
+    } else {
+      const { data: cajas } = await supabase.from('cajas').select('sucursal_id')
+      const sucConCaja = [...new Set((cajas || []).map(c => c.sucursal_id).filter(Boolean))]
+      if (sucConCaja.length) {
+        const { data: allSucs } = await supabase
+          .from('sucursales')
+          .select('centum_sucursal_id')
+          .in('id', sucConCaja)
+          .not('centum_sucursal_id', 'is', null)
+        if (allSucs?.length) sucursalIds = allSucs.map(s => s.centum_sucursal_id).filter(Boolean)
+      }
+    }
+
+    let divisionId = null
+    if (clasificacion === 'EMPRESA') divisionId = 3
+    else if (clasificacion === 'PRUEBA') divisionId = 2
+
+    // Tipo comprobante: factura vs nota_credito
+    const tiposNC = [3, 6, 7, 8]
+    let tiposComprobante = null
+    if (tipo === 'nota_credito') tiposComprobante = tiposNC
+    // Para "factura" usamos exclusión, pero la función acepta IN, así que usamos los tipos de factura
+    else if (tipo === 'factura') tiposComprobante = [1, 4, 2, 5, 9, 10, 11] // todos excepto NC
+
+    const [listResult, resumen] = await Promise.all([
+      getVentasCentumPaginado(fecha, hasta, {
+        sucursalIds, divisionId, tiposComprobante,
+        buscarCliente: buscar || null,
+        buscarNumero: numero_factura || null,
+        page, pageSize: 50,
+      }),
+      getResumenVentasCentumBI(fecha, hasta, sucursalIds, divisionId, 1301),
+    ])
+
+    const { ventas, totalCount } = listResult
+    res.json({
+      ventas,
+      page,
+      totalPages: Math.ceil(totalCount / 50),
+      totalCount,
+      resumen,
+    })
+  } catch (err) {
+    logger.error('[POS] Error en auditoría Centum:', err.message)
+    res.status(500).json({ error: 'Error al consultar Centum BI' })
+  }
+}))
+
+// GET /api/pos/ventas/auditoria-centum/:ventaId — Detalle completo de una venta Centum BI
+router.get('/ventas/auditoria-centum/:ventaId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  try {
+    const ventaId = parseInt(req.params.ventaId)
+    if (!ventaId || isNaN(ventaId)) return res.status(400).json({ error: 'VentaID inválido' })
+
+    const venta = await getVentaCentumDetalle(ventaId)
+    if (!venta) return res.status(404).json({ error: 'Venta no encontrada en Centum BI' })
+
+    res.json({ venta })
+  } catch (err) {
+    logger.error('[POS] Error en detalle auditoría Centum:', err.message)
+    res.status(500).json({ error: 'Error al consultar Centum BI' })
+  }
+}))
+
 // GET /api/pos/ventas/:id — Detalle de una venta
 router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id)')
       .eq('id', req.params.id)
       .single()
 
@@ -1628,6 +1710,34 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
       if (cierre?.id) {
         data.cierre_id = cierre.id
         data.cierre_numero = cierre.numero
+      }
+    }
+
+    // Si la venta viene de un pedido, traer info de guía de delivery
+    if (data.pedido?.id) {
+      const { data: gdp } = await supabase
+        .from('guia_delivery_pedidos')
+        .select('id, forma_pago, monto, estado_entrega, guia:guias_delivery(id, fecha, turno, cadete_nombre, estado, despachada_at, cerrada_at)')
+        .eq('pedido_pos_id', data.pedido.id)
+        .limit(1)
+        .maybeSingle()
+      if (gdp) {
+        data.pedido.guia_delivery = {
+          forma_pago: gdp.forma_pago,
+          monto: gdp.monto,
+          estado_entrega: gdp.estado_entrega,
+          ...gdp.guia,
+        }
+      }
+      // Resolver nombre de sucursal del pedido
+      if (data.pedido.sucursal_id) {
+        const { data: sucPedido } = await supabase.from('sucursales').select('nombre').eq('id', data.pedido.sucursal_id).single()
+        if (sucPedido) data.pedido.sucursal_nombre = sucPedido.nombre
+      }
+      // Si tiene venta anticipada distinta a esta venta, traer info básica
+      if (data.pedido.venta_anticipada_id && data.pedido.venta_anticipada_id !== data.id) {
+        const { data: ventaAnt } = await supabase.from('ventas_pos').select('id, pagos, total, created_at, centum_comprobante').eq('id', data.pedido.venta_anticipada_id).single()
+        if (ventaAnt) data.pedido.venta_anticipada = ventaAnt
       }
     }
 

@@ -79,7 +79,6 @@ export function imprimirComprobantesEmpleado(empleado, items, total, cajeroNombr
   }
 
   imprimirHTML(buildTicket('empleado'))
-  setTimeout(() => imprimirHTML(buildTicket('firma')), 1500)
 }
 
 /**

@@ -20,7 +20,7 @@ const Recepcion = () => {
     api.get(`/api/traspasos/ordenes/${id}`)
       .then(r => {
         setOrden(r.data)
-        if (r.data.estado !== 'despachado' && r.data.estado !== 'recibido' && r.data.estado !== 'con_diferencia') {
+        if (!['despacho_parcial', 'despachado', 'recibido', 'con_diferencia'].includes(r.data.estado)) {
           alert('Esta orden no está lista para recepción')
           navigate(`/traspasos/ordenes/${id}`)
         }

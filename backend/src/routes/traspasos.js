@@ -215,19 +215,21 @@ router.get('/dashboard', verificarAuth, asyncHandler(async (req, res) => {
     const { data: ordenes } = await supabase
       .from('ordenes_traspaso')
       .select('estado, recibido_at')
-      .not('estado', 'eq', 'cancelado')
 
     const all = ordenes || []
     const pendientes = all.filter(o => o.estado === 'pendiente').length
     const en_preparacion = all.filter(o => o.estado === 'en_preparacion').length
     const preparados = all.filter(o => o.estado === 'preparado').length
+    const despacho_parcial = all.filter(o => o.estado === 'despacho_parcial').length
     const despachados = all.filter(o => o.estado === 'despachado').length
     const recibidos_hoy = all.filter(o =>
       (o.estado === 'recibido' || o.estado === 'con_diferencia') &&
       o.recibido_at && o.recibido_at.startsWith(hoy)
     ).length
+    const con_diferencia = all.filter(o => o.estado === 'con_diferencia').length
+    const cancelados = all.filter(o => o.estado === 'cancelado').length
 
-    res.json({ pendientes, en_preparacion, preparados, despachados, recibidos_hoy })
+    res.json({ pendientes, en_preparacion, preparados, despacho_parcial, despachados, recibidos_hoy, con_diferencia, cancelados })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1040,12 +1042,12 @@ router.put('/canastos/despachar-scan', verificarAuth, asyncHandler(async (req, r
     let ordenData = null
 
     if (despachados === total) {
-      // Traer orden para ajuste stock
+      // Todos despachados — marcar orden como despachado + ajuste stock
       const { data: orden } = await supabase
         .from('ordenes_traspaso')
         .select('*')
         .eq('id', canasto.orden_traspaso_id)
-        .eq('estado', 'preparado')
+        .in('estado', ['preparado', 'despacho_parcial'])
         .single()
 
       if (orden) {
@@ -1071,6 +1073,25 @@ router.put('/canastos/despachar-scan', verificarAuth, asyncHandler(async (req, r
 
         ordenCompletada = true
         ordenData = ordenActualizada
+      }
+    } else if (despachados > 0) {
+      // Despacho parcial — algunos canastos en tránsito, otros aún en origen
+      const { data: orden } = await supabase
+        .from('ordenes_traspaso')
+        .select('id, numero, estado')
+        .eq('id', canasto.orden_traspaso_id)
+        .single()
+
+      if (orden && orden.estado === 'preparado') {
+        const { data: ordenActualizada } = await supabase
+          .from('ordenes_traspaso')
+          .update({ estado: 'despacho_parcial', updated_at: new Date().toISOString() })
+          .eq('id', orden.id)
+          .select()
+          .single()
+        ordenData = ordenActualizada
+      } else {
+        ordenData = orden
       }
     }
 

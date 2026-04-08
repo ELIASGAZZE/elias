@@ -8,9 +8,8 @@ const VentasTabBar = () => {
 
   const tabs = [
     { label: 'Historial', path: '/ventas' },
+    ...(esAdmin ? [{ label: 'Auditoría', path: '/ventas/auditoria' }] : []),
     ...(esAdmin ? [{ label: 'Reportes', path: '/ventas/reportes/promociones' }] : []),
-    ...(esAdmin ? [{ label: 'Conciliación', path: '/ventas/conciliacion' }] : []),
-    ...(esAdmin ? [{ label: 'Duplicados', path: '/ventas/duplicados-centum' }] : []),
   ]
 
   return (

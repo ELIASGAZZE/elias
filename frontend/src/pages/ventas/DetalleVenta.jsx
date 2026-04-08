@@ -303,6 +303,79 @@ const DetalleVenta = () => {
             </div>
           )}
 
+          {/* Datos del pedido */}
+          {venta.pedido && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Datos del pedido</h3>
+              <div className="grid grid-cols-2 gap-y-1.5 text-sm">
+                <span className="text-gray-500">Tipo</span>
+                <span className="text-gray-800 font-medium">
+                  {venta.pedido.tipo === 'delivery' ? 'Delivery' : 'Retiro en sucursal'}
+                </span>
+
+                {venta.pedido.fecha_entrega && (
+                  <>
+                    <span className="text-gray-500">Fecha entrega</span>
+                    <span className="text-gray-800">
+                      {(() => { const [y, m, d] = venta.pedido.fecha_entrega.split('-'); return `${d}/${m}/${y}` })()}
+                      {venta.pedido.turno_entrega && ` · ${venta.pedido.turno_entrega}`}
+                    </span>
+                  </>
+                )}
+
+                {venta.pedido.sucursal_nombre && venta.pedido.tipo !== 'delivery' && (
+                  <>
+                    <span className="text-gray-500">Sucursal retiro</span>
+                    <span className="text-gray-800">{venta.pedido.sucursal_nombre}</span>
+                  </>
+                )}
+
+                <span className="text-gray-500">Estado pedido</span>
+                <span className={`font-medium ${venta.pedido.estado === 'entregado' ? 'text-green-600' : venta.pedido.estado === 'cancelado' || venta.pedido.estado === 'no_entregado' ? 'text-red-600' : 'text-orange-600'}`}>
+                  {venta.pedido.estado === 'entregado' ? 'Entregado' : venta.pedido.estado === 'cancelado' ? 'Cancelado' : venta.pedido.estado === 'no_entregado' ? 'No entregado' : venta.pedido.estado === 'pendiente' ? 'Pendiente' : venta.pedido.estado || '—'}
+                </span>
+
+                {/* Guía de delivery */}
+                {venta.pedido.guia_delivery && (
+                  <>
+                    <span className="text-gray-500">Guía delivery</span>
+                    <span className="text-gray-800">
+                      {venta.pedido.guia_delivery.cadete_nombre || 'Sin cadete'}
+                      {venta.pedido.guia_delivery.turno && ` · ${venta.pedido.guia_delivery.turno}`}
+                    </span>
+
+                    {venta.pedido.guia_delivery.despachada_at && (
+                      <>
+                        <span className="text-gray-500">Despachada</span>
+                        <span className="text-gray-800">{formatFechaHora(venta.pedido.guia_delivery.despachada_at)}</span>
+                      </>
+                    )}
+
+                    <span className="text-gray-500">Estado entrega</span>
+                    <span className={`font-medium ${venta.pedido.guia_delivery.estado_entrega === 'entregado' ? 'text-green-600' : venta.pedido.guia_delivery.estado_entrega === 'no_entregado' || venta.pedido.guia_delivery.estado_entrega === 'rechazado' ? 'text-red-600' : 'text-orange-600'}`}>
+                      {venta.pedido.guia_delivery.estado_entrega === 'entregado' ? 'Entregado' : venta.pedido.guia_delivery.estado_entrega === 'no_entregado' ? 'No entregado' : venta.pedido.guia_delivery.estado_entrega === 'rechazado' ? 'Rechazado' : 'Pendiente'}
+                    </span>
+                  </>
+                )}
+
+                {/* Pago anticipado */}
+                {(venta.pedido.total_pagado > 0 || venta.pedido.venta_anticipada) && (
+                  <>
+                    <span className="text-gray-500">Pago anticipado</span>
+                    <span className="text-green-600 font-medium">
+                      {formatPrecio(venta.pedido.total_pagado || venta.pedido.venta_anticipada?.total)}
+                      {venta.pedido.venta_anticipada?.pagos && Array.isArray(venta.pedido.venta_anticipada.pagos) && venta.pedido.venta_anticipada.pagos.length > 0 && (
+                        <span className="text-gray-500 font-normal ml-1">
+                          ({venta.pedido.venta_anticipada.pagos.map(p => `${MEDIOS_LABELS[p.tipo] || p.tipo}: ${formatPrecio(p.monto)}`).join(', ')})
+                        </span>
+                      )}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Botón reintentar Centum */}
           {esAdmin && !venta.centum_comprobante && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
