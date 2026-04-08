@@ -68,7 +68,7 @@ const MEDIO_A_ID_VALOR = {
  * @param {number} params.total - Total de la venta
  * @returns {Promise<Object>} Venta creada en Centum
  */
-async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva, operadorMovilUser, ventaPosId }) {
+async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, pagos, total, condicionIva, operadorMovilUser, ventaPosId, idVendedor }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -206,7 +206,7 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
     TipoComprobanteVenta: { IdTipoComprobanteVenta: 4 }, // Factura B
     NumeroDocumento: { PuntoVenta: puntoVenta },
     EsContado: true,
-    Vendedor: { IdVendedor: 2 },
+    Vendedor: { IdVendedor: idVendedor || 2 },
     CondicionVenta: { IdCondicionVenta: 14 },
     Bonificacion: { IdBonificacion: 6235 },
     ...(esVentaGiftCard
@@ -308,15 +308,19 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
 
     const pagos = Array.isArray(ventaLocal.pagos) ? ventaLocal.pagos : []
 
-    // Condición IVA: usar la que viene en la venta (del frontend), fallback a DB
+    // Condición IVA y vendedor: usar la que viene en la venta (del frontend), fallback a DB
     let condicionIva = ventaLocal.condicion_iva || 'CF'
-    if (!ventaLocal.condicion_iva && ventaLocal.id_cliente_centum) {
+    let idVendedor = null
+    if (ventaLocal.id_cliente_centum && ventaLocal.id_cliente_centum !== 2) {
       const { data: cliente } = await supabase
         .from('clientes')
-        .select('condicion_iva')
+        .select('condicion_iva, vendedor_centum_id')
         .eq('id_centum', ventaLocal.id_cliente_centum)
         .single()
-      condicionIva = cliente?.condicion_iva || 'CF'
+      if (!ventaLocal.condicion_iva) {
+        condicionIva = cliente?.condicion_iva || 'CF'
+      }
+      idVendedor = cliente?.vendedor_centum_id || null
     }
 
     // Clasificación división:
@@ -359,6 +363,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       condicionIva,
       operadorMovilUser,
       ventaPosId: ventaLocal.id,
+      idVendedor,
     })
 
     // GC aplicada como pago → crear NC concepto por el monto de GC
@@ -411,7 +416,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
  * @param {string} params.condicionIva - Condición IVA del cliente (CF, RI, MT)
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser, comprobanteOriginal, ventaPosId }) {
+async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, items, total, condicionIva, operadorMovilUser, comprobanteOriginal, ventaPosId, idVendedor }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -472,7 +477,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
     TipoComprobanteVenta: { IdTipoComprobanteVenta: 6 }, // NCV - Nota de Crédito
     NumeroDocumento: { PuntoVenta: puntoVenta },
     EsContado: true,
-    Vendedor: { IdVendedor: 2 },
+    Vendedor: { IdVendedor: idVendedor || 2 },
     CondicionVenta: { IdCondicionVenta: 14 },
     Bonificacion: { IdBonificacion: 6235 },
     VentaArticulos: ventaArticulos,
@@ -558,7 +563,7 @@ async function crearNotaCreditoPOS({ idCliente, sucursalFisicaId, idDivisionEmpr
  * @param {string} [params.descripcion] - Descripción adicional del concepto
  * @returns {Promise<Object>} NC creada en Centum
  */
-async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal, concepto = {}, ventaPosId }) {
+async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, puntoVenta, total, condicionIva, descripcion, operadorMovilUser, comprobanteOriginal, concepto = {}, ventaPosId, idVendedor }) {
   const url = `${BASE_URL}/Ventas`
   const inicio = Date.now()
 
@@ -583,7 +588,7 @@ async function crearNotaCreditoConceptoPOS({ idCliente, sucursalFisicaId, idDivi
     TipoComprobanteVenta: { IdTipoComprobanteVenta: 6 }, // NCV - Nota de Crédito
     NumeroDocumento: { PuntoVenta: puntoVenta },
     EsContado: true,
-    Vendedor: { IdVendedor: 2 },
+    Vendedor: { IdVendedor: idVendedor || 2 },
     CondicionVenta: { IdCondicionVenta: 14 },
     Bonificacion: { IdBonificacion: 6235 },
   }
@@ -1156,11 +1161,13 @@ async function retrySyncVentasCentum() {
       // Determinar condición IVA del cliente real (no confiar en venta.condicion_iva,
       // que puede estar desactualizada o ser incorrecta respecto a Centum)
       let condicionIva = 'CF'
+      let idVendedor = null
       if (!esEmpleado && venta.id_cliente_centum && venta.id_cliente_centum !== 2) {
         const { data: cliente } = await supabase
-          .from('clientes').select('condicion_iva')
+          .from('clientes').select('condicion_iva, vendedor_centum_id')
           .eq('id_centum', venta.id_cliente_centum).maybeSingle()
         condicionIva = cliente?.condicion_iva || venta.condicion_iva || 'CF'
+        idVendedor = cliente?.vendedor_centum_id || null
       } else if (venta.condicion_iva) {
         condicionIva = venta.condicion_iva
       }
@@ -1245,7 +1252,7 @@ async function retrySyncVentasCentum() {
             descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
             operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
             concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
-            ventaPosId: venta.id,
+            ventaPosId: venta.id, idVendedor,
           })
         } else {
         // NC: valores positivos
@@ -1273,9 +1280,10 @@ async function retrySyncVentasCentum() {
             let condIvaOrig = 'CF'
             if (ventaOrigen.id_cliente_centum) {
               const { data: cliOrig } = await supabase
-                .from('clientes').select('condicion_iva')
+                .from('clientes').select('condicion_iva, vendedor_centum_id')
                 .eq('id_centum', ventaOrigen.id_cliente_centum).maybeSingle()
               condIvaOrig = cliOrig?.condicion_iva || 'CF'
+              idVendedor = cliOrig?.vendedor_centum_id || idVendedor
             }
             condicionIvaNC = condIvaOrig
             const esFacturaAOrig = condIvaOrig === 'RI' || condIvaOrig === 'MT'
@@ -1298,14 +1306,14 @@ async function retrySyncVentasCentum() {
             total: Math.abs(parseFloat(venta.total) || 0), condicionIva: condicionIvaNC,
             descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
             operadorMovilUser: operadorNC, comprobanteOriginal,
-            ventaPosId: venta.id,
+            ventaPosId: venta.id, idVendedor,
           })
         } else {
           resultado = await crearNotaCreditoPOS({
             idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: idDivisionNC, puntoVenta,
             items: itemsPositivos, total: Math.abs(parseFloat(venta.total) || 0),
             condicionIva: condicionIvaNC, operadorMovilUser: operadorNC, comprobanteOriginal,
-            ventaPosId: venta.id,
+            ventaPosId: venta.id, idVendedor,
           })
         }
         }
@@ -1386,7 +1394,7 @@ async function retrySyncVentasCentum() {
             sucursalFisicaId, idDivisionEmpresa, puntoVenta,
             items, pagos, total: parseFloat(venta.total) || 0,
             condicionIva, operadorMovilUser,
-            ventaPosId: venta.id,
+            ventaPosId: venta.id, idVendedor,
           })
         } catch (postErr) {
           // CUALQUIER error post-POST → marcar UNVERIFIED

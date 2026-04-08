@@ -5,7 +5,8 @@ const logger = require('../config/logger')
 const CAMPOS_AUDITABLES = [
   'razon_social', 'cuit', 'condicion_iva', 'direccion', 'localidad',
   'codigo_postal', 'provincia', 'telefono', 'email', 'celular',
-  'grupo_descuento_id', 'activo', 'id_centum', 'codigo_centum'
+  'grupo_descuento_id', 'activo', 'id_centum', 'codigo_centum',
+  'vendedor_centum_id', 'vendedor_nombre'
 ]
 
 /**
@@ -41,6 +42,19 @@ async function registrarAuditoria({ cliente_id, accion, origen, usuario, cambios
     // No registrar si no hay cambios reales (excepto crear/desactivar/etc)
     const accionesSinCambios = ['crear', 'desactivar', 'reactivar', 'resolver_duplicado', 'importar', 'exportar_centum']
     if (!accionesSinCambios.includes(accion) && cambios && Object.keys(cambios).length === 0) return
+
+    // No registrar si el último registro de este cliente tiene los mismos cambios exactos
+    if (cambios && Object.keys(cambios).length > 0) {
+      const { data: ultimo } = await supabase
+        .from('clientes_auditoria')
+        .select('cambios')
+        .eq('cliente_id', cliente_id)
+        .eq('accion', accion)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      if (ultimo && JSON.stringify(ultimo.cambios) === JSON.stringify(cambios)) return
+    }
 
     await supabase.from('clientes_auditoria').insert({
       cliente_id,

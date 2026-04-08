@@ -80,6 +80,40 @@ async function fetchClientesCentum(pagina = 1, cantidadPorPagina = 500) {
   return { items, total }
 }
 
+// Cache de vendedores Centum (ID → Nombre), se refresca cada sync
+let _vendedoresCache = null
+let _vendedoresCacheTs = 0
+const VENDEDORES_CACHE_TTL = 30 * 60 * 1000 // 30 min
+
+async function fetchVendedoresMap() {
+  if (_vendedoresCache && (Date.now() - _vendedoresCacheTs) < VENDEDORES_CACHE_TTL) {
+    return _vendedoresCache
+  }
+  const accessToken = generateAccessToken(API_KEY)
+  const url = `${BASE_URL}/Vendedores`
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
+      'CentumSuiteAccessToken': accessToken,
+    },
+  })
+  if (!response.ok) {
+    logger.warn(`[SyncClientes] No se pudo obtener vendedores: HTTP ${response.status}`)
+    return _vendedoresCache || new Map()
+  }
+  const data = await response.json()
+  const items = data[0]?.Items || data.Items || []
+  const map = new Map()
+  for (const v of items) {
+    map.set(v.IdVendedor, v.Nombre?.trim() || null)
+  }
+  _vendedoresCache = map
+  _vendedoresCacheTs = Date.now()
+  return map
+}
+
 /**
  * Sync incremental: importa clientes creados en las últimas N horas desde Centum BI (SQL Server).
  * Mucho más liviano que el sync masivo vía API REST.
@@ -105,13 +139,21 @@ async function syncClientesRecientes(horasAtras = 2) {
   }
   const desde = new Date(Date.now() - horasAtras * 60 * 60 * 1000)
 
+  // Obtener mapa de vendedores (ID → Nombre) desde API REST
+  let vendedoresMap = new Map()
+  try {
+    vendedoresMap = await fetchVendedoresMap()
+  } catch (err) {
+    logger.warn(`[SyncClientes] Error obteniendo vendedores: ${err.message}`)
+  }
+
   // Traer clientes nuevos (creados recientemente)
   const resultNuevos = await db.request()
     .input('desde', sql.DateTime, desde)
     .query(`
       SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente,
              DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente,
-             CondicionIVAClienteID, EmailCliente
+             CondicionIVAClienteID, EmailCliente, VendedorID
       FROM Clientes_VIEW
       WHERE ActivoCliente = 1 AND FechaAltaCliente >= @desde
     `)
@@ -134,6 +176,8 @@ async function syncClientesRecientes(horasAtras = 2) {
     ...(r.CondicionIVAClienteID != null ? { condicion_iva: mapCondicionIVA(r.CondicionIVAClienteID) } : {}),
     // Email desde BI (solo se incluye si tiene valor, para merge policy)
     ...(r.EmailCliente?.trim() ? { _centum_email: r.EmailCliente.trim() } : {}),
+    // Vendedor asignado desde Centum
+    ...(r.VendedorID != null ? { vendedor_centum_id: r.VendedorID, vendedor_nombre: vendedoresMap.get(r.VendedorID) || null } : {}),
   })
 
   // Obtener todos los clientes locales (con y sin id_centum) para evitar duplicados por CUIT
@@ -143,7 +187,7 @@ async function syncClientesRecientes(horasAtras = 2) {
   while (true) {
     const { data } = await supabase
       .from('clientes')
-      .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo_centum, email, celular')
+      .select('id, id_centum, razon_social, cuit, direccion, localidad, codigo_postal, telefono, condicion_iva, codigo_centum, email, celular, vendedor_centum_id, vendedor_nombre')
       .eq('activo', true)
       .range(fromLocal, fromLocal + 999)
     todosLocales = todosLocales.concat(data || [])
@@ -191,17 +235,24 @@ async function syncClientesRecientes(horasAtras = 2) {
     fromActivos += 1000
   }
 
+  let nuevosCount = 0
+  let actualizadosCount = 0
+
   if (localesActivos && localesActivos.length > 0) {
-    const idsActivos = localesActivos.map(c => c.id_centum)
+    const idsActivos = [...new Set(localesActivos.map(c => c.id_centum))]
+    const processedIds = new Set()
+    const normalize = v => (v === undefined || v === '' ? null : v)
     // Traer datos actuales de Centum en lotes
     for (let i = 0; i < idsActivos.length; i += 500) {
       const lote = idsActivos.slice(i, i + 500)
       const resCentum = await db.request().query(
-        `SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, EmailCliente
+        `SELECT ClienteID, CodigoCliente, RazonSocialCliente, CUITCliente, DireccionCliente, LocalidadCliente, CodigoPostalCliente, Telefono1Cliente, CondicionIVAClienteID, EmailCliente, VendedorID
          FROM Clientes_VIEW
          WHERE ActivoCliente = 1 AND ClienteID IN (${lote.join(',')})`
       )
       for (const r of resCentum.recordset) {
+        if (processedIds.has(r.ClienteID)) continue
+        processedIds.add(r.ClienteID)
         const local = existentesMap.get(r.ClienteID)
         if (!local) continue
         const centumData = mapearCliente(r)
@@ -216,11 +267,15 @@ async function syncClientesRecientes(horasAtras = 2) {
         const updateData = { ...centumData, ...emailMerge }
 
         // Solo actualizar si hay diferencias
-        const normalize = v => (v === undefined || v === '' ? null : v)
         const cambio = Object.keys(updateData).some(k => normalize(updateData[k]) !== normalize(local[k]))
         if (cambio) {
           const cambiosAudit = calcularCambios(local, updateData)
-          await supabase.from('clientes').update({ ...updateData, updated_at: new Date().toISOString() }).eq('id', local.id)
+          const { error } = await supabase.from('clientes').update({ ...updateData, updated_at: new Date().toISOString() }).eq('id', local.id)
+          if (error) {
+            logger.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
+            continue
+          }
+          actualizadosCount++
           if (Object.keys(cambiosAudit).length > 0) {
             registrarAuditoria({
               cliente_id: local.id,
@@ -234,9 +289,6 @@ async function syncClientesRecientes(horasAtras = 2) {
       }
     }
   }
-
-  let nuevosCount = 0
-  let actualizadosCount = 0
 
   // Insertar nuevos
   if (nuevosBI.length > 0) {
@@ -252,23 +304,6 @@ async function syncClientesRecientes(horasAtras = 2) {
     const { error } = await supabase.from('clientes').insert(inserts)
     if (error) throw error
     nuevosCount = inserts.length
-  }
-
-  // Actualizar existentes (solo si hay cambios reales)
-  const normalize = v => (v === undefined || v === '' ? null : v)
-  for (const r of existentesBI) {
-    const local = existentesMap.get(r.ClienteID)
-    if (!local) continue
-    const centumData = mapearCliente(r)
-    delete centumData._centum_email
-    const cambio = Object.keys(centumData).some(k => normalize(centumData[k]) !== normalize(local[k]))
-    if (!cambio) continue
-    const { error } = await supabase
-      .from('clientes')
-      .update({ ...centumData, updated_at: new Date().toISOString() })
-      .eq('id', local.id)
-    if (error) logger.warn(`[SyncClientes] Error actualizando ${local.id}:`, error.message)
-    else actualizadosCount++
   }
 
   // Desactivar clientes locales activos que ya no son clientes en Centum

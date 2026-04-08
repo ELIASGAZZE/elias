@@ -268,6 +268,7 @@ const SeccionClientes = () => {
               <th className="text-left py-2 px-3 font-medium text-gray-500">IVA</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Grupo Desc.</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Cód. Centum</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Vendedor</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Origen</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Actualizado</th>
               <th className="py-2 px-3"></th>
@@ -275,9 +276,9 @@ const SeccionClientes = () => {
           </thead>
           <tbody>
             {cargando ? (
-              <tr><td colSpan={9} className="text-center py-8 text-gray-400">Cargando...</td></tr>
+              <tr><td colSpan={10} className="text-center py-8 text-gray-400">Cargando...</td></tr>
             ) : clientes.length === 0 ? (
-              <tr><td colSpan={9} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
+              <tr><td colSpan={10} className="text-center py-8 text-gray-400">No se encontraron clientes</td></tr>
             ) : clientes.map(c => (
               <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="py-2 px-3 font-mono text-xs text-gray-600">{c.codigo}</td>
@@ -307,6 +308,13 @@ const SeccionClientes = () => {
                     <span className="text-green-600 text-xs font-medium">{c.codigo_centum}</span>
                   ) : c.id_centum ? (
                     <span className="text-yellow-600 text-xs font-medium" title="Sin código Centum">#{c.id_centum}</span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="py-2 px-3">
+                  {c.vendedor_nombre ? (
+                    <span className="text-xs text-gray-600">{c.vendedor_nombre}</span>
                   ) : (
                     <span className="text-gray-300">—</span>
                   )}

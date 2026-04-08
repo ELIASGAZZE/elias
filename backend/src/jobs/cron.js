@@ -71,12 +71,11 @@ async function iniciarCronJobs() {
 
   // Sync incremental de clientes: cada 5 minutos, últimas 2 horas
   cron.schedule('*/5 * * * *', async () => {
+    logger.info('[SyncClientes] Cron disparado, intentando sync...')
     await withLock('syncClientes', async () => {
       try {
         const resultado = await syncClientesRecientes(2)
-        if (resultado.nuevos > 0 || resultado.actualizados > 0) {
-          logger.info(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados desde Centum BI`)
-        }
+        logger.info(`[SyncClientes] ${resultado.nuevos} nuevos, ${resultado.actualizados} actualizados, ${resultado.desactivados} desactivados`)
       } catch (err) {
         logger.error('[SyncClientes] Error:', err.message)
       }

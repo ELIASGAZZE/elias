@@ -62,15 +62,17 @@ async function retrySyncVentasPOS() {
       const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
       const pagos = Array.isArray(venta.pagos) ? venta.pagos : []
 
-      // Obtener condición IVA del cliente
+      // Obtener condición IVA y vendedor del cliente
       let condicionIva = 'CF'
+      let idVendedor = null
       if (venta.id_cliente_centum) {
         const { data: cliente } = await supabase
           .from('clientes')
-          .select('condicion_iva')
+          .select('condicion_iva, vendedor_centum_id')
           .eq('id_centum', venta.id_cliente_centum)
           .single()
         condicionIva = cliente?.condicion_iva || 'CF'
+        idVendedor = cliente?.vendedor_centum_id || null
       }
 
       const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
@@ -95,12 +97,21 @@ async function retrySyncVentasPOS() {
           const comprobanteRef = venta.centum_comprobante || null
           const idClienteNC = venta.id_cliente_centum || 2
           const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+          // Obtener vendedor para NC gift card
+          let idVendedorGC = null
+          if (venta.id_cliente_centum) {
+            const { data: cliGC } = await supabase
+              .from('clientes').select('vendedor_centum_id')
+              .eq('id_centum', venta.id_cliente_centum).single()
+            idVendedorGC = cliGC?.vendedor_centum_id || null
+          }
           resultado = await crearNotaCreditoConceptoPOS({
             idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
             total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
             descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
             operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
             concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
+            idVendedor: idVendedorGC,
           })
         } else {
         const itemsPositivos = items.map(it => ({
@@ -116,6 +127,7 @@ async function retrySyncVentasPOS() {
         let condicionIvaNC = condicionIva
         let idDivisionNC = idDivisionEmpresa
         let operadorNC = operadorMovilUser
+        let idVendedorNC = idVendedor
 
         if (venta.venta_origen_id) {
           const { data: ventaOrigen } = await supabase
@@ -128,13 +140,16 @@ async function retrySyncVentasPOS() {
           if (ventaOrigen) {
             idClienteNC = ventaOrigen.id_cliente_centum || 2
             let condIvaOrig = 'CF'
+            let vendedorOrig = null
             if (ventaOrigen.id_cliente_centum) {
               const { data: cliOrig } = await supabase
-                .from('clientes').select('condicion_iva')
+                .from('clientes').select('condicion_iva, vendedor_centum_id')
                 .eq('id_centum', ventaOrigen.id_cliente_centum).single()
               condIvaOrig = cliOrig?.condicion_iva || 'CF'
+              vendedorOrig = cliOrig?.vendedor_centum_id || null
             }
             condicionIvaNC = condIvaOrig
+            idVendedorNC = vendedorOrig
             const esFacturaAOrig = condIvaOrig === 'RI' || condIvaOrig === 'MT'
             const pagosOrig = Array.isArray(ventaOrigen.pagos) ? ventaOrigen.pagos : []
             const soloEfectivoOrig = pagosOrig.length === 0 || pagosOrig.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
@@ -161,6 +176,7 @@ async function retrySyncVentasPOS() {
             descripcion: `DIFERENCIA EN PRECIO DE GONDOLA - ${descripcionItems}`,
             operadorMovilUser: operadorNC,
             comprobanteOriginal,
+            idVendedor: idVendedorNC,
           })
         } else {
           resultado = await crearNotaCreditoPOS({
@@ -173,6 +189,7 @@ async function retrySyncVentasPOS() {
             condicionIva: condicionIvaNC,
             operadorMovilUser: operadorNC,
             comprobanteOriginal,
+            idVendedor: idVendedorNC,
           })
         }
         }
@@ -187,6 +204,7 @@ async function retrySyncVentasPOS() {
           total: parseFloat(venta.total) || 0,
           condicionIva,
           operadorMovilUser,
+          idVendedor,
         })
       }
 

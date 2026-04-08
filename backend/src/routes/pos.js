@@ -3389,11 +3389,13 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
                   }
 
                   let condicionIva = 'CF'
+                  let vendedorCentumId = null
                   if (venta.id_cliente_centum) {
                     const { data: cli } = await supabase
-                      .from('clientes').select('condicion_iva')
+                      .from('clientes').select('condicion_iva, vendedor_centum_id')
                       .eq('id_centum', venta.id_cliente_centum).single()
                     condicionIva = cli?.condicion_iva || 'CF'
+                    vendedorCentumId = cli?.vendedor_centum_id || null
                   }
 
                   const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
@@ -3417,6 +3419,7 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
                     operadorMovilUser,
                     comprobanteOriginal: venta.centum_comprobante,
                     ventaPosId: nc.id,
+                    idVendedor: vendedorCentumId,
                   })
 
                   const numDoc = centumNC.NumeroDocumento
@@ -4072,11 +4075,13 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
 
         // Obtener condición IVA del cliente de la venta original
         let condicionIva = 'CF'
+        let vendedorCentumId = null
         if (venta.id_cliente_centum) {
           const { data: cli } = await supabase
-            .from('clientes').select('condicion_iva')
+            .from('clientes').select('condicion_iva, vendedor_centum_id')
             .eq('id_centum', venta.id_cliente_centum).single()
           condicionIva = cli?.condicion_iva || 'CF'
+          vendedorCentumId = cli?.vendedor_centum_id || null
         }
 
         const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
@@ -4100,6 +4105,7 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
           operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
           ventaPosId: notaCredito.id,
+          idVendedor: vendedorCentumId,
         })
 
         // Guardar info de NC Centum en la nota de crédito local
@@ -4175,14 +4181,18 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
 
     // Obtener condicion_iva de ambos clientes para clasificación correcta
     let condicionIvaOrig = venta.condicion_iva || 'CF'
-    if (!venta.condicion_iva && venta.id_cliente_centum) {
-      const { data: cliOrig } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', venta.id_cliente_centum).single()
-      condicionIvaOrig = cliOrig?.condicion_iva || 'CF'
+    let vendedorCentumIdOrig = null
+    if (venta.id_cliente_centum) {
+      const { data: cliOrig } = await supabase.from('clientes').select('condicion_iva, vendedor_centum_id').eq('id_centum', venta.id_cliente_centum).single()
+      if (!venta.condicion_iva) condicionIvaOrig = cliOrig?.condicion_iva || 'CF'
+      vendedorCentumIdOrig = cliOrig?.vendedor_centum_id || null
     }
     let condicionIvaNuevo = 'CF'
+    let vendedorCentumIdNuevo = null
     if (id_cliente_centum) {
-      const { data: cliNuevo } = await supabase.from('clientes').select('condicion_iva').eq('id_centum', id_cliente_centum).single()
+      const { data: cliNuevo } = await supabase.from('clientes').select('condicion_iva, vendedor_centum_id').eq('id_centum', id_cliente_centum).single()
       condicionIvaNuevo = cliNuevo?.condicion_iva || 'CF'
+      vendedorCentumIdNuevo = cliNuevo?.vendedor_centum_id || null
     }
 
     // 1. Crear nota de crédito (anula la venta original)
@@ -4292,6 +4302,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             operadorMovilUser,
             comprobanteOriginal: venta.centum_comprobante,
             ventaPosId: notaCredito.id,
+            idVendedor: vendedorCentumIdOrig,
           })
 
           const numDocNC = centumNC.NumeroDocumento
@@ -4348,6 +4359,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
             condicionIva: condicionIvaNuevo,
             operadorMovilUser: operadorMovilUserNuevo,
             ventaPosId: nuevaVenta.id,
+            idVendedor: vendedorCentumIdNuevo,
           })
 
           const numDocFCV = centumFCV.NumeroDocumento
@@ -4515,11 +4527,13 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
         }
 
         let condicionIva = 'CF'
+        let vendedorCentumId = null
         if (venta.id_cliente_centum) {
           const { data: cli } = await supabase
-            .from('clientes').select('condicion_iva')
+            .from('clientes').select('condicion_iva, vendedor_centum_id')
             .eq('id_centum', venta.id_cliente_centum).single()
           condicionIva = cli?.condicion_iva || 'CF'
+          vendedorCentumId = cli?.vendedor_centum_id || null
         }
 
         const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
@@ -4547,6 +4561,7 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
           operadorMovilUser,
           comprobanteOriginal: venta.centum_comprobante,
           ventaPosId: notaCredito.id,
+          idVendedor: vendedorCentumId,
         })
 
         const numDoc = centumNC.NumeroDocumento
@@ -4748,15 +4763,17 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
       }
     }
 
-    // Obtener condición IVA del cliente
+    // Obtener condición IVA y vendedor del cliente
     let condicionIva = 'CF'
+    let vendedorCentumId = null
     if (!esEmpleado && venta.id_cliente_centum) {
       const { data: cliente } = await supabase
         .from('clientes')
-        .select('condicion_iva')
+        .select('condicion_iva, vendedor_centum_id')
         .eq('id_centum', venta.id_cliente_centum)
         .single()
       condicionIva = cliente?.condicion_iva || 'CF'
+      vendedorCentumId = cliente?.vendedor_centum_id || null
     }
 
     const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
@@ -4826,6 +4843,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
           concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
           ventaPosId: ventaId,
+          idVendedor: vendedorCentumId,
         })
       } else {
       // NC: enviar con valores positivos (abs), Centum maneja el signo por tipo comprobante
@@ -4843,6 +4861,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
       let condicionIvaNC = condicionIva
       let idDivisionNC = idDivisionEmpresa
       let operadorNC = operadorMovilUser
+      let vendedorCentumIdNC = vendedorCentumId
 
       if (venta.venta_origen_id) {
         const { data: ventaOrigen } = await supabase
@@ -4856,13 +4875,14 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           // Usar cliente de la venta original
           idClienteNC = ventaOrigen.id_cliente_centum || 2
 
-          // Obtener condición IVA del cliente original
+          // Obtener condición IVA y vendedor del cliente original
           let condIvaOrig = 'CF'
           if (ventaOrigen.id_cliente_centum) {
             const { data: cliOrig } = await supabase
-              .from('clientes').select('condicion_iva')
+              .from('clientes').select('condicion_iva, vendedor_centum_id')
               .eq('id_centum', ventaOrigen.id_cliente_centum).single()
             condIvaOrig = cliOrig?.condicion_iva || 'CF'
+            vendedorCentumIdNC = cliOrig?.vendedor_centum_id || null
           }
           condicionIvaNC = condIvaOrig
 
@@ -4896,6 +4916,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           operadorMovilUser: operadorNC,
           comprobanteOriginal,
           ventaPosId: ventaId,
+          idVendedor: vendedorCentumIdNC,
         })
       } else {
         resultado = await crearNotaCreditoPOS({
@@ -4909,6 +4930,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
           operadorMovilUser: operadorNC,
           comprobanteOriginal,
           ventaPosId: ventaId,
+          idVendedor: vendedorCentumIdNC,
         })
       }
       }
@@ -4924,6 +4946,7 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
         condicionIva,
         operadorMovilUser,
         ventaPosId: ventaId,
+        idVendedor: vendedorCentumId,
       })
     }
 
