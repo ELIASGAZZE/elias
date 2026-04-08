@@ -364,13 +364,48 @@ const DetalleVenta = () => {
                     <span className="text-gray-500">Pago anticipado</span>
                     <span className="text-green-600 font-medium">
                       {formatPrecio(venta.pedido.total_pagado || venta.pedido.venta_anticipada?.total)}
-                      {venta.pedido.venta_anticipada?.pagos && Array.isArray(venta.pedido.venta_anticipada.pagos) && venta.pedido.venta_anticipada.pagos.length > 0 && (
+                      {venta.pedido.pagos && Array.isArray(venta.pedido.pagos) && venta.pedido.pagos.length > 0 ? (
+                        <span className="text-gray-500 font-normal ml-1">
+                          ({venta.pedido.pagos.map(p => `${MEDIOS_LABELS[p.tipo] || p.tipo}: ${formatPrecio(p.monto)}`).join(', ')})
+                        </span>
+                      ) : venta.pedido.venta_anticipada?.pagos && Array.isArray(venta.pedido.venta_anticipada.pagos) && venta.pedido.venta_anticipada.pagos.length > 0 && (
                         <span className="text-gray-500 font-normal ml-1">
                           ({venta.pedido.venta_anticipada.pagos.map(p => `${MEDIOS_LABELS[p.tipo] || p.tipo}: ${formatPrecio(p.monto)}`).join(', ')})
                         </span>
                       )}
                     </span>
                   </>
+                )}
+              </div>
+
+              {/* Trazabilidad del pedido */}
+              <div className="mt-2 space-y-1">
+                {(venta.pedido.cajero_nombre) && (
+                  <div className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1">
+                    <span className="font-semibold text-gray-600">Creado:</span>{' '}
+                    {venta.pedido.cajero_nombre}
+                    {venta.pedido.creado_en_cierre ? ` (Caja #${venta.pedido.creado_en_cierre})` : ''}
+                    {(venta.pedido.creado_sucursal_nombre || venta.pedido.sucursal_nombre) ? ` — ${venta.pedido.creado_sucursal_nombre || venta.pedido.sucursal_nombre}` : ''}
+                    {venta.pedido.created_at ? ` — ${new Date(venta.pedido.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </div>
+                )}
+                {venta.pedido.cobrado_por && (
+                  <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1">
+                    <span className="font-semibold">Cobrado:</span>{' '}
+                    {venta.pedido.cobrado_por}
+                    {venta.pedido.cobrado_en_cierre ? ` (Caja #${venta.pedido.cobrado_en_cierre})` : ''}
+                    {venta.pedido.cobrado_sucursal_nombre ? ` — ${venta.pedido.cobrado_sucursal_nombre}` : ''}
+                    {venta.pedido.cobrado_at ? ` — ${new Date(venta.pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </div>
+                )}
+                {venta.pedido.entregado_por && (
+                  <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1">
+                    <span className="font-semibold">Entregado:</span>{' '}
+                    {venta.pedido.entregado_por}
+                    {venta.pedido.entregado_en_cierre ? ` (Caja #${venta.pedido.entregado_en_cierre})` : ''}
+                    {venta.pedido.entregado_sucursal_nombre ? ` — ${venta.pedido.entregado_sucursal_nombre}` : ''}
+                    {venta.pedido.entregado_at ? ` — ${new Date(venta.pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </div>
                 )}
               </div>
             </div>

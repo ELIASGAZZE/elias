@@ -691,7 +691,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       const pagosPayload = [
         ...pagos.map(p => ({ tipo: p.tipo, monto: p.monto, detalle: p.detalle || null })),
       ]
-      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado, vuelto: vuelto > 0 ? vuelto : 0 })
+      const descFormaPagoData = totalDescuentoPagos > 0 ? { total: totalDescuentoPagos, detalle: descuentosPorForma } : null
+      onConfirmar({ pagos: pagosPayload, total: totalConDescFormaPago, monto_pagado: totalPagado, vuelto: vuelto > 0 ? vuelto : 0, descuento_forma_pago: descFormaPagoData })
       setGuardando(false)
       return
     }

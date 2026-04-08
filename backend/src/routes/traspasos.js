@@ -610,6 +610,37 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandl
     if (error) throw error
     if (!data) return res.status(400).json({ error: 'La orden debe estar en preparación' })
 
+    // ── Ajuste negativo de stock en Centum (baja en sucursal origen) ──
+    let centumAjusteResult = { ok: false, ajusteId: null, error: 'no ejecutado' }
+    try {
+      const { data: sucOrigen } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .eq('id', data.sucursal_origen_id)
+        .single()
+
+      if (sucOrigen?.centum_sucursal_id) {
+        const itemsPreparados = (data.items || []).filter(it => parseFloat(it.cantidad) > 0)
+        centumAjusteResult = await ajusteStockNegativo({
+          ordenId: req.params.id,
+          centumSucursalId: sucOrigen.centum_sucursal_id,
+          items: itemsPreparados,
+          ordenNumero: data.numero,
+        })
+        await supabase.from('ordenes_traspaso').update({
+          centum_ajuste_origen_id: centumAjusteResult.ajusteId,
+          centum_error: centumAjusteResult.error,
+        }).eq('id', req.params.id)
+      } else {
+        centumAjusteResult.error = 'Sucursal origen sin centum_sucursal_id'
+        logger.warn(`[Centum Stock] ${centumAjusteResult.error} — Orden: ${data.numero}`)
+      }
+    } catch (centumErr) {
+      centumAjusteResult.error = centumErr.message
+      logger.error(`[Centum Stock] Error ajuste para orden ${data.numero}:`, centumErr.message)
+      await supabase.from('ordenes_traspaso').update({ centum_error: centumErr.message }).eq('id', req.params.id)
+    }
+
     // Auto-calcular pesos de pesables a partir de escaneos reales en items de la orden
     try {
       const pesosPorArticulo = {}
@@ -761,13 +792,6 @@ router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, asyncHandl
 
     if (!orden) return res.status(400).json({ error: 'La orden debe estar preparada para despachar' })
 
-    // Ajuste negativo de stock en origen (stub)
-    const resultado = await ajusteStockNegativo(
-      orden.sucursal_origen_id,
-      orden.items || [],
-      orden.numero
-    )
-
     // Actualizar canastos a en_transito
     await supabase
       .from('traspaso_canastos')
@@ -781,8 +805,6 @@ router.put('/ordenes/:id/despachar', verificarAuth, soloGestorOAdmin, asyncHandl
         estado: 'despachado',
         despachado_por: req.perfil?.id,
         despachado_at: new Date().toISOString(),
-        centum_ajuste_origen_id: resultado.ajusteId,
-        centum_error: resultado.error,
         updated_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
@@ -828,12 +850,19 @@ router.put('/ordenes/:id/recibir', verificarAuth, asyncHandler(async (req, res) 
 
     if (!orden) return res.status(400).json({ error: 'La orden debe estar despachada para recibir' })
 
-    // Ajuste positivo de stock en destino (stub)
-    const resultado = await ajusteStockPositivo(
-      orden.sucursal_destino_id,
-      orden.items || [],
-      orden.numero
-    )
+    // Ajuste positivo de stock en destino (stub — se implementará en recepción)
+    const { data: sucDestino } = await supabase
+      .from('sucursales')
+      .select('centum_sucursal_id')
+      .eq('id', orden.sucursal_destino_id)
+      .single()
+
+    const resultado = await ajusteStockPositivo({
+      ordenId: req.params.id,
+      centumSucursalId: sucDestino?.centum_sucursal_id,
+      items: orden.items || [],
+      ordenNumero: orden.numero,
+    })
 
     const { data, error } = await supabase
       .from('ordenes_traspaso')
@@ -1051,20 +1080,13 @@ router.put('/canastos/despachar-scan', verificarAuth, asyncHandler(async (req, r
         .single()
 
       if (orden) {
-        const resultado = await ajusteStockNegativo(
-          orden.sucursal_origen_id,
-          orden.items || [],
-          orden.numero
-        )
-
+        // El ajuste de stock ya se hizo al confirmar preparación — solo marcar como despachado
         const { data: ordenActualizada } = await supabase
           .from('ordenes_traspaso')
           .update({
             estado: 'despachado',
             despachado_por: req.perfil?.id,
             despachado_at: new Date().toISOString(),
-            centum_ajuste_origen_id: resultado.ajusteId,
-            centum_error: resultado.error,
             updated_at: new Date().toISOString(),
           })
           .eq('id', orden.id)
@@ -2230,6 +2252,49 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
 
     if (errPrep) throw errPrep
 
+    // ── Ajuste negativo de stock en Centum (baja en sucursal origen) ──
+    let centumAjusteResult = { ok: false, ajusteId: null, error: 'no ejecutado' }
+    try {
+      const { data: sucOrigen } = await supabase
+        .from('sucursales')
+        .select('centum_sucursal_id')
+        .eq('id', ordenPreparada.sucursal_origen_id)
+        .single()
+
+      if (sucOrigen?.centum_sucursal_id) {
+        // Consolidar items preparados: usar cantidades reales de la preparación
+        const itemsPreparados = (ordenPreparada.items || [])
+          .filter(it => parseFloat(it.cantidad) > 0)
+
+        centumAjusteResult = await ajusteStockNegativo({
+          ordenId: req.params.id,
+          centumSucursalId: sucOrigen.centum_sucursal_id,
+          items: itemsPreparados,
+          ordenNumero: ordenPreparada.numero,
+        })
+
+        // Guardar resultado del ajuste en la orden
+        await supabase
+          .from('ordenes_traspaso')
+          .update({
+            centum_ajuste_origen_id: centumAjusteResult.ajusteId,
+            centum_error: centumAjusteResult.error,
+          })
+          .eq('id', req.params.id)
+      } else {
+        centumAjusteResult.error = `Sucursal origen sin centum_sucursal_id`
+        logger.warn(`[Centum Stock] ${centumAjusteResult.error} — Orden: ${ordenPreparada.numero}`)
+      }
+    } catch (centumErr) {
+      centumAjusteResult.error = centumErr.message
+      logger.error(`[Centum Stock] Error al ajustar stock para orden ${ordenPreparada.numero}:`, centumErr.message)
+      // No bloqueamos la preparación — el error queda registrado
+      await supabase
+        .from('ordenes_traspaso')
+        .update({ centum_error: centumErr.message })
+        .eq('id', req.params.id)
+    }
+
     // Auto-learn weights (copiado de PUT /preparado)
     try {
       const pesosPorArticulo = {}
@@ -2328,6 +2393,9 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
       bultos_creados: bultosCreados,
       nueva_orden_id,
       nueva_orden_numero,
+      centum_ajuste_origen_id: centumAjusteResult.ajusteId,
+      centum_ajuste_ok: centumAjusteResult.ok,
+      centum_error: centumAjusteResult.error,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

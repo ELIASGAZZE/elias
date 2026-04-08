@@ -16,7 +16,7 @@ const formatPrecio = (n) => {
 
 function estadoPago(obs) {
   if (!obs) return { label: 'No pagó', color: 'text-red-600 bg-red-50', cls: 'pago-nopago' }
-  if (obs.includes('PAGO ANTICIPADO')) return { label: 'Pagó', color: 'text-green-700 bg-green-50', cls: 'pago-pagado' }
+  if (obs.includes('PAGO ANTICIPADO') || obs.includes('TALO PAY')) return { label: 'Pagó', color: 'text-green-700 bg-green-50', cls: 'pago-pagado' }
   if (obs.includes('PAGO EN ENTREGA: EFECTIVO')) return { label: 'Paga en efectivo', color: 'text-amber-700 bg-amber-50', cls: 'pago-efectivo' }
   return { label: 'No pagó', color: 'text-red-600 bg-red-50', cls: 'pago-nopago' }
 }
@@ -88,7 +88,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
   function tieneNoPagados(lista) {
     return lista.some(p => {
       const obs = p.observaciones || ''
-      return !obs.includes('PAGO ANTICIPADO') && !obs.includes('PAGO EN ENTREGA: EFECTIVO')
+      return !obs.includes('PAGO ANTICIPADO') && !obs.includes('TALO PAY') && !obs.includes('PAGO EN ENTREGA: EFECTIVO')
     })
   }
 
@@ -207,7 +207,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
               const direccion = obsMatch ? obsMatch[1].trim() : ''
               const celular = p.celular_cliente || ''
               const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
-              const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+              const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO') || (p.observaciones || '').includes('TALO PAY')
               const totalMostrar = totalConDescuento(p)
               const tieneDesc = esEfectivo && descPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
               const obsEntrega = p.observaciones_pedido || ''
@@ -321,7 +321,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
                 const direccion = obsMatch ? obsMatch[1].trim() : ''
                 const celular = p.celular_cliente || ''
                 const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
-                const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+                const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO') || (p.observaciones || '').includes('TALO PAY')
                 const totalMostrar = totalConDescuento(p)
                 const tieneDesc = esEfectivo && descEfectivoPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
                 return `
@@ -429,7 +429,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
       const celular = p.celular_cliente || ''
       const totalMostrar = totalConDescuento(p)
       const esEfectivo = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
-      const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO')
+      const esAnticipado = (p.observaciones || '').includes('PAGO ANTICIPADO') || (p.observaciones || '').includes('TALO PAY')
       const tieneDesc = esEfectivo && descEfectivoPct > 0 && totalMostrar !== (parseFloat(p.total) || 0)
       const obsEntrega = p.observaciones_pedido || ''
       const tarjeta = p.tarjeta_regalo || ''
@@ -619,7 +619,7 @@ export default function ModalGuiaDelivery({ onCerrar, cajaId: cajaIdProp }) {
                   <span className="text-gray-500">Pagos anticipados:</span>
                   <span className="font-medium text-green-700">
                     {formatPrecio((mostrarDespacho === 'AM' ? pedidosAM : pedidosPM)
-                      .filter(p => (p.observaciones || '').includes('PAGO ANTICIPADO'))
+                      .filter(p => (p.observaciones || '').includes('PAGO ANTICIPADO') || (p.observaciones || '').includes('TALO PAY'))
                       .reduce((s, p) => s + (p.total || 0), 0))}
                   </span>
                 </div>

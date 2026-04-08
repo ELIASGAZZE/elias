@@ -397,10 +397,14 @@ export function usePedidoWizard({
           payload.observaciones = `PAGO ANTICIPADO: ${resumenPago}`
           payload.pagos_anticipado = datosPago.pagos
           payload.caja_cobro_id = terminalConfig?.caja_id || null
+          if (datosPago.descuento_forma_pago) {
+            payload.descuento_forma_pago = datosPago.descuento_forma_pago
+          }
         } else {
           payload.observaciones = 'PAGO ANTICIPADO'
         }
-        payload.total_pagado = total
+        // Usar el total con descuento si está disponible
+        payload.total_pagado = datosPago?.monto_pagado || total
       } else if (observacionExtra) {
         payload.observaciones = observacionExtra
       }
@@ -444,10 +448,11 @@ export function usePedidoWizard({
         try {
           const resumenPago = datosPago?.pagos ? datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ') : ''
           await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
-            total_pagado: pedido.total,
+            total_pagado: datosPago?.monto_pagado || pedido.total,
             observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
             pagos_anticipado: datosPago?.pagos || [],
             caja_cobro_id: terminalConfig?.caja_id || null,
+            descuento_forma_pago: datosPago?.descuento_forma_pago || null,
           })
           setPedidosRefreshKey(k => k + 1)
         } catch (err) {
