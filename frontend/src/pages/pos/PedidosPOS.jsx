@@ -1152,8 +1152,35 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {pedidoDetalle.pagos && Array.isArray(pedidoDetalle.pagos) ? ` — ${pedidoDetalle.pagos.map(p => p.tipo || p.forma).join(', ')}` : ''}
                   </div>
                 )}
-                {/* Entrega */}
-                {pedidoDetalle.entregado_por && (
+                {/* Historial de entregas/reversiones */}
+                {Array.isArray(pedidoDetalle.historial) && pedidoDetalle.historial.length > 0 ? (
+                  pedidoDetalle.historial.map((evento, idx) => {
+                    const fmt = evento.fecha ? new Date(evento.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
+                    if (evento.tipo === 'entregado') {
+                      return (
+                        <div key={idx} className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
+                          <span className="font-semibold">Entregado:</span>{' '}
+                          {evento.usuario}
+                          {evento.cierre ? ` (Caja #${evento.cierre})` : ''}
+                          {evento.sucursal ? ` — ${evento.sucursal}` : ''}
+                          {evento.via === 'guia' ? ' — vía guía' : ''}
+                          {fmt ? ` — ${fmt}` : ''}
+                        </div>
+                      )
+                    }
+                    if (evento.tipo === 'revertido') {
+                      return (
+                        <div key={idx} className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1.5">
+                          <span className="font-semibold">Revertido:</span>{' '}
+                          {evento.usuario}
+                          {evento.motivo ? ` — "${evento.motivo}"` : ''}
+                          {fmt ? ` — ${fmt}` : ''}
+                        </div>
+                      )
+                    }
+                    return null
+                  })
+                ) : pedidoDetalle.entregado_por && (
                   <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
                     <span className="font-semibold">Entregado:</span>{' '}
                     {pedidoDetalle.entregado_por}
