@@ -1,6 +1,6 @@
 // Detalle de un cierre de caja POS con comparacion cajero vs gestor vs ventas POS
 import React, { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import Navbar from '../../components/layout/Navbar'
 import api from '../../services/api'
@@ -64,6 +64,8 @@ const FilaComparativa = ({ label, valorCajero, valorGestor, valorPos, esMoneda =
 
 const DetalleCierrePos = () => {
   const { id } = useParams()
+  const location = useLocation()
+  const navigate = useNavigate()
   const { usuario, esAdmin, esGestor } = useAuth()
   const [cierre, setCierre] = useState(null)
   const [verificacion, setVerificacion] = useState(null)
@@ -87,6 +89,8 @@ const DetalleCierrePos = () => {
   const [movimientosCargando, setMovimientosCargando] = useState(false)
 
   useEffect(() => {
+    setCargando(true)
+    setError('')
     const cargar = async () => {
       try {
         // Fetch cierre and denominaciones in parallel
@@ -168,7 +172,7 @@ const DetalleCierrePos = () => {
       }
     }
     cargar()
-  }, [id, usuario?.rol])
+  }, [id, usuario?.rol, location.key])
 
   const toggleControlarGasto = async (gastoId, controlado) => {
     setControlandoGasto(gastoId)
@@ -709,6 +713,7 @@ const DetalleCierrePos = () => {
 
           const efectivoCobrado = entregados.filter(p => p.forma_pago === 'efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
           const anticipadoEntregado = entregados.filter(p => p.forma_pago === 'anticipado').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+          const taloPayEntregado = entregados.filter(p => p.forma_pago === 'talo_pay').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
           const cambioEntregado = parseFloat(guiaDelivery.cambio_entregado) || 0
           const totalADevolver = efectivoCobrado + cambioEntregado
 
@@ -750,6 +755,12 @@ const DetalleCierrePos = () => {
                   <span className="text-[11px] text-gray-500 block">Anticipado</span>
                   <span className="font-bold text-blue-700">{formatMonto(anticipadoEntregado)}</span>
                 </div>
+                {taloPayEntregado > 0 && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-center">
+                    <span className="text-[11px] text-gray-500 block">Talo Pay (no rinde)</span>
+                    <span className="font-bold text-indigo-700">{formatMonto(taloPayEntregado)}</span>
+                  </div>
+                )}
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
                   <span className="text-[11px] text-gray-500 block">Cambio entregado</span>
                   <span className="font-bold text-amber-700">{formatMonto(cambioEntregado)}</span>
@@ -818,8 +829,8 @@ const DetalleCierrePos = () => {
                           <span className="w-16 font-medium text-gray-700">#{pedido.numero || '—'}</span>
                           <span className="flex-1 min-w-0 truncate text-gray-700">{pedido.nombre_cliente || '—'}</span>
                           <span className="w-24 text-center">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${gp.forma_pago === 'anticipado' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                              {gp.forma_pago === 'anticipado' ? 'Anticipado' : 'Efectivo'}
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${gp.forma_pago === 'talo_pay' ? 'bg-indigo-100 text-indigo-700' : gp.forma_pago === 'anticipado' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                              {gp.forma_pago === 'talo_pay' ? 'Talo Pay' : gp.forma_pago === 'anticipado' ? 'Anticipado' : 'Efectivo'}
                             </span>
                           </span>
                           <span className="w-28 text-center">
@@ -846,6 +857,12 @@ const DetalleCierrePos = () => {
                     <span className="text-gray-500">Anticipado entregado ({entregados.filter(p => p.forma_pago === 'anticipado').length})</span>
                     <span className="font-medium text-blue-700">{formatMonto(anticipadoEntregado)}</span>
                   </div>
+                  {taloPayEntregado > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Talo Pay - no rinde ({entregados.filter(p => p.forma_pago === 'talo_pay').length})</span>
+                      <span className="font-medium text-indigo-700">{formatMonto(taloPayEntregado)}</span>
+                    </div>
+                  )}
                   {noEntregados.length > 0 && (
                     <div className="flex justify-between text-xs">
                       <span className="text-red-600">No entregados ({noEntregados.length})</span>
@@ -1300,6 +1317,28 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
+        {/* Talo Pay — conciliación automática, no impacta en caja */}
+        {posVentas?.talo_pay?.cantidad > 0 && (
+          <div className="bg-white border border-indigo-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-indigo-800">
+              Talo Pay - conciliación automática ({posVentas.talo_pay.cantidad})
+            </h3>
+            <p className="text-xs text-gray-500">Estos cobros no impactan en la caja. Se concilian de forma independiente.</p>
+            <div className="space-y-1">
+              {posVentas.talo_pay.detalle.map(v => (
+                <div key={v.id} className="flex items-center justify-between px-3 py-2 bg-indigo-50/50 rounded-lg text-sm">
+                  <span className="text-gray-700">{v.nombre_cliente || 'Sin cliente'}</span>
+                  <span className="font-medium text-indigo-700">{formatMonto(v.total)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-indigo-200 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-indigo-800">Total Talo Pay</span>
+              <span className="text-indigo-700">{formatMonto(posVentas.talo_pay.total)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Gastos durante el turno */}
         {gastos.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
@@ -1662,7 +1701,7 @@ const DetalleCierrePos = () => {
               onClick={async () => {
                 try {
                   await api.post(`/api/cierres-pos/${cierre.id}/verificar`)
-                  setCierre(prev => ({ ...prev, estado: 'pendiente_agente' }))
+                  navigate('/cajas-pos')
                 } catch (err) {
                   alert(err.response?.data?.error || 'Error al verificar')
                 }

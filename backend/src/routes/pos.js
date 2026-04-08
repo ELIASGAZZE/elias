@@ -1681,7 +1681,7 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at)')
       .eq('id', req.params.id)
       .single()
 
@@ -2297,20 +2297,38 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
     if (total_pagado) insertData.total_pagado = total_pagado
     if (tarjeta_regalo?.trim()) insertData.tarjeta_regalo = tarjeta_regalo.trim()
     if (observaciones_pedido?.trim()) insertData.observaciones_pedido = observaciones_pedido.trim()
-    if (cajero_nombre?.trim()) {
-      insertData.cajero_nombre = cajero_nombre.trim()
-    } else {
-      // Buscar empleado del cierre activo
-      const { data: cierreAbierto } = await supabase
+    // Buscar cierre activo para registrar empleado y número de caja al crear
+    // Primero intentar por cajero_id, luego por caja_cobro_id (si el usuario no tiene cierre propio)
+    let cierreCreacion = null
+    const { data: cierreByUser } = await supabase
+      .from('cierres_pos')
+      .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+      .eq('cajero_id', req.perfil.id)
+      .is('cierre_at', null)
+      .order('apertura_at', { ascending: false })
+      .limit(1)
+    if (cierreByUser?.[0]) {
+      cierreCreacion = cierreByUser[0]
+    } else if (caja_cobro_id) {
+      const { data: cierreByCaja } = await supabase
         .from('cierres_pos')
-        .select('empleado:empleados!empleado_id(nombre)')
-        .eq('cajero_id', req.perfil.id)
+        .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+        .eq('caja_id', caja_cobro_id)
         .is('cierre_at', null)
         .order('apertura_at', { ascending: false })
         .limit(1)
-      if (cierreAbierto?.[0]?.empleado?.nombre) {
-        insertData.cajero_nombre = cierreAbierto[0].empleado.nombre
-      }
+      if (cierreByCaja?.[0]) cierreCreacion = cierreByCaja[0]
+    }
+    if (cajero_nombre?.trim()) {
+      insertData.cajero_nombre = cajero_nombre.trim()
+    } else if (cierreCreacion?.empleado?.nombre) {
+      insertData.cajero_nombre = cierreCreacion.empleado.nombre
+    } else {
+      insertData.cajero_nombre = req.perfil.nombre || null
+    }
+    if (cierreCreacion) {
+      insertData.creado_en_cierre = cierreCreacion.numero || null
+      insertData.creado_sucursal_nombre = cierreCreacion.cajas?.sucursales?.nombre || null
     }
 
     const { data, error } = await supabase
@@ -2321,92 +2339,56 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
 
     if (error) throw error
 
-    // Si hay pagos anticipados reales, crear venta_pos en la caja del cobrador
-    let ventaAnticipada = null
+    // Si hay pagos anticipados reales, registrar info de cobro en el pedido (sin crear venta — la venta se crea al entregar)
     if (data && pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0 && (parseFloat(total_pagado) || 0) > 0) {
       try {
-        // Obtener sucursal de la caja del cobrador
-        let sucursalCaja = null
-        if (caja_cobro_id) {
-          const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_cobro_id).single()
-          sucursalCaja = cajaInfo?.sucursal_id || null
+        // Buscar cierre activo para registrar quién cobró (por cajero_id o por caja_id)
+        let cobradoPor = null
+        let cobradoEnCierre = null
+        let cobradoSucursalNombre = null
+        let cierreCobro = null
+        const { data: cierreByUser2 } = await supabase
+          .from('cierres_pos')
+          .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+          .eq('cajero_id', req.perfil.id)
+          .is('cierre_at', null)
+          .order('apertura_at', { ascending: false })
+          .limit(1)
+        if (cierreByUser2?.[0]) {
+          cierreCobro = cierreByUser2[0]
+        } else if (caja_cobro_id) {
+          const { data: cierreByCaja2 } = await supabase
+            .from('cierres_pos')
+            .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+            .eq('caja_id', caja_cobro_id)
+            .is('cierre_at', null)
+            .order('apertura_at', { ascending: false })
+            .limit(1)
+          if (cierreByCaja2?.[0]) cierreCobro = cierreByCaja2[0]
+        }
+        if (cierreCobro) {
+          cobradoPor = cierreCobro.empleado?.nombre || null
+          cobradoEnCierre = cierreCobro.numero || null
+          cobradoSucursalNombre = cierreCobro.cajas?.sucursales?.nombre || null
+        } else {
+          cobradoPor = req.perfil.nombre || null
         }
 
-        const { data: venta, error: errVenta } = await supabase
-          .from('ventas_pos')
-          .insert({
-            cajero_id: req.perfil.id,
-            sucursal_id: sucursalCaja || req.perfil.sucursal_id || null,
-            caja_id: caja_cobro_id || null,
-            id_cliente_centum: id_cliente_centum ?? 0,
-            nombre_cliente: nombre_cliente || 'Consumidor Final',
-            subtotal: total || 0,
-            descuento_total: 0,
-            total: total || 0,
-            monto_pagado: parseFloat(total_pagado) || 0,
-            vuelto: 0,
-            items: JSON.stringify(items),
-            pagos: pagos_anticipado,
-            pedido_pos_id: data.id,
-          })
-          .select()
-          .single()
-
-        if (!errVenta && venta) {
-          ventaAnticipada = venta
-          // Vincular venta al pedido
-          await supabase.from('pedidos_pos').update({ venta_anticipada_id: venta.id }).eq('id', data.id)
-          data.venta_anticipada_id = venta.id
-
-          // Registrar en Centum ERP (async)
-          if (caja_cobro_id) {
-            const { data: cajaData } = await supabase.from('cajas').select('*, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)').eq('id', caja_cobro_id).single()
-            if (cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
-              ;(async () => {
-                try {
-                  await supabase.from('ventas_pos').update({
-                    centum_intentos: 1,
-                    centum_ultimo_intento: new Date().toISOString(),
-                  }).eq('id', venta.id)
-                  const resultado = await registrarVentaPOSEnCentum(venta, {
-                    sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
-                    puntoVenta: cajaData.punto_venta_centum,
-                    centum_operador_empresa: cajaData.sucursales.centum_operador_empresa,
-                    centum_operador_prueba: cajaData.sucursales.centum_operador_prueba,
-                  })
-                  if (resultado) {
-                    const numDoc = resultado.NumeroDocumento
-                    const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
-                    await supabase.from('ventas_pos').update({
-                      id_venta_centum: resultado.IdVenta || null,
-                      centum_comprobante: comprobante,
-                      centum_sync: true,
-                      centum_error: null,
-                      numero_cae: resultado.CAE || null,
-                    }).eq('id', venta.id)
-                    fetchAndSaveCAE(venta.id, resultado.IdVenta)
-                  }
-                } catch (err) {
-                  logger.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
-                  try {
-                    await supabase.from('ventas_pos').update({
-                      centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
-                      centum_ultimo_intento: new Date().toISOString(),
-                    }).eq('id', venta.id)
-                  } catch (e) {}
-                }
-              })()
-            }
-          }
-        } else if (errVenta) {
-          logger.error('[POS] Error creando venta anticipada:', errVenta.message)
-        }
+        await supabase.from('pedidos_pos').update({
+          pagos: pagos_anticipado,
+          descuento_forma_pago: req.body.descuento_forma_pago || null,
+          cobrado_por: cobradoPor,
+          cobrado_en_cierre: cobradoEnCierre,
+          caja_cobro_id: caja_cobro_id || null,
+          cobrado_at: new Date().toISOString(),
+          cobrado_sucursal_nombre: cobradoSucursalNombre,
+        }).eq('id', data.id)
       } catch (errAnticipado) {
         logger.error('[POS] Error en flujo venta anticipada:', errAnticipado.message)
       }
     }
 
-    res.status(201).json({ pedido: data, ventaAnticipada, mensaje: 'Pedido registrado correctamente' })
+    res.status(201).json({ pedido: data, mensaje: 'Pedido registrado correctamente' })
   } catch (err) {
     logger.error('[POS] Error al crear pedido:', err.message)
     res.status(500).json({ error: 'Error al crear pedido: ' + err.message })
@@ -2560,7 +2542,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
     // Verificar que no haya pedidos sin forma de pago
     const sinPago = pedidos.filter(p => {
       const obs = p.observaciones || ''
-      return !obs.includes('PAGO ANTICIPADO') && !obs.includes('PAGO EN ENTREGA: EFECTIVO')
+      return !obs.includes('PAGO ANTICIPADO') && !obs.includes('TALO PAY') && !obs.includes('PAGO EN ENTREGA: EFECTIVO')
     })
     if (sinPago.length > 0) {
       return res.status(400).json({ error: `Hay ${sinPago.length} pedido(s) sin forma de pago definida` })
@@ -2581,12 +2563,18 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
     // Calcular totales (efectivo con descuento aplicado)
     let totalEfectivo = 0
     let totalAnticipado = 0
+    let totalTaloPay = 0
     let totalDescuento = 0
     pedidos.forEach(p => {
       const obs = p.observaciones || ''
       const pedidoTotal = parseFloat(p.total) || 0
-      if (obs.includes('PAGO ANTICIPADO')) {
-        totalAnticipado += pedidoTotal
+      if (obs.includes('PAGO ANTICIPADO') || obs.includes('TALO PAY')) {
+        // Talo Pay: tiene mp_payment_id y pagos null — conciliación automática, no impacta en caja
+        if (p.mp_payment_id && !p.pagos) {
+          totalTaloPay += pedidoTotal
+        } else {
+          totalAnticipado += pedidoTotal
+        }
       } else {
         const desc = descEfectivoPct > 0 ? Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100 : 0
         totalEfectivo += Math.round((pedidoTotal - desc) * 100) / 100
@@ -2642,10 +2630,11 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
 
     for (const pedido of pedidos) {
       const obs = pedido.observaciones || ''
-      const esAnticipado = obs.includes('PAGO ANTICIPADO')
-      const formaPago = esAnticipado ? 'anticipado' : 'efectivo'
+      const esAnticipado = obs.includes('PAGO ANTICIPADO') || obs.includes('TALO PAY')
+      const esTaloPay = esAnticipado && pedido.mp_payment_id && !pedido.pagos
+      const formaPago = esTaloPay ? 'talo_pay' : (esAnticipado ? 'anticipado' : 'efectivo')
 
-      // Si es anticipado y ya tiene venta creada, reutilizarla
+      // Si es anticipado y ya tiene venta creada (legacy), reutilizarla
       let venta = null
       if (esAnticipado && pedido.venta_anticipada_id) {
         const { data: ventaExistente } = await supabase
@@ -2668,20 +2657,25 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
         }
       }
 
-      // Crear venta_pos para cada pedido (legacy o no anticipado)
+      // Crear venta_pos para cada pedido
       const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
       const pedidoTotal = parseFloat(pedido.total) || 0
 
-      // Aplicar descuento efectivo si corresponde
+      // Calcular descuento: usar el descuento guardado en el pedido si existe (anticipado), sino calcular
       let descuento = 0
       let totalVenta = pedidoTotal
-      if (!esAnticipado && descEfectivoPct > 0) {
+      if (esAnticipado && pedido.descuento_forma_pago?.total) {
+        descuento = pedido.descuento_forma_pago.total
+        totalVenta = Math.round((pedidoTotal - descuento) * 100) / 100
+      } else if (!esAnticipado && descEfectivoPct > 0) {
         descuento = Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100
         totalVenta = Math.round((pedidoTotal - descuento) * 100) / 100
       }
 
+      // Usar pagos del pedido si existen (anticipado), sino construir
+      const tipoAnticipado = esTaloPay ? 'Talo Pay' : 'Pago anticipado'
       const pagos = esAnticipado
-        ? [{ tipo: 'Pago anticipado', monto: pedidoTotal }]
+        ? (Array.isArray(pedido.pagos) && pedido.pagos.length > 0 ? pedido.pagos : [{ tipo: tipoAnticipado, monto: totalVenta }])
         : [{ tipo: 'efectivo', monto: totalVenta }]
 
       const insertVenta = {
@@ -2697,7 +2691,9 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
         vuelto: 0,
         items: typeof pedido.items === 'string' ? pedido.items : JSON.stringify(pedido.items),
         pagos,
-        descuento_forma_pago: descuento > 0 ? { total: descuento, detalle: [{ formaCobro: 'Efectivo', porcentaje: descEfectivoPct, descuento }] } : null,
+        descuento_forma_pago: esAnticipado && pedido.descuento_forma_pago
+          ? pedido.descuento_forma_pago
+          : (descuento > 0 ? { total: descuento, detalle: [{ formaCobro: 'Efectivo', porcentaje: descEfectivoPct, descuento }] } : null),
         pedido_pos_id: pedido.id,
       }
 
@@ -2777,8 +2773,24 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       if (errGP) logger.error('[Guía Delivery] Error insertando guia_delivery_pedidos:', errGP.message)
     }
 
-    // Cambiar estado de todos los pedidos a 'entregado' y marcar total_pagado
+    // Cambiar estado de todos los pedidos a 'entregado' y marcar total_pagado + datos de entrega
     const pedidoIds = pedidos.map(p => p.id)
+    // Buscar datos del empleado que despacha para trazabilidad
+    let entregadoPor = null, entregadoEnCierre = null, entregadoSucursalNombre = null, cajaEntregaId = null
+    const { data: cierreDespacho } = await supabase
+      .from('cierres_pos')
+      .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
+      .eq('cajero_id', req.perfil.id)
+      .is('cierre_at', null)
+      .order('apertura_at', { ascending: false })
+      .limit(1)
+    if (cierreDespacho?.[0]) {
+      entregadoPor = cierreDespacho[0].empleado?.nombre || null
+      entregadoEnCierre = cierreDespacho[0].numero || null
+      entregadoSucursalNombre = cierreDespacho[0].cajas?.sucursales?.nombre || null
+      cajaEntregaId = cierreDespacho[0].cajas?.id || null
+    }
+
     for (const pedido of pedidos) {
       const obs = pedido.observaciones || ''
       const pedidoTotal = parseFloat(pedido.total) || 0
@@ -2792,7 +2804,15 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
 
       await supabase
         .from('pedidos_pos')
-        .update({ estado: 'entregado', total_pagado: totalPagado || pedidoTotal })
+        .update({
+          estado: 'entregado',
+          total_pagado: totalPagado || pedidoTotal,
+          entregado_at: new Date().toISOString(),
+          entregado_por: entregadoPor,
+          entregado_en_cierre: entregadoEnCierre,
+          entregado_sucursal_nombre: entregadoSucursalNombre,
+          caja_entrega_id: cajaEntregaId,
+        })
         .eq('id', pedido.id)
     }
 
@@ -2835,7 +2855,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
           billetes: {},
           monedas: {},
           observaciones_apertura: labelDelivery,
-          observaciones: `Guía delivery ${turno} - ${pedidos.length} pedidos. Cadete: ${cadete_nombre || 'Sin asignar'}. Efectivo a cobrar: $${totalEfectivo}. Cambio entregado: $${cambioNum}. Total a devolver: $${totalADevolver}.`,
+          observaciones: `Guía delivery ${turno} - ${pedidos.length} pedidos. Cadete: ${cadete_nombre || 'Sin asignar'}. Efectivo a cobrar: $${totalEfectivo}. Cambio entregado: $${cambioNum}. Total a devolver: $${totalADevolver}.${totalTaloPay > 0 ? ` Talo Pay (no rinde): $${totalTaloPay}.` : ''}`,
         })
         .select()
         .single()
@@ -2903,6 +2923,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       pedidos_despachados: pedidoIds.length,
       total_efectivo: totalEfectivo,
       total_anticipado: totalAnticipado,
+      total_talo_pay: totalTaloPay,
       total_descuento: totalDescuento,
       descuento_efectivo_pct: descEfectivoPct,
       cambio_entregado: cambioNum,
@@ -3228,87 +3249,40 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
       observaciones: observaciones || pedido.observaciones || 'PAGO ANTICIPADO',
     }
 
-    // Crear venta anticipada si hay pagos reales y no existe ya una
-    let ventaAnticipada = null
-    if (!pedido.venta_anticipada_id && pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0 && (parseFloat(total_pagado) || 0) > 0) {
-      try {
-        let sucursalCaja = null
-        if (caja_cobro_id) {
-          const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_cobro_id).single()
-          sucursalCaja = cajaInfo?.sucursal_id || null
-        }
+    // Registrar info de cobro en el pedido (sin crear venta — la venta se crea al entregar)
+    if (pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0) {
+      updateData.pagos = pagos_anticipado
+      updateData.descuento_forma_pago = req.body.descuento_forma_pago || null
+      updateData.caja_cobro_id = caja_cobro_id || null
+      updateData.cobrado_at = new Date().toISOString()
 
-        const itemsPedido = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
-
-        const { data: venta, error: errVenta } = await supabase
-          .from('ventas_pos')
-          .insert({
-            cajero_id: req.perfil.id,
-            sucursal_id: sucursalCaja || req.perfil.sucursal_id || null,
-            caja_id: caja_cobro_id || null,
-            id_cliente_centum: pedido.id_cliente_centum ?? 0,
-            nombre_cliente: pedido.nombre_cliente || 'Consumidor Final',
-            subtotal: totalPedido,
-            descuento_total: 0,
-            total: totalPedido,
-            monto_pagado: parseFloat(total_pagado) || 0,
-            vuelto: 0,
-            items: typeof pedido.items === 'string' ? pedido.items : JSON.stringify(pedido.items),
-            pagos: pagos_anticipado,
-            pedido_pos_id: pedido.id,
-          })
-          .select()
-          .single()
-
-        if (!errVenta && venta) {
-          ventaAnticipada = venta
-          updateData.venta_anticipada_id = venta.id
-
-          // Registrar en Centum ERP (async)
-          if (caja_cobro_id) {
-            const { data: cajaData } = await supabase.from('cajas').select('*, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)').eq('id', caja_cobro_id).single()
-            if (cajaData?.punto_venta_centum && cajaData?.sucursales?.centum_sucursal_id) {
-              ;(async () => {
-                try {
-                  await supabase.from('ventas_pos').update({
-                    centum_intentos: 1,
-                    centum_ultimo_intento: new Date().toISOString(),
-                  }).eq('id', venta.id)
-                  const resultado = await registrarVentaPOSEnCentum(venta, {
-                    sucursalFisicaId: cajaData.sucursales.centum_sucursal_id,
-                    puntoVenta: cajaData.punto_venta_centum,
-                    centum_operador_empresa: cajaData.sucursales.centum_operador_empresa,
-                    centum_operador_prueba: cajaData.sucursales.centum_operador_prueba,
-                  })
-                  if (resultado) {
-                    const numDoc = resultado.NumeroDocumento
-                    const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
-                    await supabase.from('ventas_pos').update({
-                      id_venta_centum: resultado.IdVenta || null,
-                      centum_comprobante: comprobante,
-                      centum_sync: true,
-                      centum_error: null,
-                      numero_cae: resultado.CAE || null,
-                    }).eq('id', venta.id)
-                    fetchAndSaveCAE(venta.id, resultado.IdVenta)
-                  }
-                } catch (err) {
-                  logger.error(`[POS] Error Centum para venta anticipada ${venta.id}:`, err.message)
-                  try {
-                    await supabase.from('ventas_pos').update({
-                      centum_error: `UNVERIFIED|anticipado: ${(err.message || '').slice(0, 150)}`,
-                      centum_ultimo_intento: new Date().toISOString(),
-                    }).eq('id', venta.id)
-                  } catch (e) {}
-                }
-              })()
-            }
-          }
-        } else if (errVenta) {
-          logger.error('[POS] Error creando venta anticipada en cobro:', errVenta.message)
-        }
-      } catch (errAnticipado) {
-        logger.error('[POS] Error en flujo venta anticipada cobro:', errAnticipado.message)
+      // Buscar cierre activo para registrar quién cobró (por cajero_id o por caja_id)
+      let cierrePago = null
+      const { data: cierreByUserPago } = await supabase
+        .from('cierres_pos')
+        .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+        .eq('cajero_id', req.perfil.id)
+        .is('cierre_at', null)
+        .order('apertura_at', { ascending: false })
+        .limit(1)
+      if (cierreByUserPago?.[0]) {
+        cierrePago = cierreByUserPago[0]
+      } else if (caja_cobro_id) {
+        const { data: cierreByCajaPago } = await supabase
+          .from('cierres_pos')
+          .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+          .eq('caja_id', caja_cobro_id)
+          .is('cierre_at', null)
+          .order('apertura_at', { ascending: false })
+          .limit(1)
+        if (cierreByCajaPago?.[0]) cierrePago = cierreByCajaPago[0]
+      }
+      if (cierrePago) {
+        updateData.cobrado_por = cierrePago.empleado?.nombre || null
+        updateData.cobrado_en_cierre = cierrePago.numero || null
+        updateData.cobrado_sucursal_nombre = cierrePago.cajas?.sucursales?.nombre || null
+      } else {
+        updateData.cobrado_por = req.perfil.nombre || null
       }
     }
 
@@ -3320,7 +3294,7 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
       .single()
 
     if (error) throw error
-    res.json({ ...data, ventaAnticipada })
+    res.json(data)
   } catch (err) {
     logger.error('Error registrando pago de pedido:', err)
     res.status(500).json({ error: 'Error al registrar pago: ' + err.message })
@@ -3330,7 +3304,7 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
 // PUT /api/pos/pedidos/:id/estado — cambiar estado (entregado/cancelado)
 router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const { estado } = req.body
+    const { estado, caja_id } = req.body
     if (!['entregado', 'cancelado'].includes(estado)) {
       return res.status(400).json({ error: 'Estado inválido. Debe ser entregado o cancelado' })
     }
@@ -3346,9 +3320,44 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
       return res.status(404).json({ error: 'Pedido no encontrado o ya procesado' })
     }
 
+    // Preparar datos de entrega si corresponde
+    const updateEstado = { estado }
+    if (estado === 'entregado') {
+      updateEstado.entregado_at = new Date().toISOString()
+      // Buscar cierre activo por cajero_id, fallback por caja_id
+      let cierreEnt = null
+      const { data: cierreEntByUser } = await supabase
+        .from('cierres_pos')
+        .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
+        .eq('cajero_id', req.perfil.id)
+        .is('cierre_at', null)
+        .order('apertura_at', { ascending: false })
+        .limit(1)
+      if (cierreEntByUser?.[0]) {
+        cierreEnt = cierreEntByUser[0]
+      } else if (caja_id) {
+        const { data: cierreEntByCaja } = await supabase
+          .from('cierres_pos')
+          .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
+          .eq('caja_id', caja_id)
+          .is('cierre_at', null)
+          .order('apertura_at', { ascending: false })
+          .limit(1)
+        if (cierreEntByCaja?.[0]) cierreEnt = cierreEntByCaja[0]
+      }
+      if (cierreEnt) {
+        updateEstado.entregado_por = cierreEnt.empleado?.nombre || null
+        updateEstado.entregado_en_cierre = cierreEnt.numero || null
+        updateEstado.entregado_sucursal_nombre = cierreEnt.cajas?.sucursales?.nombre || null
+        updateEstado.caja_entrega_id = cierreEnt.cajas?.id || null
+      } else {
+        updateEstado.entregado_por = req.perfil.nombre || null
+      }
+    }
+
     const { data, error } = await supabase
       .from('pedidos_pos')
-      .update({ estado })
+      .update(updateEstado)
       .eq('id', req.params.id)
       .eq('estado', 'pendiente')
       .select()
@@ -3407,7 +3416,7 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
 
     // Bloquear reversión de retiros no pre-pagados (solo delivery o retiro anticipado)
     const obsRetiro = pedido.observaciones || ''
-    if (pedido.tipo === 'retiro' && !obsRetiro.includes('PAGO ANTICIPADO') && !pedido.venta_anticipada_id) {
+    if (pedido.tipo === 'retiro' && !obsRetiro.includes('PAGO ANTICIPADO') && !obsRetiro.includes('TALO PAY') && !pedido.venta_anticipada_id) {
       return res.status(400).json({ error: 'No se pueden revertir pedidos de retiro que se abonaron al momento del retiro. Solo se permiten reversiones de pedidos delivery o retiros con pago anticipado.' })
     }
 
@@ -3698,7 +3707,7 @@ router.post('/pedidos/:id/link-pago', verificarAuth, asyncHandler(async (req, re
     }
 
     const totalPagado = parseFloat(pedido.total_pagado) || 0
-    const esPagoAnticipado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
+    const esPagoAnticipado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY') || totalPagado > 0
     let montoACobrar = Math.round(pedido.total * 100) / 100
     let titulo = `Pedido POS #${pedido.numero}`
 
@@ -3727,7 +3736,7 @@ router.post('/pedidos/:id/link-pago', verificarAuth, asyncHandler(async (req, re
 
     // Guardar referencia y marcar como pendiente de pago (async, no bloquea respuesta)
     const obsActual = pedido.observaciones || ''
-    const yaEsPago = obsActual.includes('PAGO ANTICIPADO') || obsActual.includes('PAGO PENDIENTE')
+    const yaEsPago = obsActual.includes('PAGO ANTICIPADO') || obsActual.includes('TALO PAY') || obsActual.includes('PAGO PENDIENTE')
     const updateData = { mp_preference_id: pago.id || null }
     if (!yaEsPago) {
       updateData.observaciones = obsActual ? `PAGO PENDIENTE: LINK TALO | ${obsActual}` : 'PAGO PENDIENTE: LINK TALO'
@@ -3778,27 +3787,30 @@ router.post('/webhook-talo', asyncHandler(async (req, res) => {
     if (!pedido || pedido.estado !== 'pendiente') return
 
     const obsActual = pedido.observaciones || ''
-    const yaEsPagoAnticipado = obsActual.includes('PAGO ANTICIPADO')
+    const yaEsPagoAnticipado = obsActual.includes('PAGO ANTICIPADO') || obsActual.includes('TALO PAY')
     const totalPagadoActual = parseFloat(pedido.total_pagado) || 0
     const montoPago = parseFloat(pago.price?.amount) || parseFloat(pedido.total) || 0
 
+    const cobrado_at = new Date().toISOString()
     if (yaEsPagoAnticipado) {
       await supabase
         .from('pedidos_pos')
         .update({
           total_pagado: totalPagadoActual + montoPago,
           mp_payment_id: String(paymentId),
+          cobrado_at,
         })
         .eq('id', pedidoId)
       logger.info(`[Talo Webhook] Pedido ${pedidoId} — diferencia pagada $${montoPago} (payment ${paymentId})`)
     } else {
-      const nuevaObs = obsActual ? `PAGO ANTICIPADO | ${obsActual}` : 'PAGO ANTICIPADO'
+      const nuevaObs = obsActual ? `TALO PAY | ${obsActual}` : 'TALO PAY'
       await supabase
         .from('pedidos_pos')
         .update({
           observaciones: nuevaObs,
           mp_payment_id: String(paymentId),
           total_pagado: parseFloat(pedido.total) || 0,
+          cobrado_at,
         })
         .eq('id', pedidoId)
       logger.info(`[Talo Webhook] Pedido ${pedidoId} marcado como pagado (payment ${paymentId})`)

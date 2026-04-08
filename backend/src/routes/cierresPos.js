@@ -698,14 +698,18 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     // Gift cards activadas ya están incluidas como ventas_pos normales (con caja_id y pagos correctos)
     // No se consultan por separado
 
-    // Separar ventas de empleados (cuenta_corriente) del resto
+    // Separar ventas de empleados (cuenta_corriente) y Talo Pay del resto
     const ventasEmpleados = []
+    const ventasTaloPay = []
     const ventasNormales = []
     ;(ventas || []).forEach(v => {
       const pagos = v.pagos || []
       const esCuentaCorriente = pagos.some(p => (p.tipo || '').toLowerCase() === 'cuenta_corriente')
+      const esTaloPay = pagos.some(p => ['talo pay', 'pago anticipado'].includes((p.tipo || '').toLowerCase()))
       if (esCuentaCorriente) {
         ventasEmpleados.push(v)
+      } else if (esTaloPay) {
+        ventasTaloPay.push(v)
       } else {
         ventasNormales.push(v)
       }
@@ -815,6 +819,9 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     // Total general del cuadro comparativo = solo medios que aparecen en el cuadro (excluye MP y cuenta_corriente)
     const totalComparativo = mediosPagoArray.reduce((s, mp) => s + mp.total, 0)
 
+    // Talo Pay — conciliación automática, no impacta en caja
+    const totalTaloPay = ventasTaloPay.reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
+
     res.json({
       total_efectivo: parseFloat(totalEfectivo.toFixed(2)),
       medios_pago: mediosPagoArray,
@@ -835,6 +842,17 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         detalle: retiroEmpleadosDetalle,
       },
       cupones_mp: cuponesMP,
+      talo_pay: {
+        cantidad: ventasTaloPay.length,
+        total: parseFloat(totalTaloPay.toFixed(2)),
+        detalle: ventasTaloPay.map(v => ({
+          id: v.id,
+          numero_venta: v.numero_venta,
+          total: v.total,
+          nombre_cliente: v.nombre_cliente,
+          created_at: v.created_at,
+        })),
+      },
     })
   } catch (err) {
     logger.error('Error al obtener ventas POS:', err)

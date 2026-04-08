@@ -104,7 +104,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     return pedidos.filter(p => {
       const obs = p.observaciones || ''
       const totalPagado = parseFloat(p.total_pagado) || 0
-      const esPagado = obs.includes('PAGO ANTICIPADO') || totalPagado > 0
+      const esPagado = obs.includes('PAGO ANTICIPADO') || obs.includes('TALO PAY') || totalPagado > 0
       const pagaEfectivo = obs.includes('PAGO EN ENTREGA: EFECTIVO')
       if (filtroPago === 'pago') return esPagado
       if (filtroPago === 'efectivo') return pagaEfectivo
@@ -136,7 +136,7 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
 
   async function cambiarEstado(pedidoId, estado) {
     const pedido = pedidos.find(p => p.id === pedidoId)
-    const esPagado = pedido && (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+    const esPagado = pedido && ((pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY'))
     const totalPagado = pedido ? (parseFloat(pedido.total_pagado) || 0) : 0
 
     if (estado === 'cancelado' && esPagado && totalPagado > 0) {
@@ -393,8 +393,9 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
         Una vez despachado el pedido se generara la factura para el cliente <strong>${esc(pedido.nombre_cliente || 'CONSUMIDOR FINAL')}</strong>${emailCliente ? ` y se enviara por email a <strong>${esc(emailCliente)}</strong>` : ''}.
       </div>
       <div class="cajero-info">
-        Cajero: ${esc(pedido.cajero_nombre || pedido.perfiles?.nombre || '')}
-        ${pedido.sucursales?.nombre ? ` &nbsp;|&nbsp; Sucursal: ${esc(pedido.sucursales.nombre)}` : ''}
+        Creado por: ${esc(pedido.cajero_nombre || pedido.perfiles?.nombre || '')}${pedido.creado_en_cierre ? ` (Caja #${pedido.creado_en_cierre})` : ''}${pedido.creado_sucursal_nombre || pedido.sucursales?.nombre ? ` - ${esc(pedido.creado_sucursal_nombre || pedido.sucursales?.nombre)}` : ''} - ${new Date(pedido.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        ${pedido.cobrado_por ? `<br>Cobrado por: ${esc(pedido.cobrado_por)}${pedido.cobrado_en_cierre ? ` (Caja #${pedido.cobrado_en_cierre})` : ''}${pedido.cobrado_sucursal_nombre ? ` - ${esc(pedido.cobrado_sucursal_nombre)}` : ''}${pedido.cobrado_at ? ` - ${new Date(pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}${pedido.pagos && Array.isArray(pedido.pagos) ? ` (${pedido.pagos.map(p => esc(p.tipo || p.forma)).join(', ')})` : ''}` : ''}
+        ${pedido.entregado_por ? `<br>Entregado por: ${esc(pedido.entregado_por)}${pedido.entregado_en_cierre ? ` (Caja #${pedido.entregado_en_cierre})` : ''}${pedido.entregado_sucursal_nombre ? ` - ${esc(pedido.entregado_sucursal_nombre)}` : ''}${pedido.entregado_at ? ` - ${new Date(pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}` : ''}
       </div>
     </div>
     <div class="footer-right">
@@ -479,10 +480,14 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
     const p = pedidos.find(p => p.id === pedidoSeleccionado)
     if (!p) return null
     const totalPagado = parseFloat(p.total_pagado) || 0
-    const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
+    const esPagado = (p.observaciones || '').includes('PAGO ANTICIPADO') || (p.observaciones || '').includes('TALO PAY') || totalPagado > 0
     const pagaEfectivoEntrega = (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
     const pagaConLink = (p.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
-    const diferencia = esPagado ? (p.total - totalPagado) : 0
+    const descFormaPago = p.descuento_forma_pago?.total || 0
+    const totalConDescuento = Math.round((p.total - descFormaPago) * 100) / 100
+    const difRaw = esPagado ? (totalConDescuento - totalPagado) : 0
+    // Tolerancia de $1 por redondeo a centenas del efectivo
+    const diferencia = Math.abs(difRaw) < 1 ? 0 : difRaw
     return {
       ...p,
       items: typeof p.items === 'string' ? JSON.parse(p.items) : p.items,
@@ -672,10 +677,12 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
             {pedidosFiltrados.map(pedido => {
               const fecha = new Date(pedido.created_at)
               const totalPagado = parseFloat(pedido.total_pagado) || 0
-              const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || totalPagado > 0
+              const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY') || totalPagado > 0
               const pagaEfectivoEntrega = (pedido.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO')
               const pagaConLink = (pedido.observaciones || '').match(/PAGO PENDIENTE: LINK (MP|TALO)/)
-              const diferencia = esPagado ? (pedido.total - totalPagado) : 0
+              const descFormaPagoPed = pedido.descuento_forma_pago?.total || 0
+              const difRawPed = esPagado ? (Math.round((pedido.total - descFormaPagoPed) * 100) / 100 - totalPagado) : 0
+              const diferencia = Math.abs(difRawPed) < 1 ? 0 : difRawPed
               const items = (() => { try { return typeof pedido.items === 'string' ? JSON.parse(pedido.items) : (pedido.items || []) } catch { return [] } })()
 
               return (
@@ -762,7 +769,19 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                       {(pedido.cajero_nombre || pedido.perfiles?.nombre) && (
                         <>
                           <span>|</span>
-                          <span>Cajero: {pedido.cajero_nombre || pedido.perfiles.nombre}</span>
+                          <span>Creado por: {pedido.cajero_nombre || pedido.perfiles.nombre}{pedido.creado_en_cierre ? ` (Caja #${pedido.creado_en_cierre})` : ''}{pedido.creado_sucursal_nombre ? ` - ${pedido.creado_sucursal_nombre}` : ''}</span>
+                        </>
+                      )}
+                      {(pedido.cobrado_por || (pedido.cobrado_at && pedido.mp_payment_id)) && (
+                        <>
+                          <span>|</span>
+                          <span>Cobrado por: {pedido.cobrado_por || 'Talo Pay'}{pedido.cobrado_en_cierre ? ` (Caja #${pedido.cobrado_en_cierre})` : ''}{pedido.cobrado_sucursal_nombre ? ` - ${pedido.cobrado_sucursal_nombre}` : ''}{pedido.cobrado_at ? ` el ${new Date(pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                        </>
+                      )}
+                      {pedido.entregado_por && (
+                        <>
+                          <span>|</span>
+                          <span>Entregado por: {pedido.entregado_por}{pedido.entregado_en_cierre ? ` (Caja #${pedido.entregado_en_cierre})` : ''}{pedido.entregado_sucursal_nombre ? ` - ${pedido.entregado_sucursal_nombre}` : ''}{pedido.entregado_at ? ` el ${new Date(pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
                         </>
                       )}
                     </div>
@@ -795,7 +814,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {pedido.estado !== 'pendiente' && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
                         {(pedido.estado === 'entregado' || pedido.estado === 'no_entregado') &&
-                         !(pedido.tipo === 'retiro' && !(pedido.observaciones || '').includes('PAGO ANTICIPADO') && !pedido.venta_anticipada_id) && (
+                         !(pedido.tipo === 'retiro' && !(pedido.observaciones || '').includes('PAGO ANTICIPADO') && !(pedido.observaciones || '').includes('TALO PAY') && !pedido.venta_anticipada_id) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); revertirPedido(pedido.id) }}
                             className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-semibold px-2 py-1 rounded-md transition-colors flex items-center gap-1"
@@ -1112,16 +1131,38 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                   Turno: <span className="font-medium text-gray-700">{pedidoDetalle.turno_entrega === 'AM' ? 'AM (9-13hs)' : 'PM (17-21hs)'}</span>
                 </div>
               )}
-              {pedidoDetalle.sucursales?.nombre && (
-                <div className="mt-1 text-xs text-gray-500">
-                  Sucursal: {pedidoDetalle.sucursales.nombre}
+              {/* Trazabilidad: Creación / Cobro / Entrega */}
+              <div className="mt-3 space-y-1.5">
+                {/* Creación */}
+                <div className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1.5">
+                  <span className="font-semibold text-gray-600">Creado:</span>{' '}
+                  {pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre || '—'}
+                  {pedidoDetalle.creado_en_cierre ? ` (Caja #${pedidoDetalle.creado_en_cierre})` : ''}
+                  {(pedidoDetalle.creado_sucursal_nombre || pedidoDetalle.sucursales?.nombre) ? ` — ${pedidoDetalle.creado_sucursal_nombre || pedidoDetalle.sucursales.nombre}` : ''}
+                  {pedidoDetalle.created_at ? ` — ${new Date(pedidoDetalle.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                 </div>
-              )}
-              {(pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre) && (
-                <div className="mt-1 text-xs text-gray-500">
-                  Cajero: {pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre}
-                </div>
-              )}
+                {/* Cobro */}
+                {(pedidoDetalle.cobrado_por || (pedidoDetalle.cobrado_at && pedidoDetalle.mp_payment_id)) && (
+                  <div className={`text-xs rounded px-2 py-1.5 ${pedidoDetalle.cobrado_por ? 'text-green-700 bg-green-50' : 'text-indigo-700 bg-indigo-50'}`}>
+                    <span className="font-semibold">Cobrado:</span>{' '}
+                    {pedidoDetalle.cobrado_por || 'Talo Pay'}
+                    {pedidoDetalle.cobrado_en_cierre ? ` (Caja #${pedidoDetalle.cobrado_en_cierre})` : ''}
+                    {pedidoDetalle.cobrado_sucursal_nombre ? ` — ${pedidoDetalle.cobrado_sucursal_nombre}` : ''}
+                    {pedidoDetalle.cobrado_at ? ` — ${new Date(pedidoDetalle.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                    {pedidoDetalle.pagos && Array.isArray(pedidoDetalle.pagos) ? ` — ${pedidoDetalle.pagos.map(p => p.tipo || p.forma).join(', ')}` : ''}
+                  </div>
+                )}
+                {/* Entrega */}
+                {pedidoDetalle.entregado_por && (
+                  <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
+                    <span className="font-semibold">Entregado:</span>{' '}
+                    {pedidoDetalle.entregado_por}
+                    {pedidoDetalle.entregado_en_cierre ? ` (Caja #${pedidoDetalle.entregado_en_cierre})` : ''}
+                    {pedidoDetalle.entregado_sucursal_nombre ? ` — ${pedidoDetalle.entregado_sucursal_nombre}` : ''}
+                    {pedidoDetalle.entregado_at ? ` — ${new Date(pedidoDetalle.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Footer con total + acciones */}
@@ -1214,7 +1255,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
               {pedidoDetalle.estado !== 'pendiente' && (
                 <div className="flex flex-wrap gap-2">
                   {(pedidoDetalle.estado === 'entregado' || pedidoDetalle.estado === 'no_entregado') &&
-                   !(pedidoDetalle.tipo === 'retiro' && !(pedidoDetalle.observaciones || '').includes('PAGO ANTICIPADO') && !pedidoDetalle.venta_anticipada_id) && (
+                   !(pedidoDetalle.tipo === 'retiro' && !(pedidoDetalle.observaciones || '').includes('PAGO ANTICIPADO') && !(pedidoDetalle.observaciones || '').includes('TALO PAY') && !pedidoDetalle.venta_anticipada_id) && (
                     <button
                       onClick={() => revertirPedido(pedidoDetalle.id)}
                       className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"

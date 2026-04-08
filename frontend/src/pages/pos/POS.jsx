@@ -800,6 +800,7 @@ const POS = () => {
 
   // Pedido en proceso de entrega (viene de tab Pedidos)
   const [pedidoEnProceso, setPedidoEnProceso] = useState(null) // { id, esPagado, ... }
+  const carritoBloquedado = pedidoEnProceso?.esPagado && !pedidoEnProceso?.editando
 
   // Modal problema
   const [mostrarActualizaciones, setMostrarActualizaciones] = useState(false)
@@ -1876,9 +1877,16 @@ const POS = () => {
         celular: pedido.celular_cliente || '',
       })
     }
-    const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+    const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
-    setPedidoEnProceso({ id: pedido.id, numero: pedido.numero, esPagado, totalPagado, ventaAnticipadaId: pedido.venta_anticipada_id || null })
+    setPedidoEnProceso({
+      id: pedido.id, numero: pedido.numero, esPagado, totalPagado,
+      ventaAnticipadaId: pedido.venta_anticipada_id || null,
+      pagos: pedido.pagos || null,
+      descuento_forma_pago: pedido.descuento_forma_pago || null,
+      caja_cobro_id: pedido.caja_cobro_id || null,
+      mp_payment_id: pedido.mp_payment_id || null,
+    })
     setVistaActiva('venta')
   }
 
@@ -1907,7 +1915,7 @@ const POS = () => {
         celular: pedido.celular_cliente || '',
       })
     }
-    const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO')
+    const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
     // Extraer dirección de observaciones
     const obsMatch = (pedido.observaciones || '').match(/Dirección: ([^|]+)/)
@@ -2032,18 +2040,24 @@ const POS = () => {
   // Marcar pedido como entregado en backend
   async function marcarPedidoEntregado(pedidoId) {
     try {
-      await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado' })
+      await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado', caja_id: terminalConfig?.caja_id || null })
     } catch (err) {
       console.error('Error marcando pedido como entregado:', err)
     }
   }
 
-  // Entregar pedido ya pagado: guardar venta directamente sin ModalCobrar
+  // Entregar pedido ya pagado: crear la venta (con descuento) y marcar como entregado
   async function handleEntregarPedidoPagado() {
     if (!pedidoEnProceso || carrito.length === 0) return
 
     const totalPagado = pedidoEnProceso.totalPagado || 0
-    const diferencia = total - totalPagado
+    // Calcular total efectivo considerando descuento forma pago del pedido
+    const descFormaPago = pedidoEnProceso.descuento_forma_pago
+    const descuentoTotal = descFormaPago?.total || 0
+    const totalConDescuento = Math.round((total - descuentoTotal) * 100) / 100
+    const difRaw = totalConDescuento - totalPagado
+    // Tolerancia de $1 por redondeo a centenas del efectivo
+    const diferencia = Math.abs(difRaw) < 1 ? 0 : difRaw
 
     // Si falta cobrar pero el cliente tiene saldo, descontar automáticamente
     let saldoAplicadoEntrega = 0
@@ -2060,19 +2074,19 @@ const POS = () => {
 
     // Si sobró dinero (pagó de más), generar saldo a favor
     if (diferencia < -0.01) {
-      if (!confirm(`El cliente pagó ${formatPrecio(totalPagado)} pero el total actual es ${formatPrecio(total)}.\nSe generará saldo a favor de ${formatPrecio(Math.abs(diferencia))}.\n\n¿Continuar?`)) return
+      if (!confirm(`El cliente pagó ${formatPrecio(totalPagado)} pero el total actual es ${formatPrecio(totalConDescuento)}.\nSe generará saldo a favor de ${formatPrecio(Math.abs(diferencia))}.\n\n¿Continuar?`)) return
     }
 
     setGuardandoPedido(true)
     try {
-      // Si ya existe venta anticipada creada al cobrar, solo marcar entregado
+      // Si ya existe venta anticipada (pedidos legacy), solo marcar entregado
       if (pedidoEnProceso.ventaAnticipadaId) {
         await marcarPedidoEntregado(pedidoEnProceso.id)
         limpiarVenta()
         return
       }
 
-      // Fallback legacy: crear venta al entregar (pedidos viejos sin venta_anticipada_id)
+      // Crear venta al entregar con los datos de pago del pedido
       const items = carrito.map(i => ({
         id_articulo: i.articulo.id,
         codigo: i.articulo.codigo,
@@ -2083,21 +2097,34 @@ const POS = () => {
         rubro: i.articulo.rubro?.nombre || null,
         subRubro: i.articulo.subRubro?.nombre || null,
       }))
+
+      // Usar pagos del pedido si existen, sino fallback
+      // Si el pedido fue pagado con Talo Pay (mp_payment_id presente y pagos null), marcar como 'Talo Pay'
+      const esTaloPay = !pedidoEnProceso.pagos && pedidoEnProceso.mp_payment_id
+      const pagosVenta = pedidoEnProceso.pagos || [
+        { tipo: esTaloPay ? 'Talo Pay' : 'Pago anticipado', monto: totalPagado, detalle: null },
+      ]
+
+      // Si la diferencia entre total y pagado es < $1 (redondeo centenas), igualar para que no falle validación
+      const montoPagadoFinal = (totalPagado + saldoAplicadoEntrega)
+      const montoAjustado = Math.abs(totalConDescuento - montoPagadoFinal) < 1 ? totalConDescuento : montoPagadoFinal
+
       const payload = {
         id_cliente_centum: cliente.id_centum,
         nombre_cliente: cliente.razon_social,
-        caja_id: terminalConfig?.caja_id || null,
+        caja_id: pedidoEnProceso.caja_cobro_id || terminalConfig?.caja_id || null,
         items,
         promociones_aplicadas: null,
         subtotal: total,
-        descuento_total: 0,
-        total,
-        monto_pagado: totalPagado + saldoAplicadoEntrega,
+        descuento_total: descuentoTotal,
+        total: totalConDescuento,
+        monto_pagado: montoAjustado,
         vuelto: 0,
         pagos: [
-          { tipo: 'Pago anticipado', monto: totalPagado, detalle: null },
+          ...pagosVenta,
           ...(saldoAplicadoEntrega > 0 ? [{ tipo: 'Saldo', monto: saldoAplicadoEntrega, detalle: null }] : []),
         ],
+        descuento_forma_pago: descFormaPago || null,
         pedido_pos_id: pedidoEnProceso.id,
       }
       if (saldoAplicadoEntrega > 0) {
@@ -2612,8 +2639,9 @@ const POS = () => {
                   {cliente.id_centum > 0 && (
                     <>
                       <button
-                        onClick={() => setMostrarEditarCliente(true)}
-                        className="text-gray-400 hover:text-violet-600"
+                        onClick={() => !carritoBloquedado && setMostrarEditarCliente(true)}
+                        disabled={carritoBloquedado}
+                        className={carritoBloquedado ? "text-gray-300 cursor-not-allowed" : "text-gray-400 hover:text-violet-600"}
                         title="Editar cliente"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2652,8 +2680,9 @@ const POS = () => {
                     </>
                   )}
                   <button
-                    onClick={() => { setCliente({ ...CLIENTE_DEFAULT }); setDescuentosGrupoRubros({}) }}
-                    className="text-gray-400 hover:text-red-500"
+                    onClick={() => { if (carritoBloquedado) return; setCliente({ ...CLIENTE_DEFAULT }); setDescuentosGrupoRubros({}) }}
+                    disabled={carritoBloquedado}
+                    className={carritoBloquedado ? "text-gray-300 cursor-not-allowed" : "text-gray-400 hover:text-red-500"}
                     title="Volver a Consumidor Final"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2671,9 +2700,10 @@ const POS = () => {
                   <input
                     ref={inputClienteRef}
                     type="text"
-                    placeholder="DNI / CUIT del cliente… (F6)"
+                    placeholder={carritoBloquedado ? "Cliente fijo para este pedido" : "DNI / CUIT del cliente… (F6)"}
                     value={busquedaCliente}
-                    onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, ''); setBusquedaCliente(v); setClienteIdx(-1) }}
+                    disabled={carritoBloquedado}
+                    onChange={e => { if (carritoBloquedado) return; const v = e.target.value.replace(/[^0-9-]/g, ''); setBusquedaCliente(v); setClienteIdx(-1) }}
                     onKeyDown={e => {
                       const dropdownVisible = clientesCentum.length > 0 || (busquedaCliente.trim().length >= 2 && !buscandoClientes)
                       const maxIdx = clientesCentum.length // último índice = "Crear cliente nuevo"
@@ -2791,7 +2821,7 @@ const POS = () => {
                 </svg>
               </button>
             </div>
-            {cliente.id_centum > 0 && (
+            {cliente.id_centum > 0 && !carritoBloquedado && (
               <div className="flex items-center gap-2 mt-2">
                 <input
                   type="email"
@@ -2863,8 +2893,9 @@ const POS = () => {
                       <div className="flex items-center gap-2 mt-1">
                         <div className="flex items-center gap-0.5">
                           <button
-                            onClick={() => cambiarCantidad(item.articulo.id, -1, item.articulo.esPesable)}
-                            className="w-6 h-6 rounded bg-gray-300 hover:bg-gray-400 flex items-center justify-center text-gray-700 text-sm font-bold"
+                            onClick={() => !carritoBloquedado && cambiarCantidad(item.articulo.id, -1, item.articulo.esPesable)}
+                            disabled={carritoBloquedado}
+                            className={`w-6 h-6 rounded flex items-center justify-center text-sm font-bold ${carritoBloquedado ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-300 hover:bg-gray-400 text-gray-700'}`}
                           >−</button>
                           {item.articulo.esPesable ? (
                             <input
@@ -2885,8 +2916,9 @@ const POS = () => {
                             <span className="w-7 text-center text-sm font-semibold">{item.cantidad}</span>
                           )}
                           <button
-                            onClick={() => cambiarCantidad(item.articulo.id, 1, item.articulo.esPesable)}
-                            className="w-6 h-6 rounded bg-violet-100 hover:bg-violet-200 flex items-center justify-center text-violet-700 text-sm font-bold"
+                            onClick={() => !carritoBloquedado && cambiarCantidad(item.articulo.id, 1, item.articulo.esPesable)}
+                            disabled={carritoBloquedado}
+                            className={`w-6 h-6 rounded flex items-center justify-center text-sm font-bold ${carritoBloquedado ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-violet-100 hover:bg-violet-200 text-violet-700'}`}
                           >+</button>
                         </div>
                         {item.articulo.esPesable && <span className="text-[10px] text-amber-600 font-medium">kg</span>}
@@ -2924,9 +2956,9 @@ const POS = () => {
                           />
                         ) : (
                           <span
-                            onClick={() => setEditandoPrecio(item.articulo.id)}
-                            className={`text-xs cursor-pointer hover:underline ${tieneOverride ? 'text-violet-600 font-semibold' : 'text-gray-500'}`}
-                            title={tieneOverride ? `Motivo: ${item.motivoCambioPrecio || 'Sin motivo'}` : 'Click para editar precio'}
+                            onClick={() => !carritoBloquedado && setEditandoPrecio(item.articulo.id)}
+                            className={`text-xs ${carritoBloquedado ? 'text-gray-500 cursor-default' : `cursor-pointer hover:underline ${tieneOverride ? 'text-violet-600 font-semibold' : 'text-gray-500'}`}`}
+                            title={carritoBloquedado ? '' : (tieneOverride ? `Motivo: ${item.motivoCambioPrecio || 'Sin motivo'}` : 'Click para editar precio')}
                           >
                             {formatPrecio(precioUnit)} {item.articulo.esPesable ? '/kg' : 'c/u'}
                           </span>
@@ -2944,8 +2976,9 @@ const POS = () => {
                         )}
                         <div className="flex-1" />
                         <button
-                          onClick={() => quitarDelCarrito(item.articulo.id)}
-                          className="text-red-300 hover:text-red-500 p-0.5"
+                          onClick={() => !carritoBloquedado && quitarDelCarrito(item.articulo.id)}
+                          disabled={carritoBloquedado}
+                          className={`p-0.5 ${carritoBloquedado ? 'text-gray-300 cursor-not-allowed' : 'text-red-300 hover:text-red-500'}`}
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -3158,12 +3191,13 @@ const POS = () => {
             <input
               ref={inputBusquedaRef}
               type="text"
-              placeholder="Buscar por nombre, código o escanear... (F7)"
+              placeholder={carritoBloquedado ? "Pedido pagado — solo entregar" : "Buscar por nombre, código o escanear... (F7)"}
               value={busquedaArt}
-              onChange={handleBusquedaChange}
-              onKeyDown={handleBusquedaKeyDown}
-              className="w-full bg-white border rounded-xl pl-10 pr-12 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm"
-              autoFocus
+              onChange={carritoBloquedado ? undefined : handleBusquedaChange}
+              onKeyDown={carritoBloquedado ? undefined : handleBusquedaKeyDown}
+              disabled={carritoBloquedado}
+              className={`w-full border rounded-xl pl-10 pr-12 py-2.5 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent shadow-sm ${carritoBloquedado ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white'}`}
+              autoFocus={!carritoBloquedado}
             />
             {/* Botón teclado virtual */}
             <button
@@ -3197,7 +3231,7 @@ const POS = () => {
                       <div
                         key={art.id}
                         ref={seleccionado ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}
-                        onClick={() => { agregarAlCarrito(art); setBusquedaArt(''); setBusquedaIdx(-1); inputBusquedaRef.current?.focus() }}
+                        onClick={() => { if (carritoBloquedado) return; agregarAlCarrito(art); setBusquedaArt(''); setBusquedaIdx(-1); inputBusquedaRef.current?.focus() }}
                         className={`flex items-center justify-between px-4 py-2.5 cursor-pointer border-b last:border-b-0 transition-colors ${
                           seleccionado ? 'bg-violet-200 border-l-4 border-l-violet-600' : enCarrito ? 'bg-violet-50' : 'hover:bg-gray-50'
                         }`}
@@ -3282,8 +3316,8 @@ const POS = () => {
                   return (
                     <div
                       key={art.id}
-                      onClick={() => agregarAlCarrito(art)}
-                      className={`relative rounded-xl cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-95 select-none ${
+                      onClick={() => !carritoBloquedado && agregarAlCarrito(art)}
+                      className={`relative rounded-xl transition-all duration-150 select-none ${carritoBloquedado ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md hover:scale-[1.02] active:scale-95'} ${
                         enCarrito ? 'ring-2 ring-violet-500 shadow-md' : 'shadow-sm'
                       }`}
                       style={{ borderTop: `4px solid ${color.border}`, backgroundColor: color.bg }}
