@@ -1681,7 +1681,7 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, mp_payment_id, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, mp_payment_id, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at, historial)')
       .eq('id', req.params.id)
       .single()
 
@@ -2802,16 +2802,27 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
         totalPagado = Math.round((pedidoTotal - desc) * 100) / 100
       }
 
+      const entregadoAtNow = new Date().toISOString()
+      const hist = Array.isArray(pedido.historial) ? [...pedido.historial] : []
+      hist.push({
+        tipo: 'entregado',
+        fecha: entregadoAtNow,
+        usuario: entregadoPor || req.perfil.nombre || req.perfil.username,
+        cierre: entregadoEnCierre || null,
+        sucursal: entregadoSucursalNombre || null,
+        via: 'guia',
+      })
       await supabase
         .from('pedidos_pos')
         .update({
           estado: 'entregado',
           total_pagado: totalPagado || pedidoTotal,
-          entregado_at: new Date().toISOString(),
+          entregado_at: entregadoAtNow,
           entregado_por: entregadoPor,
           entregado_en_cierre: entregadoEnCierre,
           entregado_sucursal_nombre: entregadoSucursalNombre,
           caja_entrega_id: cajaEntregaId,
+          historial: hist,
         })
         .eq('id', pedido.id)
     }
@@ -3312,7 +3323,7 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
     // Leer pedido actual antes de actualizar (para saldo)
     const { data: pedidoActual } = await supabase
       .from('pedidos_pos')
-      .select('id, numero, id_cliente_centum, nombre_cliente, total_pagado, estado')
+      .select('id, numero, id_cliente_centum, nombre_cliente, total_pagado, estado, historial')
       .eq('id', req.params.id)
       .single()
 
@@ -3353,6 +3364,19 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
       } else {
         updateEstado.entregado_por = req.perfil.nombre || null
       }
+    }
+
+    // Registrar evento en historial
+    if (estado === 'entregado') {
+      const hist = Array.isArray(pedidoActual.historial) ? [...pedidoActual.historial] : []
+      hist.push({
+        tipo: 'entregado',
+        fecha: updateEstado.entregado_at,
+        usuario: updateEstado.entregado_por || req.perfil.nombre || req.perfil.username,
+        cierre: updateEstado.entregado_en_cierre || null,
+        sucursal: updateEstado.entregado_sucursal_nombre || null,
+      })
+      updateEstado.historial = hist
     }
 
     const { data, error } = await supabase
@@ -3623,9 +3647,18 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
     const obsActual = pedido.observaciones || ''
     const obsAppend = `${obsActual ? obsActual + ' ' : ''}| REVERTIDO: ${motivo.trim()} por ${req.perfil.nombre || req.perfil.username} el ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`
 
+    // Registrar reversión en historial
+    const histRevert = Array.isArray(pedido.historial) ? [...pedido.historial] : []
+    histRevert.push({
+      tipo: 'revertido',
+      fecha: new Date().toISOString(),
+      usuario: req.perfil.nombre || req.perfil.username,
+      motivo: motivo.trim(),
+    })
+
     const { data: pedidoActualizado, error: errUpdate } = await supabase
       .from('pedidos_pos')
-      .update({ estado: 'pendiente', observaciones: obsAppend })
+      .update({ estado: 'pendiente', observaciones: obsAppend, historial: histRevert })
       .eq('id', pedido.id)
       .select()
       .single()

@@ -398,7 +398,35 @@ const DetalleVenta = () => {
                     {venta.pedido.cobrado_at ? ` — ${new Date(venta.pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                   </div>
                 )}
-                {venta.pedido.entregado_por && (
+                {/* Historial de entregas/reversiones */}
+                {Array.isArray(venta.pedido.historial) && venta.pedido.historial.length > 0 ? (
+                  venta.pedido.historial.map((evento, idx) => {
+                    const fmt = evento.fecha ? new Date(evento.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
+                    if (evento.tipo === 'entregado') {
+                      return (
+                        <div key={idx} className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1">
+                          <span className="font-semibold">Entregado:</span>{' '}
+                          {evento.usuario}
+                          {evento.cierre ? ` (Caja #${evento.cierre})` : ''}
+                          {evento.sucursal ? ` — ${evento.sucursal}` : ''}
+                          {evento.via === 'guia' ? ' — vía guía' : ''}
+                          {fmt ? ` — ${fmt}` : ''}
+                        </div>
+                      )
+                    }
+                    if (evento.tipo === 'revertido') {
+                      return (
+                        <div key={idx} className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
+                          <span className="font-semibold">Revertido:</span>{' '}
+                          {evento.usuario}
+                          {evento.motivo ? ` — "${evento.motivo}"` : ''}
+                          {fmt ? ` — ${fmt}` : ''}
+                        </div>
+                      )
+                    }
+                    return null
+                  })
+                ) : venta.pedido.entregado_por && (
                   <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1">
                     <span className="font-semibold">Entregado:</span>{' '}
                     {venta.pedido.entregado_por}
