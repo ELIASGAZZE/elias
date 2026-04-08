@@ -24,7 +24,7 @@ function generarTokenDescarga(ventaId) {
 }
 function generarLinkDescarga(ventaId) {
   const token = generarTokenDescarga(ventaId)
-  const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+  const backendUrl = process.env.BACKEND_URL || 'https://padano-backend.onrender.com'
   return `${backendUrl}/api/pos/ventas/${ventaId}/comprobante.pdf?token=${token}`
 }
 
@@ -1681,7 +1681,7 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, mp_payment_id, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at)')
       .eq('id', req.params.id)
       .single()
 
@@ -3720,7 +3720,7 @@ router.post('/pedidos/:id/link-pago', verificarAuth, asyncHandler(async (req, re
       titulo = `Diferencia Pedido POS #${pedido.numero}`
     }
 
-    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+    const backendUrl = process.env.BACKEND_URL || 'https://padano-backend.onrender.com'
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 
     const pago = await crearPagoTalo({

@@ -389,10 +389,10 @@ const DetalleVenta = () => {
                     {venta.pedido.created_at ? ` — ${new Date(venta.pedido.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                   </div>
                 )}
-                {venta.pedido.cobrado_por && (
-                  <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1">
+                {(venta.pedido.cobrado_por || (venta.pedido.cobrado_at && venta.pedido.mp_payment_id)) && (
+                  <div className={`text-xs rounded px-2 py-1 ${venta.pedido.cobrado_por ? 'text-green-700 bg-green-50' : 'text-indigo-700 bg-indigo-50'}`}>
                     <span className="font-semibold">Cobrado:</span>{' '}
-                    {venta.pedido.cobrado_por}
+                    {venta.pedido.cobrado_por || 'Talo Pay'}
                     {venta.pedido.cobrado_en_cierre ? ` (Caja #${venta.pedido.cobrado_en_cierre})` : ''}
                     {venta.pedido.cobrado_sucursal_nombre ? ` — ${venta.pedido.cobrado_sucursal_nombre}` : ''}
                     {venta.pedido.cobrado_at ? ` — ${new Date(venta.pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}

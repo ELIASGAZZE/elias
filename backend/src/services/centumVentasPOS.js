@@ -1647,7 +1647,7 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
   const crypto = require('crypto')
   const COMPROBANTE_SECRET = process.env.COMPROBANTE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'comprobante-secret'
   const token = crypto.createHmac('sha256', COMPROBANTE_SECRET).update(String(ventaPosId)).digest('hex').slice(0, 32)
-  const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`
+  const backendUrl = process.env.BACKEND_URL || 'https://padano-backend.onrender.com'
   const linkPDF = `${backendUrl}/api/pos/ventas/${ventaPosId}/comprobante.pdf?token=${token}`
 
   const esNC = venta.tipo === 'nota_credito'
