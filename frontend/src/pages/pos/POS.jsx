@@ -1508,8 +1508,8 @@ const POS = () => {
         e.preventDefault()
         setVistaActiva('venta')
       }
-      // F2 = Tab Pedidos
-      if (e.key === 'F2') {
+      // F2 = Tab Pedidos (no disponible en modo delivery)
+      if (e.key === 'F2' && !modoDelivery) {
         e.preventDefault()
         setVistaActiva('pedidos')
       }
@@ -1555,8 +1555,8 @@ const POS = () => {
         e.preventDefault()
         setMostrarConfirmarCancelar(true)
       }
-      // F10 = Es pedido
-      if (e.key === 'F10' && tieneItems && !pedidoEnProceso) {
+      // F10 = Es pedido (no disponible en modo delivery)
+      if (e.key === 'F10' && tieneItems && !pedidoEnProceso && !modoDelivery) {
         e.preventDefault()
         handleEsPedido()
       }
@@ -2213,7 +2213,8 @@ const POS = () => {
               Venta <span className="text-[10px] opacity-60 ml-1">F1</span>
             </button>
 
-            {/* Tab Pedidos */}
+            {/* Tab Pedidos (oculto en modo delivery) */}
+            {!modoDelivery && (
             <button
               onClick={() => setVistaActiva('pedidos')}
               className={`relative px-3 py-1.5 text-xs font-medium transition-colors rounded-t-lg mt-1 ${
@@ -2224,6 +2225,7 @@ const POS = () => {
             >
               Pedidos <span className="text-[10px] opacity-60 ml-1">F2</span>
             </button>
+            )}
 
             {/* Tab Saldos */}
             <button
@@ -3120,6 +3122,7 @@ const POS = () => {
                 {/* Si NO hay pedido en proceso: botones normales */}
                 {!pedidoEnProceso && !empleadoActivo && (
                   <>
+                    {!modoDelivery && (
                     <button
                       onClick={handleEsPedido}
                       disabled={guardandoPedido}
@@ -3128,6 +3131,7 @@ const POS = () => {
                     >
                       {guardandoPedido ? 'Guardando...' : <>{`Es pedido `}<span className="text-[9px] opacity-70">F10</span></>}
                     </button>
+                    )}
                     <button
                       onClick={handleCobrar}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-base transition-colors"

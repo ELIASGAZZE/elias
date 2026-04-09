@@ -917,6 +917,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
     if (nombreForma) {
       e.preventDefault()
       if (modoDelivery && !nombreForma.toLowerCase().includes('rappi') && !nombreForma.toLowerCase().includes('pedidosya')) return
+      if (!modoDelivery && (nombreForma.toLowerCase().includes('rappi') || nombreForma.toLowerCase().includes('pedidosya'))) return
       const found = formasCobro.find(f => f.nombre.toLowerCase().includes(nombreForma.toLowerCase()) || nombreForma.toLowerCase().includes(f.nombre.toLowerCase()))
       if (found) {
         setFormaSeleccionada(found)
@@ -1045,7 +1046,11 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           <div>
             <h3 className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-3">Otros medios</h3>
             <div className="space-y-2">
-              {formasCobro.filter(fc => !modoDelivery || fc.nombre.toLowerCase().includes('rappi') || fc.nombre.toLowerCase().includes('pedidosya') || fc.nombre.toLowerCase().includes('pedidos')).map((fc) => {
+              {formasCobro.filter(fc => {
+                const esDeliveryPago = fc.nombre.toLowerCase().includes('rappi') || fc.nombre.toLowerCase().includes('pedidosya') || fc.nombre.toLowerCase().includes('pedidos')
+                if (modoDelivery) return esDeliveryPago
+                return !esDeliveryPago
+              }).map((fc) => {
                 const fkeyMatch = Object.entries(FKEY_FORMAS).find(([,name]) => fc.nombre.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fc.nombre.toLowerCase()))
                 return (
                 <button

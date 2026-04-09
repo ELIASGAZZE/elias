@@ -468,36 +468,35 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
   try {
     const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
-    // === IDEMPOTENCIA: prevenir ventas duplicadas por doble-submit ===
+    // === IDEMPOTENCIA: ticket_uid siempre existe (frontend lo genera, backend lo garantiza) ===
+    const idempotencyKey = ticket_uid || crypto.randomUUID()
     if (!ticket_uid) {
-      logger.warn(`[POS] Venta SIN ticket_uid — sin protección anti-duplicado. Cliente: ${nombre_cliente}, Total: ${total}, Cajero: ${req.perfil?.id}`)
+      logger.warn(`[POS] Venta SIN ticket_uid del frontend — generado server-side: ${idempotencyKey}. Cliente: ${nombre_cliente}, Total: ${total}, Cajero: ${req.perfil?.id}`)
     }
-    if (ticket_uid) {
-      // Capa 1: lock en memoria — bloquea requests concurrentes con mismo ticket_uid
-      if (ventaTicketLock.has(ticket_uid)) {
-        logger.warn(`[POS] Venta duplicada bloqueada (lock) — ticket_uid ${ticket_uid} ya está siendo procesado`)
-        return res.status(409).json({ error: 'Esta venta ya se está procesando', duplicada: true })
-      }
-      ventaTicketLock.add(ticket_uid)
 
-      // Capa 2: check en DB — por si el lock se perdió (restart del server, etc)
-      try {
-        const { data: ventaExistente } = await supabase
-          .from('ventas_pos')
-          .select('id, numero_venta')
-          .eq('ticket_uid', ticket_uid)
-          .maybeSingle()
-        if (ventaExistente) {
-          ventaTicketLock.delete(ticket_uid)
-          logger.warn(`[POS] Venta duplicada bloqueada (DB) — ticket_uid ${ticket_uid} ya existe como venta #${ventaExistente.numero_venta}`)
-          return res.json({ venta: ventaExistente, duplicada: true })
-        }
-      } catch (dbCheckErr) {
-        // Si la columna ticket_uid no existe aún, ignorar el check de DB (no bloquear la venta)
-        if (!dbCheckErr.message?.includes('ticket_uid')) {
-          ventaTicketLock.delete(ticket_uid)
-          throw dbCheckErr
-        }
+    // Capa 1: lock en memoria — bloquea requests concurrentes con mismo ticket_uid
+    if (ventaTicketLock.has(idempotencyKey)) {
+      logger.warn(`[POS] Venta duplicada bloqueada (lock) — ticket_uid ${idempotencyKey} ya está siendo procesado`)
+      return res.status(409).json({ error: 'Esta venta ya se está procesando', duplicada: true })
+    }
+    ventaTicketLock.add(idempotencyKey)
+
+    // Capa 2: check en DB — por si el lock se perdió (restart del server, etc)
+    try {
+      const { data: ventaExistente } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta')
+        .eq('ticket_uid', idempotencyKey)
+        .maybeSingle()
+      if (ventaExistente) {
+        ventaTicketLock.delete(idempotencyKey)
+        logger.warn(`[POS] Venta duplicada bloqueada (DB) — ticket_uid ${idempotencyKey} ya existe como venta #${ventaExistente.numero_venta}`)
+        return res.json({ venta: ventaExistente, duplicada: true })
+      }
+    } catch (dbCheckErr) {
+      if (!dbCheckErr.message?.includes('ticket_uid')) {
+        ventaTicketLock.delete(idempotencyKey)
+        throw dbCheckErr
       }
     }
 
@@ -583,7 +582,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         })),
         centum_sync: false, // Gift cards SÍ se sincronizan a Centum como concepto
         condicion_iva: condicion_iva || null,
-        ticket_uid: ticket_uid || null,
+        ticket_uid: idempotencyKey,
       }
       if (created_at_offline) insertGCOnly.created_at = created_at_offline
 
@@ -624,7 +623,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
           comprador: gc.comprador_nombre || null,
         }))
       }
-      if (ticket_uid) insertData.ticket_uid = ticket_uid
+      insertData.ticket_uid = idempotencyKey
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
       if (created_at_offline) insertData.created_at = created_at_offline
@@ -700,11 +699,11 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     const ventaId = data?.id || null
 
     // Vincular eliminaciones de artículos del mismo ticket (auditoría)
-    if (ticket_uid && ventaId && data?.numero_venta) {
+    if (idempotencyKey && ventaId && data?.numero_venta) {
       supabase
         .from('pos_eliminaciones_log')
         .update({ venta_pos_id: ventaId, numero_venta: data.numero_venta })
-        .eq('ticket_uid', ticket_uid)
+        .eq('ticket_uid', idempotencyKey)
         .is('venta_pos_id', null)
         .then(({ error: linkErr }) => {
           if (linkErr) logger.warn('[POS] No se pudo vincular eliminaciones al ticket:', linkErr.message)
@@ -834,10 +833,10 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       }
     }
 
-    if (ticket_uid) ventaTicketLock.delete(ticket_uid)
+    ventaTicketLock.delete(idempotencyKey)
     res.status(201).json({ venta: data, mensaje: tieneItems ? 'Venta registrada correctamente' : 'Gift card activada correctamente' })
   } catch (err) {
-    if (ticket_uid) ventaTicketLock.delete(ticket_uid)
+    ventaTicketLock.delete(idempotencyKey)
     logger.error('[POS] Error al guardar venta:', err.message)
     res.status(500).json({ error: 'Error al guardar venta: ' + err.message })
   }
@@ -3641,7 +3640,154 @@ router.put('/pedidos/:id/revertir', verificarAuth, asyncHandler(async (req, res)
         }
       }
     }
-    // === CASO B: Entregado individualmente — solo revertir estado ===
+    // === CASO B: Entregado individualmente — buscar venta vinculada y anular ===
+    if (!guiaPedido) {
+      // Buscar ventas vinculadas al pedido (excluir la venta anticipada y NCs)
+      const { data: ventasVinculadas } = await supabase
+        .from('ventas_pos')
+        .select('*')
+        .eq('pedido_pos_id', pedido.id)
+        .neq('tipo', 'nota_credito')
+        .order('created_at', { ascending: false })
+
+      // Tomar solo la última venta (la más reciente), excluyendo la venta anticipada
+      const ventaAAnular = (ventasVinculadas || []).find(v => v.id !== pedido.venta_anticipada_id)
+
+      if (ventaAAnular) {
+        const venta = ventaAAnular
+        if (!venta.centum_sync) {
+          // Venta no sincronizada — eliminar directamente
+          await supabase.from('ventas_pos').delete().eq('id', venta.id)
+          ventaEliminada = true
+          logger.info(`[POS] Reversión individual: venta ${venta.id} eliminada (no sync Centum)`)
+        } else {
+          // Venta sincronizada — crear Nota de Crédito
+          const itemsVenta = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
+          const totalNC = Math.abs(parseFloat(venta.total)) || 0
+
+          const itemsNC = itemsVenta.map(item => ({
+            ...item,
+            cantidad: item.cantidad || 1,
+            precioUnitario: item.precioUnitario || item.precio_unitario || item.precio || 0,
+            precio: item.precioUnitario || item.precio_unitario || item.precio || 0,
+          }))
+
+          // Crear NC en ventas_pos
+          const { data: nc, error: ncErr } = await supabase
+            .from('ventas_pos')
+            .insert({
+              cajero_id: req.perfil.id,
+              sucursal_id: venta.sucursal_id,
+              caja_id: venta.caja_id,
+              id_cliente_centum: venta.id_cliente_centum || 0,
+              nombre_cliente: venta.nombre_cliente || pedido.nombre_cliente || 'Cliente',
+              subtotal: -(parseFloat(venta.subtotal) || totalNC),
+              descuento_total: -(parseFloat(venta.descuento_total) || 0),
+              total: -totalNC,
+              monto_pagado: 0,
+              vuelto: 0,
+              items: JSON.stringify(itemsNC),
+              pagos: [],
+              tipo: 'nota_credito',
+              venta_origen_id: venta.id,
+            })
+            .select()
+            .single()
+
+          if (ncErr) throw ncErr
+          notaCreditoCreada = nc
+
+          // NC en Centum si la venta original tiene comprobante
+          if (venta.centum_comprobante) {
+            try {
+              const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+              if (pvOriginal) {
+                let sucursalFisicaId = null
+                let centumOperadorEmpresa = null
+                let centumOperadorPrueba = null
+                if (venta.caja_id) {
+                  const { data: cajaData } = await supabase
+                    .from('cajas')
+                    .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+                    .eq('id', venta.caja_id)
+                    .single()
+                  sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+                  centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+                  centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
+                }
+
+                let condicionIva = 'CF'
+                let vendedorCentumId = null
+                if (venta.id_cliente_centum) {
+                  const { data: cli } = await supabase
+                    .from('clientes').select('condicion_iva, vendedor_centum_id')
+                    .eq('id_centum', venta.id_cliente_centum).single()
+                  condicionIva = cli?.condicion_iva || 'CF'
+                  vendedorCentumId = cli?.vendedor_centum_id || null
+                }
+
+                const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+                const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+                const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+                const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+                const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+                const operadorMovilUser = idDivisionEmpresa === 2
+                  ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+                  : (centumOperadorEmpresa || null)
+
+                const centumNC = await crearNotaCreditoPOS({
+                  idCliente: venta.id_cliente_centum || 2,
+                  sucursalFisicaId,
+                  idDivisionEmpresa,
+                  puntoVenta: pvOriginal.puntoVenta,
+                  items: itemsNC,
+                  total: totalNC,
+                  condicionIva,
+                  operadorMovilUser,
+                  comprobanteOriginal: venta.centum_comprobante,
+                  ventaPosId: nc.id,
+                  idVendedor: vendedorCentumId,
+                })
+
+                const numDoc = centumNC.NumeroDocumento
+                const comprobante = numDoc
+                  ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+                  : null
+                await supabase.from('ventas_pos').update({
+                  id_venta_centum: centumNC.IdVenta || null,
+                  centum_comprobante: comprobante,
+                  centum_sync: true,
+                  numero_cae: centumNC.CAE || null,
+                  clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
+                }).eq('id', nc.id)
+
+                logger.info(`[POS] NC Centum por reversión individual pedido #${pedido.numero}: ${comprobante}`)
+                fetchAndSaveCAE(nc.id, centumNC.IdVenta)
+              }
+            } catch (centumErr) {
+              logger.error('[POS] Error NC Centum en reversión individual:', centumErr.message)
+              await supabase.from('ventas_pos').update({
+                centum_error: centumErr.message,
+              }).eq('id', nc.id)
+            }
+          }
+        }
+      }
+
+      // Resetear total_pagado solo si el pago fue en efectivo en caja (devolvible).
+      // Pagos anticipados (Talo Pay, MP link, transferencia) no se resetean — el dinero ya entró.
+      if (ventaAAnular && !pedido.venta_anticipada_id) {
+        const pagosVenta = Array.isArray(ventaAAnular.pagos) ? ventaAAnular.pagos : []
+        const tiposNoDevolvibles = ['talo pay', 'talo', 'mercadopago', 'mp', 'transferencia', 'qr']
+        const todoDevolvible = pagosVenta.length === 0 || pagosVenta.every(p =>
+          !tiposNoDevolvibles.includes((p.tipo || '').toLowerCase())
+        )
+        if (todoDevolvible) {
+          await supabase.from('pedidos_pos').update({ total_pagado: 0 }).eq('id', pedido.id)
+        }
+      }
+    }
 
     // Actualizar pedido a pendiente
     const obsActual = pedido.observaciones || ''

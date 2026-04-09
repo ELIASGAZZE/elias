@@ -36,7 +36,7 @@ const Fichaje = () => {
   // Cargar últimos fichajes (filtrados por sucursal si hay, últimos 7 días)
   const cargarUltimos = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ limit: '50', dias: '7' })
+      const params = new URLSearchParams({ limit: '50', dias: '1' })
       if (sucursal?.id) params.set('sucursal_id', sucursal.id)
       const { data } = await axios.get(`${API_URL}/api/fichajes/ultimos?${params}`)
       setUltimosFichajes(data)
@@ -134,7 +134,7 @@ const Fichaje = () => {
   }, {})
 
   return (
-    <div className="min-h-screen bg-gray-900 flex select-none">
+    <div className="h-screen bg-gray-900 flex select-none overflow-hidden">
 
       {/* Error de token inválido */}
       {tokenError && (
@@ -227,7 +227,7 @@ const Fichaje = () => {
       </div>
 
       {/* Columna derecha: Historial de fichajes */}
-      <div className="w-80 bg-gray-800/50 border-l border-gray-700/50 overflow-y-auto p-5">
+      <div className="w-80 bg-gray-800/50 border-l border-gray-700/50 overflow-hidden p-5">
         <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold mb-4">Registros recientes</p>
         {Object.keys(fichajesPorDia).length === 0 ? (
           <p className="text-gray-600 text-sm">Sin registros</p>

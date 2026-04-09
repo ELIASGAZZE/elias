@@ -1694,7 +1694,7 @@ async function enviarComprobanteAutomatico(ventaPosId, cae, caeVto) {
 async function retrySyncCAE() {
   const hace7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { data: ventas, error } = await supabase.from('ventas_pos')
-    .select('id, numero_venta, id_venta_centum, centum_comprobante, pagos, id_cliente_centum')
+    .select('id, numero_venta, id_venta_centum, centum_comprobante, pagos, id_cliente_centum, tipo')
     .eq('centum_sync', true)
     .not('id_venta_centum', 'is', null)
     .is('numero_cae', null)
@@ -1710,6 +1710,8 @@ async function retrySyncCAE() {
   // Factura B (CF) + pago electrónico → EMPRESA → necesita CAE
   const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
   const necesitanCAE = ventas.filter(v => {
+    // Las NC EMPRESA siempre necesitan CAE (Centum las autoriza con AFIP)
+    if (v.tipo === 'nota_credito') return true
     const comp = v.centum_comprobante || ''
     const esFacturaA = comp.startsWith('A ')
     if (esFacturaA) return true

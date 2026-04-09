@@ -46,7 +46,7 @@ const PRINT_STYLES = `
   .row { display: flex; justify-content: space-between; }
   .item-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .item-detail { font-size: 14px; display: flex; justify-content: space-between; padding-left: 4px; }
-  .firma { margin-top: 12px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 2px; text-align: center; font-size: 14px; }
+  .firma { margin-top: 30px; border-top: 1px solid #000; width: 80%; margin-left: 10%; padding-top: 4px; text-align: center; font-size: 14px; margin-bottom: 20px; }
 `
 
 function abrirVentanaImpresion(html) {
@@ -97,7 +97,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
     billetesActivos.forEach(d => {
       const cant = billetes[String(d.valor)]
       const total = d.valor * cant
-      html += `<div class="row"><span>$${d.valor.toLocaleString('es-AR')} x ${cant}</span><span>${formatMonto(total)}</span></div>`
+      html += `<div class="row"><span>$${d.valor.toLocaleString('es-AR')} x ${cant}</span></div>`
     })
   }
 
@@ -105,8 +105,7 @@ function buildDenominacionesHtml(billetes, monedas, denominaciones) {
     html += '<div class="seccion">MONEDAS</div>'
     monedasActivas.forEach(d => {
       const cant = monedas[String(d.valor)]
-      const total = d.valor * cant
-      html += `<div class="row"><span>$${d.valor.toLocaleString('es-AR')} x ${cant}</span><span>${formatMonto(total)}</span></div>`
+      html += `<div class="row"><span>$${d.valor.toLocaleString('es-AR')} x ${cant}</span></div>`
     })
   }
 
@@ -125,14 +124,11 @@ export function imprimirCierre(cierre, retiros, denominaciones, gastos) {
   if (cierre.empleado?.nombre) html += `<div>Abrio: ${escapeHtml(cierre.empleado.nombre)}</div>`
   if (cierre.cerrado_por?.nombre) html += `<div>Cerro: ${escapeHtml(cierre.cerrado_por.nombre)}</div>`
   html += `<div>Fecha: ${escapeHtml(formatFecha(cierre.fecha))}</div>`
-  if (cierre.fondo_fijo > 0) html += `<div>Cambio inicial: ${formatMonto(cierre.fondo_fijo)}</div>`
   html += '<div class="line-double"></div>'
 
   // Denominaciones
   html += buildDenominacionesHtml(cierre.billetes, cierre.monedas, denominaciones)
 
-  html += '<div class="line"></div>'
-  html += `<div class="row total"><span>Total efectivo</span><span>${formatMonto(cierre.total_efectivo)}</span></div>`
   html += '<div class="line-double"></div>'
 
   // Medios de pago
@@ -143,15 +139,6 @@ export function imprimirCierre(cierre, retiros, denominaciones, gastos) {
       html += `<div class="row"><span>${label}</span><span>${formatMonto(mp.monto)}</span></div>`
     })
     html += '<div class="line-double"></div>'
-  }
-
-  html += `<div class="row total"><span>TOTAL GENERAL</span><span>${formatMonto(cierre.total_general)}</span></div>`
-  html += '<div class="line-double"></div>'
-
-  // Cambio y retiros
-  if (parseFloat(cierre.cambio_que_queda) > 0 || parseFloat(cierre.efectivo_retirado) > 0) {
-    html += `<div class="row"><span>Cambio que queda</span><span>${formatMonto(cierre.cambio_que_queda)}</span></div>`
-    html += `<div class="row"><span>Efectivo retirado</span><span>${formatMonto(cierre.efectivo_retirado)}</span></div>`
   }
 
   // Retiros durante el turno

@@ -81,7 +81,7 @@ const DetalleCierrePos = () => {
   const [controlandoGasto, setControlandoGasto] = useState(null)
   const [retiroEmpleadoExpandido, setRetiroEmpleadoExpandido] = useState(null)
   const [cuponesExpanded, setCuponesExpanded] = useState(false)
-  const [efectivoExpanded, setEfectivoExpanded] = useState(false)
+  const [expandedMedio, setExpandedMedio] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [tabActiva, setTabActiva] = useState('detalle')
@@ -895,86 +895,110 @@ const DetalleCierrePos = () => {
               <span className="w-28 text-right">Diferencia</span>
             </div>
 
-            <div
-              className="cursor-pointer hover:bg-gray-50 rounded transition-colors"
-              onClick={() => esAdmin && posVentas && setEfectivoExpanded(!efectivoExpanded)}
-            >
-              <FilaComparativa
-                label={esAdmin && posVentas ? (efectivoExpanded ? 'Efectivo ▲' : 'Efectivo ▼') : 'Efectivo'}
-                valorCajero={(parseFloat(cierre.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
-                valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
-                valorPos={posVentas ? posVentas.total_efectivo : null}
-              />
-            </div>
-            {efectivoExpanded && posVentas && (() => {
-              const ventasConEfectivo = (posVentas.detalle_ventas || []).filter(v =>
-                (v.pagos || []).some(p => (p.tipo || 'Efectivo') === 'Efectivo')
-              )
-              return ventasConEfectivo.length > 0 && (
-                <div className="bg-gray-50 rounded-lg p-3 -mt-1 mb-1">
-                  <div className="flex items-center text-[10px] font-medium text-gray-400 py-1 border-b border-gray-200 mb-1">
-                    <span className="w-16">Venta</span>
-                    <span className="w-14 text-center">Hora</span>
-                    <span className="flex-1 text-right">Total venta</span>
-                    <span className="w-24 text-right">Efectivo</span>
-                    <span className="w-20 text-right">Vuelto</span>
-                    <span className="w-24 text-right font-semibold">Neto</span>
+            {/* Fila expandible genérica para cualquier medio de pago */}
+            {(() => {
+              const toggleMedio = (key) => esAdmin && posVentas && setExpandedMedio(prev => prev === key ? null : key)
+
+              const renderExpansion = (medioKey, filterFn, labelMedio) => {
+                if (expandedMedio !== medioKey || !posVentas) return null
+                const ventasFiltradas = (posVentas.detalle_ventas || []).filter(v =>
+                  (v.pagos || []).some(filterFn)
+                )
+                if (ventasFiltradas.length === 0) return null
+                const totalMedio = ventasFiltradas.reduce((sum, v) => {
+                  return sum + (v.pagos || []).filter(filterFn).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+                }, 0)
+                return (
+                  <div className="bg-gray-50 rounded-lg p-3 -mt-1 mb-1">
+                    <div className="flex items-center text-[10px] font-medium text-gray-400 py-1 border-b border-gray-200 mb-1">
+                      <span className="w-16">Venta</span>
+                      <span className="w-14 text-center">Hora</span>
+                      <span className="flex-1 text-right">Total venta</span>
+                      <span className="w-24 text-right">{labelMedio}</span>
+                      {medioKey === 'Efectivo' && <span className="w-20 text-right">Vuelto</span>}
+                      {medioKey === 'Efectivo' && <span className="w-24 text-right font-semibold">Neto</span>}
+                    </div>
+                    {ventasFiltradas.map(v => {
+                      const pagoMedio = (v.pagos || []).filter(filterFn).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+                      const vuelto = parseFloat(v.vuelto) || 0
+                      const neto = pagoMedio - vuelto
+                      return (
+                        <div key={v.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0">
+                          <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className="w-16 text-blue-600 font-medium hover:underline">#{v.numero_venta || '—'}</a>
+                          <span className="w-14 text-center text-gray-400 whitespace-nowrap">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                          <span className="flex-1 text-right text-gray-500">{formatMonto(v.total)}</span>
+                          <span className="w-24 text-right text-gray-700">{formatMonto(pagoMedio)}</span>
+                          {medioKey === 'Efectivo' && <span className="w-20 text-right text-red-500">{vuelto > 0 ? `-${formatMonto(vuelto)}` : '—'}</span>}
+                          {medioKey === 'Efectivo' && <span className="w-24 text-right font-medium text-teal-700">{formatMonto(neto)}</span>}
+                        </div>
+                      )
+                    })}
+                    <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
+                      <span className="flex-1 text-gray-700">{ventasFiltradas.length} venta(s) con {labelMedio.toLowerCase()}</span>
+                      <span className="w-24 text-right text-teal-700">{formatMonto(totalMedio)}</span>
+                    </div>
                   </div>
-                  {ventasConEfectivo.map(v => {
-                    const pagoEfectivo = (v.pagos || []).filter(p => (p.tipo || 'Efectivo') === 'Efectivo').reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-                    const vuelto = parseFloat(v.vuelto) || 0
-                    const neto = pagoEfectivo - vuelto
+                )
+              }
+
+              const medioLabel = (nombre, key) => esAdmin && posVentas ? (expandedMedio === key ? `${nombre} ▲` : `${nombre} ▼`) : nombre
+
+              return (
+                <>
+                  {/* Efectivo */}
+                  <div className="cursor-pointer hover:bg-gray-50 rounded transition-colors" onClick={() => toggleMedio('Efectivo')}>
+                    <FilaComparativa
+                      label={medioLabel('Efectivo', 'Efectivo')}
+                      valorCajero={(parseFloat(cierre.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0)}
+                      valorGestor={verificacion ? (parseFloat(verificacion.total_efectivo) || 0) + retiros.reduce((s, r) => s + parseFloat(r.total || 0), 0) + (parseFloat(cierre.cambio_que_queda) || 0) - (parseFloat(cierre.fondo_fijo) || 0) + gastos.reduce((s, g) => s + parseFloat(g.importe || 0), 0) : null}
+                      valorPos={posVentas ? posVentas.total_efectivo : null}
+                    />
+                  </div>
+                  {renderExpansion('Efectivo', p => (p.tipo || 'Efectivo') === 'Efectivo', 'Efectivo')}
+
+                  {/* Medios de pago dinámicos */}
+                  {allFormaCobroIds.map(fcId => {
+                    const cierreMp = cierreMediosMap[fcId]
+                    const verifMp = verifMediosMap[fcId]
+                    const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
                     return (
-                      <div key={v.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0">
-                        <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className="w-16 text-blue-600 font-medium hover:underline">#{v.numero_venta || '—'}</a>
-                        <span className="w-14 text-center text-gray-400">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="flex-1 text-right text-gray-500">{formatMonto(v.total)}</span>
-                        <span className="w-24 text-right text-gray-700">{formatMonto(pagoEfectivo)}</span>
-                        <span className="w-20 text-right text-red-500">{vuelto > 0 ? `-${formatMonto(vuelto)}` : '—'}</span>
-                        <span className="w-24 text-right font-medium text-teal-700">{formatMonto(neto)}</span>
-                      </div>
+                      <React.Fragment key={fcId}>
+                        <div className="cursor-pointer hover:bg-gray-50 rounded transition-colors" onClick={() => toggleMedio(`fc-${fcId}`)}>
+                          <FilaComparativa
+                            label={medioLabel(nombre, `fc-${fcId}`)}
+                            valorCajero={parseFloat(cierreMp?.monto) || 0}
+                            valorGestor={verificacion ? (parseFloat(verifMp?.monto) || 0) : null}
+                            valorPos={getPosMonto(nombre)}
+                          />
+                        </div>
+                        {renderExpansion(`fc-${fcId}`, p => mediosSonIguales(p.tipo, nombre), nombre)}
+                      </React.Fragment>
                     )
                   })}
-                  <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
-                    <span className="flex-1 text-gray-700">{ventasConEfectivo.length} venta(s) con efectivo</span>
-                    <span className="w-24 text-right text-teal-700">{formatMonto(posVentas.total_efectivo)}</span>
-                  </div>
-                </div>
+
+                  {/* Medios que solo existen en Ventas POS */}
+                  {posVentas && posVentas.medios_pago.filter(pmp => {
+                    const upper = pmp.nombre.toUpperCase()
+                    return !allFormaCobroIds.some(fcId => {
+                      const nombre = cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || ''
+                      return mediosSonIguales(nombre, pmp.nombre)
+                    }) && upper !== 'EFECTIVO' && upper !== 'CUENTA_CORRIENTE' && upper !== 'POSNET MP' && upper !== 'QR MP'
+                  }).map((pmp, idx) => (
+                    <React.Fragment key={`pos-${pmp.nombre}-${idx}`}>
+                      <div className="cursor-pointer hover:bg-gray-50 rounded transition-colors" onClick={() => toggleMedio(`pos-${pmp.nombre}`)}>
+                        <FilaComparativa
+                          label={medioLabel(pmp.nombre, `pos-${pmp.nombre}`)}
+                          valorCajero={0}
+                          valorGestor={verificacion ? 0 : null}
+                          valorPos={pmp.total}
+                        />
+                      </div>
+                      {renderExpansion(`pos-${pmp.nombre}`, p => mediosSonIguales(p.tipo, pmp.nombre), pmp.nombre)}
+                    </React.Fragment>
+                  ))}
+                </>
               )
             })()}
-
-            {/* Medios de pago dinamicos */}
-            {allFormaCobroIds.map(fcId => {
-              const cierreMp = cierreMediosMap[fcId]
-              const verifMp = verifMediosMap[fcId]
-              const nombre = cierreMp?.nombre || verifMp?.nombre || 'Medio de pago'
-              return (
-                <FilaComparativa
-                  key={fcId}
-                  label={nombre}
-                  valorCajero={parseFloat(cierreMp?.monto) || 0}
-                  valorGestor={verificacion ? (parseFloat(verifMp?.monto) || 0) : null}
-                  valorPos={getPosMonto(nombre)}
-                />
-              )
-            })}
-
-            {/* Medios que solo existen en Ventas POS */}
-            {posVentas && posVentas.medios_pago.filter(pmp => {
-              const upper = pmp.nombre.toUpperCase()
-              return !allFormaCobroIds.some(fcId => {
-                const nombre = cierreMediosMap[fcId]?.nombre || verifMediosMap[fcId]?.nombre || ''
-                return mediosSonIguales(nombre, pmp.nombre)
-              }) && upper !== 'EFECTIVO' && upper !== 'CUENTA_CORRIENTE' && upper !== 'POSNET MP' && upper !== 'QR MP'
-            }).map((pmp, idx) => (
-              <FilaComparativa
-                key={`pos-${pmp.nombre}-${idx}`}
-                label={pmp.nombre}
-                valorCajero={0}
-                valorGestor={verificacion ? 0 : null}
-                valorPos={pmp.total}
-              />
-            ))}
 
             {/* Total general — ajustado con cambio y gastos */}
             {(() => {

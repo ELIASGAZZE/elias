@@ -494,22 +494,33 @@ router.put('/:id/editar-conteo', verificarAuth, validate(editarConteoSchema), as
       billetes, monedas, total_efectivo,
       medios_pago, total_general, observaciones,
       cambio_billetes, cambio_monedas, cambio_que_queda, efectivo_retirado,
+      fondo_fijo, fondo_fijo_billetes,
     } = req.body
+
+    const updateData = {
+      billetes: billetes || {},
+      monedas: monedas || {},
+      total_efectivo: total_efectivo || 0,
+      medios_pago: medios_pago || [],
+      total_general: total_general || 0,
+      observaciones: observaciones || '',
+      cambio_billetes: cambio_billetes || {},
+      cambio_monedas: cambio_monedas || {},
+      cambio_que_queda: cambio_que_queda || 0,
+      efectivo_retirado: efectivo_retirado || 0,
+    }
+
+    // Admin puede editar fondo_fijo (cambio inicial) con desglose
+    if (req.perfil.rol === 'admin' && fondo_fijo != null) {
+      updateData.fondo_fijo = fondo_fijo
+      if (fondo_fijo_billetes) {
+        updateData.fondo_fijo_billetes = fondo_fijo_billetes
+      }
+    }
 
     const { data, error } = await supabase
       .from('cierres_pos')
-      .update({
-        billetes: billetes || {},
-        monedas: monedas || {},
-        total_efectivo: total_efectivo || 0,
-        medios_pago: medios_pago || [],
-        total_general: total_general || 0,
-        observaciones: observaciones || '',
-        cambio_billetes: cambio_billetes || {},
-        cambio_monedas: cambio_monedas || {},
-        cambio_que_queda: cambio_que_queda || 0,
-        efectivo_retirado: efectivo_retirado || 0,
-      })
+      .update(updateData)
       .eq('id', req.params.id)
       .select(SELECT_CIERRE)
       .single()

@@ -225,6 +225,9 @@ const CerrarCajaPos = () => {
   // Cambio que queda en caja
   const [cambioBilletes, setCambioBilletes] = useState({})
 
+  // Fondo fijo editable por denominación (solo admin en modo edición)
+  const [fondoFijoBilletes, setFondoFijoBilletes] = useState(null)
+
   // Otros medios (keyed by forma_cobro id)
   const [mediosPago, setMediosPago] = useState({})
   const [observaciones, setObservaciones] = useState('')
@@ -343,6 +346,16 @@ const CerrarCajaPos = () => {
           if (cierreData.observaciones) {
             setObservaciones(cierreData.observaciones)
           }
+          // Pre-cargar fondo fijo billetes para edición admin
+          if (cierreData.fondo_fijo_billetes) {
+            const fondoInit = {}
+            Object.entries(cierreData.fondo_fijo_billetes).forEach(([val, cant]) => {
+              fondoInit[Number(val)] = cant
+            })
+            setFondoFijoBilletes(fondoInit)
+          } else {
+            setFondoFijoBilletes({})
+          }
           if (Array.isArray(cierreData.medios_pago)) {
             const mediosEdit = { ...mediosInit }
             cierreData.medios_pago.forEach(mp => {
@@ -368,6 +381,11 @@ const CerrarCajaPos = () => {
   )
 
   const totalEfectivo = totalBilletes
+
+  const fondoFijoTotal = useMemo(
+    () => fondoFijoBilletes ? denomBilletes.reduce((sum, d) => sum + d.valor * (fondoFijoBilletes[d.valor] || 0), 0) : null,
+    [denomBilletes, fondoFijoBilletes]
+  )
 
   const cambioQueQueda = useMemo(
     () => denomBilletes.reduce((sum, d) => sum + d.valor * (cambioBilletes[d.valor] || 0), 0),
@@ -482,6 +500,16 @@ const CerrarCajaPos = () => {
       }
 
       if (modoEdicion) {
+        // Admin puede editar fondo_fijo con desglose por billete
+        if (esAdmin && fondoFijoBilletes) {
+          const fondoBilletesPayload = {}
+          denomBilletes.forEach(d => {
+            const cant = fondoFijoBilletes[d.valor] || 0
+            if (cant > 0) fondoBilletesPayload[String(d.valor)] = cant
+          })
+          payload.fondo_fijo = fondoFijoTotal
+          payload.fondo_fijo_billetes = fondoBilletesPayload
+        }
         await api.put(`/api/cierres-pos/${id}/editar-conteo`, payload)
         navigate(fromDetalle ? `/cajas-pos/cierre/${id}` : '/cajas-pos')
       } else {
@@ -583,7 +611,7 @@ const CerrarCajaPos = () => {
         <div className="flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl p-3 mb-4">
           <div className="text-sm text-teal-800">
             <p className="font-semibold">Sesion POS</p>
-            <p>Caja: {cierre.caja?.nombre || '-'} · Empleado: {cierre.empleado?.nombre || '-'} · {formatFecha(cierre.fecha)} · Apertura: {formatHora(cierre.apertura_at)} · Cambio: {formatMonto(cierre.fondo_fijo)}</p>
+            <p>Caja: {cierre.caja?.nombre || '-'} · Empleado: {cierre.empleado?.nombre || '-'} · {formatFecha(cierre.fecha)} · Apertura: {formatHora(cierre.apertura_at)} · Cambio: {modoEdicion && esAdmin && fondoFijoTotal != null ? formatMonto(fondoFijoTotal) : formatMonto(cierre.fondo_fijo)}</p>
           </div>
           <div className="text-right">
             <span className="text-xs text-teal-600">Total efectivo</span>
@@ -747,6 +775,29 @@ const CerrarCajaPos = () => {
           )}
         </div>
 
+        {/* Cambio inicial (editable solo admin en modo edición) */}
+        {modoEdicion && esAdmin && fondoFijoBilletes && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6">
+            <h3 className="text-sm font-semibold text-indigo-800 mb-3">Cambio inicial</h3>
+            <div className="grid grid-cols-1 gap-2">
+              {denomBilletes.map(d => (
+                <ContadorDenominacion
+                  key={`ff-${d.id}`}
+                  valor={d.valor}
+                  cantidad={fondoFijoBilletes[d.valor] || 0}
+                  onChange={(val) => setFondoFijoBilletes(prev => ({ ...prev, [d.valor]: val }))}
+                />
+              ))}
+            </div>
+            <div className="mt-3 flex gap-4 text-sm">
+              <div className="flex-1 bg-white border border-indigo-200 rounded-lg p-2 text-center">
+                <span className="text-xs text-gray-500 block">Cambio inicial</span>
+                <span className="font-bold text-indigo-700">{formatMonto(fondoFijoTotal)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Cambio que queda en caja */}
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
           <h3 className="text-sm font-semibold text-amber-800 mb-3">Cambio que queda en caja</h3>
@@ -760,14 +811,10 @@ const CerrarCajaPos = () => {
               />
             ))}
           </div>
-          <div className="mt-3 flex gap-4 text-sm">
-            <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
+          <div className="mt-3 text-sm">
+            <div className="bg-white border border-amber-200 rounded-lg p-2 text-center">
               <span className="text-xs text-gray-500 block">Cambio que queda</span>
               <span className="font-bold text-amber-700">{formatMonto(cambioQueQueda)}</span>
-            </div>
-            <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
-              <span className="text-xs text-gray-500 block">Efectivo retirado</span>
-              <span className="font-bold text-teal-700">{formatMonto(efectivoRetirado)}</span>
             </div>
           </div>
         </div>
@@ -775,14 +822,14 @@ const CerrarCajaPos = () => {
         {/* Resumen + boton confirmar — ancho completo */}
         <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-4">
           <h3 className="text-sm font-semibold text-teal-800 mb-2">Resumen del cierre</h3>
-          <div className="flex gap-6 text-sm">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
             <div className="flex gap-2 text-gray-600">
               <span>Apertura:</span>
               <span className="font-medium">{formatHora(cierre.apertura_at)}</span>
             </div>
             <div className="flex gap-2 text-gray-600">
               <span>Cambio inicial:</span>
-              <span className="font-medium">{formatMonto(cierre.fondo_fijo)}</span>
+              <span className="font-medium">{formatMonto(modoEdicion && esAdmin && fondoFijoTotal != null ? fondoFijoTotal : cierre.fondo_fijo)}</span>
             </div>
             <div className="flex gap-2 text-gray-600">
               <span>Total efectivo:</span>
