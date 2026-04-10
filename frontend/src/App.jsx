@@ -92,6 +92,10 @@ const ChatCompras = lazy(() => import('./pages/compras/ChatCompras'))
 const ConsumoInterno = lazy(() => import('./pages/compras/ConsumoInterno'))
 const PedidosExtra = lazy(() => import('./pages/compras/PedidosExtra'))
 
+// Mercado Libre
+const MercadoLibreHome = lazy(() => import('./pages/mercadolibre/MercadoLibreHome'))
+const MLVentas = lazy(() => import('./pages/mercadolibre/MLVentas'))
+
 // Admin
 const AdminArticulos = lazy(() => import('./pages/admin/AdminArticulos'))
 const AdminArticulosManuales = lazy(() => import('./pages/admin/AdminArticulosManuales'))
@@ -327,6 +331,10 @@ const App = () => {
               <TareasAnalytics />
             </RutaProtegida>
           } />
+
+          {/* App: Mercado Libre */}
+          <Route path="/mercadolibre" element={<RutaProtegida soloAdmin><MercadoLibreHome /></RutaProtegida>} />
+          <Route path="/mercadolibre/ventas" element={<RutaProtegida soloAdmin><MLVentas /></RutaProtegida>} />
 
           {/* Rutas admin */}
           <Route path="/admin/articulos" element={

@@ -49,6 +49,7 @@ const gruposDescuentoRoutes = require('./routes/gruposDescuento')
 const comprasRoutes = require('./routes/compras')
 const traspasosRoutes = require('./routes/traspasos')
 const notificacionesRoutes = require('./routes/notificaciones')
+const mercadolibreRoutes = require('./routes/mercadolibre')
 const { mountMcp } = require('../mcp-server')
 const { iniciarCronJobs } = require('./jobs/cron')
 
@@ -142,6 +143,7 @@ app.use('/api/grupos-descuento', gruposDescuentoRoutes)
 app.use('/api/compras', comprasRoutes)
 app.use('/api/traspasos', traspasosRoutes)
 app.use('/api/notificaciones', notificacionesRoutes)
+app.use('/api/mercadolibre', mercadolibreRoutes)
 
 // ── MCP Server (Cowork) ──────────────────────────────────────────────────────
 mountMcp(app)
