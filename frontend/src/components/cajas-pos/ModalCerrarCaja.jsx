@@ -60,7 +60,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   const [error, setError] = useState('')
 
   // Cupones MP (informativo)
-  const [cuponesMP, setCuponesMP] = useState({ posnet: 0, qr: 0, problema: 0 })
+  const [cuponesMP, setCuponesMP] = useState({ posnet: 0, qr: 0, problema: 0, anulaciones: 0 })
 
   // Retiros y gastos del turno
   const [retiros, setRetiros] = useState([])
@@ -105,11 +105,15 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
         setGastos(gastosRes.data || [])
 
         // Calcular cupones MP desde detalle de ventas
-        let posnet = 0, qr = 0, problema = 0
+        let posnet = 0, qr = 0, problema = 0, anulaciones = 0
         const detalleVentas = posVentasRes.data?.detalle_ventas || []
         detalleVentas.forEach(v => {
-          (v.pagos || []).forEach(p => {
-            if (p.detalle?.mp_problema) {
+          const esNC = v.tipo === 'nota_credito'
+          ;(v.pagos || []).forEach(p => {
+            const esMPTipo = p.tipo === 'QR MP' || p.tipo === 'Posnet MP'
+            if (esNC && esMPTipo) {
+              anulaciones++
+            } else if (p.detalle?.mp_problema) {
               problema++
             } else if (p.tipo === 'QR MP') {
               qr++
@@ -118,7 +122,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
             }
           })
         })
-        setCuponesMP({ posnet, qr, problema })
+        setCuponesMP({ posnet, qr, problema, anulaciones })
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
@@ -312,6 +316,14 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                   </svg>
                   <span>QR: <strong>{cuponesMP.qr}</strong></span>
                 </div>
+                {cuponesMP.anulaciones > 0 && (
+                  <div className="flex items-center gap-1.5 text-sm text-red-700">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    <span>Anulaciones: <strong>{cuponesMP.anulaciones}</strong></span>
+                  </div>
+                )}
                 {cuponesMP.problema > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-amber-700">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

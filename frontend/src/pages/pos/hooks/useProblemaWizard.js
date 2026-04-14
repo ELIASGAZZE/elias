@@ -33,6 +33,10 @@ export default function useProblemaWizard({ terminalConfig } = {}) {
   const [problemaObservacion, setProblemaObservacion] = useState('')
   const [problemaPreciosCorregidos, setProblemaPreciosCorregidos] = useState({}) // { idx: precioCorregido }
   const [problemaEmailCliente, setProblemaEmailCliente] = useState('')
+  const [problemaVentasCierre, setProblemaVentasCierre] = useState([])
+  const [problemaCargandoCierre, setProblemaCargandoCierre] = useState(false)
+  const [problemaMotivoAnulacion, setProblemaMotivoAnulacion] = useState('')
+  const [problemaResultadoAnulacion, setProblemaResultadoAnulacion] = useState(null)
 
   const problemaTimerRef = useRef(null)
   const problemaCliTimerRef = useRef(null)
@@ -60,6 +64,10 @@ export default function useProblemaWizard({ terminalConfig } = {}) {
     setProblemaPreciosCorregidos({})
     setProblemaYaDevuelto({})
     setProblemaEmailCliente('')
+    setProblemaVentasCierre([])
+    setProblemaCargandoCierre(false)
+    setProblemaMotivoAnulacion('')
+    setProblemaResultadoAnulacion(null)
   }, [])
 
   async function buscarVentasProblema(overrides = {}) {
@@ -80,6 +88,7 @@ export default function useProblemaWizard({ terminalConfig } = {}) {
         if (sucId) params.sucursal_id = sucId
       }
       params.problema = 1
+      params.excluir_con_nc = 1
       const { data } = await api.get('/api/pos/ventas', { params })
       setProblemaVentas(data.ventas || [])
     } catch {
@@ -149,6 +158,14 @@ export default function useProblemaWizard({ terminalConfig } = {}) {
     setProblemaPreciosCorregidos,
     problemaEmailCliente,
     setProblemaEmailCliente,
+    problemaVentasCierre,
+    setProblemaVentasCierre,
+    problemaCargandoCierre,
+    setProblemaCargandoCierre,
+    problemaMotivoAnulacion,
+    setProblemaMotivoAnulacion,
+    problemaResultadoAnulacion,
+    setProblemaResultadoAnulacion,
     problemaTimerRef,
     problemaCliTimerRef,
 

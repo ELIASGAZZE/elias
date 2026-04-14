@@ -487,6 +487,37 @@ router.post('/order/:id/refund', verificarAuth, asyncHandler(async (req, res) =>
   }
 }))
 
+// POST /api/mp-point/payment/:id/refund — devolver cobro QR usando Payments API
+router.post('/payment/:id/refund', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const paymentId = req.params.id
+    const { amount } = req.body // si viene amount → refund parcial
+
+    const body = amount ? { amount: parseFloat(amount) } : {}
+
+    const idempotencyKey = `refund-pay-${paymentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const resp = await mpFetch(`https://api.mercadopago.com/v1/payments/${paymentId}/refunds`, {
+      method: 'POST',
+      headers: mpHeaders(idempotencyKey),
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+    })
+
+    if (resp.status === 201 || resp.status === 200) {
+      const data = await resp.json().catch(() => ({}))
+      logger.info(`[MP Point] Refund por payment exitoso para payment ${paymentId}`)
+      return res.json({ ok: true, ...data })
+    }
+
+    const data = await resp.json().catch(() => ({}))
+    logger.error('[MP Point] Error en refund por payment:', data)
+    const msg = data.errors?.[0]?.message || data.message || 'Error al anular el cobro'
+    return res.status(resp.status).json({ error: msg })
+  } catch (err) {
+    logger.error('[MP Point] Error en refund por payment:', err.message)
+    res.status(500).json({ error: 'Error al anular el cobro' })
+  }
+}))
+
 // ── QR Instore (para posnet N950 que no muestra QR en pantalla) ───────────────
 const MP_USER_ID = '455606488'
 

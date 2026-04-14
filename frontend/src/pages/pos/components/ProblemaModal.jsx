@@ -1,7 +1,7 @@
 import React from 'react'
 import NuevoClienteModal from '../../../components/NuevoClienteModal'
 import api from '../../../services/api'
-import { imprimirTicketDevolucion } from '../../../utils/imprimirComprobante'
+import { imprimirTicketDevolucion, imprimirTicketAnulacion } from '../../../utils/imprimirComprobante'
 
 const formatPrecio = (n) => {
   if (n == null) return '$0'
@@ -34,11 +34,16 @@ export default function ProblemaModal(props) {
     problemaObservacion, setProblemaObservacion,
     problemaPreciosCorregidos, setProblemaPreciosCorregidos,
     problemaEmailCliente, setProblemaEmailCliente,
+    problemaVentasCierre, setProblemaVentasCierre,
+    problemaCargandoCierre, setProblemaCargandoCierre,
+    problemaMotivoAnulacion, setProblemaMotivoAnulacion,
+    problemaResultadoAnulacion, setProblemaResultadoAnulacion,
     problemaCliTimerRef,
     cerrarModalProblema,
     buscarVentasProblema,
     buscarVentasProblemaDebounced,
     terminalConfig,
+    cierreActivo,
     setProblemaBuscandoCli,
   } = props
 
@@ -54,7 +59,7 @@ export default function ProblemaModal(props) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
             </svg>
             <h2 className="text-white font-bold text-lg">
-              {problemaPaso === 0 ? 'Reportar problema' : problemaPaso === 1 ? 'Buscar factura' : problemaPaso === 2 ? 'Seleccionar productos' : problemaPaso === 3 ? 'Describir problema' : problemaPaso === 4 ? 'Identificar cliente' : problemaPaso === 5 ? 'Confirmar devolucion' : problemaPaso === 10 ? 'Cliente correcto' : problemaPaso === 11 ? 'Confirmar correccion' : problemaPaso === 20 ? 'Precio correcto' : problemaPaso === 21 ? 'Confirmar diferencia' : problemaPaso === 30 ? 'Cambio de producto' : ''}
+              {problemaPaso === 0 ? 'Reportar problema' : problemaPaso === 1 ? 'Buscar factura' : problemaPaso === 2 ? 'Seleccionar productos' : problemaPaso === 3 ? 'Describir problema' : problemaPaso === 4 ? 'Identificar cliente' : problemaPaso === 5 ? 'Confirmar devolucion' : problemaPaso === 10 ? 'Cliente correcto' : problemaPaso === 11 ? 'Confirmar correccion' : problemaPaso === 20 ? 'Precio correcto' : problemaPaso === 21 ? 'Confirmar diferencia' : problemaPaso === 30 ? 'Cambio de producto' : problemaPaso === 40 ? 'Anular venta reciente' : problemaPaso === 41 ? 'Confirmar anulacion' : problemaPaso === 42 ? 'Venta anulada' : ''}
             </h2>
           </div>
           <button onClick={cerrarModalProblema} className="text-white/70 hover:text-white">
@@ -75,6 +80,7 @@ export default function ProblemaModal(props) {
                 { id: 'cantidad_mal', label: 'Se facturo mal la cantidad de un articulo', icon: 'M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007zM8.625 10.5a.375.375 0 11-.75 0 .375.375 0 01.75 0zm7.5 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z' },
                 { id: 'precio_mal', label: 'Se facturo mal el precio de un articulo', icon: 'M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z' },
                 { id: 'cambio', label: 'El cliente desea cambiar el producto', icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5' },
+                { id: 'anular_venta', label: 'Anular venta reciente (de este turno)', icon: 'M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636' },
               ].map(op => (
                 <button
                   key={op.id}
@@ -103,7 +109,39 @@ export default function ProblemaModal(props) {
               <button
                 disabled={!problemaSeleccionado}
                 onClick={() => {
-                  if (problemaSeleccionado === 'cambio') {
+                  if (problemaSeleccionado === 'anular_venta') {
+                    if (!cierreActivo?.id) {
+                      alert('No hay un turno de caja abierto. Abrí la caja antes de anular una venta.')
+                      return
+                    }
+                    setProblemaCargandoCierre(true)
+                    setProblemaVentasCierre([])
+                    setProblemaVentaSel(null)
+                    // Cargar ventas del turno actual usando el endpoint de ventas con filtros
+                    const apertura = cierreActivo.apertura_at?.split('T')[0]
+                    api.get('/api/pos/ventas', { params: {
+                      caja_id: terminalConfig?.caja_id,
+                      desde_hora: cierreActivo.apertura_at,
+                      problema: 1,
+                      tipo: 'venta',
+                      excluir_con_nc: 1,
+                    }})
+                      .then(({ data }) => {
+                        const ventas = (data.ventas || []).filter(v => {
+                          if (v.tipo && v.tipo !== 'venta') return false
+                          if (v.anulada) return false
+                          // Excluir ventas cobradas con Talo Pay (no se pueden anular)
+                          const pagos = typeof v.pagos === 'string' ? JSON.parse(v.pagos) : (v.pagos || [])
+                          const esTaloPay = pagos.some(p => ['talo pay', 'pago anticipado'].includes((p.tipo || '').toLowerCase()))
+                          if (esTaloPay) return false
+                          return true
+                        })
+                        setProblemaVentasCierre(ventas)
+                      })
+                      .catch(() => setProblemaVentasCierre([]))
+                      .finally(() => setProblemaCargandoCierre(false))
+                    setProblemaPaso(40)
+                  } else if (problemaSeleccionado === 'cambio') {
                     setProblemaPaso(30)
                   } else {
                     setProblemaPaso(1)
@@ -228,7 +266,7 @@ export default function ProblemaModal(props) {
                   No se encontraron facturas
                 </div>
               ) : (
-                problemaVentas.filter(v => v.tipo !== 'nota_credito').map(v => {
+                problemaVentas.filter(v => v.tipo !== 'nota_credito' && !v.anulada).map(v => {
                   const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
                   const pagos = typeof v.pagos === 'string' ? JSON.parse(v.pagos) : (v.pagos || [])
                   const fecha = new Date(v.created_at)
@@ -1120,6 +1158,331 @@ export default function ProblemaModal(props) {
                 className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold transition-colors"
               >
                 Si, confirmo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Paso 40: Anular venta — seleccionar venta del cierre actual */}
+        {problemaPaso === 40 && (
+          <div className="p-5 flex flex-col min-h-0 flex-1">
+            <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1 flex-shrink-0">
+              Ventas realizadas en este turno de caja
+            </div>
+            <div className="text-[10px] text-gray-400 mb-3 flex-shrink-0">
+              Solo se pueden anular ventas del turno actual ({cierreActivo?.numero ? `#${cierreActivo.numero}` : ''})
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-0 max-h-72 space-y-2">
+              {problemaCargandoCierre ? (
+                <div className="flex items-center justify-center py-8 text-gray-400 text-sm">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-red-500 mr-2" />
+                  Cargando ventas...
+                </div>
+              ) : problemaVentasCierre.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  No se realizaron ventas en este turno
+                </div>
+              ) : (
+                problemaVentasCierre.filter(v => !v.anulada).map(v => {
+                  const items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || [])
+                  const pagos = typeof v.pagos === 'string' ? JSON.parse(v.pagos) : (v.pagos || [])
+                  const fecha = new Date(v.created_at)
+                  const sel = problemaVentaSel?.id === v.id
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => setProblemaVentaSel(v)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${
+                        sel ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-gray-800">
+                          {v.numero_venta ? <span className="text-blue-600 mr-1">#{v.numero_venta}</span> : null}
+                          {v.nombre_cliente || 'Consumidor Final'}
+                        </span>
+                        <span className="text-sm font-bold text-gray-700">{formatPrecio(v.total)}</span>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      {pagos.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {[...new Set(pagos.map(p => p.tipo))].map(tipo => (
+                            <span key={tipo} className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-medium">
+                              {tipo}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-400 mt-0.5 truncate">
+                        {items.map(i => `${i.cantidad}x ${i.nombre}`).join(', ')}
+                      </div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-4 flex-shrink-0">
+              <button
+                onClick={() => { setProblemaPaso(0); setProblemaVentaSel(null); setProblemaVentasCierre([]) }}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Volver
+              </button>
+              <button
+                disabled={!problemaVentaSel}
+                onClick={() => { setProblemaMotivoAnulacion(''); setProblemaPaso(41) }}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors"
+              >
+                Seleccionar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Paso 41: Anular venta — motivo + resumen + confirmar */}
+        {problemaPaso === 41 && problemaVentaSel && (() => {
+          const items = typeof problemaVentaSel.items === 'string' ? JSON.parse(problemaVentaSel.items) : (problemaVentaSel.items || [])
+          const pagos = typeof problemaVentaSel.pagos === 'string' ? JSON.parse(problemaVentaSel.pagos) : (problemaVentaSel.pagos || [])
+          const descFormaPago = parseFloat(problemaVentaSel.descuento_forma_pago) || 0
+
+          return (
+            <div className="p-5 flex flex-col min-h-0 flex-1">
+              {/* Info venta — fija arriba */}
+              <div className="bg-gray-50 rounded-lg px-3 py-2 mb-3 flex-shrink-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-gray-700">
+                    {problemaVentaSel.numero_venta ? <span className="text-blue-600 mr-1">#{problemaVentaSel.numero_venta}</span> : null}
+                    {problemaVentaSel.nombre_cliente || 'Consumidor Final'}
+                  </span>
+                  <span className="text-sm font-bold text-gray-700">{formatPrecio(problemaVentaSel.total)}</span>
+                </div>
+                <div className="text-xs text-gray-400">
+                  {new Date(problemaVentaSel.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                  {problemaVentaSel.centum_comprobante && <span className="text-violet-500 font-medium"> · {problemaVentaSel.centum_comprobante}</span>}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto min-h-0 space-y-3">
+                {/* Productos */}
+                <div>
+                  <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Productos ({items.length})</div>
+                  <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 space-y-0.5">
+                    {items.map((i, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{i.cantidad}x {i.nombre}</span>
+                        <span className="text-gray-500">{formatPrecio((i.precio_unitario || i.precioUnitario || i.precio || 0) * i.cantidad)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Formas de pago originales + instrucciones de reembolso */}
+                {pagos.length > 0 && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Reembolso al cliente</div>
+                    <div className="space-y-2">
+                      {pagos.map((p, idx) => {
+                        const tipoLower = (p.tipo || '').toLowerCase()
+                        let colorBg = 'bg-gray-50'
+                        let colorBorder = 'border-gray-200'
+                        let colorText = 'text-gray-700'
+                        let instruccion = ''
+
+                        if (tipoLower === 'efectivo') {
+                          colorBg = 'bg-emerald-50'; colorBorder = 'border-emerald-200'; colorText = 'text-emerald-700'
+                          instruccion = `Devolver ${formatPrecio(p.monto)} en efectivo al cliente`
+                          if (descFormaPago > 0) instruccion += ` (incluye dto. forma pago $${descFormaPago.toFixed(2)})`
+                        } else if (tipoLower === 'posnet mp' || tipoLower === 'qr mp') {
+                          colorBg = 'bg-blue-50'; colorBorder = 'border-blue-200'; colorText = 'text-blue-700'
+                          instruccion = p.detalle?.mp_order_id
+                            ? `Reembolso automatico de ${formatPrecio(p.monto)} via Mercado Pago (se procesa al confirmar)`
+                            : `Hacer devolucion manual en Mercado Pago por ${formatPrecio(p.monto)}`
+                        } else if (tipoLower === 'payway') {
+                          colorBg = 'bg-amber-50'; colorBorder = 'border-amber-200'; colorText = 'text-amber-700'
+                          instruccion = `Realizar la anulacion en el posnet Payway por ${formatPrecio(p.monto)}`
+                        } else if (tipoLower === 'transferencia') {
+                          colorBg = 'bg-purple-50'; colorBorder = 'border-purple-200'; colorText = 'text-purple-700'
+                          instruccion = `Coordinar devolucion de transferencia por ${formatPrecio(p.monto)} con administracion`
+                        } else if (tipoLower === 'saldo') {
+                          colorBg = 'bg-teal-50'; colorBorder = 'border-teal-200'; colorText = 'text-teal-700'
+                          instruccion = `Se restaurara ${formatPrecio(p.monto)} al saldo del cliente`
+                        } else if (tipoLower === 'gift card') {
+                          colorBg = 'bg-pink-50'; colorBorder = 'border-pink-200'; colorText = 'text-pink-700'
+                          instruccion = `Coordinar recarga de Gift Card por ${formatPrecio(p.monto)} con administracion`
+                        } else {
+                          instruccion = `Coordinar devolucion de ${p.tipo} por ${formatPrecio(p.monto)}`
+                        }
+
+                        return (
+                          <div key={idx} className={`${colorBg} border ${colorBorder} rounded-lg px-3 py-2`}>
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span className={`text-sm font-semibold ${colorText}`}>{p.tipo}</span>
+                              <span className={`text-sm font-bold ${colorText}`}>{formatPrecio(p.monto)}</span>
+                            </div>
+                            <div className="text-xs text-gray-600">{instruccion}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Motivo */}
+                <div>
+                  <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Motivo de la anulacion <span className="text-red-500">*</span></div>
+                  <textarea
+                    value={problemaMotivoAnulacion}
+                    onChange={e => setProblemaMotivoAnulacion(e.target.value)}
+                    placeholder="Explica por que se anula esta venta..."
+                    rows={2}
+                    autoFocus
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                  />
+                </div>
+
+                {/* Advertencia */}
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <svg className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                  </svg>
+                  <div className="text-xs text-red-700">
+                    <strong>Esta accion es irreversible.</strong> Se generara una nota de credito que anula completamente la factura en Centum y AFIP.
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-4 flex-shrink-0">
+                <button
+                  onClick={() => setProblemaPaso(40)}
+                  disabled={problemaConfirmando}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Volver
+                </button>
+                <button
+                  disabled={!problemaMotivoAnulacion.trim() || problemaConfirmando}
+                  onClick={async () => {
+                    setProblemaConfirmando(true)
+                    try {
+                      const itemsVenta = typeof problemaVentaSel.items === 'string' ? JSON.parse(problemaVentaSel.items) : (problemaVentaSel.items || [])
+                      const { data } = await api.post('/api/pos/anular-venta', {
+                        venta_id: problemaVentaSel.id,
+                        motivo: problemaMotivoAnulacion.trim(),
+                        caja_id: terminalConfig?.caja_id || null,
+                      })
+                      setProblemaResultadoAnulacion(data)
+                      // Imprimir 2 tickets: cliente + cajero con firma
+                      imprimirTicketAnulacion({
+                        ventaNumero: problemaVentaSel.numero_venta,
+                        ventaComprobante: problemaVentaSel.centum_comprobante,
+                        cliente: problemaVentaSel.nombre_cliente || 'Consumidor Final',
+                        items: itemsVenta,
+                        totalAnulado: data.total_anulado,
+                        reembolsos: data.reembolsos,
+                        motivo: problemaMotivoAnulacion.trim(),
+                        numeroNC: data.numero_nc,
+                        cajeroNombre: cierreActivo?.empleado?.nombre || 'Cajero',
+                      })
+                      setProblemaPaso(42)
+                    } catch (err) {
+                      alert('Error al anular la venta: ' + (err.response?.data?.error || err.message))
+                    } finally {
+                      setProblemaConfirmando(false)
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                >
+                  {problemaConfirmando && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />}
+                  {problemaConfirmando ? 'Anulando...' : 'Anular venta'}
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Paso 42: Anular venta — resultado */}
+        {problemaPaso === 42 && problemaResultadoAnulacion && (
+          <div className="p-5 flex flex-col min-h-0 flex-1">
+            <div className="flex flex-col items-center mb-4">
+              <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
+                <svg className="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-gray-800">Venta anulada correctamente</h3>
+              {problemaResultadoAnulacion.numero_nc && (
+                <p className="text-sm text-gray-500 mt-1">NC #{problemaResultadoAnulacion.numero_nc}</p>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-0 max-h-72 space-y-3">
+              <div className="bg-gray-50 rounded-lg px-3 py-2 flex justify-between text-sm">
+                <span className="text-gray-600">Total anulado</span>
+                <span className="font-bold text-gray-800">{formatPrecio(problemaResultadoAnulacion.total_anulado)}</span>
+              </div>
+
+              {problemaResultadoAnulacion.centum_nc && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-700 font-medium flex items-center gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  Nota de credito sincronizada con Centum
+                </div>
+              )}
+
+              {!problemaResultadoAnulacion.centum_nc && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 font-medium flex items-center gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                  </svg>
+                  NC registrada localmente (no se pudo sincronizar con Centum)
+                </div>
+              )}
+
+              {/* Instrucciones de reembolso */}
+              {problemaResultadoAnulacion.reembolsos?.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Acciones de reembolso</div>
+                  <div className="space-y-2">
+                    {problemaResultadoAnulacion.reembolsos.map((r, idx) => {
+                      const esOk = r.estado === 'reembolsado' || r.estado === 'automatico'
+                      const esError = r.estado === 'error'
+                      return (
+                        <div key={idx} className={`rounded-lg px-3 py-2 border ${
+                          esOk ? 'bg-emerald-50 border-emerald-200' : esError ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+                        }`}>
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className={`text-sm font-semibold ${esOk ? 'text-emerald-700' : esError ? 'text-red-700' : 'text-amber-700'}`}>
+                              {r.tipo}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              {esOk && <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                              {esError && <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>}
+                              {r.estado === 'manual' && <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" /></svg>}
+                              <span className={`text-sm font-bold ${esOk ? 'text-emerald-700' : esError ? 'text-red-700' : 'text-amber-700'}`}>{formatPrecio(r.monto)}</span>
+                            </span>
+                          </div>
+                          <div className={`text-xs ${esOk ? 'text-emerald-600' : esError ? 'text-red-600' : 'text-amber-600'}`}>
+                            {r.mensaje}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex-shrink-0">
+              <button
+                onClick={cerrarModalProblema}
+                className="w-full py-2.5 rounded-xl bg-gray-800 hover:bg-gray-900 text-white text-sm font-semibold transition-colors"
+              >
+                Cerrar
               </button>
             </div>
           </div>

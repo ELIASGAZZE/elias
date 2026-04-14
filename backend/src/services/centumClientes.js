@@ -277,7 +277,7 @@ async function syncClientesRecientes(horasAtras = 2) {
           }
           actualizadosCount++
           if (Object.keys(cambiosAudit).length > 0) {
-            registrarAuditoria({
+            await registrarAuditoria({
               cliente_id: local.id,
               accion: 'sync_centum',
               origen: 'cron',

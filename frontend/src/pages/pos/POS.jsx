@@ -831,6 +831,10 @@ const POS = () => {
     problemaObservacion, setProblemaObservacion,
     problemaPreciosCorregidos, setProblemaPreciosCorregidos,
     problemaEmailCliente, setProblemaEmailCliente,
+    problemaVentasCierre, setProblemaVentasCierre,
+    problemaCargandoCierre, setProblemaCargandoCierre,
+    problemaMotivoAnulacion, setProblemaMotivoAnulacion,
+    problemaResultadoAnulacion, setProblemaResultadoAnulacion,
     problemaCliTimerRef,
     cerrarModalProblema,
     buscarVentasProblema,
@@ -3514,11 +3518,16 @@ const POS = () => {
         problemaObservacion={problemaObservacion} setProblemaObservacion={setProblemaObservacion}
         problemaPreciosCorregidos={problemaPreciosCorregidos} setProblemaPreciosCorregidos={setProblemaPreciosCorregidos}
         problemaEmailCliente={problemaEmailCliente} setProblemaEmailCliente={setProblemaEmailCliente}
+        problemaVentasCierre={problemaVentasCierre} setProblemaVentasCierre={setProblemaVentasCierre}
+        problemaCargandoCierre={problemaCargandoCierre} setProblemaCargandoCierre={setProblemaCargandoCierre}
+        problemaMotivoAnulacion={problemaMotivoAnulacion} setProblemaMotivoAnulacion={setProblemaMotivoAnulacion}
+        problemaResultadoAnulacion={problemaResultadoAnulacion} setProblemaResultadoAnulacion={setProblemaResultadoAnulacion}
         problemaCliTimerRef={problemaCliTimerRef}
         cerrarModalProblema={cerrarModalProblema}
         buscarVentasProblema={buscarVentasProblema}
         buscarVentasProblemaDebounced={buscarVentasProblemaDebounced}
         terminalConfig={terminalConfig}
+        cierreActivo={cierreActivo}
       />
 
 

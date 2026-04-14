@@ -80,6 +80,8 @@ const DetalleVentaCentum = () => {
   const items = venta.items || []
   const esNC = [3, 6, 7, 8].includes(venta.TipoComprobanteID)
   const division = venta.DivisionEmpresaGrupoEconomicoID === 3 ? 'EMPRESA' : 'PRUEBA'
+  // BI almacena Precio NETO (sin IVA). Para Factura B / NC B mostrar precio con IVA incluido
+  const precioConIva = [4, 6].includes(venta.TipoComprobanteID)
 
   return (
     <div className="min-h-screen bg-gray-50 pb-6">
@@ -300,21 +302,29 @@ const DetalleVentaCentum = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {items.map((item, i) => {
-                    const subtotal = (parseFloat(item.Precio) || 0) * (parseFloat(item.Cantidad) || 0)
+                    const precioBI = parseFloat(item.Precio) || 0
+                    const ivaTasa = parseFloat(item.ImpuestoTasa) || 0
+                    // BI guarda neto; para Factura B / NC B recalcular con IVA
+                    const precioDisplay = precioConIva && precioBI > 0
+                      ? Math.round(precioBI * (1 + ivaTasa / 100) * 100) / 100
+                      : precioBI
+                    const subtotal = precioDisplay * (parseFloat(item.Cantidad) || 0)
                     const descTotal = (item.Descuento1 || 0) + (item.Descuento2 || 0) + (item.Descuento3 || 0) + (item.DescuentoPromocion || 0)
+                    const esCero = precioBI === 0 && (parseFloat(item.Cantidad) || 0) > 0
                     return (
-                      <tr key={item.VentaItemID || i} className="hover:bg-gray-50">
+                      <tr key={item.VentaItemID || i} className={esCero ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}>
                         <td className="px-2 py-2 text-gray-500 font-mono text-xs">{item.CodigoArticulo || '—'}</td>
                         <td className="px-2 py-2 text-gray-800 max-w-[250px] truncate" title={item.NombreArticulo}>
                           {item.NombreArticulo || `Artículo ${item.ArticuloID}`}
+                          {esCero && <span className="ml-1 text-xs text-red-500 font-medium">(precio $0)</span>}
                         </td>
                         <td className="px-2 py-2 text-right text-gray-700">{formatCantidad(item.Cantidad)}</td>
-                        <td className="px-2 py-2 text-right text-gray-700">{formatPrecio(item.Precio)}</td>
-                        <td className="px-2 py-2 text-right text-gray-500">{item.ImpuestoTasa || 0}%</td>
+                        <td className={`px-2 py-2 text-right ${esCero ? 'text-red-500' : 'text-gray-700'}`}>{formatPrecio(precioDisplay)}</td>
+                        <td className="px-2 py-2 text-right text-gray-500">{ivaTasa}%</td>
                         <td className="px-2 py-2 text-right text-gray-500">
                           {descTotal > 0 ? `${descTotal}%` : '—'}
                         </td>
-                        <td className="px-2 py-2 text-right font-medium text-gray-800">{formatPrecio(subtotal)}</td>
+                        <td className={`px-2 py-2 text-right font-medium ${esCero ? 'text-red-500' : 'text-gray-800'}`}>{formatPrecio(subtotal)}</td>
                       </tr>
                     )
                   })}

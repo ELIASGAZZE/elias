@@ -280,6 +280,12 @@ const CajasPosHome = () => {
                             {cierre.empleado?.nombre && (
                               <span> · {cierre.empleado.nombre}</span>
                             )}
+                            {cierre.cierre_at && (
+                              <span> · Cierre: {formatFecha(cierre.cierre_at.split('T')[0])} {formatHora(cierre.cierre_at)}</span>
+                            )}
+                            {cierre.cerrado_por?.nombre && (
+                              <span> · Cerró: {cierre.cerrado_por.nombre}</span>
+                            )}
                           </div>
                           {cierre.total_general !== undefined && !esGestor && usuario?.rol !== 'operario' && (
                             <span className="text-sm font-medium text-gray-700">

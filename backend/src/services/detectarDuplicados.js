@@ -19,11 +19,13 @@ async function detectarVentasDuplicadas() {
   logger.info(`[DetectarDuplicados] Analizando ventas del ${desde.slice(0, 10)}...`)
 
   // 1. Buscar duplicados en ventas_pos (ventas regulares + empleados)
+  // Excluir NC de gift card (se crean automáticamente al usar una GC como pago)
   const { data: ventas, error } = await supabase
     .from('ventas_pos')
-    .select('id, numero_venta, nombre_cliente, total, created_at, cajero_id, caja_id, ticket_uid')
+    .select('id, numero_venta, nombre_cliente, total, created_at, cajero_id, caja_id, ticket_uid, tipo, clasificacion, nc_concepto_tipo')
     .gte('created_at', desde)
     .lt('created_at', hasta)
+    .is('nc_concepto_tipo', null)
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -47,6 +49,12 @@ async function detectarVentasDuplicadas() {
 
       // Mismo cliente y mismo total
       if (a.nombre_cliente !== b.nombre_cliente || a.total !== b.total) continue
+
+      // No comparar ventas de gift card entre sí (es normal vender varias GC seguidas)
+      if (a.clasificacion === 'GIFT_CARD' && b.clasificacion === 'GIFT_CARD') continue
+
+      // No comparar NC contra ventas normales
+      if (a.tipo === 'nota_credito' || b.tipo === 'nota_credito') continue
 
       // Dentro de la ventana temporal
       const diffMs = Math.abs(new Date(b.created_at) - new Date(a.created_at))

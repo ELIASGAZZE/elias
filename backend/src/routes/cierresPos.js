@@ -678,7 +678,7 @@ router.get('/:id/guia-delivery', verificarAuth, asyncHandler(async (req, res) =>
   }
 }))
 
-// GET /api/cierres-pos/:id/pos-ventas — ventas POS en el rango de tiempo del cierre
+// GET /api/cierres-pos/:id/pos-ventas — ventas POS vinculadas al cierre
 router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data: cierre, error: errorCierre } = await supabase
@@ -691,20 +691,33 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    const desde = cierre.apertura_at
-    const hasta = cierre.cierre_at || new Date().toISOString()
+    const SELECT_VENTAS = 'id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at, tipo, anulada, centum_comprobante, id_cliente_centum'
 
-    // Query ventas_pos in the time range for this cajero
-    const { data: ventas, error: errorVentas } = await supabase
+    // Primero: buscar ventas vinculadas directamente por cierre_pos_id
+    let { data: ventas, error: errorVentas } = await supabase
       .from('ventas_pos')
-      .select('id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at')
-      .eq('cajero_id', cierre.cajero_id)
-      .eq('caja_id', cierre.caja_id)
-      .gte('created_at', desde)
-      .lte('created_at', hasta)
+      .select(SELECT_VENTAS)
+      .eq('cierre_pos_id', cierre.id)
       .order('created_at', { ascending: true })
 
     if (errorVentas) throw errorVentas
+
+    // Fallback: si no hay ventas por cierre_pos_id, buscar por caja_id + rango de tiempo (ventas históricas sin cierre_pos_id)
+    if (!ventas || ventas.length === 0) {
+      const desde = cierre.apertura_at
+      const hasta = cierre.cierre_at || new Date().toISOString()
+      const { data: ventasFallback, error: errorFallback } = await supabase
+        .from('ventas_pos')
+        .select(SELECT_VENTAS)
+        .eq('caja_id', cierre.caja_id)
+        .gte('created_at', desde)
+        .lte('created_at', hasta)
+        .order('created_at', { ascending: true })
+      if (errorFallback) throw errorFallback
+      ventas = ventasFallback || []
+    }
+
+    if (!ventas) ventas = []
 
     // Gift cards activadas ya están incluidas como ventas_pos normales (con caja_id y pagos correctos)
     // No se consultan por separado
@@ -758,6 +771,7 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     const cuponesMPDetalle = []
     ventasNormales.forEach(v => {
       const pagos = v.pagos || []
+      const esNC = v.tipo === 'nota_credito'
       pagos.forEach(p => {
         if (TIPOS_MP.includes((p.tipo || '').toLowerCase())) {
           cuponesMPDetalle.push({
@@ -774,16 +788,21 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
             mp_problema: p.detalle?.mp_problema || null,
             mp_problema_desc: p.detalle?.mp_problema_desc || null,
             created_at: v.created_at,
+            es_anulacion: esNC,
+            venta_origen_id: esNC ? v.venta_origen_id : null,
           })
         }
       })
     })
 
+    const cuponesNormales = cuponesMPDetalle.filter(c => !c.es_anulacion)
+    const cuponesAnulaciones = cuponesMPDetalle.filter(c => c.es_anulacion)
     const cuponesMP = {
       total: parseFloat(cuponesMPDetalle.reduce((s, c) => s + c.monto, 0).toFixed(2)),
       cantidad: cuponesMPDetalle.length,
-      posnet: cuponesMPDetalle.filter(c => c.tipo.toLowerCase() === 'posnet mp').length,
-      qr: cuponesMPDetalle.filter(c => c.tipo.toLowerCase() === 'qr mp').length,
+      posnet: cuponesNormales.filter(c => c.tipo.toLowerCase() === 'posnet mp').length,
+      qr: cuponesNormales.filter(c => c.tipo.toLowerCase() === 'qr mp').length,
+      anulaciones: cuponesAnulaciones.length,
       problemas: cuponesMPDetalle.filter(c => c.mp_problema).length,
       detalle: cuponesMPDetalle,
     }
@@ -794,12 +813,14 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     // Retiros de empleados — buscar items completos de ventas_empleados (tienen precio_original y descuento_pct)
     let ventasEmpleadosDB = []
     if (ventasEmpleados.length > 0) {
+      const desdeEmp = cierre.apertura_at
+      const hastaEmp = cierre.cierre_at || new Date().toISOString()
       const { data: veDB } = await supabase
         .from('ventas_empleados')
         .select('id, empleado:empleados(id, nombre), items, total, created_at')
-        .eq('cajero_id', cierre.cajero_id)
-        .gte('created_at', desde)
-        .lte('created_at', hasta)
+        .eq('caja_id', cierre.caja_id)
+        .gte('created_at', desdeEmp)
+        .lte('created_at', hastaEmp)
         .order('created_at', { ascending: true })
       ventasEmpleadosDB = veDB || []
     }
@@ -846,6 +867,9 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         vuelto: v.vuelto,
         pagos: v.pagos,
         created_at: v.created_at,
+        tipo: v.tipo || 'venta',
+        nombre_cliente: v.nombre_cliente,
+        venta_origen_id: v.venta_origen_id || null,
       })),
       retiro_empleados: {
         cantidad: ventasEmpleados.length,
@@ -853,6 +877,33 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         detalle: retiroEmpleadosDetalle,
       },
       cupones_mp: cuponesMP,
+      notas_credito: (() => {
+        const ncs = ventasNormales.filter(v => v.tipo === 'nota_credito')
+        return {
+          cantidad: ncs.length,
+          total: parseFloat(ncs.reduce((s, v) => s + (parseFloat(v.total) || 0), 0).toFixed(2)),
+          detalle: ncs.map(v => {
+            const pagos = v.pagos || []
+            // Buscar venta original para mostrar contexto
+            const ventaOrigen = v.venta_origen_id
+              ? (ventas || []).find(vo => vo.id === v.venta_origen_id)
+              : null
+            return {
+              id: v.id,
+              numero_venta: v.numero_venta,
+              total: v.total,
+              nombre_cliente: v.nombre_cliente,
+              created_at: v.created_at,
+              pagos,
+              venta_origen_id: v.venta_origen_id,
+              venta_origen_numero: ventaOrigen?.numero_venta || null,
+              venta_origen_total: ventaOrigen ? parseFloat(ventaOrigen.total) : null,
+              centum_comprobante: v.centum_comprobante,
+              motivo: ventaOrigen?.anulada_motivo || null,
+            }
+          }),
+        }
+      })(),
       talo_pay: {
         cantidad: ventasTaloPay.length,
         total: parseFloat(totalTaloPay.toFixed(2)),
@@ -866,7 +917,7 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       },
     })
   } catch (err) {
-    logger.error('Error al obtener ventas POS:', err)
+    logger.error('Error al obtener ventas POS:', err.message)
     res.status(500).json({ error: 'Error al obtener ventas del POS' })
   }
 }))

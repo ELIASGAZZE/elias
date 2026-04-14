@@ -305,8 +305,9 @@ const DetalleCierrePos = () => {
             {cierre.empleado && <span>Abrió: <strong className="text-gray-700">{cierre.empleado.nombre}</strong></span>}
             {cierre.cerrado_por && <span>Cerró: <strong className="text-gray-700">{cierre.cerrado_por.nombre}</strong></span>}
             <span>Fecha: <strong className="text-gray-700">{formatFecha(cierre.fecha)}</strong></span>
-            {cierre.apertura_at && <span>Apertura: <strong className="text-gray-700">{formatHora(cierre.apertura_at)}</strong></span>}
-            {cierre.cierre_at && <span>Cierre: <strong className="text-gray-700">{formatHora(cierre.cierre_at)}</strong></span>}
+            {cierre.apertura_at && <span>Hora apertura: <strong className="text-gray-700">{formatHora(cierre.apertura_at)}</strong></span>}
+            {cierre.cierre_at && <span>Fecha cierre: <strong className="text-gray-700">{formatFecha(cierre.cierre_at.split('T')[0])}</strong></span>}
+            {cierre.cierre_at && <span>Hora cierre: <strong className="text-gray-700">{formatHora(cierre.cierre_at)}</strong></span>}
             {cierre.fondo_fijo > 0 && cierre.tipo !== 'delivery' && <span>Cambio inicial: <strong className="text-gray-700">{formatMonto(cierre.fondo_fijo)}</strong></span>}
             {cierre.fondo_fijo > 0 && cierre.tipo === 'delivery' && <span className="text-amber-600 font-medium">Cambio entregado: <strong>{formatMonto(cierre.fondo_fijo)}</strong></span>}
             {posVentas && <span className="text-teal-600 font-medium">Ventas POS: {posVentas.cantidad_ventas} venta(s)</span>}
@@ -922,21 +923,33 @@ const DetalleCierrePos = () => {
                       const pagoMedio = (v.pagos || []).filter(filterFn).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
                       const vuelto = parseFloat(v.vuelto) || 0
                       const neto = pagoMedio - vuelto
+                      const esNC = v.tipo === 'nota_credito'
                       return (
-                        <div key={v.id} className="flex items-center text-xs py-1 border-b border-gray-100 last:border-b-0">
-                          <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className="w-16 text-blue-600 font-medium hover:underline">#{v.numero_venta || '—'}</a>
+                        <div key={v.id} className={`flex items-center text-xs py-1 border-b last:border-b-0 ${esNC ? 'bg-red-50 rounded px-1 -mx-1 border-red-100' : 'border-gray-100'}`}>
+                          <span className="w-16 flex items-center gap-1">
+                            <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className={`font-medium hover:underline ${esNC ? 'text-red-600' : 'text-blue-600'}`}>#{v.numero_venta || '—'}</a>
+                            {esNC && <span className="text-[8px] font-bold text-red-600 bg-red-200 px-0.5 rounded">NC</span>}
+                          </span>
                           <span className="w-14 text-center text-gray-400 whitespace-nowrap">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
-                          <span className="flex-1 text-right text-gray-500">{formatMonto(v.total)}</span>
-                          <span className="w-24 text-right text-gray-700">{formatMonto(pagoMedio)}</span>
+                          <span className={`flex-1 text-right ${esNC ? 'text-red-500' : 'text-gray-500'}`}>{formatMonto(v.total)}</span>
+                          <span className={`w-24 text-right ${esNC ? 'text-red-600 font-medium' : 'text-gray-700'}`}>{formatMonto(pagoMedio)}</span>
                           {medioKey === 'Efectivo' && <span className="w-20 text-right text-red-500">{vuelto > 0 ? `-${formatMonto(vuelto)}` : '—'}</span>}
-                          {medioKey === 'Efectivo' && <span className="w-24 text-right font-medium text-teal-700">{formatMonto(neto)}</span>}
+                          {medioKey === 'Efectivo' && <span className={`w-24 text-right font-medium ${esNC ? 'text-red-700' : 'text-teal-700'}`}>{formatMonto(neto)}</span>}
                         </div>
                       )
                     })}
-                    <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
-                      <span className="flex-1 text-gray-700">{ventasFiltradas.length} venta(s) con {labelMedio.toLowerCase()}</span>
-                      <span className="w-24 text-right text-teal-700">{formatMonto(totalMedio)}</span>
-                    </div>
+                    {(() => {
+                      const ventasNorm = ventasFiltradas.filter(v => v.tipo !== 'nota_credito')
+                      const ventasNC = ventasFiltradas.filter(v => v.tipo === 'nota_credito')
+                      return (
+                        <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
+                          <span className="flex-1 text-gray-700">
+                            {ventasNorm.length} venta(s){ventasNC.length > 0 && <span className="text-red-600"> · {ventasNC.length} anulación(es)</span>}
+                          </span>
+                          <span className="w-24 text-right text-teal-700">{formatMonto(totalMedio)}</span>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )
               }
@@ -1165,6 +1178,68 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
+        {/* Notas de Crédito / Problemas */}
+        {posVentas?.notas_credito?.cantidad > 0 && (() => {
+          const nc = posVentas.notas_credito
+          return (
+            <div className="bg-white border border-red-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-red-800 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                  </svg>
+                  Problemas / Notas de Crédito
+                  <span className="text-xs font-normal text-red-600 bg-red-50 px-2 py-0.5 rounded">{nc.cantidad}</span>
+                </h3>
+                <span className="text-sm font-bold text-red-700">{formatMonto(nc.total)}</span>
+              </div>
+
+              <div className="space-y-2">
+                {nc.detalle.map((item, idx) => {
+                  const pagos = item.pagos || []
+                  const formasPago = pagos.map(p => `${p.tipo} ${formatMonto(p.monto)}`).join(', ')
+                  return (
+                    <div key={idx} className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <a href={`/ventas/${item.id}`} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-red-700 hover:underline">
+                            NC #{item.numero_venta}
+                          </a>
+                          {item.venta_origen_numero && (
+                            <span className="text-[10px] text-gray-500">
+                              anula <a href={`/ventas/${item.venta_origen_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">#{item.venta_origen_numero}</a>
+                            </span>
+                          )}
+                          {item.centum_comprobante && (
+                            <span className="text-[10px] text-violet-500 font-medium">{item.centum_comprobante}</span>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold text-red-700">{formatMonto(item.total)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>{item.nombre_cliente || 'Consumidor Final'}</span>
+                        <span>{new Date(item.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      {item.motivo && (
+                        <div className="text-xs text-red-600 mt-1 italic">Motivo: {item.motivo}</div>
+                      )}
+                      {pagos.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {pagos.map((p, pidx) => (
+                            <span key={pidx} className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">
+                              {p.tipo} {formatMonto(p.monto)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Cupones Mercado Pago */}
         {esAdmin && posVentas?.cupones_mp?.cantidad > 0 && (() => {
           const mp = posVentas.cupones_mp
@@ -1182,6 +1257,11 @@ const DetalleCierrePos = () => {
                   {mp.qr > 0 && (
                     <span className="text-xs font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
                       QR: {mp.qr}
+                    </span>
+                  )}
+                  {mp.anulaciones > 0 && (
+                    <span className="text-xs font-normal text-red-700 bg-red-50 px-2 py-0.5 rounded">
+                      Anulaciones: {mp.anulaciones}
                     </span>
                   )}
                   {mp.problemas > 0 && (
@@ -1211,12 +1291,13 @@ const DetalleCierrePos = () => {
                     <span className="w-24 text-right">Importe</span>
                   </div>
                   {mp.detalle.map((c, idx) => (
-                    <div key={idx} className={`flex items-center text-xs py-1.5 ${c.mp_problema ? 'bg-amber-50 rounded px-1 -mx-1' : 'border-b border-blue-50'}`}>
-                      <span className="flex-1">
-                        {c.numero_venta && c.venta_id ? <a href={`/ventas/${c.venta_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 font-medium hover:underline">#{c.numero_venta}</a> : c.numero_venta ? `#${c.numero_venta}` : '—'}
+                    <div key={idx} className={`flex items-center text-xs py-1.5 ${c.es_anulacion ? 'bg-red-50 rounded px-1 -mx-1' : c.mp_problema ? 'bg-amber-50 rounded px-1 -mx-1' : 'border-b border-blue-50'}`}>
+                      <span className="flex-1 flex items-center gap-1.5">
+                        {c.numero_venta && c.venta_id ? <a href={`/ventas/${c.venta_id}`} target="_blank" rel="noopener noreferrer" className={`font-medium hover:underline ${c.es_anulacion ? 'text-red-600' : 'text-blue-600'}`}>#{c.numero_venta}</a> : c.numero_venta ? `#${c.numero_venta}` : '—'}
+                        {c.es_anulacion && <span className="text-[9px] font-bold text-red-600 bg-red-200 px-1 py-0.5 rounded">ANULACIÓN</span>}
                       </span>
                       <span className="w-20 text-center">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.tipo.toLowerCase() === 'qr mp' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.es_anulacion ? 'bg-red-100 text-red-700' : c.tipo.toLowerCase() === 'qr mp' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
                           {c.tipo.toLowerCase() === 'qr mp' ? 'QR' : 'Posnet'}
                         </span>
                       </span>
@@ -1229,7 +1310,7 @@ const DetalleCierrePos = () => {
                       <span className="w-16 text-center text-gray-400">
                         {new Date(c.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <span className="w-24 text-right font-medium text-gray-700">{formatMonto(c.monto)}</span>
+                      <span className={`w-24 text-right font-medium ${c.es_anulacion ? 'text-red-600' : 'text-gray-700'}`}>{formatMonto(c.monto)}</span>
                     </div>
                   ))}
 
