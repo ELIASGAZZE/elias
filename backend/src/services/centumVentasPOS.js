@@ -1276,8 +1276,9 @@ async function retrySyncVentasCentum() {
         if (venta.nc_concepto_tipo === 'gift_card') {
           const comprobanteRef = venta.centum_comprobante || null
           const idClienteNC = venta.id_cliente_centum || 2
-          const clasificacionNCGC = await obtenerClasificacionVentaGC(venta.gc_aplicada_codigos)
-          const divisionNCGC = clasificacionNCGC === 'EMPRESA' ? 3 : 2
+          // Usar clasificacion guardada en la NC (ya calculada al crearla), no recalcular
+          // porque la NC no tiene gc_aplicada_codigos (los tiene la venta padre)
+          const divisionNCGC = venta.clasificacion === 'EMPRESA' ? 3 : 2
           const operadorNC = divisionNCGC === 2
             ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
             : (centumOperadorEmpresa || null)
