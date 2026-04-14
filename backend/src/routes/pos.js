@@ -5628,9 +5628,11 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
 
     // --- Anti-duplicación: verificar en BI antes de crear (ventas Y NCs) ---
     {
+      // Incluir gc_aplicada_monto porque la factura en Centum es por total + GC
+      const gcAplicadaBI = parseFloat(venta.gc_aplicada_monto) || 0
       const totalParaBI = venta.tipo === 'nota_credito'
         ? Math.abs(parseFloat(venta.total) || 0)
-        : (parseFloat(venta.total) || 0)
+        : (parseFloat(venta.total) || 0) + gcAplicadaBI
       const check = await verificarEnBI(ventaId, sucursalFisicaId, puntoVenta, totalParaBI)
 
       if (check.found) {

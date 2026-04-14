@@ -847,18 +847,36 @@ async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoV
     // Buscar la primera venta que NO esté ya vinculada a otra venta POS
     let existente = null
     for (const row of result.recordset) {
+      // Check 1: verificar por id_venta_centum
       const { data: yaVinculada } = await supabase
         .from('ventas_pos')
         .select('id')
         .eq('id_venta_centum', row.VentaID)
         .maybeSingle()
 
-      if (!yaVinculada) {
-        existente = row
-        break
-      } else {
+      if (yaVinculada) {
         logger.info(`[Centum POS] Venta BI ${row.VentaID} ya vinculada a POS ${yaVinculada.id}, buscando otra`)
+        continue
       }
+
+      // Check 2: verificar por centum_comprobante (nunca duplicar comprobante)
+      const numDocStr = (row.NumeroDocumento || '').trim()
+      const numDocMatch = numDocStr.match(/^([A-Z])(\d+)-(\d+)$/)
+      if (numDocMatch) {
+        const comprobante = `${numDocMatch[1]} PV${parseInt(numDocMatch[2])}-${parseInt(numDocMatch[3])}`
+        const { data: yaComprobante } = await supabase
+          .from('ventas_pos')
+          .select('id')
+          .eq('centum_comprobante', comprobante)
+          .maybeSingle()
+        if (yaComprobante) {
+          logger.info(`[Centum POS] Comprobante ${comprobante} ya asignado a POS ${yaComprobante.id}, buscando otra`)
+          continue
+        }
+      }
+
+      existente = row
+      break
     }
 
     if (!existente) {
@@ -1359,7 +1377,10 @@ async function retrySyncVentasCentum() {
         // instancia vieja puede haber posteado la venta antes de que esta instancia arranque.
         // También protege contra IIFEs (pedidos/delivery) que postearon pero no guardaron el resultado.
         {
-          const check = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
+          // Incluir gc_aplicada_monto porque la factura en Centum es por total + GC
+          const gcBI = parseFloat(venta.gc_aplicada_monto) || 0
+          const totalBI = (parseFloat(venta.total) || 0) + gcBI
+          const check = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, totalBI)
 
           if (check.found) {
             // Ya existe en Centum → vincular sin crear duplicado
