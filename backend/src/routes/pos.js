@@ -1173,8 +1173,7 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       const desgloseMediosR = {}
       ventas.forEach(v => {
         const totalBase = parseFloat(v.total) || 0
-        // Sumar gc_aplicada_monto al total para reflejar el valor real de la factura
-        const total = v.tipo === 'nota_credito' ? totalBase : totalBase + (parseFloat(v.gc_aplicada_monto) || 0)
+        const total = totalBase
         if (v.tipo === 'nota_credito') {
           // NC se resta (valor negativo) para coincidir con Centum BI
           totalNCR -= Math.abs(total)
