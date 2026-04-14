@@ -623,12 +623,13 @@ const VentasHome = () => {
                             v.numero_cae ? (
                               <span className="text-xs text-teal-700 font-mono">{v.numero_cae}</span>
                             ) : (
-                              <span className="text-xs text-gray-400">—</span>
+                              <span className="text-xs text-red-600 font-semibold">SIN CAE</span>
                             )
                           ) : ''}
                         </td>
                         <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${v.tipo === 'nota_credito' ? 'text-red-600' : 'text-gray-800'}`}>
-                          {formatPrecio(v.total)}
+                          {formatPrecio(v.tipo === 'nota_credito' ? -Math.abs(v.total) : (parseFloat(v.total) + (parseFloat(v.gc_aplicada_monto) || 0)))}
+
                         </td>
                         <td className="px-3 py-2 text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1">
@@ -656,6 +657,7 @@ const VentasHome = () => {
                                   descuentoGrupoCliente: parseFloat(v.descuento_grupo_cliente || 0),
                                   grupoDescuentoNombre: v.grupo_descuento_nombre || null,
                                   grupoDescuentoPorcentaje: v.grupo_descuento_porcentaje || null,
+                                  gcAplicadaMonto: parseFloat(v.gc_aplicada_monto || 0),
                                 })
                               }}
                               className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"

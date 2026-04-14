@@ -173,6 +173,93 @@ const DetalleVenta = () => {
           </div>
         )}
 
+        {/* Detalle Gift Card (para NCs de gift_card) */}
+        {esNC && venta.nc_concepto_tipo === 'gift_card' && venta.gift_card_info && (
+          <div className="bg-white rounded-xl border border-amber-200 p-4">
+            <h2 className="text-sm font-semibold text-amber-700 uppercase mb-3">Detalle Gift Card</h2>
+            <p className="text-sm text-gray-600 mb-3">
+              Esta nota de crédito corresponde al <span className="font-semibold">uso de una Gift Card</span> como medio de pago.
+            </p>
+            <div className="space-y-2">
+              {venta.gift_card_info.gift_card && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
+                  <span className="text-xs text-amber-600 uppercase font-medium">Gift Card</span>
+                  <div className="flex items-center justify-between mt-1">
+                    <div>
+                      <span className="text-sm font-bold text-gray-800">
+                        {venta.gift_card_info.gift_card.codigo}
+                      </span>
+                      <span className="text-xs text-gray-500 ml-2">
+                        Valor: {formatPrecio(venta.gift_card_info.gift_card.monto_inicial)}
+                      </span>
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                      venta.gift_card_info.gift_card.estado === 'activa' ? 'bg-green-100 text-green-700' :
+                      venta.gift_card_info.gift_card.estado === 'agotada' ? 'bg-gray-100 text-gray-600' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {venta.gift_card_info.gift_card.estado === 'activa' ? 'Activa' :
+                       venta.gift_card_info.gift_card.estado === 'agotada' ? 'Agotada' : 'Anulada'}
+                      {venta.gift_card_info.gift_card.estado === 'activa' && ` — Saldo: ${formatPrecio(venta.gift_card_info.gift_card.saldo)}`}
+                    </span>
+                  </div>
+                  {venta.gift_card_info.gift_card.comprador_nombre && (
+                    <span className="text-xs text-gray-500 block mt-1">
+                      Comprador: {venta.gift_card_info.gift_card.comprador_nombre}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {venta.gift_card_info.venta_venta_gc && (
+                <Link
+                  to={`/ventas/${venta.gift_card_info.venta_venta_gc.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 rounded-lg bg-green-50 hover:bg-green-100 border border-green-100 transition-colors"
+                >
+                  <div>
+                    <span className="text-xs font-medium text-green-600 uppercase">Factura de venta de la GC</span>
+                    <span className="text-sm font-medium text-gray-800 ml-2">
+                      #{venta.gift_card_info.venta_venta_gc.numero_venta}
+                    </span>
+                    {venta.gift_card_info.venta_venta_gc.centum_comprobante && (
+                      <span className="text-xs text-green-600 ml-2">{venta.gift_card_info.venta_venta_gc.centum_comprobante}</span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.gift_card_info.venta_venta_gc.total)}</span>
+                    <span className="text-xs text-gray-400 block">{formatFechaHora(venta.gift_card_info.venta_venta_gc.created_at)}</span>
+                  </div>
+                </Link>
+              )}
+
+              {venta.gift_card_info.venta_uso_gc && (
+                <Link
+                  to={`/ventas/${venta.gift_card_info.venta_uso_gc.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 transition-colors"
+                >
+                  <div>
+                    <span className="text-xs font-medium text-indigo-600 uppercase">Factura donde se usó la GC</span>
+                    <span className="text-sm font-medium text-gray-800 ml-2">
+                      #{venta.gift_card_info.venta_uso_gc.numero_venta}
+                    </span>
+                    {venta.gift_card_info.venta_uso_gc.centum_comprobante && (
+                      <span className="text-xs text-green-600 ml-2">{venta.gift_card_info.venta_uso_gc.centum_comprobante}</span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.gift_card_info.venta_uso_gc.subtotal || venta.gift_card_info.venta_uso_gc.total)}</span>
+                    <span className="text-xs text-gray-400 block">{formatFechaHora(venta.gift_card_info.venta_uso_gc.created_at)}</span>
+                  </div>
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Info general */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Informacion general</h2>
@@ -223,21 +310,11 @@ const DetalleVenta = () => {
             )}
 
             <span className="text-gray-500">División</span>
-            {(() => {
-              const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
-              const pagosList = venta.pagos || []
-              const soloEfectivo = pagosList.length === 0 || pagosList.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
-              const condIva = venta.condicion_iva || 'CF'
-              const esFactA = condIva === 'RI' || condIva === 'MT'
-              const esPrueba = !esFactA && soloEfectivo
-              return (
-                <span className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
-                  esPrueba ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
-                }`}>
-                  {esPrueba ? 'PRUEBA' : 'EMPRESA'}
-                </span>
-              )
-            })()}
+            <span className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
+              venta.clasificacion === 'PRUEBA' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
+            }`}>
+              {venta.clasificacion || 'EMPRESA'}
+            </span>
 
             <span className="text-gray-500">Centum</span>
             {venta.centum_comprobante ? (
@@ -480,7 +557,7 @@ const DetalleVenta = () => {
                 )}
               </div>
               <div className="text-right">
-                <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.venta_origen.total)}</span>
+                <span className="text-sm font-medium text-gray-700">{formatPrecio(venta.venta_origen.subtotal || venta.venta_origen.total)}</span>
                 <span className="text-xs text-gray-400 block">{formatFechaHora(venta.venta_origen.created_at)}</span>
               </div>
             </Link>
@@ -554,6 +631,8 @@ const DetalleVenta = () => {
                 <Link
                   key={nc.id}
                   to={`/ventas/${nc.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="flex items-center justify-between p-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-100 transition-colors"
                 >
                   <div>
@@ -592,6 +671,92 @@ const DetalleVenta = () => {
                     <span className="text-xs text-gray-400 block">{formatFechaHora(v.created_at)}</span>
                   </div>
                 </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Gift Cards aplicadas como pago en esta venta */}
+        {venta.gc_aplicadas_info?.length > 0 && (
+          <div className="bg-white rounded-xl border border-amber-200 p-4">
+            <h2 className="text-sm font-semibold text-amber-700 uppercase mb-3">
+              Gift Cards aplicadas ({venta.gc_aplicadas_info.length})
+            </h2>
+            <div className="space-y-3">
+              {venta.gc_aplicadas_info.map((gcInfo, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-amber-600 uppercase font-medium">Gift Card</span>
+                        <span className="text-sm font-bold text-gray-800 ml-2">{gcInfo.gift_card.codigo}</span>
+                      </div>
+                      <div className="text-right">
+                        {gcInfo.monto_usado && (
+                          <span className="text-sm font-bold text-green-600">-{formatPrecio(gcInfo.monto_usado)}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-xs text-gray-500">
+                        Valor original: {formatPrecio(gcInfo.gift_card.monto_inicial)}
+                        {gcInfo.gift_card.comprador_nombre && ` — Comprador: ${gcInfo.gift_card.comprador_nombre}`}
+                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                        gcInfo.gift_card.estado === 'activa' ? 'bg-green-100 text-green-700' :
+                        gcInfo.gift_card.estado === 'agotada' ? 'bg-gray-100 text-gray-600' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {gcInfo.gift_card.estado === 'activa' ? `Activa — Saldo: ${formatPrecio(gcInfo.gift_card.saldo)}` :
+                         gcInfo.gift_card.estado === 'agotada' ? 'Agotada' : 'Anulada'}
+                      </span>
+                    </div>
+                  </div>
+                  {gcInfo.venta_venta_gc && (
+                    <Link
+                      to={`/ventas/${gcInfo.venta_venta_gc.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-lg bg-green-50 hover:bg-green-100 border border-green-100 transition-colors"
+                    >
+                      <div>
+                        <span className="text-xs font-medium text-green-600 uppercase">Factura de venta de la GC</span>
+                        <span className="text-sm font-medium text-gray-800 ml-2">
+                          #{gcInfo.venta_venta_gc.numero_venta}
+                        </span>
+                        {gcInfo.venta_venta_gc.centum_comprobante && (
+                          <span className="text-xs text-green-600 ml-2">{gcInfo.venta_venta_gc.centum_comprobante}</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-medium text-gray-700">{formatPrecio(gcInfo.venta_venta_gc.total)}</span>
+                        <span className="text-xs text-gray-400 block">{formatFechaHora(gcInfo.venta_venta_gc.created_at)}</span>
+                      </div>
+                    </Link>
+                  )}
+                  {gcInfo.nota_credito && (
+                    <Link
+                      to={`/ventas/${gcInfo.nota_credito.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-100 transition-colors"
+                    >
+                      <div>
+                        <span className="text-xs font-medium text-red-600 uppercase">Nota de Crédito</span>
+                        <span className="text-sm font-medium text-gray-800 ml-2">
+                          #{gcInfo.nota_credito.numero_venta}
+                        </span>
+                        {gcInfo.nota_credito.centum_comprobante && (
+                          <span className="text-xs text-green-600 ml-2">{gcInfo.nota_credito.centum_comprobante}</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-bold text-red-600">{formatPrecio(gcInfo.nota_credito.total)}</span>
+                        <span className="text-xs text-gray-400 block">{formatFechaHora(gcInfo.nota_credito.created_at)}</span>
+                      </div>
+                    </Link>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -827,7 +992,7 @@ const DetalleVenta = () => {
             )}
             {gcAplicadaMonto > 0 && (
               <div className="flex justify-between">
-                <span className="text-gray-500">Gift Card aplicada</span>
+                <span className="text-gray-500">Gift Card aplicada{venta.gc_aplicada_codigos ? ` (${venta.gc_aplicada_codigos})` : ''}</span>
                 <span className="text-green-600">-{formatPrecio(gcAplicadaMonto)}</span>
               </div>
             )}

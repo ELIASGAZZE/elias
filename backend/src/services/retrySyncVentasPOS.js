@@ -3,7 +3,7 @@
 // Si falla, graba el error y no las vuelve a tocar
 
 const supabase = require('../config/supabase')
-const { crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, fetchAndSaveCAE } = require('./centumVentasPOS')
+const { crearVentaPOS, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, fetchAndSaveCAE, obtenerClasificacionVentaGC } = require('./centumVentasPOS')
 const logger = require('../config/logger')
 
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
@@ -92,12 +92,15 @@ async function retrySyncVentasPOS() {
       let resultado
 
       if (venta.tipo === 'nota_credito') {
-        // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+        // NC Gift Card: concepto VENTA GIFT CARD, división heredada de la venta donde se vendió la GC
         if (venta.nc_concepto_tipo === 'gift_card') {
           const comprobanteRef = venta.centum_comprobante || null
           const idClienteNC = venta.id_cliente_centum || 2
-          const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
-          // Obtener vendedor para NC gift card
+          const clasificacionNCGC = await obtenerClasificacionVentaGC(venta.gc_aplicada_codigos)
+          const divisionNCGC = clasificacionNCGC === 'EMPRESA' ? 3 : 2
+          const operadorNC = divisionNCGC === 2
+            ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+            : (centumOperadorEmpresa || null)
           let idVendedorGC = null
           if (venta.id_cliente_centum) {
             const { data: cliGC } = await supabase
@@ -106,8 +109,8 @@ async function retrySyncVentasPOS() {
             idVendedorGC = cliGC?.vendedor_centum_id || null
           }
           resultado = await crearNotaCreditoConceptoPOS({
-            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
-            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: divisionNCGC, puntoVenta,
+            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: venta.condicion_iva || 'CF',
             descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
             operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
             concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },

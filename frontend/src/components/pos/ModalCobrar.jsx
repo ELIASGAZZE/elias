@@ -560,10 +560,14 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   // Anular cobro MP (refund)
   async function anularPagoMP(pagoIdx) {
     const pago = pagos[pagoIdx]
-    if (!pago?.detalle?.mp_order_id) return
+    if (!pago?.detalle?.mp_order_id && !pago?.detalle?.mp_payment_id) return
     setMpRefundingIdx(pagoIdx)
     try {
-      const { data } = await api.post(`/api/mp-point/order/${pago.detalle.mp_order_id}/refund`)
+      // Orders API refund si hay order_id, sino Payments API refund con payment_id (QR instore)
+      const refundUrl = pago.detalle.mp_order_id
+        ? `/api/mp-point/order/${pago.detalle.mp_order_id}/refund`
+        : `/api/mp-point/payment/${pago.detalle.mp_payment_id}/refund`
+      const { data } = await api.post(refundUrl)
       if (data.ok || data.id) {
         // Quitar el pago de la lista
         setPagos(prev => prev.filter((_, i) => i !== pagoIdx))
@@ -809,6 +813,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       grupoDescuentoNombre,
       grupoDescuentoPorcentaje,
       puntoVenta: terminalConfig.punto_venta_centum || null,
+      gcAplicadaMonto: totalGiftCards > 0 ? totalGiftCards : 0,
     }
 
     try {

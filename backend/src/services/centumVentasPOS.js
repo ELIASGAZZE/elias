@@ -22,6 +22,22 @@ const MAX_INTENTOS = 3
 // Base: 5 min → attempt 1: ~5 min, attempt 2: ~10 min, attempt 3+: capped at 1 hour
 // Prefijos para centum_error que codifican el estado
 const PREFIX_UNVERIFIED = 'UNVERIFIED|'
+
+/**
+ * Busca la clasificación de la venta donde se vendió/activó la GC.
+ * La NC debe ir en la misma división que la venta original de la GC.
+ */
+async function obtenerClasificacionVentaGC(gcCodigos) {
+  if (!gcCodigos) return 'PRUEBA'
+  const codigos = gcCodigos.split(',').map(c => c.trim()).filter(Boolean)
+  if (codigos.length === 0) return 'PRUEBA'
+  const { data: gc } = await supabase.from('gift_cards').select('id').eq('codigo', codigos[0]).maybeSingle()
+  if (!gc) return 'PRUEBA'
+  const { data: movAct } = await supabase.from('movimientos_gift_card').select('venta_pos_id').eq('gift_card_id', gc.id).gt('monto', 0).limit(1).maybeSingle()
+  if (!movAct?.venta_pos_id) return 'PRUEBA'
+  const { data: ventaGC } = await supabase.from('ventas_pos').select('clasificacion').eq('id', movAct.venta_pos_id).maybeSingle()
+  return (ventaGC?.clasificacion === 'EMPRESA' || ventaGC?.clasificacion === 'PRUEBA') ? ventaGC.clasificacion : 'PRUEBA'
+}
 const PREFIX_DEFINITIVE = 'DEFINITIVE|'
 const PREFIX_MAX_RETRIES = 'MAX_RETRIES|'
 
@@ -189,9 +205,15 @@ async function crearVentaPOS({ idCliente, sucursalFisicaId, idDivisionEmpresa, p
       throw new Error(`No se puede crear venta en Centum: ${articulosSinId.length} artículo(s) sin IdArticulo válido: ${articulosSinId.map(a => a.Codigo || a.Nombre || 'sin código').join(', ')}`)
     }
 
-    // Validar que los precios de artículos no sean todos 0
-    const preciosTodosZero = ventaArticulos.every(a => a.Precio === 0)
-    if (preciosTodosZero) {
+    // Filtrar artículos con precio 0 (errores de pesaje/escaneo) — no enviar a Centum
+    const articulosCero = ventaArticulos.filter(a => a.Precio === 0)
+    if (articulosCero.length > 0) {
+      logger.warn(`[Centum POS] Eliminando ${articulosCero.length} artículo(s) con precio $0 antes de enviar a Centum: ${articulosCero.map(a => `${a.Codigo} (cant: ${a.Cantidad})`).join(', ')}`)
+      ventaArticulos = ventaArticulos.filter(a => a.Precio !== 0)
+    }
+
+    // Validar que queden artículos después de filtrar
+    if (ventaArticulos.length === 0) {
       throw new Error(`No se puede crear venta en Centum: todos los artículos tienen precio 0. Items originales: ${JSON.stringify(items.map(i => ({ nombre: i.nombre, precio_unitario: i.precio_unitario, precio: i.precio })))}`)
     }
 
@@ -332,10 +354,10 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
     let idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
 
-    // GC aplicada como pago → forzar B PRUEBA (división 2)
-    if (parseFloat(ventaLocal.gc_aplicada_monto) > 0) {
+    // GC aplicada como pago → forzar B PRUEBA solo si no hay pagos electrónicos
+    if (parseFloat(ventaLocal.gc_aplicada_monto) > 0 && soloEfectivo) {
       idDivisionEmpresa = 2
-      logger.info(`[Centum POS] GC aplicada ($${ventaLocal.gc_aplicada_monto}) → forzando B PRUEBA`)
+      logger.info(`[Centum POS] GC aplicada ($${ventaLocal.gc_aplicada_monto}) + solo efectivo → forzando B PRUEBA`)
     }
 
     // Obtener operador móvil de la sucursal según división
@@ -352,6 +374,13 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       }).eq('id', ventaLocal.id).then(() => {}).catch(() => {})
     }
 
+    // Si hay GC aplicada, la factura debe ser por el monto completo (total + GC),
+    // porque la GC es un medio de pago, no un descuento. La NC posterior descuenta el monto de la GC.
+    const gcAplicada = parseFloat(ventaLocal.gc_aplicada_monto) || 0
+    const totalParaCentum = gcAplicada > 0
+      ? (parseFloat(ventaLocal.total) || 0) + gcAplicada
+      : (parseFloat(ventaLocal.total) || 0)
+
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,
       sucursalFisicaId: config.sucursalFisicaId,
@@ -359,7 +388,7 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       puntoVenta: config.puntoVenta,
       items,
       pagos,
-      total: parseFloat(ventaLocal.total) || 0,
+      total: totalParaCentum,
       condicionIva,
       operadorMovilUser,
       ventaPosId: ventaLocal.id,
@@ -367,10 +396,12 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
     })
 
     // GC aplicada como pago → crear NC concepto por el monto de GC
+    // La NC debe ir en la misma división donde se VENDIÓ la GC (no donde se usó)
     if (parseFloat(ventaLocal.gc_aplicada_monto) > 0 && resultado) {
       try {
         const numDoc = resultado.NumeroDocumento
         const comprobante = numDoc ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}` : null
+        const clasificacionNC = await obtenerClasificacionVentaGC(ventaLocal.gc_aplicada_codigos)
         await supabase.from('ventas_pos').insert({
           sucursal_id: ventaLocal.sucursal_id,
           cajero_id: ventaLocal.cajero_id,
@@ -379,8 +410,8 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
           nombre_cliente: ventaLocal.nombre_cliente || null,
           tipo: 'nota_credito',
           venta_origen_id: ventaLocal.id,
-          total: parseFloat(ventaLocal.gc_aplicada_monto),
-          subtotal: parseFloat(ventaLocal.gc_aplicada_monto),
+          total: -Math.abs(parseFloat(ventaLocal.gc_aplicada_monto)),
+          subtotal: -Math.abs(parseFloat(ventaLocal.gc_aplicada_monto)),
           descuento_total: 0,
           monto_pagado: 0,
           vuelto: 0,
@@ -388,10 +419,11 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
           pagos: [],
           centum_sync: false,
           nc_concepto_tipo: 'gift_card',
-
+          clasificacion: clasificacionNC,
+          condicion_iva: ventaLocal.condicion_iva || 'CF',
           centum_comprobante: comprobante, // referencia a la factura de artículos
         })
-        logger.info(`[Centum POS] NC Gift Card creada para venta ${ventaLocal.id}: monto=$${ventaLocal.gc_aplicada_monto}, ref=${comprobante}`)
+        logger.info(`[Centum POS] NC Gift Card creada para venta ${ventaLocal.id}: monto=$${ventaLocal.gc_aplicada_monto}, ref=${comprobante}, clasificacion=${clasificacionNC}`)
       } catch (ncErr) {
         logger.error(`[Centum POS] Error al crear NC Gift Card para venta ${ventaLocal.id}:`, ncErr.message)
       }
@@ -972,7 +1004,7 @@ async function retrySyncVentasCentum() {
   // Incluye centum_intentos y centum_ultimo_intento para la máquina de estados
   const { data: pendientes, error } = await supabase
     .from('ventas_pos')
-    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento, gc_aplicada_monto, nc_concepto_tipo, sucursal_id, cajero_id, centum_comprobante, condicion_iva, clasificacion')
+    .select('id, caja_id, id_cliente_centum, items, pagos, total, tipo, venta_origen_id, nombre_cliente, numero_venta, centum_error, centum_intentos, centum_ultimo_intento, gc_aplicada_monto, gc_aplicada_codigos, nc_concepto_tipo, sucursal_id, cajero_id, centum_comprobante, condicion_iva, clasificacion')
     .eq('centum_sync', false)
     .not('caja_id', 'is', null)
     .gte('created_at', hace30d)
@@ -1188,10 +1220,10 @@ async function retrySyncVentasCentum() {
         // Primera vez: calcular normalmente
         idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
 
-        // GC aplicada como pago → forzar B PRUEBA (división 2)
-        if (parseFloat(venta.gc_aplicada_monto) > 0) {
+        // GC aplicada como pago → forzar B PRUEBA solo si no hay pagos electrónicos
+        if (parseFloat(venta.gc_aplicada_monto) > 0 && soloEfectivo) {
           idDivisionEmpresa = 2
-          logger.info(`[RetryCentumVentas] GC aplicada ($${venta.gc_aplicada_monto}) → forzando B PRUEBA`)
+          logger.info(`[RetryCentumVentas] GC aplicada ($${venta.gc_aplicada_monto}) + solo efectivo → forzando B PRUEBA`)
         }
       }
 
@@ -1240,15 +1272,18 @@ async function retrySyncVentasCentum() {
           centum_ultimo_intento: new Date().toISOString(),
         }).eq('id', venta.id)
 
-        // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+        // NC Gift Card: concepto VENTA GIFT CARD, división heredada de la venta donde se vendió la GC
         if (venta.nc_concepto_tipo === 'gift_card') {
-          // centum_comprobante almacena la referencia a la factura de artículos
           const comprobanteRef = venta.centum_comprobante || null
           const idClienteNC = venta.id_cliente_centum || 2
-          const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+          const clasificacionNCGC = await obtenerClasificacionVentaGC(venta.gc_aplicada_codigos)
+          const divisionNCGC = clasificacionNCGC === 'EMPRESA' ? 3 : 2
+          const operadorNC = divisionNCGC === 2
+            ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+            : (centumOperadorEmpresa || null)
           resultado = await crearNotaCreditoConceptoPOS({
-            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
-            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+            idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: divisionNCGC, puntoVenta,
+            total: Math.abs(parseFloat(venta.total) || 0), condicionIva: venta.condicion_iva || 'CF',
             descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
             operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
             concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
@@ -1349,10 +1384,12 @@ async function retrySyncVentasCentum() {
                   await supabase.from('ventas_pos').insert({
                     sucursal_id: venta.sucursal_id, cajero_id: venta.cajero_id, caja_id: venta.caja_id,
                     id_cliente_centum: venta.id_cliente_centum || 2, nombre_cliente: venta.nombre_cliente || null,
-                    tipo: 'nota_credito', venta_origen_id: venta.id, total: parseFloat(venta.gc_aplicada_monto),
-                    subtotal: parseFloat(venta.gc_aplicada_monto), descuento_total: 0, monto_pagado: 0, vuelto: 0,
+                    tipo: 'nota_credito', venta_origen_id: venta.id, total: -Math.abs(parseFloat(venta.gc_aplicada_monto)),
+                    subtotal: -Math.abs(parseFloat(venta.gc_aplicada_monto)), descuento_total: 0, monto_pagado: 0, vuelto: 0,
                     items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(venta.gc_aplicada_monto), precio_final: parseFloat(venta.gc_aplicada_monto) }]),
-                    pagos: [], centum_sync: false, nc_concepto_tipo: 'gift_card', clasificacion: 'NC-B_PRUEBA',
+                    pagos: [], centum_sync: false, nc_concepto_tipo: 'gift_card',
+                    clasificacion: await obtenerClasificacionVentaGC(venta.gc_aplicada_codigos),
+                    condicion_iva: venta.condicion_iva || 'CF',
                     centum_comprobante: comprobanteEx,
                   })
                   logger.info(`[RetryCentumVentas] NC Gift Card creada (BI found) para venta ${venta.id}: monto=$${venta.gc_aplicada_monto}`)
@@ -1388,11 +1425,16 @@ async function retrySyncVentasCentum() {
         await supabase.from('ventas_pos').update(preWriteData).eq('id', venta.id)
 
         // ============ POST a Centum ============
+        // Si hay GC aplicada, facturar por monto completo (total + GC)
+        const gcAplicadaRetry = parseFloat(venta.gc_aplicada_monto) || 0
+        const totalParaCentumRetry = gcAplicadaRetry > 0
+          ? (parseFloat(venta.total) || 0) + gcAplicadaRetry
+          : (parseFloat(venta.total) || 0)
         try {
           resultado = await crearVentaPOS({
             idCliente: venta.id_cliente_centum || 2,
             sucursalFisicaId, idDivisionEmpresa, puntoVenta,
-            items, pagos, total: parseFloat(venta.total) || 0,
+            items, pagos, total: totalParaCentumRetry,
             condicionIva, operadorMovilUser,
             ventaPosId: venta.id, idVendedor,
           })
@@ -1468,8 +1510,8 @@ async function retrySyncVentasCentum() {
               nombre_cliente: venta.nombre_cliente || null,
               tipo: 'nota_credito',
               venta_origen_id: venta.id,
-              total: parseFloat(venta.gc_aplicada_monto),
-              subtotal: parseFloat(venta.gc_aplicada_monto),
+              total: -Math.abs(parseFloat(venta.gc_aplicada_monto)),
+              subtotal: -Math.abs(parseFloat(venta.gc_aplicada_monto)),
               descuento_total: 0,
               monto_pagado: 0,
               vuelto: 0,
@@ -1477,7 +1519,8 @@ async function retrySyncVentasCentum() {
               pagos: [],
               centum_sync: false,
               nc_concepto_tipo: 'gift_card',
-    
+              clasificacion: await obtenerClasificacionVentaGC(venta.gc_aplicada_codigos),
+              condicion_iva: venta.condicion_iva || 'CF',
               centum_comprobante: comprobante, // referencia a la factura de artículos
             })
             logger.info(`[RetryCentumVentas] NC Gift Card creada para venta ${venta.id}: monto=$${venta.gc_aplicada_monto}, ref=${comprobante}`)
@@ -1529,7 +1572,7 @@ async function retrySyncVentasCentum() {
   try {
     const { data: ventasSinNC } = await supabase
       .from('ventas_pos')
-      .select('id, sucursal_id, cajero_id, caja_id, id_cliente_centum, nombre_cliente, gc_aplicada_monto, centum_comprobante')
+      .select('id, sucursal_id, cajero_id, caja_id, id_cliente_centum, nombre_cliente, gc_aplicada_monto, gc_aplicada_codigos, centum_comprobante, clasificacion, condicion_iva')
       .eq('centum_sync', true)
       .eq('tipo', 'venta')
       .gt('gc_aplicada_monto', 0)
@@ -1552,10 +1595,12 @@ async function retrySyncVentasCentum() {
         await supabase.from('ventas_pos').insert({
           sucursal_id: v.sucursal_id, cajero_id: v.cajero_id, caja_id: v.caja_id,
           id_cliente_centum: v.id_cliente_centum || 2, nombre_cliente: v.nombre_cliente || null,
-          tipo: 'nota_credito', venta_origen_id: v.id, total: parseFloat(v.gc_aplicada_monto),
-          subtotal: parseFloat(v.gc_aplicada_monto), descuento_total: 0, monto_pagado: 0, vuelto: 0,
+          tipo: 'nota_credito', venta_origen_id: v.id, total: -Math.abs(parseFloat(v.gc_aplicada_monto)),
+          subtotal: -Math.abs(parseFloat(v.gc_aplicada_monto)), descuento_total: 0, monto_pagado: 0, vuelto: 0,
           items: JSON.stringify([{ descripcion: 'GIFT CARD', nombre: 'GIFT CARD', es_gift_card: true, cantidad: 1, precio_unitario: parseFloat(v.gc_aplicada_monto), precio_final: parseFloat(v.gc_aplicada_monto) }]),
           pagos: [], centum_sync: false, nc_concepto_tipo: 'gift_card',
+          clasificacion: await obtenerClasificacionVentaGC(v.gc_aplicada_codigos),
+          condicion_iva: v.condicion_iva || 'CF',
           centum_comprobante: v.centum_comprobante,
         })
         logger.info(`[RetryCentumVentas] NC Gift Card (safety net) creada para venta ${v.id}: monto=$${v.gc_aplicada_monto}`)
@@ -1773,4 +1818,4 @@ async function retryEmailsPendientes() {
   return { pendientes: ventas.length, enviados, sinEmail, fallidos }
 }
 
-module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico, retryEmailsPendientes }
+module.exports = { crearVentaPOS, registrarVentaPOSEnCentum, crearNotaCreditoPOS, crearNotaCreditoConceptoPOS, extraerPuntoVentaDeComprobante, obtenerVentaCentum, buscarVentaExistenteEnCentum, verificarEnBI, retrySyncVentasCentum, fetchAndSaveCAE, retrySyncCAE, enviarComprobanteAutomatico, retryEmailsPendientes, obtenerClasificacionVentaGC }

@@ -217,13 +217,13 @@ export function imprimirRetiro(retiro, cierre) {
   abrirVentanaImpresion(html)
 }
 
-export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje, puntoVenta }) {
+export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje, puntoVenta, gcAplicadaMonto }) {
   // Factura A (RI/MT) → ticket simple sin datos fiscales
   const condIva = cliente?.condicion_iva || 'CF'
   const esFacturaA = condIva === 'RI' || condIva === 'MT'
 
   if (esFacturaA) {
-    return imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje })
+    return imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje, gcAplicadaMonto })
   }
 
   // Factura B (CF/EX) → comprobante fiscal completo
@@ -314,6 +314,9 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
     Object.entries(resumen).forEach(([tipo, monto]) => {
       html += `<div class="row" style="font-size:14px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
+    if (gcAplicadaMonto > 0) {
+      html += `<div class="row" style="font-size:14px"><span>GIFT CARD</span><span>${formatMonto(gcAplicadaMonto)}</span></div>`
+    }
     const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
     if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
       html += '<div class="line"></div>'
@@ -363,7 +366,7 @@ export async function imprimirTicketPOS({ items, cliente, pagos, promosAplicadas
 }
 
 // Ticket simple para Factura A (RI/MT) — sin datos fiscales
-function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje }) {
+function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descuentosPorForma, subtotal, descuentoTotal, totalDescuentoPagos, total, totalPagado, vuelto, esOffline, numeroVenta, descuentoGrupoCliente, grupoDescuentoNombre, grupoDescuentoPorcentaje, gcAplicadaMonto }) {
   let html = ''
 
   html += '<div class="center titulo">PADANO SRL</div>'
@@ -418,6 +421,9 @@ function imprimirTicketPOSSimple({ items, cliente, pagos, promosAplicadas, descu
     Object.entries(resumen).forEach(([tipo, monto]) => {
       html += `<div class="row" style="font-size:14px"><span>${escapeHtml(tipo)}</span><span>${formatMonto(monto)}</span></div>`
     })
+    if (gcAplicadaMonto > 0) {
+      html += `<div class="row" style="font-size:14px"><span>GIFT CARD</span><span>${formatMonto(gcAplicadaMonto)}</span></div>`
+    }
     const totalPagadoReal = pagosReales.reduce((s, p) => s + (p.monto || 0), 0)
     if (totalPagadoReal > total && totalPagadoReal - total > 0.01) {
       html += '<div class="line"></div>'
@@ -502,6 +508,77 @@ export function imprimirTicketDevolucion({ items, cliente, saldoAFavor, tipoProb
       html += '<div style="text-align:center;font-size:13px;margin-top:2px">DNI: _______________</div>'
     } else {
       html += '<div class="center" style="font-size:13px;margin-top:4px">Este saldo queda disponible para su proxima compra.</div>'
+      html += '<div class="center" style="font-size:12px;margin-top:2px">Conserve este comprobante.</div>'
+    }
+
+    return html
+  }
+
+  abrirVentanaImpresion(buildTicket('cliente'))
+  setTimeout(() => {
+    abrirVentanaImpresion(buildTicket('cajero'))
+  }, 1500)
+}
+
+/**
+ * Imprime comprobante de anulación de venta (2 copias: cliente + cajero con firma).
+ */
+export function imprimirTicketAnulacion({ ventaNumero, ventaComprobante, cliente, items, totalAnulado, reembolsos, motivo, numeroNC, cajeroNombre }) {
+  function buildTicket(copia) {
+    let html = ''
+
+    html += '<div class="center titulo">PADANO SRL</div>'
+    html += `<div class="center bold" style="font-size:14px;margin-bottom:1px;color:#c00">${copia === 'cajero' ? 'ANULACION DE VENTA - COPIA CAJERO' : 'COMPROBANTE DE ANULACION'}</div>`
+    html += '<div class="line-double"></div>'
+
+    const ahora = new Date()
+    html += `<div style="font-size:14px">${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</div>`
+
+    if (cliente) html += `<div style="font-size:14px">Cliente: ${escapeHtml(cliente)}</div>`
+    html += `<div style="font-size:14px">Venta anulada: #${escapeHtml(String(ventaNumero || ''))}${ventaComprobante ? ' (' + escapeHtml(ventaComprobante) + ')' : ''}</div>`
+    if (numeroNC) html += `<div style="font-size:14px">Nota credito: #${escapeHtml(String(numeroNC))}</div>`
+    if (cajeroNombre) html += `<div style="font-size:14px">Cajero: ${escapeHtml(cajeroNombre)}</div>`
+
+    html += '<div class="line"></div>'
+    html += '<div class="seccion">PRODUCTOS ANULADOS</div>'
+
+    items.forEach(item => {
+      const precio = item.precio_unitario || item.precioUnitario || item.precio || 0
+      const lineTotal = precio * (item.cantidad || 1)
+      html += `<div class="item-name">${escapeHtml(item.nombre)}</div>`
+      html += `<div class="item-detail"><span>${item.cantidad} x ${formatMonto(precio)}</span><span>${formatMonto(lineTotal)}</span></div>`
+    })
+
+    html += '<div class="line"></div>'
+    html += '<div class="line-double"></div>'
+    html += `<div class="row total"><span>TOTAL ANULADO</span><span>${formatMonto(totalAnulado)}</span></div>`
+    html += '<div class="line-double"></div>'
+
+    // Detalle de reembolsos
+    if (reembolsos && reembolsos.length > 0) {
+      html += '<div class="seccion" style="margin-top:4px">REEMBOLSO</div>'
+      html += '<div class="line"></div>'
+      reembolsos.forEach(r => {
+        const esOk = r.estado === 'reembolsado' || r.estado === 'automatico'
+        html += `<div style="font-size:14px;margin-top:2px"><strong>${escapeHtml(r.tipo)}</strong>: ${formatMonto(Math.abs(r.monto))}</div>`
+        html += `<div style="font-size:12px;padding-left:4px">${escapeHtml(r.mensaje)}</div>`
+      })
+      html += '<div class="line"></div>'
+    }
+
+    if (motivo) {
+      html += `<div style="font-size:13px;margin-top:4px">Motivo: ${escapeHtml(motivo)}</div>`
+      html += '<div class="line"></div>'
+    }
+
+    if (copia === 'cajero') {
+      html += '<div style="text-align:center;font-size:13px;margin-top:10px;font-weight:bold">CONFORMIDAD DEL CLIENTE</div>'
+      html += '<div style="text-align:center;font-size:12px;margin-top:2px">Confirmo haber recibido el reembolso detallado.</div>'
+      html += '<div class="firma">Firma: _______________</div>'
+      html += '<div style="text-align:center;font-size:13px;margin-top:2px">Aclaracion: _______________</div>'
+      html += '<div style="text-align:center;font-size:13px;margin-top:2px">DNI: _______________</div>'
+    } else {
+      html += '<div class="center" style="font-size:13px;margin-top:6px">Comprobante de anulacion.</div>'
       html += '<div class="center" style="font-size:12px;margin-top:2px">Conserve este comprobante.</div>'
     }
 

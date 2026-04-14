@@ -65,7 +65,10 @@ async function generarComprobanteHTML(venta, caeData) {
     </tr>`
   })
 
-  const formaPago = pagos.map(p => MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean).join(', ') || 'Cuenta Corriente'
+  const gcMonto = parseFloat(venta.gc_aplicada_monto) || 0
+  const formasPago = pagos.map(p => MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '').filter(Boolean)
+  if (gcMonto > 0) formasPago.push('Gift Card')
+  const formaPago = formasPago.join(', ') || 'Cuenta Corriente'
 
   const cae = caeData?.cae || null
   const caeVto = caeData?.cae_vencimiento || null
@@ -182,12 +185,16 @@ async function generarComprobanteHTML(venta, caeData) {
            <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
            <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
            <div class="totales-row"><span>IVA:</span><span>${formatPrecio(ivaTotal)}</span></div>
-           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>`
+           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>
+           ${pagos.map(p => `<div class="totales-row" style="font-size:10px"><span>${escapeHtml(MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '')}</span><span>${formatPrecio(p.monto)}</span></div>`).join('')}
+           ${gcMonto > 0 ? `<div class="totales-row" style="font-size:10px"><span>Gift Card</span><span>${formatPrecio(gcMonto)}</span></div>` : ''}`
         : `<div class="totales-row"><span>Subtotal:</span><span>${formatPrecio(venta.subtotal || venta.total)}</span></div>
            ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatPrecio(venta.descuento_total)}</span></div>` : ''}
            <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
            <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
-           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>`
+           <div class="totales-row total"><span>TOTAL:</span><span>${formatPrecio(totalNum)}</span></div>
+           ${pagos.map(p => `<div class="totales-row" style="font-size:10px"><span>${escapeHtml(MEDIOS_LABELS[p.medio || p.tipo] || p.medio || p.tipo || '')}</span><span>${formatPrecio(p.monto)}</span></div>`).join('')}
+           ${gcMonto > 0 ? `<div class="totales-row" style="font-size:10px"><span>Gift Card</span><span>${formatPrecio(gcMonto)}</span></div>` : ''}`
       }
     </div>
   </div>

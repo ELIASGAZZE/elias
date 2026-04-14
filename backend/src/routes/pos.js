@@ -12,6 +12,7 @@ const logger = require('../config/logger')
 const { validate } = require('../middleware/validate')
 const { crearVentaSchema } = require('../schemas/pos')
 const asyncHandler = require('../middleware/asyncHandler')
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // Lock en memoria para prevenir ventas duplicadas por doble-submit concurrente
@@ -534,9 +535,14 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
 
     // Determinar sucursal desde la caja (no del perfil del cajero)
     let sucursalDeCaja = null
+    let cierreAbiertoId = null
     if (caja_id) {
-      const { data: cajaInfo } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
-      sucursalDeCaja = cajaInfo?.sucursal_id || null
+      const [cajaRes, cierreRes] = await Promise.all([
+        supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single(),
+        supabase.from('cierres_pos').select('id').eq('caja_id', caja_id).eq('estado', 'abierta').maybeSingle(),
+      ])
+      sucursalDeCaja = cajaRes.data?.sucursal_id || null
+      cierreAbiertoId = cierreRes.data?.id || null
     }
 
     // Prorratear pagos entre items y gift cards cuando es venta mixta
@@ -583,6 +589,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         centum_sync: false, // Gift cards SÍ se sincronizan a Centum como concepto
         condicion_iva: condicion_iva || null,
         ticket_uid: idempotencyKey,
+        ...(cierreAbiertoId ? { cierre_pos_id: cierreAbiertoId } : {}),
       }
       if (created_at_offline) insertGCOnly.created_at = created_at_offline
 
@@ -624,13 +631,17 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         }))
       }
       insertData.ticket_uid = idempotencyKey
+      if (cierreAbiertoId) insertData.cierre_pos_id = cierreAbiertoId
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
       if (created_at_offline) insertData.created_at = created_at_offline
-      // GC aplicada como pago: guardar monto para forzar B PRUEBA + NC concepto en Centum
+      // GC aplicada como pago: guardar monto y códigos para forzar B PRUEBA + NC concepto en Centum
       if (gift_cards_aplicadas && Array.isArray(gift_cards_aplicadas) && gift_cards_aplicadas.length > 0) {
         const totalGCMonto = gift_cards_aplicadas.reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
-        if (totalGCMonto > 0) insertData.gc_aplicada_monto = totalGCMonto
+        if (totalGCMonto > 0) {
+          insertData.gc_aplicada_monto = totalGCMonto
+          insertData.gc_aplicada_codigos = gift_cards_aplicadas.map(gc => gc.codigo).filter(Boolean).join(', ')
+        }
       }
 
       const { data: ventaData, error } = await supabase
@@ -1013,12 +1024,31 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       if (req.query.cajero_id) {
         query = query.eq('cajero_id', req.query.cajero_id)
       }
+      if (req.query.caja_id) {
+        query = query.eq('caja_id', req.query.caja_id)
+      }
+    }
+    // Filtro por hora exacta de inicio (para anulación de ventas del turno)
+    if (req.query.desde_hora) {
+      query = query.gte('created_at', req.query.desde_hora)
     }
 
     const { data, error, count } = await query
     if (error) throw error
 
     let ventas = data || []
+
+    // Excluir ventas que ya tienen NC asociada (para anulación)
+    if (req.query.excluir_con_nc === '1' && ventas.length > 0) {
+      const ventaIds = ventas.map(v => v.id)
+      const { data: ncs } = await supabase
+        .from('ventas_pos')
+        .select('venta_origen_id')
+        .in('venta_origen_id', ventaIds)
+        .eq('tipo', 'nota_credito')
+      const idsConNC = new Set((ncs || []).map(nc => nc.venta_origen_id))
+      ventas = ventas.filter(v => !idsConNC.has(v.id))
+    }
 
     // Filtro por artículo en JS (items es JSONB, no soporta ilike)
     const articulo = req.query.articulo?.trim()?.toLowerCase()
@@ -1142,11 +1172,21 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       let totalVentasR = 0, totalNCR = 0, totalEmpresaR = 0, totalPruebaR = 0, cantVentas = 0, cantNC = 0
       const desgloseMediosR = {}
       ventas.forEach(v => {
-        const total = parseFloat(v.total) || 0
-        if (v.tipo === 'nota_credito') { totalNCR += total; cantNC++ }
-        else { totalVentasR += total; cantVentas++ }
-        if (v.clasificacion === 'EMPRESA') totalEmpresaR += total
-        else totalPruebaR += total
+        const totalBase = parseFloat(v.total) || 0
+        // Sumar gc_aplicada_monto al total para reflejar el valor real de la factura
+        const total = v.tipo === 'nota_credito' ? totalBase : totalBase + (parseFloat(v.gc_aplicada_monto) || 0)
+        if (v.tipo === 'nota_credito') {
+          // NC se resta (valor negativo) para coincidir con Centum BI
+          totalNCR -= Math.abs(total)
+          cantNC++
+          if (v.clasificacion === 'EMPRESA') totalEmpresaR -= Math.abs(total)
+          else totalPruebaR -= Math.abs(total)
+        } else {
+          totalVentasR += total
+          cantVentas++
+          if (v.clasificacion === 'EMPRESA') totalEmpresaR += total
+          else totalPruebaR += total
+        }
         const pagos = Array.isArray(v.pagos) ? v.pagos : []
         pagos.forEach(p => {
           const medio = p.medio || 'efectivo'
@@ -1746,10 +1786,79 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
       catch { return [] }
     })()
     if (itemsCheck.length > 0 && itemsCheck.every(it => it.es_gift_card === true)) {
-      data.clasificacion = 'GIFT_CARD'
+      // NCs de gift card heredan clasificación de la venta origen; ventas de solo GC → GIFT_CARD
+      if (data.tipo === 'nota_credito' && data.venta_origen_id) {
+        const { data: origenClasif } = await supabase.from('ventas_pos').select('clasificacion').eq('id', data.venta_origen_id).maybeSingle()
+        data.clasificacion = (origenClasif?.clasificacion === 'EMPRESA' || origenClasif?.clasificacion === 'PRUEBA')
+          ? origenClasif.clasificacion : 'PRUEBA'
+      } else {
+        // Ventas de solo GC: clasificar con la misma lógica normal (condición IVA + forma de pago)
+        const ciGC = data.condicion_iva || 'CF'
+        const esFacturaAGC = ciGC === 'RI' || ciGC === 'MT'
+        const pagosGC = Array.isArray(data.pagos) ? data.pagos : []
+        const tiposEfGC = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+        const soloEfGC = pagosGC.length === 0 || pagosGC.every(p => tiposEfGC.includes((p.tipo || '').toLowerCase()))
+        data.clasificacion = esFacturaAGC ? 'EMPRESA' : (soloEfGC ? 'PRUEBA' : 'EMPRESA')
+      }
       if (data.caja_id) {
         const { data: caja } = await supabase.from('cajas').select('nombre').eq('id', data.caja_id).single()
         data.cajas = caja ? { nombre: caja.nombre } : null
+      }
+      // Si es NC gift_card, enriquecer con info de la gift card antes de retornar
+      if (data.tipo === 'nota_credito' && data.nc_concepto_tipo === 'gift_card' && data.venta_origen_id) {
+        // Traer venta origen
+        const { data: origen } = await supabase
+          .from('ventas_pos')
+          .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, subtotal, created_at')
+          .eq('id', data.venta_origen_id)
+          .single()
+        data.venta_origen = origen || null
+
+        // Buscar movimiento negativo (uso de GC) en la venta donde se usó
+        const { data: movUso } = await supabase
+          .from('movimientos_gift_card')
+          .select('gift_card_id, monto')
+          .eq('venta_pos_id', data.venta_origen_id)
+          .lt('monto', 0)
+          .limit(1)
+          .maybeSingle()
+
+        if (movUso?.gift_card_id) {
+          const { data: gc } = await supabase
+            .from('gift_cards')
+            .select('id, codigo, monto_inicial, saldo, estado, comprador_nombre, created_at')
+            .eq('id', movUso.gift_card_id)
+            .single()
+
+          // Buscar venta donde se vendió/activó la GC
+          const { data: movActivacion } = await supabase
+            .from('movimientos_gift_card')
+            .select('venta_pos_id')
+            .eq('gift_card_id', movUso.gift_card_id)
+            .gt('monto', 0)
+            .limit(1)
+            .maybeSingle()
+
+          let ventaVentaGC = null
+          if (movActivacion?.venta_pos_id) {
+            const { data: vVenta } = await supabase
+              .from('ventas_pos')
+              .select('id, numero_venta, nombre_cliente, centum_comprobante, total, created_at')
+              .eq('id', movActivacion.venta_pos_id)
+              .single()
+            ventaVentaGC = vVenta || null
+          }
+
+          data.gift_card_info = {
+            gift_card: gc || null,
+            venta_venta_gc: ventaVentaGC,
+            venta_uso_gc: origen ? {
+              id: origen.id, numero_venta: origen.numero_venta,
+              nombre_cliente: origen.nombre_cliente, centum_comprobante: origen.centum_comprobante,
+              total: origen.total, subtotal: origen.subtotal, created_at: origen.created_at,
+            } : null,
+          }
+        }
       }
       return res.json({ venta: data })
     }
@@ -1776,10 +1885,24 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
         condicion_iva: cli.condicion_iva, codigo: cli.codigo,
       }
     }
-    const esFacturaA = condIva === 'RI' || condIva === 'MT'
-    const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
-    const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
-    data.clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
+    // Si ya tiene clasificacion guardada válida (de Centum sync), usarla directamente
+    const clasificacionValida = data.clasificacion === 'EMPRESA' || data.clasificacion === 'PRUEBA'
+    if (!clasificacionValida) {
+      // Para NCs, intentar heredar de la venta origen
+      if (data.tipo === 'nota_credito' && data.venta_origen_id) {
+        const { data: origenClasif } = await supabase.from('ventas_pos').select('clasificacion').eq('id', data.venta_origen_id).maybeSingle()
+        if (origenClasif?.clasificacion === 'EMPRESA' || origenClasif?.clasificacion === 'PRUEBA') {
+          data.clasificacion = origenClasif.clasificacion
+        }
+      }
+      // Si aún no tiene clasificación válida, calcular
+      if (data.clasificacion !== 'EMPRESA' && data.clasificacion !== 'PRUEBA') {
+        const esFacturaA = condIva === 'RI' || condIva === 'MT'
+        const tiposEf = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+        const soloEfectivo = pagosClasif.length === 0 || pagosClasif.every(p => tiposEf.includes((p.tipo || '').toLowerCase()))
+        data.clasificacion = esFacturaA ? 'EMPRESA' : (soloEfectivo ? 'PRUEBA' : 'EMPRESA')
+      }
+    }
 
     // Lookup caja (no hay FK)
     if (data.caja_id) {
@@ -1792,7 +1915,7 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
     if (data.venta_origen_id) {
       const { data: origen } = await supabase
         .from('ventas_pos')
-        .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, created_at')
+        .select('id, numero_venta, nombre_cliente, centum_comprobante, tipo, total, subtotal, created_at')
         .eq('id', data.venta_origen_id)
         .single()
       data.venta_origen = origen || null
@@ -1815,6 +1938,121 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
     ])
     data.ventas_relacionadas = hijasRes.data || []
     data.movimiento_saldo = movSaldoRes.data || null
+
+    // Si es NC gift_card, buscar info de la gift card, venta donde se vendió y venta donde se usó
+    if (data.tipo === 'nota_credito' && data.nc_concepto_tipo === 'gift_card' && data.venta_origen_id) {
+      // La venta_origen_id apunta a la venta donde se USÓ la gift card
+      // Buscar el movimiento negativo (uso) en esa venta
+      const { data: movUso } = await supabase
+        .from('movimientos_gift_card')
+        .select('gift_card_id, monto')
+        .eq('venta_pos_id', data.venta_origen_id)
+        .lt('monto', 0)
+        .limit(1)
+        .maybeSingle()
+
+      if (movUso?.gift_card_id) {
+        // Traer datos de la gift card
+        const { data: gc } = await supabase
+          .from('gift_cards')
+          .select('id, codigo, monto_inicial, saldo, estado, comprador_nombre, created_at')
+          .eq('id', movUso.gift_card_id)
+          .single()
+
+        // Buscar la venta donde se VENDIÓ/activó la gift card (movimiento positivo de Activación)
+        const { data: movActivacion } = await supabase
+          .from('movimientos_gift_card')
+          .select('venta_pos_id')
+          .eq('gift_card_id', movUso.gift_card_id)
+          .ilike('motivo', '%Activación%')
+          .limit(1)
+          .maybeSingle()
+
+        let ventaVentaGC = null
+        if (movActivacion?.venta_pos_id) {
+          const { data: vVenta } = await supabase
+            .from('ventas_pos')
+            .select('id, numero_venta, nombre_cliente, centum_comprobante, total, created_at')
+            .eq('id', movActivacion.venta_pos_id)
+            .single()
+          ventaVentaGC = vVenta || null
+        }
+
+        data.gift_card_info = {
+          gift_card: gc || null,
+          venta_venta_gc: ventaVentaGC,
+          venta_uso_gc: data.venta_origen ? {
+            id: data.venta_origen.id,
+            numero_venta: data.venta_origen.numero_venta,
+            nombre_cliente: data.venta_origen.nombre_cliente,
+            centum_comprobante: data.venta_origen.centum_comprobante,
+            total: data.venta_origen.total,
+            created_at: data.venta_origen.created_at,
+          } : null,
+        }
+      }
+    }
+
+    // Si la venta tiene GCs aplicadas como pago, buscar info de cada GC y la factura donde se vendió
+    if (data.gc_aplicada_codigos && !data.gift_card_info) {
+      const codigos = data.gc_aplicada_codigos.split(',').map(c => c.trim()).filter(Boolean)
+      if (codigos.length > 0) {
+        const gcInfos = []
+        for (const codigo of codigos) {
+          const { data: gc } = await supabase
+            .from('gift_cards')
+            .select('id, codigo, monto_inicial, saldo, estado, comprador_nombre, created_at')
+            .eq('codigo', codigo)
+            .maybeSingle()
+          if (!gc) continue
+
+          // Buscar movimiento de activación para encontrar la venta donde se vendió la GC
+          const { data: movActivacion } = await supabase
+            .from('movimientos_gift_card')
+            .select('venta_pos_id')
+            .eq('gift_card_id', gc.id)
+            .ilike('motivo', '%Activación%')
+            .limit(1)
+            .maybeSingle()
+
+          let ventaVentaGC = null
+          if (movActivacion?.venta_pos_id) {
+            const { data: vVenta } = await supabase
+              .from('ventas_pos')
+              .select('id, numero_venta, nombre_cliente, centum_comprobante, total, created_at')
+              .eq('id', movActivacion.venta_pos_id)
+              .single()
+            ventaVentaGC = vVenta || null
+          }
+
+          // Buscar monto usado en esta venta y la NC generada por el uso de la GC
+          const [movUsoRes, ncGCRes] = await Promise.all([
+            supabase
+              .from('movimientos_gift_card')
+              .select('monto')
+              .eq('gift_card_id', gc.id)
+              .eq('venta_pos_id', data.id)
+              .lt('monto', 0)
+              .maybeSingle(),
+            supabase
+              .from('ventas_pos')
+              .select('id, numero_venta, centum_comprobante, total, created_at')
+              .eq('venta_origen_id', data.id)
+              .eq('tipo', 'nota_credito')
+              .eq('nc_concepto_tipo', 'gift_card')
+              .maybeSingle(),
+          ])
+
+          gcInfos.push({
+            gift_card: gc,
+            venta_venta_gc: ventaVentaGC,
+            nota_credito: ncGCRes.data || null,
+            monto_usado: movUsoRes.data ? Math.abs(movUsoRes.data.monto) : null,
+          })
+        }
+        if (gcInfos.length > 0) data.gc_aplicadas_info = gcInfos
+      }
+    }
 
     // Si es NC de corrección cliente, buscar la venta nueva (hermana con tipo=venta y mismo venta_origen_id)
     if (data.tipo === 'nota_credito' && data.venta_origen_id && !data.movimiento_saldo) {
@@ -2595,12 +2833,12 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       if (cajaDeliv) cajaDeliveryId = cajaDeliv.id
     }
 
-    // Obtener config de caja delivery para Centum
-    const { data: cajaData } = await supabase
-      .from('cajas')
-      .select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
-      .eq('id', cajaDeliveryId)
-      .single()
+    // Obtener config de caja delivery para Centum + cierre abierto
+    const [{ data: cajaData }, { data: cierreDeliveryAbierto }] = await Promise.all([
+      supabase.from('cajas').select('punto_venta_centum, sucursal_id, sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)').eq('id', cajaDeliveryId).single(),
+      supabase.from('cierres_pos').select('id').eq('caja_id', cajaDeliveryId).eq('estado', 'abierta').maybeSingle(),
+    ])
+    const cierreDeliveryAbiertoId = cierreDeliveryAbierto?.id || null
 
     // Crear la guía
     const { data: guia, error: errGuia } = await supabase
@@ -2694,6 +2932,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
           ? pedido.descuento_forma_pago
           : (descuento > 0 ? { total: descuento, detalle: [{ formaCobro: 'Efectivo', porcentaje: descEfectivoPct, descuento }] } : null),
         pedido_pos_id: pedido.id,
+        ...(cierreDeliveryAbiertoId ? { cierre_pos_id: cierreDeliveryAbiertoId } : {}),
       }
 
       const { data: ventaNueva, error: errVenta } = await supabase
@@ -4899,6 +5138,302 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
   }
 }))
 
+// POST /api/pos/anular-venta — anular completamente una venta del cierre actual
+router.post('/anular-venta', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const { venta_id, motivo, caja_id } = req.body
+
+    if (!venta_id || !motivo?.trim()) {
+      return res.status(400).json({ error: 'Datos incompletos: se requiere venta_id y motivo' })
+    }
+
+    // Verificar que hay un cierre abierto para esta caja
+    if (!caja_id) return res.status(400).json({ error: 'No se identificó la caja' })
+
+    const { data: cierre } = await supabase
+      .from('cierres_pos')
+      .select('id, cajero_id, caja_id, apertura_at, estado')
+      .eq('caja_id', caja_id)
+      .eq('estado', 'abierta')
+      .single()
+
+    if (!cierre) {
+      return res.status(400).json({ error: 'No hay un cierre de caja abierto para esta caja' })
+    }
+
+    // Obtener la venta
+    const { data: venta, error: ventaErr } = await supabase
+      .from('ventas_pos')
+      .select('*')
+      .eq('id', venta_id)
+      .single()
+
+    if (ventaErr || !venta) {
+      return res.status(404).json({ error: 'Venta no encontrada' })
+    }
+
+    // Validar que la venta pertenece a esta caja y fue hecha durante el cierre abierto
+    if (venta.caja_id !== cierre.caja_id) {
+      return res.status(400).json({ error: 'La venta no pertenece a esta caja' })
+    }
+    if (new Date(venta.created_at) < new Date(cierre.apertura_at)) {
+      return res.status(400).json({ error: 'La venta es anterior a la apertura de caja actual' })
+    }
+
+    // Verificar que no tiene NC previa (ya anulada)
+    const { data: ncPrevias } = await supabase
+      .from('ventas_pos')
+      .select('id')
+      .eq('venta_origen_id', venta_id)
+      .eq('tipo', 'nota_credito')
+
+    if (ncPrevias && ncPrevias.length > 0) {
+      return res.status(400).json({ error: 'Esta venta ya tiene una nota de crédito asociada. No se puede anular nuevamente.' })
+    }
+
+    // Datos de la venta
+    const itemsVenta = (() => { try { return typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || []) } catch { return [] } })()
+    const pagosVenta = Array.isArray(venta.pagos) ? venta.pagos : []
+    const totalVenta = parseFloat(venta.total) || 0
+    const subtotalVenta = parseFloat(venta.subtotal) || 0
+
+    if (totalVenta <= 0) {
+      return res.status(400).json({ error: 'La venta tiene total $0, no se puede anular' })
+    }
+
+    // Determinar sucursal
+    let sucursalNC = null
+    if (caja_id) {
+      const { data: cajaData } = await supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single()
+      sucursalNC = cajaData?.sucursal_id || null
+    }
+
+    // Armar items NC (todos los items de la venta original)
+    const factorDescuento = subtotalVenta > 0 ? totalVenta / subtotalVenta : 1
+    const itemsNC = itemsVenta.map((item, idx) => {
+      const precioOriginal = item.precio_unitario || item.precioUnitario || item.precio || 0
+      return {
+        ...item,
+        indice_original: idx,
+        precioUnitario: Math.round(precioOriginal * factorDescuento * 100) / 100,
+        precio: Math.round(precioOriginal * factorDescuento * 100) / 100,
+      }
+    })
+
+    // Crear NC local en ventas_pos
+    const idClienteCentum = venta.id_cliente_centum || 2
+    const nombreCliente = venta.nombre_cliente || 'Consumidor Final'
+
+    const { data: notaCredito, error: ncErr } = await supabase
+      .from('ventas_pos')
+      .insert({
+        cajero_id: venta.cajero_id, // Mismo cajero que la venta original para que impacte en su cierre
+        sucursal_id: sucursalNC || venta.sucursal_id,
+        caja_id: caja_id || venta.caja_id || null,
+        id_cliente_centum: idClienteCentum,
+        nombre_cliente: nombreCliente,
+        subtotal: -subtotalVenta,
+        descuento_total: -Math.round((subtotalVenta - totalVenta) * 100) / 100,
+        total: -totalVenta,
+        monto_pagado: 0,
+        vuelto: 0,
+        descuento_forma_pago: -(parseFloat(venta.descuento_forma_pago) || 0),
+        items: JSON.stringify(itemsNC),
+        // Pagos negativos para que el cierre de caja descuente correctamente
+        pagos: pagosVenta.map(p => ({ tipo: p.tipo, monto: -Math.abs(parseFloat(p.monto) || 0), detalle: p.detalle })),
+        tipo: 'nota_credito',
+        venta_origen_id: venta_id,
+      })
+      .select()
+      .single()
+
+    if (ncErr) throw ncErr
+
+    // Registrar movimiento de saldo (para que quede en auditoría, aunque se devuelve inmediato)
+    const totalMontoPagado = parseFloat(venta.monto_pagado) || totalVenta
+    await supabase.from('movimientos_saldo_pos').insert({
+      id_cliente_centum: idClienteCentum,
+      nombre_cliente: nombreCliente,
+      monto: totalVenta,
+      motivo: `Anulación de venta - ${motivo.trim()}`,
+      venta_pos_id: notaCredito.id,
+      created_by: req.perfil.id,
+      forma_pago_origen: calcularFormaPagoOrigen(pagosVenta, totalVenta, totalMontoPagado),
+    })
+
+    // Sync NC a Centum
+    let centumNC = null
+    if (venta.centum_sync && venta.centum_comprobante) {
+      try {
+        const pvOriginal = extraerPuntoVentaDeComprobante(venta.centum_comprobante)
+        if (!pvOriginal) throw new Error('No se pudo extraer PuntoVenta del comprobante original')
+
+        let sucursalFisicaId = null
+        let centumOperadorEmpresa = null
+        let centumOperadorPrueba = null
+        const cajaParaCentum = venta.caja_id || caja_id
+        if (cajaParaCentum) {
+          const { data: cajaData } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+            .eq('id', cajaParaCentum)
+            .single()
+          sucursalFisicaId = cajaData?.sucursales?.centum_sucursal_id
+          centumOperadorEmpresa = cajaData?.sucursales?.centum_operador_empresa
+          centumOperadorPrueba = cajaData?.sucursales?.centum_operador_prueba
+        }
+        if (!sucursalFisicaId) {
+          const { data: cajaFallback } = await supabase
+            .from('cajas')
+            .select('sucursales(centum_sucursal_id, centum_operador_empresa, centum_operador_prueba)')
+            .not('punto_venta_centum', 'is', null)
+            .limit(1)
+            .single()
+          sucursalFisicaId = cajaFallback?.sucursales?.centum_sucursal_id
+          if (!centumOperadorEmpresa) centumOperadorEmpresa = cajaFallback?.sucursales?.centum_operador_empresa
+          if (!centumOperadorPrueba) centumOperadorPrueba = cajaFallback?.sucursales?.centum_operador_prueba
+        }
+
+        let condicionIva = 'CF'
+        let vendedorCentumId = null
+        if (venta.id_cliente_centum) {
+          const { data: cli } = await supabase
+            .from('clientes').select('condicion_iva, vendedor_centum_id')
+            .eq('id_centum', venta.id_cliente_centum).single()
+          condicionIva = cli?.condicion_iva || 'CF'
+          vendedorCentumId = cli?.vendedor_centum_id || null
+        }
+
+        const esFacturaA = condicionIva === 'RI' || condicionIva === 'MT'
+        const tiposEfectivo = ['efectivo', 'saldo', 'gift_card', 'cuenta_corriente']
+        const soloEfectivo = pagosVenta.length === 0 || pagosVenta.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
+        const idDivisionEmpresa = esFacturaA ? 3 : (soloEfectivo ? 2 : 3)
+
+        const operadorMovilUser = idDivisionEmpresa === 2
+          ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+          : (centumOperadorEmpresa || null)
+
+        centumNC = await crearNotaCreditoPOS({
+          idCliente: venta.id_cliente_centum || 2,
+          sucursalFisicaId,
+          idDivisionEmpresa,
+          puntoVenta: pvOriginal.puntoVenta,
+          items: itemsNC,
+          total: totalVenta,
+          condicionIva,
+          operadorMovilUser,
+          comprobanteOriginal: venta.centum_comprobante,
+          ventaPosId: notaCredito.id,
+          idVendedor: vendedorCentumId,
+        })
+
+        const numDoc = centumNC.NumeroDocumento
+        const comprobante = numDoc
+          ? `${numDoc.LetraDocumento || ''} PV${numDoc.PuntoVenta}-${numDoc.Numero}`
+          : null
+        await supabase.from('ventas_pos').update({
+          id_venta_centum: centumNC.IdVenta || null,
+          centum_comprobante: comprobante,
+          centum_sync: true,
+          numero_cae: centumNC.CAE || null,
+          clasificacion: idDivisionEmpresa === 3 ? 'EMPRESA' : 'PRUEBA',
+        }).eq('id', notaCredito.id)
+
+        logger.info(`[POS] NC Centum creada para anulación: ${comprobante}`)
+        fetchAndSaveCAE(notaCredito.id, centumNC.IdVenta)
+      } catch (centumErr) {
+        logger.error('[POS] Error al crear NC en Centum (anulación):', centumErr.message)
+        await supabase.from('ventas_pos').update({
+          centum_error: centumErr.message,
+        }).eq('id', notaCredito.id)
+      }
+    }
+
+    // Intentar refund automático de pagos MP
+    const reembolsos = []
+    for (const pago of pagosVenta) {
+      const tipoLower = (pago.tipo || '').toLowerCase()
+      if ((tipoLower === 'posnet mp' || tipoLower === 'qr mp') && (pago.detalle?.mp_order_id || pago.detalle?.mp_payment_id)) {
+        try {
+          const idempotencyKey = `refund-${pago.detalle.mp_order_id || pago.detalle.mp_payment_id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          let refundUrl, refundLabel
+          if (pago.detalle.mp_order_id) {
+            // Orders API refund (posnet y QR con order_id)
+            refundUrl = `https://api.mercadopago.com/v1/orders/${pago.detalle.mp_order_id}/refund`
+            refundLabel = `orden ${pago.detalle.mp_order_id}`
+          } else {
+            // Payments API refund (QR instore sin order_id, usa payment_id)
+            refundUrl = `https://api.mercadopago.com/v1/payments/${pago.detalle.mp_payment_id}/refunds`
+            refundLabel = `payment ${pago.detalle.mp_payment_id}`
+          }
+          const resp = await fetchWithTimeout(refundUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+              'Content-Type': 'application/json',
+              'X-Idempotency-Key': idempotencyKey,
+            },
+          }, 30000)
+          if (resp.status === 201 || resp.status === 200) {
+            reembolsos.push({ tipo: pago.tipo, monto: pago.monto, estado: 'reembolsado', mensaje: `Devolucion de $${Math.abs(pago.monto).toFixed(2)} procesada automaticamente via Mercado Pago. El cliente recibira el reintegro en su tarjeta/cuenta.` })
+            logger.info(`[POS] Refund MP exitoso para ${refundLabel} (anulación venta ${venta_id})`)
+          } else {
+            const errData = await resp.json().catch(() => ({}))
+            const errMsg = errData.errors?.[0]?.message || errData.message || 'Error al reembolsar'
+            reembolsos.push({ tipo: pago.tipo, monto: pago.monto, estado: 'error', mensaje: `No se pudo reembolsar automáticamente: ${errMsg}. Hacer devolución manual desde MP.` })
+            logger.error(`[POS] Error refund MP ${refundLabel}: ${errMsg}`)
+          }
+        } catch (mpErr) {
+          reembolsos.push({ tipo: pago.tipo, monto: pago.monto, estado: 'error', mensaje: `Error de conexión al reembolsar. Hacer devolución manual desde MP.` })
+        }
+      } else if (tipoLower === 'efectivo') {
+        reembolsos.push({ tipo: 'Efectivo', monto: pago.monto, estado: 'manual', mensaje: `Devolver $${pago.monto.toFixed(2)} en efectivo al cliente` })
+      } else if (tipoLower === 'payway') {
+        reembolsos.push({ tipo: 'Payway', monto: pago.monto, estado: 'manual', mensaje: `Realizar la anulación en el posnet Payway por $${pago.monto.toFixed(2)}` })
+      } else if (tipoLower === 'transferencia') {
+        reembolsos.push({ tipo: 'Transferencia', monto: pago.monto, estado: 'manual', mensaje: `Coordinar devolución de transferencia por $${pago.monto.toFixed(2)} con administración` })
+      } else if (tipoLower === 'saldo') {
+        reembolsos.push({ tipo: 'Saldo', monto: pago.monto, estado: 'automatico', mensaje: `Se restauró $${pago.monto.toFixed(2)} al saldo del cliente` })
+      } else if (tipoLower === 'gift card') {
+        reembolsos.push({ tipo: 'Gift Card', monto: pago.monto, estado: 'manual', mensaje: `Coordinar recarga de Gift Card por $${pago.monto.toFixed(2)} con administración` })
+      } else if (tipoLower === 'cuenta_corriente' || tipoLower === 'cuenta corriente') {
+        reembolsos.push({ tipo: 'Cuenta Corriente', monto: pago.monto, estado: 'automatico', mensaje: `Se acreditó $${pago.monto.toFixed(2)} en la cuenta corriente` })
+      } else {
+        reembolsos.push({ tipo: pago.tipo, monto: pago.monto, estado: 'manual', mensaje: `Coordinar devolución de ${pago.tipo} por $${pago.monto.toFixed(2)}` })
+      }
+    }
+
+    // Si hubo descuento por forma de pago en efectivo, aclarar monto real
+    const descuentoFormaPago = parseFloat(venta.descuento_forma_pago) || 0
+    if (descuentoFormaPago > 0) {
+      const reembolsoEfectivo = reembolsos.find(r => r.tipo === 'Efectivo')
+      if (reembolsoEfectivo) {
+        reembolsoEfectivo.mensaje = `Devolver $${reembolsoEfectivo.monto.toFixed(2)} en efectivo al cliente (incluye descuento de $${descuentoFormaPago.toFixed(2)} que se aplicó en la venta original)`
+      }
+    }
+
+    // Marcar venta original como anulada (campo metadata)
+    await supabase.from('ventas_pos').update({
+      anulada: true,
+      anulada_motivo: motivo.trim(),
+      anulada_nc_id: notaCredito.id,
+      anulada_at: new Date().toISOString(),
+    }).eq('id', venta_id)
+
+    res.json({
+      ok: true,
+      nota_credito_id: notaCredito.id,
+      numero_nc: notaCredito.numero_venta,
+      centum_nc: centumNC ? true : false,
+      total_anulado: totalVenta,
+      reembolsos,
+    })
+  } catch (err) {
+    logger.error('[POS] Error al anular venta:', err.message)
+    res.status(500).json({ error: 'Error al anular la venta' })
+  }
+}))
+
 // POST /api/pos/log-eliminacion
 // Registra eliminación de artículos del ticket (auditoría anti-robo)
 router.post('/log-eliminacion', verificarAuth, asyncHandler(async (req, res) => {
@@ -5082,10 +5617,9 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
     const soloEfectivo = pagos.length === 0 || pagos.every(p => tiposEfectivo.includes((p.tipo || '').toLowerCase()))
     let idDivisionEmpresa = esEmpleado ? 2 : (esFacturaA ? 3 : (soloEfectivo ? 2 : 3))
 
-    // GC aplicada como pago → forzar B PRUEBA (división 2)
-    if (parseFloat(venta.gc_aplicada_monto) > 0) {
-      idDivisionEmpresa = 2
-    }
+    // Si la venta ya tiene clasificación guardada (del sync original), usarla
+    if (venta.clasificacion === 'EMPRESA') idDivisionEmpresa = 3
+    else if (venta.clasificacion === 'PRUEBA') idDivisionEmpresa = 2
 
     // Obtener operador móvil según división
     const operadorMovilUser = idDivisionEmpresa === 2
@@ -5132,14 +5666,19 @@ router.post('/ventas/:id/reenviar-centum', verificarAuth, asyncHandler(async (re
 
     let resultado
     if (venta.tipo === 'nota_credito') {
-      // NC Gift Card: concepto VENTA GIFT CARD, siempre B PRUEBA
+      // NC Gift Card: concepto VENTA GIFT CARD, heredar división de la venta origen
       if (venta.nc_concepto_tipo === 'gift_card') {
         const comprobanteRef = venta.centum_comprobante || null
         const idClienteNC = venta.id_cliente_centum || 2
-        const operadorNC = centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA
+        // Usar la clasificación de la propia NC (heredada de la venta donde se vendió la GC)
+        let divisionNC = venta.clasificacion === 'EMPRESA' ? 3 : 2
+        let condIvaNC = venta.condicion_iva || condicionIva
+        const operadorNC = divisionNC === 2
+          ? (centumOperadorPrueba || OPERADOR_MOVIL_USER_PRUEBA)
+          : (centumOperadorEmpresa || null)
         resultado = await crearNotaCreditoConceptoPOS({
-          idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: 2, puntoVenta,
-          total: Math.abs(parseFloat(venta.total) || 0), condicionIva: 'CF',
+          idCliente: idClienteNC, sucursalFisicaId, idDivisionEmpresa: divisionNC, puntoVenta,
+          total: Math.abs(parseFloat(venta.total) || 0), condicionIva: condIvaNC,
           descripcion: `NC GIFT CARD - Venta origen: ${comprobanteRef || 'N/A'}`,
           operadorMovilUser: operadorNC, comprobanteOriginal: comprobanteRef,
           concepto: { idConcepto: 20, codigoConcepto: 'GIFTCARD', nombreConcepto: 'VENTA GIFT CARD' },
