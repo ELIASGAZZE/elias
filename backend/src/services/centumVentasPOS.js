@@ -778,7 +778,7 @@ async function obtenerVentaCentum(idVenta) {
  * @returns {Promise<Object|null>} Venta encontrada o null
  */
 async function buscarVentaExistenteEnCentum(ventaPosId, sucursalFisicaId, puntoVenta, total) {
-  if (!ventaPosId || !total || total <= 0) return null
+  if (!ventaPosId || !total || total === 0) return null
 
   try {
     // Buscar en Centum BI (SQL Server) si ya existe una venta que coincida
@@ -1255,7 +1255,8 @@ async function retrySyncVentasCentum() {
       if (venta.tipo === 'nota_credito') {
         // ============ VERIFICACIÓN BI PARA NCs (anti-duplicación) ============
         {
-          const checkNC = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, Math.abs(parseFloat(venta.total) || 0))
+          // Pasar total con signo negativo para que BI matchee NCs (no facturas positivas)
+          const checkNC = await verificarEnBI(venta.id, sucursalFisicaId, puntoVenta, parseFloat(venta.total) || 0)
 
           if (checkNC.found) {
             logger.info(`[RetryCentumVentas] NC ${venta.id} ENCONTRADA en BI (intento ${intentos}): IdVenta=${checkNC.data.IdVenta}`)
