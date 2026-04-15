@@ -356,14 +356,9 @@ const NuevaOrden = () => {
       const nuevos = [...prev]
       const item = { ...nuevos[idx] }
       if (item.es_pesable) {
-        const ppp = item.peso_promedio_pieza
         if (item.modo === 'pzas') {
-          // pzas → kg
-          if (ppp) item.cantidad_solicitada = Math.round(item.cantidad_solicitada * ppp * 1000) / 1000
           item.modo = 'kg'
         } else {
-          // kg → pzas
-          if (ppp) item.cantidad_solicitada = Math.round(item.cantidad_solicitada / ppp)
           item.modo = 'pzas'
         }
       } else {
@@ -556,13 +551,7 @@ const NuevaOrden = () => {
                         const actual = item.modo || 'kg'
                         const target = todoPzas ? 'kg' : 'pzas'
                         if (actual === target) return item
-                        const ppp = item.peso_promedio_pieza
-                        if (!ppp) return { ...item, modo: target }
-                        if (target === 'pzas') {
-                          return { ...item, modo: 'pzas', cantidad_solicitada: Math.round(item.cantidad_solicitada / ppp) }
-                        } else {
-                          return { ...item, modo: 'kg', cantidad_solicitada: Math.round(item.cantidad_solicitada * ppp * 1000) / 1000 }
-                        }
+                        return { ...item, modo: target }
                       }))}
                       className="text-xs text-amber-600 hover:text-amber-800 font-medium"
                     >
