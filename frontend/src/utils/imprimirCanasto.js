@@ -62,11 +62,12 @@ export function imprimirCanastos(canastos) {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border-bottom: 1px dashed #ccc;
+    border: 1px dashed #999;
     box-sizing: border-box;
     padding: 2mm 0;
+    margin-bottom: 1mm;
   }
-  .fila:last-child { border-bottom: none; }
+  .fila:last-child { margin-bottom: 0; }
   .fila svg { width: 80mm; height: 20mm; }
   .codigo {
     font-family: monospace;
