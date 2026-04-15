@@ -1,34 +1,29 @@
 /**
  * Imprime etiquetas de canastos con código de barras Code 128
- * Formato: etiqueta 100x150mm, 4 códigos por etiqueta (cada uno ~100x35mm)
- * Se imprimen de a 4 y se cortan con tijera
+ * Cada canasto genera 1 página con 4 códigos iguales (para pegar en los 4 lados)
+ * Pensado para impresora Zebra GK420t con etiquetas 100x150mm
  * @param {Array<{codigo: string}>} canastos - Array de canastos a imprimir
  */
 export function imprimirCanastos(canastos) {
   if (!canastos || canastos.length === 0) return
 
-  // Agrupar de a 4 canastos por etiqueta
-  const paginas = []
-  for (let i = 0; i < canastos.length; i += 4) {
-    paginas.push(canastos.slice(i, i + 4))
-  }
-
-  const paginasHTML = paginas.map((grupo, pIdx) => {
-    const filas = grupo.map((c, fIdx) => `
+  // Cada canasto = 1 página con 4 copias del mismo código
+  const paginasHTML = canastos.map((c, cIdx) => {
+    const filas = [0, 1, 2, 3].map(fIdx => `
       <div class="fila">
-        <svg id="bc-${pIdx}-${fIdx}"></svg>
+        <canvas id="bc-${cIdx}-${fIdx}"></canvas>
         <div class="codigo">${c.codigo}</div>
       </div>
     `).join('')
     return `<div class="pagina">${filas}</div>`
   }).join('')
 
-  const barcodeScripts = paginas.map((grupo, pIdx) =>
-    grupo.map((c, fIdx) => `
-      JsBarcode("#bc-${pIdx}-${fIdx}", "${c.codigo}", {
+  const barcodeScripts = canastos.map((c, cIdx) =>
+    [0, 1, 2, 3].map(fIdx => `
+      JsBarcode("#bc-${cIdx}-${fIdx}", "${c.codigo}", {
         format: "CODE128",
-        width: 2,
-        height: 50,
+        width: 4,
+        height: 100,
         displayValue: false,
         margin: 0,
       });
@@ -42,17 +37,13 @@ export function imprimirCanastos(canastos) {
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
 <style>
   @page { size: 100mm 150mm; margin: 0; }
-  body { margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; }
   .pagina {
     width: 100mm;
-    height: 150mm;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
+    height: 148mm;
     page-break-after: always;
-    padding: 2mm 0;
-    box-sizing: border-box;
+    padding: 1mm 2mm;
   }
   .pagina:last-child { page-break-after: auto; }
   .fila {
@@ -62,30 +53,33 @@ export function imprimirCanastos(canastos) {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border: 1px dashed #999;
-    box-sizing: border-box;
-    padding: 2mm 0;
-    margin-bottom: 1mm;
+    border: 1px dashed #888;
+    margin: 0 auto 1mm auto;
+    padding: 1mm 2mm;
+    overflow: hidden;
   }
-  .fila:last-child { margin-bottom: 0; }
-  .fila svg { width: 80mm; height: 20mm; }
+  .fila canvas {
+    max-width: 90mm;
+    height: 22mm;
+  }
   .codigo {
-    font-family: monospace;
-    font-size: 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 12pt;
     font-weight: bold;
     margin-top: 1mm;
     letter-spacing: 2px;
+    text-align: center;
   }
 </style>
 </head><body>
 ${paginasHTML}
 <script>
   ${barcodeScripts}
-  window.onload = function() { setTimeout(function() { window.print(); }, 300); };
+  window.onload = function() { setTimeout(function() { window.print(); }, 400); };
 <\/script>
 </body></html>`
 
-  const win = window.open('', '_blank', 'width=400,height=600')
+  const win = window.open('', '_blank', 'width=380,height=570')
   if (win) {
     win.document.write(html)
     win.document.close()
@@ -93,7 +87,7 @@ ${paginasHTML}
 }
 
 /**
- * Imprime una sola etiqueta de canasto
+ * Imprime una sola etiqueta de canasto (4 copias del código para los 4 lados)
  */
 export function imprimirCanasto(canasto) {
   imprimirCanastos([canasto])
