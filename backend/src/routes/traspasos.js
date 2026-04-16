@@ -615,7 +615,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandl
     try {
       const { data: sucOrigen } = await supabase
         .from('sucursales')
-        .select('centum_sucursal_id')
+        .select('centum_sucursal_id, centum_operador_empresa')
         .eq('id', data.sucursal_origen_id)
         .single()
 
@@ -626,6 +626,7 @@ router.put('/ordenes/:id/preparado', verificarAuth, soloGestorOAdmin, asyncHandl
           centumSucursalId: sucOrigen.centum_sucursal_id,
           items: itemsPreparados,
           ordenNumero: data.numero,
+          operadorMovilUser: sucOrigen.centum_operador_empresa,
         })
         await supabase.from('ordenes_traspaso').update({
           centum_ajuste_origen_id: centumAjusteResult.ajusteId,
@@ -850,10 +851,10 @@ router.put('/ordenes/:id/recibir', verificarAuth, asyncHandler(async (req, res) 
 
     if (!orden) return res.status(400).json({ error: 'La orden debe estar despachada para recibir' })
 
-    // Ajuste positivo de stock en destino (stub — se implementará en recepción)
+    // Ajuste positivo de stock en destino
     const { data: sucDestino } = await supabase
       .from('sucursales')
-      .select('centum_sucursal_id')
+      .select('centum_sucursal_id, centum_operador_empresa')
       .eq('id', orden.sucursal_destino_id)
       .single()
 
@@ -862,6 +863,7 @@ router.put('/ordenes/:id/recibir', verificarAuth, asyncHandler(async (req, res) 
       centumSucursalId: sucDestino?.centum_sucursal_id,
       items: orden.items || [],
       ordenNumero: orden.numero,
+      operadorMovilUser: sucDestino?.centum_operador_empresa,
     })
 
     const { data, error } = await supabase
@@ -2257,7 +2259,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
     try {
       const { data: sucOrigen } = await supabase
         .from('sucursales')
-        .select('centum_sucursal_id')
+        .select('centum_sucursal_id, centum_operador_empresa')
         .eq('id', ordenPreparada.sucursal_origen_id)
         .single()
 
@@ -2271,6 +2273,7 @@ router.post('/ordenes/:id/preparar-con-canastos', verificarAuth, soloGestorOAdmi
           centumSucursalId: sucOrigen.centum_sucursal_id,
           items: itemsPreparados,
           ordenNumero: ordenPreparada.numero,
+          operadorMovilUser: sucOrigen.centum_operador_empresa,
         })
 
         // Guardar resultado del ajuste en la orden

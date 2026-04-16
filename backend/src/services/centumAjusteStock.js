@@ -11,12 +11,16 @@ const API_KEY = process.env.CENTUM_API_KEY
 const CONSUMER_ID = process.env.CENTUM_CONSUMER_ID || '2'
 const CONCEPTO_VARIOS_TRASPASO = parseInt(process.env.CENTUM_CONCEPTO_VARIOS_TRASPASO || '42')
 
-function getHeaders() {
-  return {
+function getHeaders(operadorMovilUser) {
+  const headers = {
     'Content-Type': 'application/json',
     'CentumSuiteConsumidorApiPublicaId': CONSUMER_ID,
     'CentumSuiteAccessToken': generateAccessToken(API_KEY),
   }
+  if (operadorMovilUser) {
+    headers['CentumSuiteOperadorMovilUser'] = operadorMovilUser
+  }
+  return headers
 }
 
 /**
@@ -29,9 +33,10 @@ function getHeaders() {
  * @param {number} params.centumSucursalId - IdSucursalFisica en Centum
  * @param {Array} params.items - [{articulo_id, codigo, nombre, cantidad, es_pesable}]
  * @param {string} params.ordenNumero - Número de orden (ej: OT-000003)
+ * @param {string} params.operadorMovilUser - Operador Centum de la sucursal (ej: APIPAE)
  * @returns {Promise<{ok: boolean, ajusteId: number|null, error: string|null}>}
  */
-async function ajusteStockNegativo({ ordenId, centumSucursalId, items, ordenNumero }) {
+async function ajusteStockNegativo({ ordenId, centumSucursalId, items, ordenNumero, operadorMovilUser }) {
   const inicio = Date.now()
 
   // ── Anti-duplicación: verificar si ya se hizo el ajuste ──
@@ -82,11 +87,11 @@ async function ajusteStockNegativo({ ordenId, centumSucursalId, items, ordenNume
   const url = `${BASE_URL}/AjustesMovimientoStock?bAjustePrevioACero=false`
 
   try {
-    logger.info(`[Centum Stock] Ajuste negativo — Sucursal: ${centumSucursalId}, Orden: ${ordenNumero}, Items: ${itemsValidos.length}`)
+    logger.info(`[Centum Stock] Ajuste negativo — Sucursal: ${centumSucursalId}, Operador: ${operadorMovilUser}, Orden: ${ordenNumero}, Items: ${itemsValidos.length}`)
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(operadorMovilUser),
       body: JSON.stringify(body),
     }, 30000)
 
@@ -135,13 +140,22 @@ async function ajusteStockNegativo({ ordenId, centumSucursalId, items, ordenNume
 }
 
 /**
- * Ajuste positivo de stock (entrada en sucursal destino)
- * Se llamará desde el módulo de recepción (por implementar)
+ * Ajuste positivo de stock en Centum (alta por traspaso entrante)
+ * Se llama al confirmar la recepción de una orden de traspaso.
+ * Usa cantidades POSITIVAS para incrementar stock en la sucursal destino.
+ *
+ * @param {Object} params
+ * @param {string} params.ordenId - UUID de la orden de traspaso
+ * @param {number} params.centumSucursalId - IdSucursalFisica en Centum (destino)
+ * @param {Array} params.items - [{articulo_id, codigo, nombre, cantidad, es_pesable}]
+ * @param {string} params.ordenNumero - Número de orden (ej: OT-000003)
+ * @param {string} params.operadorMovilUser - Operador Centum de la sucursal destino (ej: APICE)
+ * @returns {Promise<{ok: boolean, ajusteId: number|null, error: string|null}>}
  */
-async function ajusteStockPositivo({ ordenId, centumSucursalId, items, ordenNumero }) {
+async function ajusteStockPositivo({ ordenId, centumSucursalId, items, ordenNumero, operadorMovilUser }) {
   const inicio = Date.now()
 
-  // Anti-duplicación
+  // ── Anti-duplicación: verificar si ya se hizo el ajuste ──
   try {
     const { data: orden } = await supabase
       .from('ordenes_traspaso')
@@ -157,23 +171,87 @@ async function ajusteStockPositivo({ ordenId, centumSucursalId, items, ordenNume
     logger.warn(`[Centum Stock] No se pudo verificar duplicación positivo para ${ordenNumero}:`, checkErr.message)
   }
 
-  // STUB por ahora — se implementará en el módulo de recepción
-  logger.info(`[Centum Stock STUB] Ajuste positivo — Sucursal: ${centumSucursalId}, Orden: ${ordenNumero}, Items: ${items.length}`)
+  // ── Filtrar items válidos (que tengan articulo_id numérico) ──
+  const itemsValidos = items.filter(it => it.articulo_id && !isNaN(parseInt(it.articulo_id)) && parseFloat(it.cantidad) > 0)
 
-  const ajusteId = `STUB-POS-${Date.now()}`
+  if (itemsValidos.length === 0) {
+    const msg = `No hay items válidos para ajustar stock en orden ${ordenNumero}`
+    logger.warn(`[Centum Stock] ${msg}`)
+    return { ok: false, ajusteId: null, error: msg }
+  }
 
-  await registrarLlamada({
-    servicio: 'centum',
-    endpoint: 'AjusteStockPositivo (STUB)',
-    metodo: 'POST',
-    request_body: { centumSucursalId, items: items.length, ordenNumero },
-    response_body: { ajusteId, stub: true },
-    status: 200,
-    duracion: Date.now() - inicio,
-    exito: true,
-  })
+  // ── Construir body del ajuste ──
+  const body = {
+    FechaImputacion: new Date().toISOString(),
+    ConceptoVarios: { IdConceptoVarios: CONCEPTO_VARIOS_TRASPASO },
+    SucursalFisica: { IdSucursalFisica: centumSucursalId },
+    AjusteMovimientoStockItems: itemsValidos.map((it, idx) => ({
+      IdAjusteMovimientoStockItem: idx + 1,
+      Articulo: { IdArticulo: parseInt(it.articulo_id) },
+      Cantidad: Math.abs(parseFloat(it.cantidad)),  // Positivo = alta de stock
+      Existencias: 0,
+      CostoReposicion: 0,
+      SegundoControlStock: 0,
+      ExistenciasSegundoControlStock: 0,
+      NumeroLote: '',
+      FechaVencimiento: '0001-01-01T00:00:00',
+      Observacion: `Traspaso ${ordenNumero}`,
+    })),
+  }
 
-  return { ok: true, ajusteId, error: null }
+  const url = `${BASE_URL}/AjustesMovimientoStock?bAjustePrevioACero=false`
+
+  try {
+    logger.info(`[Centum Stock] Ajuste positivo — Sucursal: ${centumSucursalId}, Operador: ${operadorMovilUser}, Orden: ${ordenNumero}, Items: ${itemsValidos.length}`)
+
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: getHeaders(operadorMovilUser),
+      body: JSON.stringify(body),
+    }, 30000)
+
+    const responseText = await response.text()
+    let responseData
+    try { responseData = JSON.parse(responseText) } catch { responseData = responseText }
+
+    await registrarLlamada({
+      servicio: 'centum',
+      endpoint: 'AjustesMovimientoStock (positivo)',
+      metodo: 'POST',
+      request_body: { url, body, ordenNumero },
+      response_body: responseData,
+      status: response.status,
+      duracion: Date.now() - inicio,
+      exito: response.status === 201 || response.status === 200,
+    })
+
+    if (response.status === 201 || response.status === 200) {
+      const ajusteId = responseData?.IdAjusteMovimientoStock || null
+      logger.info(`[Centum Stock] Ajuste positivo creado OK — ID: ${ajusteId}, Orden: ${ordenNumero}`)
+      return { ok: true, ajusteId: ajusteId ? String(ajusteId) : `HTTP${response.status}-${Date.now()}`, error: null }
+    }
+
+    // Error de Centum
+    const errorMsg = responseData?.Message || responseData?.ExceptionMessage || JSON.stringify(responseData)
+    logger.error(`[Centum Stock] Error ajuste positivo HTTP ${response.status} — Orden: ${ordenNumero}: ${errorMsg}`)
+    return { ok: false, ajusteId: null, error: `HTTP ${response.status}: ${errorMsg}` }
+
+  } catch (err) {
+    logger.error(`[Centum Stock] Excepción ajuste positivo — Orden: ${ordenNumero}:`, err.message)
+
+    await registrarLlamada({
+      servicio: 'centum',
+      endpoint: 'AjustesMovimientoStock (positivo)',
+      metodo: 'POST',
+      request_body: { url, body, ordenNumero },
+      response_body: { error: err.message },
+      status: 0,
+      duracion: Date.now() - inicio,
+      exito: false,
+    })
+
+    return { ok: false, ajusteId: null, error: err.message }
+  }
 }
 
 module.exports = { ajusteStockNegativo, ajusteStockPositivo }
