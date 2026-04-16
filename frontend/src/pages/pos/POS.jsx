@@ -3166,7 +3166,11 @@ const POS = () => {
                 )}
                 {/* Si hay pedido en proceso YA pagado y NO editando: entregar directo */}
                 {pedidoEnProceso && !pedidoEnProceso.editando && pedidoEnProceso.esPagado && (() => {
-                  const dif = total - (pedidoEnProceso.totalPagado || 0)
+                  // Aplicar descuento forma pago congelado del pedido (ej. 10% efectivo)
+                  // para que la diferencia visible coincida con la que calcula handleEntregarPedidoPagado.
+                  const descFP = parseFloat(pedidoEnProceso.descuento_forma_pago?.total) || 0
+                  const totalConDescuento = Math.round((total - descFP) * 100) / 100
+                  const dif = totalConDescuento - (pedidoEnProceso.totalPagado || 0)
                   const saldoCubreFaltante = dif > 0.01 && saldoCliente >= dif
                   const habilitado = dif <= 0.01 || saldoCubreFaltante
                   return (
@@ -3179,7 +3183,7 @@ const POS = () => {
                         : dif > 0.01 && saldoCubreFaltante ? `Entregar (usa saldo ${formatPrecio(dif)})`
                         : dif > 0.01 ? `Falta cobrar ${formatPrecio(dif)}`
                         : dif < -0.01 ? `Entregar (saldo +${formatPrecio(Math.abs(dif))})`
-                        : `Entregar ${formatPrecio(total)}`
+                        : `Entregar ${formatPrecio(totalConDescuento)}`
                       }
                     </button>
                   )
