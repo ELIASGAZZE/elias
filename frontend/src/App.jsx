@@ -95,6 +95,8 @@ const PedidosExtra = lazy(() => import('./pages/compras/PedidosExtra'))
 // Mercado Libre
 const MercadoLibreHome = lazy(() => import('./pages/mercadolibre/MercadoLibreHome'))
 const MLVentas = lazy(() => import('./pages/mercadolibre/MLVentas'))
+const MLPosventa = lazy(() => import('./pages/mercadolibre/MLPosventa'))
+const MLPublicaciones = lazy(() => import('./pages/mercadolibre/MLPublicaciones'))
 
 // Admin
 const AdminArticulos = lazy(() => import('./pages/admin/AdminArticulos'))
@@ -335,6 +337,8 @@ const App = () => {
           {/* App: Mercado Libre */}
           <Route path="/mercadolibre" element={<RutaProtegida soloAdmin><MercadoLibreHome /></RutaProtegida>} />
           <Route path="/mercadolibre/ventas" element={<RutaProtegida soloAdmin><MLVentas /></RutaProtegida>} />
+          <Route path="/mercadolibre/posventa" element={<RutaProtegida soloAdmin><MLPosventa /></RutaProtegida>} />
+          <Route path="/mercadolibre/publicaciones" element={<RutaProtegida soloAdmin><MLPublicaciones /></RutaProtegida>} />
 
           {/* Rutas admin */}
           <Route path="/admin/articulos" element={

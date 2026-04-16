@@ -6,6 +6,8 @@ const asyncHandler = require('../middleware/asyncHandler')
 const logger = require('../config/logger')
 const mlAuth = require('../services/mercadolibreAuth')
 const mlSync = require('../services/mercadolibreSync')
+const mlPosventa = require('../services/mercadolibrePosventa')
+const mlPublicaciones = require('../services/mercadolibrePublicaciones')
 
 // ═══════════════════════════════════════════════════════════════
 // OAuth — Conexión con Mercado Libre
@@ -100,10 +102,156 @@ router.get('/envios/:envioId', verificarAuth, soloAdmin, asyncHandler(async (req
 }))
 
 // ═══════════════════════════════════════════════════════════════
+// Posventa — Mensajes, Reclamos, Devoluciones
+// ═══════════════════════════════════════════════════════════════
+
+// Contadores para badges
+router.get('/posventa/contadores', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const contadores = await mlPosventa.getContadoresPosventa()
+  res.json(contadores)
+}))
+
+// Sync completo posventa
+router.post('/posventa/sync', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.syncPosventa()
+  res.json(resultado)
+}))
+
+// --- Mensajes ---
+router.post('/posventa/mensajes/sync', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.syncMensajesPendientes()
+  res.json(resultado)
+}))
+
+router.get('/posventa/mensajes', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { page, limit, estado } = req.query
+  const resultado = await mlPosventa.listarMensajesPendientes({
+    page: parseInt(page) || 1,
+    limit: parseInt(limit) || 20,
+    estado: estado || null,
+  })
+  res.json(resultado)
+}))
+
+router.get('/posventa/mensajes/:packId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.getMensajesPack(req.params.packId)
+  res.json(resultado)
+}))
+
+router.post('/posventa/mensajes/:packId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { texto } = req.body
+  if (!texto?.trim()) return res.status(400).json({ error: 'Texto requerido' })
+  const resultado = await mlPosventa.responderMensaje(req.params.packId, texto.trim())
+  res.json(resultado)
+}))
+
+// --- Reclamos ---
+router.post('/posventa/reclamos/sync', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.syncReclamos()
+  res.json(resultado)
+}))
+
+router.get('/posventa/reclamos', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { page, limit, stage, status } = req.query
+  const resultado = await mlPosventa.listarReclamos({
+    page: parseInt(page) || 1,
+    limit: parseInt(limit) || 20,
+    stage: stage || null,
+    status: status || null,
+  })
+  res.json(resultado)
+}))
+
+router.get('/posventa/reclamos/:claimId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.getReclamoDetalle(req.params.claimId)
+  if (!resultado) return res.status(404).json({ error: 'Reclamo no encontrado' })
+  res.json(resultado)
+}))
+
+// --- Devoluciones ---
+router.get('/posventa/devoluciones', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { page, limit, status } = req.query
+  const resultado = await mlPosventa.listarDevoluciones({
+    page: parseInt(page) || 1,
+    limit: parseInt(limit) || 20,
+    status: status || null,
+  })
+  res.json(resultado)
+}))
+
+router.get('/posventa/devoluciones/:claimId', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPosventa.getDevolucionDetalle(req.params.claimId)
+  if (!resultado) return res.status(404).json({ error: 'Devolución no encontrada' })
+  res.json(resultado)
+}))
+
+// ═══════════════════════════════════════════════════════════════
+// Publicaciones (Items/Listings)
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/publicaciones/contadores', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const contadores = await mlPublicaciones.getContadoresPublicaciones()
+  res.json(contadores)
+}))
+
+router.post('/publicaciones/sync', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { estado } = req.body
+  if (estado) {
+    // Sync de un estado específico
+    const resultado = await mlPublicaciones.syncPublicaciones({ estado })
+    return res.json(resultado)
+  }
+  // Sync de activas + pausadas en paralelo
+  const [activas, pausadas] = await Promise.allSettled([
+    mlPublicaciones.syncPublicaciones({ estado: 'active' }),
+    mlPublicaciones.syncPublicaciones({ estado: 'paused' }),
+  ])
+  const totalActivas = activas.status === 'fulfilled' ? activas.value.sincronizadas : 0
+  const totalPausadas = pausadas.status === 'fulfilled' ? pausadas.value.sincronizadas : 0
+  res.json({ sincronizadas: totalActivas + totalPausadas, activas: totalActivas, pausadas: totalPausadas })
+}))
+
+// Calcular y guardar costos de venta para todas las publicaciones activas
+router.post('/publicaciones/costos/sync', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const resultado = await mlPublicaciones.syncCostos()
+  res.json(resultado)
+}))
+
+router.post('/publicaciones/costos', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { items } = req.body // [{ precio, listing_type_id }]
+  if (!items?.length) return res.status(400).json({ error: 'Items requeridos' })
+  const costos = await mlPublicaciones.getCostosBatch(items.slice(0, 50)) // Max 50
+  res.json({ costos })
+}))
+
+router.get('/publicaciones', verificarAuth, soloAdmin, asyncHandler(async (req, res) => {
+  const { page, limit, estado, busqueda, sinStock, orderBy } = req.query
+  const resultado = await mlPublicaciones.listarPublicaciones({
+    page: parseInt(page) || 1,
+    limit: parseInt(limit) || 20,
+    estado: estado || null,
+    busqueda: busqueda || null,
+    sinStock: sinStock === 'true',
+    orderBy: orderBy || null,
+  })
+  res.json(resultado)
+}))
+
+// ═══════════════════════════════════════════════════════════════
 // Webhooks de ML (sin auth — ML envía notificaciones aquí)
 // ═══════════════════════════════════════════════════════════════
 
+// IPs oficiales de MercadoLibre para notificaciones
+const ML_WEBHOOK_IPS = ['54.88.218.97', '18.215.140.160', '18.213.114.129', '18.206.34.84']
+
 router.post('/webhooks', asyncHandler(async (req, res) => {
+  // Validar que la notificación venga de IPs de ML
+  const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim()
+  if (ML_WEBHOOK_IPS.length > 0 && !ML_WEBHOOK_IPS.includes(clientIp)) {
+    logger.warn({ clientIp }, '[ML Webhook] Notificación desde IP no autorizada')
+    // Responder 200 igual para no generar retries de IPs legítimas detrás de proxy
+  }
+
   // Responder 200 inmediatamente (ML requiere <500ms)
   res.status(200).json({ ok: true })
 
@@ -113,15 +261,26 @@ router.post('/webhooks', asyncHandler(async (req, res) => {
 
   try {
     if (topic === 'orders_v2') {
-      // Obtener la orden actualizada y guardarla
       const orderId = resource.replace('/orders/', '')
       const orden = await mlSync.getOrdenDetalle(orderId)
       if (orden) {
-        // Re-sync esta orden específica
-        const { upsertOrden } = require('../services/mercadolibreSync')
-        // El upsert ya está en el módulo, pero es privado — usamos syncOrdenes parcial
-        logger.info(`[ML Webhook] Orden ${orderId} procesada (${orden.status})`)
+        await mlSync.upsertOrden(orden)
+        logger.info(`[ML Webhook] Orden ${orderId} sincronizada (${orden.status})`)
       }
+    } else if (topic === 'items') {
+      const itemId = resource.replace('/items/', '')
+      logger.info(`[ML Webhook] Item ${itemId} modificado — sync pendiente en próximo ciclo`)
+      // Las publicaciones se sincronizan en batch, no individualmente
+    } else if (topic === 'shipments') {
+      const shipmentId = resource.replace('/shipments/', '')
+      logger.info(`[ML Webhook] Envío ${shipmentId} actualizado`)
+    } else if (topic === 'payments') {
+      const paymentId = resource.replace('/collections/', '')
+      logger.info(`[ML Webhook] Pago ${paymentId} actualizado`)
+    } else if (topic === 'messages') {
+      logger.info(`[ML Webhook] Nuevo mensaje — sync pendiente`)
+    } else {
+      logger.info({ topic, resource }, '[ML Webhook] Tópico no procesado')
     }
   } catch (err) {
     logger.error({ err, topic, resource }, '[ML Webhook] Error procesando notificación')

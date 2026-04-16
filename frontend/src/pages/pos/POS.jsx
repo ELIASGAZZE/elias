@@ -3338,7 +3338,6 @@ const POS = () => {
                       <div className="p-3 flex flex-col items-center text-center min-h-[100px] justify-center">
                         {art.codigo && <span className="text-xl font-bold text-gray-800 font-mono">{art.codigo}</span>}
                         <span className="text-xs font-semibold text-gray-700 mt-1 line-clamp-2 leading-tight">{art.nombre}</span>
-                        <span className="text-[11px] text-gray-500 mt-1.5">{formatPrecio(precioFinal)}</span>
                       </div>
                     </div>
                   )

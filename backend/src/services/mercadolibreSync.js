@@ -190,6 +190,7 @@ async function listarOrdenes({ estado, desde, hasta, busqueda, page = 1, limit =
 
 module.exports = {
   syncOrdenes,
+  upsertOrden,
   getOrdenDetalle,
   getEnvioDetalle,
   getDashboard,
