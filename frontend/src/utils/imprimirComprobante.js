@@ -606,6 +606,12 @@ const MEDIOS_LABELS_A4 = {
 export async function imprimirComprobanteA4(venta, caeData) {
   const items = typeof venta.items === 'string' ? JSON.parse(venta.items) : (venta.items || [])
   const pagos = venta.pagos || []
+  const descFormaPago = (() => {
+    const raw = venta.descuento_forma_pago
+    if (!raw) return null
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return null }
+  })()
+  const descFormaDetalle = Array.isArray(descFormaPago?.detalle) ? descFormaPago.detalle : []
   const esNC = venta.tipo === 'nota_credito'
   const esFacturaA = caeData?.esFacturaA || false
   const cliente = caeData?.cliente || null
@@ -757,6 +763,7 @@ export async function imprimirComprobanteA4(venta, caeData) {
       ${esFacturaA
         ? `<div class="totales-row"><span>Subtotal:</span><span>${formatMonto(netoTotal)}</span></div>
            ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatMonto(venta.descuento_total)}</span></div>` : ''}
+           ${descFormaDetalle.map(d => `<div class="totales-row"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}:</span><span>-${formatMonto(d.descuento)}</span></div>`).join('')}
            <div class="totales-row"><span>Subtotal:</span><span>${formatMonto(netoTotal)}</span></div>
            <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
            <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
@@ -764,6 +771,7 @@ export async function imprimirComprobanteA4(venta, caeData) {
            <div class="totales-row total"><span>TOTAL:</span><span>${formatMonto(totalNum)}</span></div>`
         : `<div class="totales-row"><span>Subtotal:</span><span>${formatMonto(venta.subtotal || venta.total)}</span></div>
            ${parseFloat(venta.descuento_total) > 0 ? `<div class="totales-row"><span>Dto:</span><span>-${formatMonto(venta.descuento_total)}</span></div>` : ''}
+           ${descFormaDetalle.map(d => `<div class="totales-row"><span>Desc. ${escapeHtml(d.formaCobro)} ${d.porcentaje}%${d.baseDescuento ? ` s/ ${formatMonto(d.baseDescuento)}` : ''}:</span><span>-${formatMonto(d.descuento)}</span></div>`).join('')}
            <div class="totales-row"><span>Imp. Internos:</span><span>$0,00</span></div>
            <div class="totales-row"><span>Reg. Especiales:</span><span>$0,00</span></div>
            <div class="totales-row total"><span>TOTAL:</span><span>${formatMonto(totalNum)}</span></div>`
