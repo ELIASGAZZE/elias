@@ -3,6 +3,34 @@ import api, { isNetworkError } from '../../../services/api'
 import { getClientes } from '../../../services/offlineDB'
 import { formatPrecio } from '../utils/promotionEngine'
 
+// Cuando el cobro anticipado incluye vuelto (efectivo recibido > total),
+// persistimos el NETO que queda en caja — no lo que entregó el cliente.
+// Si no se hiciera, al entregar el sistema creería que hay un saldo a favor falso
+// y la caja acabaría con un faltante igual al vuelto.
+function aplicarVueltoAPagoAnticipado(datosPago) {
+  const vuelto = parseFloat(datosPago?.vuelto) || 0
+  const montoPagado = parseFloat(datosPago?.monto_pagado) || 0
+  const pagos = Array.isArray(datosPago?.pagos) ? datosPago.pagos : []
+  if (vuelto <= 0 || pagos.length === 0) {
+    return { pagos, montoPagadoNeto: montoPagado }
+  }
+  // El vuelto siempre se devuelve en efectivo — restarlo del primer pago tipo Efectivo
+  const idxEfectivo = pagos.findIndex(p => (p.tipo || '').toLowerCase() === 'efectivo')
+  if (idxEfectivo < 0) {
+    // Sin efectivo no debería haber vuelto, pero por las dudas no tocamos
+    return { pagos, montoPagadoNeto: montoPagado }
+  }
+  const pagosNeto = pagos.map((p, i) => {
+    if (i !== idxEfectivo) return p
+    const montoNeto = Math.round(((parseFloat(p.monto) || 0) - vuelto) * 100) / 100
+    return { ...p, monto: Math.max(0, montoNeto) }
+  }).filter(p => (parseFloat(p.monto) || 0) > 0)
+  return {
+    pagos: pagosNeto,
+    montoPagadoNeto: Math.round((montoPagado - vuelto) * 100) / 100,
+  }
+}
+
 export function usePedidoWizard({
   carrito,
   cliente,
@@ -393,18 +421,22 @@ export function usePedidoWizard({
       }
       if (pagado) {
         if (datosPago?.pagos) {
-          const resumenPago = datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ')
-          payload.observaciones = `PAGO ANTICIPADO: ${resumenPago}`
-          payload.pagos_anticipado = datosPago.pagos
+          const { pagos: pagosNeto, montoPagadoNeto } = aplicarVueltoAPagoAnticipado(datosPago)
+          const vueltoDado = parseFloat(datosPago?.vuelto) || 0
+          const resumenPago = pagosNeto.map(p => `${p.tipo}: $${p.monto}`).join(', ')
+          payload.observaciones = vueltoDado > 0
+            ? `PAGO ANTICIPADO: ${resumenPago} (se dio $${vueltoDado} de vuelto al cobrar)`
+            : `PAGO ANTICIPADO: ${resumenPago}`
+          payload.pagos_anticipado = pagosNeto
           payload.caja_cobro_id = terminalConfig?.caja_id || null
           if (datosPago.descuento_forma_pago) {
             payload.descuento_forma_pago = datosPago.descuento_forma_pago
           }
+          payload.total_pagado = montoPagadoNeto || total
         } else {
           payload.observaciones = 'PAGO ANTICIPADO'
+          payload.total_pagado = datosPago?.monto_pagado || total
         }
-        // Usar el total con descuento si está disponible
-        payload.total_pagado = datosPago?.monto_pagado || total
       } else if (observacionExtra) {
         payload.observaciones = observacionExtra
       }
@@ -446,11 +478,16 @@ export function usePedidoWizard({
       setCobrarPedidoExistente(null);
       (async () => {
         try {
-          const resumenPago = datosPago?.pagos ? datosPago.pagos.map(p => `${p.tipo}: $${p.monto}`).join(', ') : ''
+          const { pagos: pagosNeto, montoPagadoNeto } = aplicarVueltoAPagoAnticipado(datosPago)
+          const vueltoDado = parseFloat(datosPago?.vuelto) || 0
+          const resumenPago = pagosNeto.map(p => `${p.tipo}: $${p.monto}`).join(', ')
+          const observaciones = vueltoDado > 0
+            ? `PAGO ANTICIPADO: ${resumenPago} (se dio $${vueltoDado} de vuelto al cobrar)`
+            : `PAGO ANTICIPADO: ${resumenPago}`
           await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
-            total_pagado: datosPago?.monto_pagado || pedido.total,
-            observaciones: `PAGO ANTICIPADO: ${resumenPago}`,
-            pagos_anticipado: datosPago?.pagos || [],
+            total_pagado: montoPagadoNeto || pedido.total,
+            observaciones,
+            pagos_anticipado: pagosNeto,
             caja_cobro_id: terminalConfig?.caja_id || null,
             descuento_forma_pago: datosPago?.descuento_forma_pago || null,
           })
