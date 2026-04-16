@@ -2120,7 +2120,10 @@ const POS = () => {
         items,
         promociones_aplicadas: null,
         subtotal: total,
-        descuento_total: descuentoTotal,
+        // descuento_total es para promos sobre items; el descuento por forma de pago va aparte.
+        // Si se guarda en ambos campos, DetalleVenta los resta dos veces y aparece un falso
+        // "Redondeo efectivo" que cancela el descuento a la vista.
+        descuento_total: 0,
         total: totalConDescuento,
         monto_pagado: montoAjustado,
         vuelto: 0,
