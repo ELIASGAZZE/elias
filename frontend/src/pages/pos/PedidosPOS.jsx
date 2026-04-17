@@ -785,19 +785,19 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                       {(pedido.cajero_nombre || pedido.perfiles?.nombre) && (
                         <>
                           <span>|</span>
-                          <span>Creado por: {pedido.cajero_nombre || pedido.perfiles.nombre}{pedido.creado_en_cierre ? ` (Caja #${pedido.creado_en_cierre})` : ''}{pedido.creado_sucursal_nombre ? ` - ${pedido.creado_sucursal_nombre}` : ''}</span>
+                          <span>Creado por: {pedido.cajero_nombre || pedido.perfiles.nombre}{pedido.creado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedido.creado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800" onClick={e => e.stopPropagation()}>Caja #{pedido.creado_en_cierre}</a>)</> : ''}{pedido.creado_sucursal_nombre ? ` - ${pedido.creado_sucursal_nombre}` : ''}</span>
                         </>
                       )}
-                      {(pedido.cobrado_por || (pedido.cobrado_at && pedido.mp_payment_id)) && (
+                      {(pedido.cobrado_por || pedido.cobrado_en_cierre || (pedido.cobrado_at && pedido.mp_payment_id)) && (
                         <>
                           <span>|</span>
-                          <span>Cobrado por: {pedido.cobrado_por || 'Talo Pay'}{pedido.cobrado_en_cierre ? ` (Caja #${pedido.cobrado_en_cierre})` : ''}{pedido.cobrado_sucursal_nombre ? ` - ${pedido.cobrado_sucursal_nombre}` : ''}{pedido.cobrado_at ? ` el ${new Date(pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                          <span>{pedido.cobrado_en_cierre && !pedido.cobrado_por ? 'Cobro en delivery: Efectivo' : `Cobrado por: ${pedido.cobrado_por || 'Talo Pay'}`}{pedido.cobrado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedido.cobrado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800" onClick={e => e.stopPropagation()}>Caja #{pedido.cobrado_en_cierre}</a>)</> : ''}{pedido.cobrado_sucursal_nombre ? ` - ${pedido.cobrado_sucursal_nombre}` : ''}{pedido.cobrado_at ? ` el ${new Date(pedido.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
                         </>
                       )}
                       {pedido.entregado_por && (
                         <>
                           <span>|</span>
-                          <span>Entregado por: {pedido.entregado_por}{pedido.entregado_en_cierre ? ` (Caja #${pedido.entregado_en_cierre})` : ''}{pedido.entregado_sucursal_nombre ? ` - ${pedido.entregado_sucursal_nombre}` : ''}{pedido.entregado_at ? ` el ${new Date(pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                          <span>Entregado por: {pedido.entregado_por}{pedido.entregado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedido.entregado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800" onClick={e => e.stopPropagation()}>Caja #{pedido.entregado_en_cierre}</a>)</> : ''}{pedido.entregado_sucursal_nombre ? ` - ${pedido.entregado_sucursal_nombre}` : ''}{pedido.entregado_at ? ` el ${new Date(pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
                         </>
                       )}
                     </div>
@@ -1153,21 +1153,36 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                 <div className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1.5">
                   <span className="font-semibold text-gray-600">Creado:</span>{' '}
                   {pedidoDetalle.cajero_nombre || pedidoDetalle.perfiles?.nombre || '—'}
-                  {pedidoDetalle.creado_en_cierre ? ` (Caja #${pedidoDetalle.creado_en_cierre})` : ''}
+                  {pedidoDetalle.creado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedidoDetalle.creado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800">Caja #{pedidoDetalle.creado_en_cierre}</a>)</> : ''}
                   {(pedidoDetalle.creado_sucursal_nombre || pedidoDetalle.sucursales?.nombre) ? ` — ${pedidoDetalle.creado_sucursal_nombre || pedidoDetalle.sucursales.nombre}` : ''}
                   {pedidoDetalle.created_at ? ` — ${new Date(pedidoDetalle.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                 </div>
                 {/* Cobro */}
-                {(pedidoDetalle.cobrado_por || (pedidoDetalle.cobrado_at && pedidoDetalle.mp_payment_id)) && (
-                  <div className={`text-xs rounded px-2 py-1.5 ${pedidoDetalle.cobrado_por ? 'text-green-700 bg-green-50' : 'text-indigo-700 bg-indigo-50'}`}>
-                    <span className="font-semibold">Cobrado:</span>{' '}
-                    {pedidoDetalle.cobrado_por || 'Talo Pay'}
-                    {pedidoDetalle.cobrado_en_cierre ? ` (Caja #${pedidoDetalle.cobrado_en_cierre})` : ''}
-                    {pedidoDetalle.cobrado_sucursal_nombre ? ` — ${pedidoDetalle.cobrado_sucursal_nombre}` : ''}
-                    {pedidoDetalle.cobrado_at ? ` — ${new Date(pedidoDetalle.cobrado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
-                    {pedidoDetalle.pagos && Array.isArray(pedidoDetalle.pagos) ? ` — ${pedidoDetalle.pagos.map(p => p.tipo || p.forma).join(', ')}` : ''}
-                  </div>
-                )}
+                {(() => {
+                  const tieneCobro = pedidoDetalle.cobrado_por || pedidoDetalle.cobrado_en_cierre || (pedidoDetalle.cobrado_at && pedidoDetalle.mp_payment_id)
+                  const totalPagadoDet = parseFloat(pedidoDetalle.total_pagado) || 0
+                  // Fallback: si tiene total_pagado pero no datos explícitos de cobro, usar datos de entrega
+                  const cobroFallback = !tieneCobro && totalPagadoDet > 0 && pedidoDetalle.estado === 'entregado'
+                  if (!tieneCobro && !cobroFallback) return null
+                  const esDelivery = pedidoDetalle.cobrado_en_cierre && !pedidoDetalle.cobrado_por
+                  const cierreNum = pedidoDetalle.cobrado_en_cierre || (cobroFallback ? pedidoDetalle.entregado_en_cierre : null)
+                  const sucursal = pedidoDetalle.cobrado_sucursal_nombre || (cobroFallback ? pedidoDetalle.entregado_sucursal_nombre : null)
+                  const fechaCobro = pedidoDetalle.cobrado_at || (cobroFallback ? pedidoDetalle.entregado_at : null)
+                  const persona = pedidoDetalle.cobrado_por || (cobroFallback ? pedidoDetalle.entregado_por : null)
+                  const label = esDelivery ? 'Cobro en delivery:' : cobroFallback ? 'Cobrado al entregar:' : 'Cobrado:'
+                  const colorClass = esDelivery ? 'text-orange-700 bg-orange-50' : 'text-green-700 bg-green-50'
+                  const hoverClass = esDelivery ? 'hover:text-orange-900' : 'hover:text-green-900'
+                  return (
+                    <div className={`text-xs rounded px-2 py-1.5 ${colorClass}`}>
+                      <span className="font-semibold">{label}</span>{' '}
+                      {persona || (esDelivery ? 'Efectivo' : 'Talo Pay')}
+                      {cierreNum ? <> (<a href={`/cajas-pos/cierre/${cierreNum}`} target="_blank" rel="noopener noreferrer" className={`underline ${hoverClass}`}>Caja #{cierreNum}</a>)</> : ''}
+                      {sucursal ? ` — ${sucursal}` : ''}
+                      {fechaCobro ? ` — ${new Date(fechaCobro).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                      {pedidoDetalle.pagos && Array.isArray(pedidoDetalle.pagos) ? ` — ${pedidoDetalle.pagos.map(p => p.tipo || p.forma).join(', ')}` : ''}
+                    </div>
+                  )
+                })()}
                 {/* Historial de entregas/reversiones */}
                 {Array.isArray(pedidoDetalle.historial) && pedidoDetalle.historial.length > 0 ? (
                   pedidoDetalle.historial.map((evento, idx) => {
@@ -1177,7 +1192,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                         <div key={idx} className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
                           <span className="font-semibold">Entregado:</span>{' '}
                           {evento.usuario}
-                          {evento.cierre ? ` (Caja #${evento.cierre})` : ''}
+                          {evento.cierre ? <> (<a href={`/cajas-pos/cierre/${evento.cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-900">Caja #{evento.cierre}</a>)</> : ''}
                           {evento.sucursal ? ` — ${evento.sucursal}` : ''}
                           {evento.via === 'guia' ? ' — vía guía' : ''}
                           {fmt ? ` — ${fmt}` : ''}
@@ -1200,7 +1215,7 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                   <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
                     <span className="font-semibold">Entregado:</span>{' '}
                     {pedidoDetalle.entregado_por}
-                    {pedidoDetalle.entregado_en_cierre ? ` (Caja #${pedidoDetalle.entregado_en_cierre})` : ''}
+                    {pedidoDetalle.entregado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedidoDetalle.entregado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-900">Caja #{pedidoDetalle.entregado_en_cierre}</a>)</> : ''}
                     {pedidoDetalle.entregado_sucursal_nombre ? ` — ${pedidoDetalle.entregado_sucursal_nombre}` : ''}
                     {pedidoDetalle.entregado_at ? ` — ${new Date(pedidoDetalle.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                   </div>

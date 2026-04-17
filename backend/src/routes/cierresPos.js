@@ -225,10 +225,15 @@ router.get('/ultimo-cambio', verificarAuth, asyncHandler(async (req, res) => {
 // GET /api/cierres-pos/:id — detalle de un cierre POS (CIEGO para gestor)
 router.get('/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
+    // Aceptar UUID o número de cierre
+    const esUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)
+    const campo = esUUID ? 'id' : 'numero'
+    const valor = esUUID ? req.params.id : parseInt(req.params.id)
+
     const { data: cierre, error } = await supabase
       .from('cierres_pos')
       .select(SELECT_CIERRE)
-      .eq('id', req.params.id)
+      .eq(campo, valor)
       .single()
 
     if (error || !cierre) {

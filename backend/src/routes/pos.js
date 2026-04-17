@@ -3129,11 +3129,15 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       const obs = pedido.observaciones || ''
       const pedidoTotal = parseFloat(pedido.total) || 0
       let totalPagado = parseFloat(pedido.total_pagado) || 0
+      let descFormaPago = pedido.descuento_forma_pago || null
 
       // Si paga en efectivo y no tenía total_pagado, calcular con descuento aplicado
       if (obs.includes('PAGO EN ENTREGA: EFECTIVO') && totalPagado === 0) {
         const desc = descEfectivoPct > 0 ? Math.round(pedidoTotal * descEfectivoPct / 100 * 100) / 100 : 0
         totalPagado = Math.round((pedidoTotal - desc) * 100) / 100
+        if (desc > 0) {
+          descFormaPago = { tipo: 'efectivo', porcentaje: descEfectivoPct, total: desc }
+        }
       }
 
       const entregadoAtNow = new Date().toISOString()
@@ -3151,6 +3155,7 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
         .update({
           estado: 'entregado',
           total_pagado: totalPagado || pedidoTotal,
+          descuento_forma_pago: descFormaPago,
           entregado_at: entregadoAtNow,
           entregado_por: entregadoPor,
           entregado_en_cierre: entregadoEnCierre,
@@ -3254,12 +3259,21 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       logger.info(`[Guía Delivery] Sin efectivo a cobrar — no se crea cierre delivery`)
     }
 
-    // Vincular cierre al registro de guía
+    // Vincular cierre al registro de guía + actualizar pedidos de efectivo con cierre delivery
     if (cierreDelivery) {
       await supabase
         .from('guias_delivery')
         .update({ cierre_pos_id: cierreDelivery.id })
         .eq('id', guia.id)
+
+      // Marcar pedidos de efectivo con el cierre delivery donde se rinde
+      const pedidosEfectivo = pedidos.filter(p => (p.observaciones || '').includes('PAGO EN ENTREGA: EFECTIVO'))
+      if (pedidosEfectivo.length > 0) {
+        await supabase
+          .from('pedidos_pos')
+          .update({ cobrado_en_cierre: cierreDelivery.numero })
+          .in('id', pedidosEfectivo.map(p => p.id))
+      }
     }
 
     res.json({

@@ -103,26 +103,29 @@ const DetalleCierrePos = () => {
         setCierre(cierreData)
         setDenominaciones(denomRes.data || [])
 
+        // Usar UUID real para todas las llamadas subsiguientes (el id de la URL puede ser un número)
+        const cierreId = cierreData.id
+
         // Fetch retiros, verificacion and POS ventas data in parallel
         const promises = []
 
         // Retiros: todos los roles, cualquier estado
         promises.push(
-          api.get(`/api/cierres-pos/${id}/retiros`)
+          api.get(`/api/cierres-pos/${cierreId}/retiros`)
             .then(res => setRetiros(res.data || []))
             .catch(err => console.error('Error loading retiros:', err.message))
         )
 
         // Gastos
         promises.push(
-          api.get(`/api/cierres-pos/${id}/gastos`)
+          api.get(`/api/cierres-pos/${cierreId}/gastos`)
             .then(res => setGastos(res.data || []))
             .catch(err => console.error('Error loading gastos:', err.message))
         )
 
         if (usuario?.rol !== 'operario') {
           promises.push(
-            api.get(`/api/cierres-pos/${id}/verificacion`)
+            api.get(`/api/cierres-pos/${cierreId}/verificacion`)
               .then(res => setVerificacion(res.data))
               .catch(err => console.error('Error loading verificacion:', err.message))
           )
@@ -132,13 +135,13 @@ const DetalleCierrePos = () => {
         if (usuario?.rol !== 'operario' && cierreData.estado !== 'abierta') {
           if (cierreData.tipo === 'delivery') {
             promises.push(
-              api.get(`/api/cierres-pos/${id}/guia-delivery`)
+              api.get(`/api/cierres-pos/${cierreId}/guia-delivery`)
                 .then(res => setGuiaDelivery(res.data))
                 .catch(() => setGuiaDelivery(null))
             )
           } else {
             promises.push(
-              api.get(`/api/cierres-pos/${id}/pos-ventas`)
+              api.get(`/api/cierres-pos/${cierreId}/pos-ventas`)
                 .then(res => setPosVentas(res.data))
                 .catch(() => setPosNoEncontrado(true))
             )
@@ -148,17 +151,17 @@ const DetalleCierrePos = () => {
         // Cambios de precio, cancelaciones y eliminaciones (solo admin)
         if (esAdmin) {
           promises.push(
-            api.get(`/api/cierres-pos/${id}/cambios-precio`)
+            api.get(`/api/cierres-pos/${cierreId}/cambios-precio`)
               .then(res => setCambiosPrecio(res.data || []))
               .catch(err => console.error('Error loading cambios-precio:', err.message))
           )
           promises.push(
-            api.get(`/api/cierres-pos/${id}/cancelaciones`)
+            api.get(`/api/cierres-pos/${cierreId}/cancelaciones`)
               .then(res => setCancelaciones(res.data || []))
               .catch(err => console.error('Error loading cancelaciones:', err.message))
           )
           promises.push(
-            api.get(`/api/cierres-pos/${id}/eliminaciones`)
+            api.get(`/api/cierres-pos/${cierreId}/eliminaciones`)
               .then(res => setEliminaciones(res.data || []))
               .catch(err => console.error('Error loading eliminaciones:', err.message))
           )
@@ -189,7 +192,7 @@ const DetalleCierrePos = () => {
   const cargarMovimientos = async () => {
     setMovimientosCargando(true)
     try {
-      const { data } = await api.get(`/api/cierres-pos/${id}/movimientos`)
+      const { data } = await api.get(`/api/cierres-pos/${cierre?.id || id}/movimientos`)
       setMovimientos(data)
     } catch (err) {
       console.error('Error al cargar movimientos:', err)
