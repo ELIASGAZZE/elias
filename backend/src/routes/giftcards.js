@@ -134,7 +134,7 @@ router.get('/consultar/:codigo', verificarAuth, asyncHandler(async (req, res) =>
     if (movActivacion?.venta_pos_id) {
       const { data: venta } = await supabase
         .from('ventas_pos')
-        .select('id, numero_venta, cajero_id, sucursal_id, created_at')
+        .select('id, numero_venta, cajero_id, sucursal_id, created_at, cierre_pos_id')
         .eq('id', movActivacion.venta_pos_id)
         .single()
       if (venta) {
@@ -150,7 +150,13 @@ router.get('/consultar/:codigo', verificarAuth, asyncHandler(async (req, res) =>
           .select('nombre')
           .eq('id', venta.sucursal_id)
           .single()
-        venta_activacion = { ...venta, cajero_nombre: ventaCajeroNombre, sucursal_nombre: suc?.nombre || null }
+        // Obtener número del cierre de caja
+        let cierre_numero = null
+        if (venta.cierre_pos_id) {
+          const { data: cierre } = await supabase.from('cierres_pos').select('numero').eq('id', venta.cierre_pos_id).single()
+          if (cierre) cierre_numero = cierre.numero
+        }
+        venta_activacion = { ...venta, cajero_nombre: ventaCajeroNombre, sucursal_nombre: suc?.nombre || null, cierre_numero }
       }
     }
 
@@ -185,10 +191,20 @@ router.get('/consultar/:codigo', verificarAuth, asyncHandler(async (req, res) =>
       if (m.venta_pos_id) {
         const { data: v } = await supabase
           .from('ventas_pos')
-          .select('numero_venta, cajero_nombre')
+          .select('numero_venta, cajero_id, cierre_pos_id')
           .eq('id', m.venta_pos_id)
           .single()
-        return { ...m, numero_venta: v?.numero_venta, venta_cajero: v?.cajero_nombre }
+        let venta_cajero = null
+        if (v?.cajero_id) {
+          const { data: p } = await supabase.from('perfiles').select('nombre').eq('id', v.cajero_id).single()
+          if (p) venta_cajero = p.nombre
+        }
+        let cierre_numero = null
+        if (v?.cierre_pos_id) {
+          const { data: c } = await supabase.from('cierres_pos').select('numero').eq('id', v.cierre_pos_id).single()
+          if (c) cierre_numero = c.numero
+        }
+        return { ...m, numero_venta: v?.numero_venta, venta_cajero, cierre_pos_id: v?.cierre_pos_id, cierre_numero }
       }
       return m
     }))

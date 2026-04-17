@@ -8,6 +8,7 @@ const { retrySyncVentasCentum, retrySyncCAE, retryEmailsPendientes } = require('
 const { analizarBatch } = require('../services/patronesIA')
 const { registrarLlamada } = require('../services/apiLogger')
 const { detectarVentasDuplicadas } = require('../services/detectarDuplicados')
+const { procesarBounces } = require('../services/bounceHandler')
 
 // Lock simple para evitar ejecución paralela de crons en múltiples instancias
 const cronLocks = {}
@@ -284,6 +285,21 @@ async function iniciarCronJobs() {
     })
   })
   logger.info('[CRON] Detección duplicados: 09:00 UTC (06:00 Argentina) diariamente')
+
+  // Procesar bounces de email: cada 15 minutos
+  cron.schedule('3-58/15 * * * *', async () => {
+    await withLock('procesarBounces', async () => {
+      try {
+        const resultado = await procesarBounces()
+        if (resultado.limpiados > 0) {
+          logger.info(`[Bounces] ${resultado.limpiados} emails de clientes limpiados por bounce`)
+        }
+      } catch (err) {
+        logger.error('[Bounces] Error en cron:', err.message)
+      }
+    })
+  })
+  logger.info('[CRON] Procesamiento bounces email: cada 15 minutos (offset 3)')
 }
 
 module.exports = { iniciarCronJobs }

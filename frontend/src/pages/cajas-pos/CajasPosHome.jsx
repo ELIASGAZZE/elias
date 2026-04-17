@@ -137,9 +137,16 @@ const CajasPosHome = () => {
     }
   }
 
+  const [filtroEstado, setFiltroEstado] = useState('todas')
+
   // Separar cajas abiertas del resto
   const cajasAbiertas = cierres.filter(c => c.estado === 'abierta')
-  const cierresCerrados = cierres.filter(c => c.estado !== 'abierta')
+  const cierresCerrados = cierres.filter(c => {
+    if (c.estado === 'abierta') return false
+    if (filtroEstado === 'pendientes') return c.estado === 'pendiente_gestor'
+    if (filtroEstado === 'verificadas') return c.estado !== 'pendiente_gestor'
+    return true
+  })
 
   const getLinkCierre = (cierre) => {
     if (cierre.estado === 'abierta' && esAdmin) {
@@ -176,6 +183,8 @@ const CajasPosHome = () => {
                     <div key={cierre.id} className="flex items-center gap-2">
                       <Link
                         to={`/cajas-pos/cierre/${cierre.id}/cerrar`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="flex-1 bg-teal-50 border-2 border-teal-200 rounded-xl p-4 hover:border-teal-300 hover:shadow-sm transition-all"
                       >
                         <div className="flex items-center justify-between mb-1">
@@ -229,9 +238,32 @@ const CajasPosHome = () => {
 
             {/* Lista de cierres */}
             <div>
-              <h3 className="font-semibold text-gray-700 text-sm mb-3">
-                {esGestor ? 'Cierres pendientes de verificacion' : 'Cierres de caja'}
-              </h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-700 text-sm">
+                  {esGestor ? 'Cierres pendientes de verificacion' : 'Cierres de caja'}
+                </h3>
+                {!esGestor && (
+                  <div className="flex bg-gray-100 rounded-lg p-0.5 text-xs">
+                    {[
+                      { key: 'todas', label: 'Todas' },
+                      { key: 'pendientes', label: 'Pendientes' },
+                      { key: 'verificadas', label: 'Verificadas' },
+                    ].map(f => (
+                      <button
+                        key={f.key}
+                        onClick={() => setFiltroEstado(f.key)}
+                        className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                          filtroEstado === f.key
+                            ? 'bg-white text-gray-800 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {cargando ? (
                 <div className="flex justify-center py-10">
@@ -247,6 +279,8 @@ const CajasPosHome = () => {
                     <div key={cierre.id} className="flex items-center gap-2">
                       <Link
                         to={getLinkCierre(cierre)}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className={`flex-1 rounded-xl p-4 hover:shadow-sm transition-all ${
                           cierre.tipo === 'delivery'
                             ? 'bg-purple-50 border border-purple-200 hover:border-purple-300'

@@ -1,5 +1,5 @@
 // Modal para cierre de caja POS — se abre inline sin salir del POS
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import ContadorDenominacion from '../cajas/ContadorDenominacion'
 import ModalRetiroPos from './ModalRetiroPos'
 import ModalGastoPos from './ModalGastoPos'
@@ -88,6 +88,12 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   const [empleadoResuelto, setEmpleadoResuelto] = useState(null)
   const [errorEmpleado, setErrorEmpleado] = useState('')
   const [validandoEmpleado, setValidandoEmpleado] = useState(false)
+
+  // Chequeo pedidos pendientes (solo cierre PM — último del día)
+  const [pedidosPendientesPM, setPedidosPendientesPM] = useState([])
+  const [mostrarCheckPendientes, setMostrarCheckPendientes] = useState(false)
+  const checkPendientesListoRef = useRef(false)
+  const respuestaPendientesRef = useRef(null) // 'si' | 'no'
 
   useEffect(() => {
     const cargar = async () => {
@@ -207,6 +213,23 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
       setError('Ingresa un codigo de empleado valido')
       return
     }
+
+    // Chequeo pedidos pendientes (solo cuando es cierre PM — último del día)
+    if (!checkPendientesListoRef.current) {
+      try {
+        const { data } = await api.get(`/api/cierres-pos/${cierreId}/pedidos-pendientes-pm`)
+        if (data.es_pm && (data.pedidos || []).length > 0) {
+          setPedidosPendientesPM(data.pedidos)
+          setMostrarCheckPendientes(true)
+          return
+        }
+      } catch (err) {
+        // No bloquear cierre si falla el chequeo — log silencioso
+        console.warn('No se pudo verificar pedidos pendientes:', err?.message)
+      }
+      checkPendientesListoRef.current = true
+    }
+
     setEnviando(true)
     setError('')
     try {
@@ -231,13 +254,23 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
         if (cant > 0) cambioBilletesPayload[String(d.valor)] = cant
       })
 
+      // Anexar respuesta del chequeo de pedidos pendientes a observaciones
+      let observacionesFinal = observaciones
+      if (respuestaPendientesRef.current && pedidosPendientesPM.length > 0) {
+        const nums = pedidosPendientesPM.map(p => `#${p.numero}`).join(', ')
+        const linea = respuestaPendientesRef.current === 'si'
+          ? `[Cierre PM] Pedidos pendientes no entregados (${pedidosPendientesPM.length}): ${nums}`
+          : `[Cierre PM] Operador confirmó que los pedidos ${nums} ya fueron entregados (quedaron marcados pendientes por error).`
+        observacionesFinal = observacionesFinal ? `${observacionesFinal}\n${linea}` : linea
+      }
+
       const payload = {
         billetes: billetesPayload,
         monedas: {},
         total_efectivo: totalEfectivo,
         medios_pago: mediosPagoPayload,
         total_general: totalGeneral,
-        observaciones,
+        observaciones: observacionesFinal,
         cambio_billetes: cambioBilletesPayload,
         cambio_monedas: {},
         cambio_que_queda: cambioQueQueda,
@@ -578,6 +611,72 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
             setGastos(prev => [...prev, nuevoGasto])
           }}
         />
+      )}
+
+      {/* Popup chequeo pedidos pendientes PM */}
+      {mostrarCheckPendientes && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
+            <div className="bg-amber-500 px-5 py-3">
+              <h3 className="text-white font-semibold text-base flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Pedidos pendientes
+              </h3>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-gray-700 font-medium">
+                ¿Estos pedidos no fueron entregados aún?
+              </p>
+              <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {pedidosPendientesPM.map(p => (
+                  <div key={p.id} className="px-3 py-2 flex items-center justify-between text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-800">#{p.numero}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 uppercase">{p.tipo}</span>
+                        {p.turno_entrega && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{p.turno_entrega}</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 truncate">
+                        {p.nombre_cliente || 'Sin cliente'} · {formatFecha(p.fecha_entrega)}
+                      </div>
+                    </div>
+                    <span className="text-sm font-medium text-gray-700 ml-2 whitespace-nowrap">
+                      {formatMonto(p.total_pagado || 0)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border-t border-gray-200 px-5 py-3 flex gap-3">
+              <button
+                onClick={() => {
+                  respuestaPendientesRef.current = 'no'
+                  checkPendientesListoRef.current = true
+                  setMostrarCheckPendientes(false)
+                  setTimeout(() => cerrarCaja(), 0)
+                }}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 py-2.5 rounded-xl font-medium transition-colors"
+              >
+                No
+              </button>
+              <button
+                onClick={() => {
+                  respuestaPendientesRef.current = 'si'
+                  checkPendientesListoRef.current = true
+                  setMostrarCheckPendientes(false)
+                  setTimeout(() => cerrarCaja(), 0)
+                }}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-xl font-medium transition-colors"
+              >
+                Sí
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

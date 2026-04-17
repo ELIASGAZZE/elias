@@ -40,6 +40,9 @@ export function usePedidoWizard({
   subtotal,
   descuentoTotal,
   promosAplicadas,
+  descuentoGrupoCliente,
+  descuentoGrupoDetalle,
+  grupoDescuentoNombre,
   limpiarVenta,
   precioConDescEmpleado,
   isOnline,
@@ -280,7 +283,12 @@ export function usePedidoWizard({
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
         rubro: i.articulo.rubro?.nombre || null,
+        subRubro: i.articulo.subRubro?.nombre || null,
+        iva_tasa: i.articulo.iva?.tasa || 21,
       }))
+      // Total final del pedido (antes de descuento por forma de pago, que aplica al cobrar)
+      const descGrupo = parseFloat(descuentoGrupoCliente) || 0
+      const totalPedido = Math.round((total - descGrupo) * 100) / 100
 
       if (fechaEntrega) {
         const manana = new Date()
@@ -301,7 +309,14 @@ export function usePedidoWizard({
         id_cliente_centum: cli.id_centum,
         nombre_cliente: cli.razon_social,
         items: itemsPayload,
-        total,
+        total: totalPedido,
+        subtotal,
+        descuento_total: descuentoTotal || 0,
+        descuento_grupo_cliente: descGrupo,
+        descuento_grupo_cliente_detalle: descuentoGrupoDetalle || null,
+        grupo_descuento_nombre: grupoDescuentoNombre || null,
+        promociones_aplicadas: (promosAplicadas && promosAplicadas.length > 0) ? promosAplicadas : null,
+        condicion_iva: cliente.condicion_iva || null,
         tipo: tipo || 'retiro',
         observaciones: 'PAGO PENDIENTE: LINK TALO',
       }
@@ -387,7 +402,12 @@ export function usePedidoWizard({
         cantidad: i.cantidad,
         esPesable: i.articulo.esPesable || false,
         rubro: i.articulo.rubro?.nombre || null,
+        subRubro: i.articulo.subRubro?.nombre || null,
+        iva_tasa: i.articulo.iva?.tasa || 21,
       }))
+      // Total final del pedido (antes de descuento por forma de pago)
+      const descGrupo = parseFloat(descuentoGrupoCliente) || 0
+      const totalPedido = Math.round((total - descGrupo) * 100) / 100
 
       if (fechaEntrega) {
         const manana = new Date()
@@ -407,7 +427,14 @@ export function usePedidoWizard({
         id_cliente_centum: cli.id_centum,
         nombre_cliente: cli.razon_social,
         items: itemsPayload,
-        total,
+        total: totalPedido,
+        subtotal,
+        descuento_total: descuentoTotal || 0,
+        descuento_grupo_cliente: descGrupo,
+        descuento_grupo_cliente_detalle: descuentoGrupoDetalle || null,
+        grupo_descuento_nombre: grupoDescuentoNombre || null,
+        promociones_aplicadas: (promosAplicadas && promosAplicadas.length > 0) ? promosAplicadas : null,
+        condicion_iva: cliente.condicion_iva || null,
         tipo: tipo || 'retiro',
       }
       if (direccion) {
@@ -432,10 +459,10 @@ export function usePedidoWizard({
           if (datosPago.descuento_forma_pago) {
             payload.descuento_forma_pago = datosPago.descuento_forma_pago
           }
-          payload.total_pagado = montoPagadoNeto || total
+          payload.total_pagado = montoPagadoNeto || totalPedido
         } else {
           payload.observaciones = 'PAGO ANTICIPADO'
-          payload.total_pagado = datosPago?.monto_pagado || total
+          payload.total_pagado = datosPago?.monto_pagado || totalPedido
         }
       } else if (observacionExtra) {
         payload.observaciones = observacionExtra

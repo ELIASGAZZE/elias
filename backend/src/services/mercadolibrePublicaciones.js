@@ -244,8 +244,8 @@ const TARIFA_CACHE_TTL = 3600000 // 1h
  * Obtiene el costo de venta para un item específico
  * Incluye category_id, logistic_type y shipping_mode para cálculo preciso
  */
-async function getCostosVenta(precio, listingTypeId, categoryId, logisticType, shippingMode) {
-  const cacheKey = `${Math.round(precio)}_${listingTypeId}_${categoryId || ''}_${logisticType || ''}_${shippingMode || ''}`
+async function getCostosVenta(precio, listingTypeId, categoryId, logisticType, shippingMode, billableWeight) {
+  const cacheKey = `${Math.round(precio)}_${listingTypeId}_${categoryId || ''}_${logisticType || ''}_${shippingMode || ''}_${billableWeight || ''}`
   const cached = tarifasCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < TARIFA_CACHE_TTL) return cached.data
 
@@ -253,6 +253,7 @@ async function getCostosVenta(precio, listingTypeId, categoryId, logisticType, s
   if (categoryId) url += `&category_id=${categoryId}`
   if (logisticType) url += `&logistic_type=${logisticType}`
   if (shippingMode) url += `&shipping_mode=${shippingMode}`
+  if (billableWeight) url += `&billable_weight=${billableWeight}`
 
   const resp = await mlFetch(url)
   if (!resp.ok) return null
@@ -309,70 +310,56 @@ async function getCostosBatch(items) {
 }
 
 /**
- * Obtiene el costo de envío estimado para el vendedor por item_id
- * Solo cobra al vendedor si ofrece envío gratis (free_shipping=true)
+ * Obtiene el costo de envío estimado y el peso facturable del item
+ * Devuelve { costo, billable_weight } — costo es 0 si no ofrece envío gratis
  */
 async function getCostoEnvio(itemId, ofreceFreeShipping) {
-  // Si el vendedor no ofrece envío gratis, el costo lo paga el comprador → $0 para el vendedor
-  if (!ofreceFreeShipping) return 0
-
   const sellerId = await getSellerId()
   if (!sellerId) return null
 
+  // Siempre consultamos para obtener billable_weight (necesario para comisión exacta)
+  // Pasamos free_shipping según el item para obtener el costo correcto
   const resp = await mlFetch(
-    `/users/${sellerId}/shipping_options/free?item_id=${itemId}&free_shipping=true`
+    `/users/${sellerId}/shipping_options/free?item_id=${itemId}&free_shipping=${ofreceFreeShipping ? 'true' : 'false'}`
   )
-  if (!resp.ok) return 0
+  if (!resp.ok) return { costo: 0, billable_weight: null }
 
   const data = await resp.json()
-  return data?.coverage?.all_country?.list_cost || 0
+  const all = data?.coverage?.all_country || {}
+  return {
+    costo: ofreceFreeShipping ? (all.list_cost || 0) : 0,
+    billable_weight: all.billable_weight || null,
+  }
 }
 
 /**
  * Calcula y guarda los costos de venta + envío para todas las publicaciones activas
  */
 async function syncCostos() {
-  const { data: items, error } = await supabase
-    .from('ml_publicaciones')
-    .select('ml_item_id, precio, tipo_publicacion, categoria_id, envio_gratis, logistic_type, shipping_mode')
-    .eq('estado', 'active')
-    .gt('precio', 0)
-
-  if (error) throw error
-  if (!items || items.length === 0) return { actualizados: 0 }
-
-  // --- Fase 1: Costos de comisión (dedup por combo precio+tipo+categoría+logística) ---
-  const uniqueCombos = new Map()
-  for (const item of items) {
-    const lt = item.tipo_publicacion || 'gold_special'
-    const cat = item.categoria_id || ''
-    const log = item.logistic_type || ''
-    const sm = item.shipping_mode || ''
-    const key = `${Math.round(item.precio)}_${lt}_${cat}_${log}_${sm}`
-    if (!uniqueCombos.has(key)) {
-      uniqueCombos.set(key, {
-        precio: item.precio,
-        listing_type_id: lt,
-        category_id: cat || null,
-        logistic_type: log || null,
-        shipping_mode: sm || null,
-      })
-    }
+  // Paginar para superar el límite de 1000 filas de Supabase
+  let items = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const { data, error: pageErr } = await supabase
+      .from('ml_publicaciones')
+      .select('ml_item_id, precio, tipo_publicacion, categoria_id, envio_gratis, logistic_type, shipping_mode')
+      .eq('estado', 'active')
+      .gt('precio', 0)
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+    if (pageErr) throw pageErr
+    if (!data || data.length === 0) break
+    items = items.concat(data)
+    if (data.length < pageSize) break
+    page++
   }
 
-  logger.info(`[ML Costos] Fase 1: Calculando comisiones para ${items.length} items (${uniqueCombos.size} combos únicos)`)
+  if (items.length === 0) return { actualizados: 0 }
 
-  const costosMap = new Map()
-  for (const [key, combo] of uniqueCombos) {
-    const costo = await getCostosVenta(combo.precio, combo.listing_type_id, combo.category_id, combo.logistic_type, combo.shipping_mode)
-    if (costo) costosMap.set(key, costo)
-    await delay(100)
-  }
+  // --- Fase 1: Shipping options (costo envío + billable_weight) en paralelo de a 5 ---
+  logger.info(`[ML Costos] Fase 1: Obteniendo envíos + peso facturable de ${items.length} items`)
 
-  // --- Fase 2: Costos de envío (por item_id, en paralelo de a 5) ---
-  logger.info(`[ML Costos] Fase 2: Calculando costos de envío para ${items.length} items`)
-
-  const envioMap = new Map()
+  const envioMap = new Map() // ml_item_id -> { costo, billable_weight }
   const envioChunks = chunkArray(items, 5)
   for (const chunk of envioChunks) {
     const results = await Promise.allSettled(
@@ -388,6 +375,36 @@ async function syncCostos() {
 
   logger.info(`[ML Costos] Envíos obtenidos: ${envioMap.size}/${items.length}`)
 
+  // --- Fase 2: Comisiones (dedup por precio+tipo+cat+logística+peso) ---
+  const uniqueCombos = new Map()
+  for (const item of items) {
+    const lt = item.tipo_publicacion || 'gold_special'
+    const cat = item.categoria_id || ''
+    const log = item.logistic_type || ''
+    const sm = item.shipping_mode || ''
+    const bw = envioMap.get(item.ml_item_id)?.billable_weight || ''
+    const key = `${Math.round(item.precio)}_${lt}_${cat}_${log}_${sm}_${bw}`
+    if (!uniqueCombos.has(key)) {
+      uniqueCombos.set(key, {
+        precio: item.precio,
+        listing_type_id: lt,
+        category_id: cat || null,
+        logistic_type: log || null,
+        shipping_mode: sm || null,
+        billable_weight: bw || null,
+      })
+    }
+  }
+
+  logger.info(`[ML Costos] Fase 2: Calculando comisiones (${uniqueCombos.size} combos únicos)`)
+
+  const costosMap = new Map()
+  for (const [key, combo] of uniqueCombos) {
+    const costo = await getCostosVenta(combo.precio, combo.listing_type_id, combo.category_id, combo.logistic_type, combo.shipping_mode, combo.billable_weight)
+    if (costo) costosMap.set(key, costo)
+    await delay(100)
+  }
+
   // --- Fase 3: Guardar en Supabase ---
   let actualizados = 0
   const updateBatch = []
@@ -397,11 +414,13 @@ async function syncCostos() {
     const cat = item.categoria_id || ''
     const log = item.logistic_type || ''
     const sm = item.shipping_mode || ''
-    const key = `${Math.round(item.precio)}_${lt}_${cat}_${log}_${sm}`
+    const envioData = envioMap.get(item.ml_item_id) || { costo: 0, billable_weight: null }
+    const bw = envioData.billable_weight || ''
+    const key = `${Math.round(item.precio)}_${lt}_${cat}_${log}_${sm}_${bw}`
     const costo = costosMap.get(key)
     if (!costo) continue
 
-    const costoEnvio = envioMap.get(item.ml_item_id) || 0
+    const costoEnvio = envioData.costo || 0
     const costoTotal = costo.cargo_venta + costoEnvio
 
     updateBatch.push({

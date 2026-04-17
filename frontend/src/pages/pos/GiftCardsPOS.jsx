@@ -273,9 +273,13 @@ export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo })
                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Últimos movimientos</h4>
                     <div className="space-y-1.5 max-h-48 overflow-y-auto">
                       {consultaResult.movimientos.map(m => (
-                        <div key={m.id} className="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
+                        <div
+                          key={m.id}
+                          className={`flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0 ${m.venta_pos_id ? 'cursor-pointer hover:bg-gray-50 rounded transition-colors' : ''}`}
+                          onClick={() => m.venta_pos_id && window.open(`/ventas/${m.venta_pos_id}`, '_blank')}
+                        >
                           <div>
-                            <span className="block text-sm text-gray-700">{m.motivo}</span>
+                            <span className={`block text-sm ${m.venta_pos_id ? 'text-violet-600 hover:underline' : 'text-gray-700'}`}>{m.motivo}</span>
                             <span className="block text-xs text-gray-400">{new Date(m.created_at).toLocaleString('es-AR')}</span>
                           </div>
                           <span className={`text-sm font-bold ${parseFloat(m.monto) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
@@ -437,6 +441,19 @@ export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo })
                         </a>
                       </div>
                     )}
+                    {cardSeleccionada.venta_activacion?.cierre_numero != null && (
+                      <div>
+                        <span className="text-[10px] text-gray-500">Cierre de caja</span>
+                        <a
+                          href={`/cajas-pos/cierre/${cardSeleccionada.venta_activacion.cierre_pos_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block text-sm font-medium text-violet-700 hover:text-violet-900 hover:underline cursor-pointer"
+                        >
+                          #{cardSeleccionada.venta_activacion.cierre_numero}
+                        </a>
+                      </div>
+                    )}
                     {cardSeleccionada.caja_nombre && (
                       <div>
                         <span className="text-[10px] text-gray-500">Caja</span>
@@ -472,11 +489,26 @@ export default function GiftCardsPOS({ embebido, terminalConfig, cierreActivo })
               ) : (
                 <div className="space-y-2">
                   {movimientos.map(m => (
-                    <div key={m.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    <div
+                      key={m.id}
+                      className={`flex items-center justify-between py-2 border-b border-gray-100 last:border-0 ${m.venta_pos_id ? 'cursor-pointer hover:bg-gray-50 rounded transition-colors' : ''}`}
+                      onClick={() => m.venta_pos_id && window.open(`/ventas/${m.venta_pos_id}`, '_blank')}
+                    >
                       <div>
-                        <span className="block text-sm font-medium text-gray-700">
+                        <span className={`block text-sm font-medium ${m.venta_pos_id ? 'text-violet-600' : 'text-gray-700'}`}>
                           {m.motivo}
                           {m.numero_venta ? <span className="text-gray-400 font-normal"> · Venta #{m.numero_venta}</span> : ''}
+                          {m.cierre_numero != null ? (
+                            <a
+                              href={`/cajas-pos/cierre/${m.cierre_pos_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-gray-400 font-normal hover:text-violet-700 hover:underline"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {' '}· Cierre #{m.cierre_numero}
+                            </a>
+                          ) : ''}
                         </span>
                         <span className="block text-xs text-gray-400">
                           {new Date(m.created_at).toLocaleString('es-AR')}

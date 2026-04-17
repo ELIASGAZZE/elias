@@ -18,6 +18,57 @@ const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'a
 // Lock en memoria para prevenir ventas duplicadas por doble-submit concurrente
 const ventaTicketLock = new Set()
 
+// Helper: enriquecer gift_cards_vendidas con estado actual, venta de uso y NC
+async function enriquecerGCVendidas(gcVendidas, ventaId) {
+  const resultado = []
+  for (const gcv of gcVendidas) {
+    const { data: gc } = await supabase
+      .from('gift_cards')
+      .select('id, codigo, monto_inicial, saldo, estado, comprador_nombre')
+      .eq('codigo', gcv.codigo)
+      .maybeSingle()
+    if (!gc) { resultado.push(gcv); continue }
+
+    const { data: movUso } = await supabase
+      .from('movimientos_gift_card')
+      .select('venta_pos_id, monto')
+      .eq('gift_card_id', gc.id)
+      .lt('monto', 0)
+      .not('venta_pos_id', 'eq', ventaId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    let ventaUsoGC = null
+    if (movUso?.venta_pos_id) {
+      const { data: vUso } = await supabase
+        .from('ventas_pos')
+        .select('id, numero_venta, nombre_cliente, centum_comprobante, total, created_at')
+        .eq('id', movUso.venta_pos_id)
+        .single()
+      ventaUsoGC = vUso || null
+    }
+
+    const { data: ncGC } = await supabase
+      .from('ventas_pos')
+      .select('id, numero_venta, centum_comprobante, total, created_at')
+      .eq('tipo', 'nota_credito')
+      .eq('nc_concepto_tipo', 'gift_card')
+      .or(`venta_origen_id.eq.${ventaId}${movUso?.venta_pos_id ? `,venta_origen_id.eq.${movUso.venta_pos_id}` : ''}`)
+      .limit(1)
+      .maybeSingle()
+
+    resultado.push({
+      ...gcv,
+      gift_card: gc,
+      venta_uso: ventaUsoGC,
+      nota_credito: ncGC || null,
+      monto_usado: movUso ? Math.abs(movUso.monto) : null,
+    })
+  }
+  return resultado
+}
+
 // Token HMAC para links de descarga de comprobantes (no requiere auth)
 const COMPROBANTE_SECRET = process.env.COMPROBANTE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'comprobante-secret'
 function generarTokenDescarga(ventaId) {
@@ -1859,6 +1910,11 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
           }
         }
       }
+      // Enriquecer gift_cards_vendidas antes de retornar (early return para ventas solo-GC)
+      const gcVendidasEarly = (() => { try { return typeof data.gift_cards_vendidas === 'string' ? JSON.parse(data.gift_cards_vendidas) : (data.gift_cards_vendidas || []) } catch { return [] } })()
+      if (gcVendidasEarly.length > 0) {
+        data.gift_cards_vendidas = await enriquecerGCVendidas(gcVendidasEarly, data.id)
+      }
       return res.json({ venta: data })
     }
 
@@ -2051,6 +2107,12 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
         }
         if (gcInfos.length > 0) data.gc_aplicadas_info = gcInfos
       }
+    }
+
+    // Enriquecer gift_cards_vendidas con estado actual, saldo, venta de uso y NC
+    const gcVendidas = (() => { try { return typeof data.gift_cards_vendidas === 'string' ? JSON.parse(data.gift_cards_vendidas) : (data.gift_cards_vendidas || []) } catch { return [] } })()
+    if (gcVendidas.length > 0) {
+      data.gift_cards_vendidas = await enriquecerGCVendidas(gcVendidas, data.id)
     }
 
     // Si es NC de corrección cliente, buscar la venta nueva (hermana con tipo=venta y mismo venta_origen_id)
@@ -2477,7 +2539,14 @@ router.get('/ventas/:id/devoluciones', verificarAuth, asyncHandler(async (req, r
 // POST /api/pos/pedidos — crear pedido (carrito guardado para retiro posterior)
 router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega, sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido, cajero_nombre, pagos_anticipado, caja_cobro_id } = req.body
+    const {
+      id_cliente_centum, nombre_cliente, items, total, observaciones, tipo, direccion_entrega,
+      sucursal_retiro, estado, fecha_entrega, total_pagado, turno_entrega, sucursal_id,
+      tarjeta_regalo, observaciones_pedido, cajero_nombre, pagos_anticipado, caja_cobro_id,
+      // Descuentos congelados al crear el pedido — se respetan al entregar
+      promociones_aplicadas, subtotal, descuento_total, descuento_grupo_cliente,
+      descuento_grupo_cliente_detalle, grupo_descuento_nombre, condicion_iva,
+    } = req.body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items es requerido' })
@@ -2533,6 +2602,19 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
     if (total_pagado) insertData.total_pagado = total_pagado
     if (tarjeta_regalo?.trim()) insertData.tarjeta_regalo = tarjeta_regalo.trim()
     if (observaciones_pedido?.trim()) insertData.observaciones_pedido = observaciones_pedido.trim()
+
+    // Congelar descuentos/promociones vigentes al momento de crear el pedido
+    if (Array.isArray(promociones_aplicadas) && promociones_aplicadas.length > 0) {
+      insertData.promociones_aplicadas = promociones_aplicadas
+    }
+    if (subtotal != null) insertData.subtotal = parseFloat(subtotal) || 0
+    if (descuento_total != null) insertData.descuento_total = parseFloat(descuento_total) || 0
+    if (descuento_grupo_cliente != null) insertData.descuento_grupo_cliente = parseFloat(descuento_grupo_cliente) || 0
+    if (Array.isArray(descuento_grupo_cliente_detalle) && descuento_grupo_cliente_detalle.length > 0) {
+      insertData.descuento_grupo_cliente_detalle = descuento_grupo_cliente_detalle
+    }
+    if (grupo_descuento_nombre) insertData.grupo_descuento_nombre = grupo_descuento_nombre
+    if (condicion_iva) insertData.condicion_iva = condicion_iva
     // Buscar cierre activo para registrar empleado y número de caja al crear
     // Primero intentar por cajero_id, luego por caja_cobro_id (si el usuario no tiene cierre propio)
     let cierreCreacion = null
@@ -3361,7 +3443,13 @@ router.get('/pedidos/articulos-por-dia', verificarAuth, asyncHandler(async (req,
 // PUT /api/pos/pedidos/:id — editar items/total/observaciones de un pedido pendiente
 router.put('/pedidos/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
-    const { items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente, id_cliente_centum, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido } = req.body
+    const {
+      items, total, observaciones, tipo, fecha_entrega, direccion_entrega, nombre_cliente,
+      id_cliente_centum, turno_entrega, sucursal_id, tarjeta_regalo, observaciones_pedido,
+      // Al cambiar items también se recalculan los descuentos congelados
+      promociones_aplicadas, subtotal, descuento_total, descuento_grupo_cliente,
+      descuento_grupo_cliente_detalle, grupo_descuento_nombre, condicion_iva,
+    } = req.body
 
     // Permitir actualización parcial (solo campos extras sin items/total)
     const esActualizacionParcial = !items && total == null
@@ -3424,6 +3512,17 @@ router.put('/pedidos/:id', verificarAuth, asyncHandler(async (req, res) => {
     }
     if (tarjeta_regalo !== undefined) updateData.tarjeta_regalo = tarjeta_regalo?.trim() || null
     if (observaciones_pedido !== undefined) updateData.observaciones_pedido = observaciones_pedido?.trim() || null
+
+    // Al cambiar items se re-congelan los descuentos (recalculados por el frontend)
+    if (!esActualizacionParcial) {
+      updateData.promociones_aplicadas = Array.isArray(promociones_aplicadas) && promociones_aplicadas.length > 0 ? promociones_aplicadas : null
+      if (subtotal != null) updateData.subtotal = parseFloat(subtotal) || 0
+      updateData.descuento_total = descuento_total != null ? parseFloat(descuento_total) || 0 : 0
+      updateData.descuento_grupo_cliente = descuento_grupo_cliente != null ? parseFloat(descuento_grupo_cliente) || 0 : 0
+      updateData.descuento_grupo_cliente_detalle = Array.isArray(descuento_grupo_cliente_detalle) && descuento_grupo_cliente_detalle.length > 0 ? descuento_grupo_cliente_detalle : null
+      updateData.grupo_descuento_nombre = grupo_descuento_nombre || null
+      if (condicion_iva !== undefined) updateData.condicion_iva = condicion_iva || null
+    }
 
     // Si el pedido estaba pagado y el nuevo total es menor, ajustar total_pagado y generar saldo
     let saldoGenerado = null
@@ -6052,6 +6151,14 @@ async function handleEmailBatch(req, res) {
     res.status(500).json({ error: err.message })
   }
 }
+
+// POST /api/pos/bounces/procesar — procesar bounces manualmente (admin)
+router.post('/bounces/procesar', verificarAuth, asyncHandler(async (req, res) => {
+  if (req.perfil?.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' })
+  const { procesarBounces } = require('../services/bounceHandler')
+  const resultado = await procesarBounces()
+  res.json(resultado)
+}))
 
 // GET /api/pos/ventas/:id/comprobante.pdf — descarga pública de comprobante (con token HMAC)
 router.get('/ventas/:id/comprobante.pdf', asyncHandler(async (req, res) => {

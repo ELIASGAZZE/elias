@@ -1631,7 +1631,14 @@ const POS = () => {
     })
   }, [])
 
+  // Hash determinístico del carrito (id + cantidad + precio por item).
+  // Sirve para detectar si el carrito cambió respecto al snapshot de un pedido congelado.
+  const carritoHashActual = useMemo(() => (
+    carrito.map(i => `${i.articulo.id}:${i.cantidad}:${i.precioOverride ?? i.articulo.precio}`).join('|')
+  ), [carrito])
+
   // Calcular totales — precio de Centum ya incluye IVA
+  // Si hay un pedido congelado y el carrito no cambió, se respetan los valores originales del pedido.
   const { subtotal, subtotalSinDescEmpleado, descuentoTotal, descEmpleadoDetalle, descEmpleadoTotal, total, promosAplicadas } = useMemo(() => {
     let sub = 0
     let subSinDesc = 0
@@ -1657,8 +1664,15 @@ const POS = () => {
     const descEmpleado = Object.values(rubroMap)
     const totalDescEmpleado = descEmpleado.reduce((s, d) => s + d.descuento, 0)
 
-    const aplicadas = (modoDelivery || cliente.grupo_descuento_porcentaje > 0) ? [] : calcularPromocionesLocales(carrito, promociones)
-    const descTotal = aplicadas.reduce((sum, p) => sum + p.descuento, 0)
+    // Si estamos entregando un pedido congelado y el carrito no cambió, respetar promociones originales
+    const congelado = pedidoEnProceso?.congelados
+    const usarCongelado = congelado && congelado.carritoHash === carritoHashActual
+    const aplicadas = usarCongelado
+      ? (Array.isArray(congelado.promociones_aplicadas) ? congelado.promociones_aplicadas : [])
+      : ((modoDelivery || cliente.grupo_descuento_porcentaje > 0) ? [] : calcularPromocionesLocales(carrito, promociones))
+    const descTotal = usarCongelado
+      ? (parseFloat(congelado.descuento_total) || 0)
+      : aplicadas.reduce((sum, p) => sum + p.descuento, 0)
 
     return {
       subtotal: sub,
@@ -1669,7 +1683,7 @@ const POS = () => {
       total: sub - descTotal,
       promosAplicadas: aplicadas,
     }
-  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, modoDelivery, cliente.grupo_descuento_porcentaje])
+  }, [carrito, promociones, empleadoActivo, descuentosEmpleado, precioConDescEmpleado, modoDelivery, cliente.grupo_descuento_porcentaje, pedidoEnProceso, carritoHashActual])
 
   function ejecutarCancelacion() {
     api.post('/api/auditoria/cancelacion', {
@@ -1704,6 +1718,37 @@ const POS = () => {
     })
   }
 
+  // Descuento por grupo de cliente (por rubro, con fallback al % general)
+  // Declarado antes del hook de pedido para que pueda congelarse al crear el pedido.
+  // Si estamos entregando un pedido congelado y el carrito no cambió, respetar el descuento original.
+  const { descuentoGrupoCliente, descuentoGrupoDetalle } = useMemo(() => {
+    const congelado = pedidoEnProceso?.congelados
+    if (congelado && congelado.carritoHash === carritoHashActual) {
+      return {
+        descuentoGrupoCliente: parseFloat(congelado.descuento_grupo_cliente) || 0,
+        descuentoGrupoDetalle: Array.isArray(congelado.descuento_grupo_cliente_detalle) ? congelado.descuento_grupo_cliente_detalle : [],
+      }
+    }
+    if (cliente.grupo_descuento_porcentaje <= 0) return { descuentoGrupoCliente: 0, descuentoGrupoDetalle: [] }
+    const pctGeneral = cliente.grupo_descuento_porcentaje
+    const tieneRubros = Object.keys(descuentosGrupoRubros).length > 0
+    const rubroMap = {} // { rubroNombre: { rubro, porcentaje, descuento } }
+    for (const item of carrito) {
+      const rubroNombre = item.articulo.rubro?.nombre || 'Sin rubro'
+      const precio = item.precioOverride != null ? item.precioOverride : (item.articulo.precio || 0)
+      const pct = tieneRubros ? (descuentosGrupoRubros[rubroNombre] ?? pctGeneral) : pctGeneral
+      const desc = Math.round(precio * item.cantidad * pct / 100 * 100) / 100
+      if (!rubroMap[rubroNombre]) {
+        rubroMap[rubroNombre] = { rubro: rubroNombre, porcentaje: pct, descuento: 0 }
+      }
+      rubroMap[rubroNombre].descuento += desc
+    }
+    const detalle = Object.values(rubroMap).filter(d => d.descuento > 0)
+    const totalDesc = Math.round(detalle.reduce((s, d) => s + d.descuento, 0) * 100) / 100
+    return { descuentoGrupoCliente: totalDesc, descuentoGrupoDetalle: detalle }
+  }, [carrito, cliente.grupo_descuento_porcentaje, descuentosGrupoRubros, pedidoEnProceso, carritoHashActual])
+  const totalConDescGrupo = Math.round((total - descuentoGrupoCliente) * 100) / 100
+
   // --- Pedido Wizard Hook ---
   const pedidoWizard = usePedidoWizard({
     carrito,
@@ -1714,6 +1759,9 @@ const POS = () => {
     subtotal,
     descuentoTotal,
     promosAplicadas,
+    descuentoGrupoCliente,
+    descuentoGrupoDetalle,
+    grupoDescuentoNombre: cliente?.grupo_descuento_nombre || null,
     limpiarVenta,
     precioConDescEmpleado,
     isOnline,
@@ -1790,28 +1838,6 @@ const POS = () => {
     handleCobrarPedidoEnCaja,
   } = pedidoWizard
 
-  // Descuento por grupo de cliente (por rubro, con fallback al % general)
-  const { descuentoGrupoCliente, descuentoGrupoDetalle } = useMemo(() => {
-    if (cliente.grupo_descuento_porcentaje <= 0) return { descuentoGrupoCliente: 0, descuentoGrupoDetalle: [] }
-    const pctGeneral = cliente.grupo_descuento_porcentaje
-    const tieneRubros = Object.keys(descuentosGrupoRubros).length > 0
-    const rubroMap = {} // { rubroNombre: { rubro, porcentaje, descuento } }
-    for (const item of carrito) {
-      const rubroNombre = item.articulo.rubro?.nombre || 'Sin rubro'
-      const precio = item.precioOverride != null ? item.precioOverride : (item.articulo.precio || 0)
-      const pct = tieneRubros ? (descuentosGrupoRubros[rubroNombre] ?? pctGeneral) : pctGeneral
-      const desc = Math.round(precio * item.cantidad * pct / 100 * 100) / 100
-      if (!rubroMap[rubroNombre]) {
-        rubroMap[rubroNombre] = { rubro: rubroNombre, porcentaje: pct, descuento: 0 }
-      }
-      rubroMap[rubroNombre].descuento += desc
-    }
-    const detalle = Object.values(rubroMap).filter(d => d.descuento > 0)
-    const totalDesc = Math.round(detalle.reduce((s, d) => s + d.descuento, 0) * 100) / 100
-    return { descuentoGrupoCliente: totalDesc, descuentoGrupoDetalle: detalle }
-  }, [carrito, cliente.grupo_descuento_porcentaje, descuentosGrupoRubros])
-  const totalConDescGrupo = Math.round((total - descuentoGrupoCliente) * 100) / 100
-
   const totalGiftCardsEnVenta = giftCardsEnVenta.reduce((s, g) => s + g.monto, 0)
   const totalConGiftCards = totalConDescGrupo + totalGiftCardsEnVenta
 
@@ -1867,6 +1893,9 @@ const POS = () => {
         precio: item.precio,
         esPesable: item.esPesable || false,
         descuento1: 0, descuento2: 0, descuento3: 0,
+        rubro: item.rubro ? { nombre: item.rubro } : null,
+        subRubro: item.subRubro ? { nombre: item.subRubro } : null,
+        iva: item.iva_tasa != null ? { tasa: item.iva_tasa } : null,
       },
       cantidad: item.cantidad,
       precioOverride: item.precio,
@@ -1879,10 +1908,18 @@ const POS = () => {
         lista_precio_id: 1,
         email: pedido.email_cliente || '',
         celular: pedido.celular_cliente || '',
+        condicion_iva: pedido.condicion_iva || null,
+        grupo_descuento_nombre: pedido.grupo_descuento_nombre || null,
       })
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
+
+    // Snapshot de descuentos congelados — se respeta si el carrito no se modifica antes de entregar
+    const tieneSnapshot = pedido.subtotal != null
+    const carritoHash = nuevoCarrito.map(i => `${i.articulo.id}:${i.cantidad}:${i.precioOverride ?? i.articulo.precio}`).join('|')
+    const parseJSON = (v) => { if (!v) return null; if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return null } }
+
     setPedidoEnProceso({
       id: pedido.id, numero: pedido.numero, esPagado, totalPagado,
       ventaAnticipadaId: pedido.venta_anticipada_id || null,
@@ -1890,6 +1927,16 @@ const POS = () => {
       descuento_forma_pago: pedido.descuento_forma_pago || null,
       caja_cobro_id: pedido.caja_cobro_id || null,
       mp_payment_id: pedido.mp_payment_id || null,
+      congelados: tieneSnapshot ? {
+        carritoHash,
+        subtotal: parseFloat(pedido.subtotal) || 0,
+        descuento_total: parseFloat(pedido.descuento_total) || 0,
+        descuento_grupo_cliente: parseFloat(pedido.descuento_grupo_cliente) || 0,
+        descuento_grupo_cliente_detalle: parseJSON(pedido.descuento_grupo_cliente_detalle),
+        grupo_descuento_nombre: pedido.grupo_descuento_nombre || null,
+        promociones_aplicadas: parseJSON(pedido.promociones_aplicadas),
+        total: parseFloat(pedido.total) || 0,
+      } : null,
     })
     setVistaActiva('venta')
   }
@@ -1905,6 +1952,9 @@ const POS = () => {
         precio: item.precio,
         esPesable: item.esPesable || false,
         descuento1: 0, descuento2: 0, descuento3: 0,
+        rubro: item.rubro ? { nombre: item.rubro } : null,
+        subRubro: item.subRubro ? { nombre: item.subRubro } : null,
+        iva: item.iva_tasa != null ? { tasa: item.iva_tasa } : null,
       },
       cantidad: item.cantidad,
       precioOverride: item.precio,
@@ -1917,7 +1967,25 @@ const POS = () => {
         lista_precio_id: 1,
         email: pedido.email_cliente || '',
         celular: pedido.celular_cliente || '',
+        condicion_iva: pedido.condicion_iva || null,
+        grupo_descuento_nombre: pedido.grupo_descuento_nombre || null,
       })
+      // Recuperar datos completos del cliente (grupo de descuento) para recalcular si se modifica
+      if (pedido.id_cliente_centum) {
+        api.get('/api/clientes', { params: { buscar: pedido.id_cliente_centum, limit: 1 } })
+          .then(({ data }) => {
+            const cli = (data?.clientes || data?.data || []).find(c => c.id_centum === pedido.id_cliente_centum)
+            if (cli) {
+              setCliente(prev => ({
+                ...prev,
+                grupo_descuento_porcentaje: cli.grupo_descuento_porcentaje || 0,
+                grupo_descuento_nombre: cli.grupo_descuento_nombre || prev.grupo_descuento_nombre,
+                lista_precio_id: cli.lista_precio_id || 1,
+              }))
+            }
+          })
+          .catch(err => console.warn('No se pudo cargar datos de cliente:', err.message))
+      }
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
@@ -1967,8 +2035,12 @@ const POS = () => {
       cantidad: i.cantidad,
       esPesable: i.articulo.esPesable || false,
       rubro: i.articulo.rubro?.nombre || null,
+      subRubro: i.articulo.subRubro?.nombre || null,
+      iva_tasa: i.articulo.iva?.tasa || 21,
     }))
-    const nuevoTotal = items.reduce((sum, i) => sum + (i.precio * i.cantidad), 0)
+    // Recalcular total con promos y descuento grupo al editar (consistente con crear pedido)
+    const descGrupo = parseFloat(descuentoGrupoCliente) || 0
+    const nuevoTotal = Math.round((total - descGrupo) * 100) / 100
     const totalPagado = pedidoEnProceso.totalPagado || 0
 
     // Validar perecederos
@@ -2019,6 +2091,13 @@ const POS = () => {
       await api.put(`/api/pos/pedidos/${pedidoEnProceso.id}`, {
         items,
         total: nuevoTotal,
+        subtotal,
+        descuento_total: descuentoTotal || 0,
+        descuento_grupo_cliente: descGrupo,
+        descuento_grupo_cliente_detalle: descuentoGrupoDetalle || null,
+        grupo_descuento_nombre: cliente?.grupo_descuento_nombre || null,
+        promociones_aplicadas: (promosAplicadas && promosAplicadas.length > 0) ? promosAplicadas : null,
+        condicion_iva: cliente.condicion_iva || null,
         observaciones: obsActualizada || null,
         tipo: pedidoEnProceso.tipo,
         fecha_entrega: pedidoEnProceso.fecha_entrega || null,
@@ -2113,17 +2192,27 @@ const POS = () => {
       const montoPagadoFinal = (totalPagado + saldoAplicadoEntrega)
       const montoAjustado = Math.abs(totalConDescuento - montoPagadoFinal) < 1 ? totalConDescuento : montoPagadoFinal
 
+      // Si el pedido tiene snapshot de descuentos congelados, usarlo para el payload de venta.
+      const cong = pedidoEnProceso.congelados
+      const subtotalVenta = cong?.subtotal != null ? cong.subtotal : total
+      const descTotalVenta = cong?.descuento_total != null ? cong.descuento_total : 0
+      const promocionesVenta = Array.isArray(cong?.promociones_aplicadas) && cong.promociones_aplicadas.length > 0
+        ? cong.promociones_aplicadas
+        : null
+      const descGrupoVenta = parseFloat(cong?.descuento_grupo_cliente) || 0
+      const grupoNombreVenta = cong?.grupo_descuento_nombre || cliente?.grupo_descuento_nombre || null
+
       const payload = {
         id_cliente_centum: cliente.id_centum,
         nombre_cliente: cliente.razon_social,
         caja_id: pedidoEnProceso.caja_cobro_id || terminalConfig?.caja_id || null,
         items,
-        promociones_aplicadas: null,
-        subtotal: total,
+        promociones_aplicadas: promocionesVenta,
+        subtotal: subtotalVenta,
         // descuento_total es para promos sobre items; el descuento por forma de pago va aparte.
         // Si se guarda en ambos campos, DetalleVenta los resta dos veces y aparece un falso
         // "Redondeo efectivo" que cancela el descuento a la vista.
-        descuento_total: 0,
+        descuento_total: descTotalVenta,
         total: totalConDescuento,
         monto_pagado: montoAjustado,
         vuelto: 0,
@@ -2133,6 +2222,10 @@ const POS = () => {
         ],
         descuento_forma_pago: descFormaPago || null,
         pedido_pos_id: pedidoEnProceso.id,
+      }
+      if (descGrupoVenta > 0) {
+        payload.descuento_grupo_cliente = descGrupoVenta
+        payload.grupo_descuento_nombre = grupoNombreVenta
       }
       if (saldoAplicadoEntrega > 0) {
         payload.saldo_aplicado = saldoAplicadoEntrega

@@ -722,18 +722,39 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     // Gift cards activadas ya están incluidas como ventas_pos normales (con caja_id y pagos correctos)
     // No se consultan por separado
 
-    // Separar ventas de empleados (cuenta_corriente) y Talo Pay del resto
+    // ── Pagos anticipados de pedidos (cobrados en este cierre pero sin venta aún) ──
+    const desde = cierre.apertura_at
+    const hasta = cierre.cierre_at || new Date().toISOString()
+    let pedidosAnticipados = []
+    try {
+      const { data: pedAnt } = await supabase
+        .from('pedidos_pos')
+        .select('id, numero, nombre_cliente, total, total_pagado, pagos, cobrado_at, cobrado_por, descuento_forma_pago')
+        .eq('caja_cobro_id', cierre.caja_id)
+        .gte('cobrado_at', desde)
+        .lte('cobrado_at', hasta)
+        .not('pagos', 'is', null)
+      pedidosAnticipados = (pedAnt || []).filter(p => Array.isArray(p.pagos) && p.pagos.length > 0)
+    } catch (errPed) {
+      logger.error('Error al consultar pedidos anticipados para cierre:', errPed.message)
+    }
+
+    // Separar ventas de empleados (cuenta_corriente), Talo Pay y Pago anticipado del resto
     const ventasEmpleados = []
     const ventasTaloPay = []
+    const ventasPagoAnticipado = []
     const ventasNormales = []
     ;(ventas || []).forEach(v => {
       const pagos = v.pagos || []
       const esCuentaCorriente = pagos.some(p => (p.tipo || '').toLowerCase() === 'cuenta_corriente')
-      const esTaloPay = pagos.some(p => ['talo pay', 'pago anticipado'].includes((p.tipo || '').toLowerCase()))
+      const esTaloPay = pagos.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
+      const esPagoAnticipado = pagos.some(p => (p.tipo || '').toLowerCase() === 'pago anticipado')
       if (esCuentaCorriente) {
         ventasEmpleados.push(v)
       } else if (esTaloPay) {
         ventasTaloPay.push(v)
+      } else if (esPagoAnticipado) {
+        ventasPagoAnticipado.push(v)
       } else {
         ventasNormales.push(v)
       }
@@ -760,6 +781,31 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         mediosPago['Efectivo'].total -= vuelto
       }
     })
+
+    // ── Sumar pagos anticipados de pedidos al cierre ──
+    // Estos pedidos se cobraron en esta caja/cierre pero la venta se crea al entregar.
+    // Se suman al efectivo y medios para que el cierre refleje el dinero físico recibido.
+    const pagosAnticipadosMedios = {}
+    let totalPagosAnticipados = 0
+    pedidosAnticipados.forEach(ped => {
+      const pagos = ped.pagos || []
+      pagos.forEach(p => {
+        const tipo = p.tipo || 'Efectivo'
+        const tipoLower = tipo.toLowerCase()
+        // Talo Pay se concilia aparte, no impacta en caja
+        if (tipoLower === 'talo pay') return
+        const monto = parseFloat(p.monto) || 0
+        totalPagosAnticipados += monto
+        // Sumar al mediosPago general del cierre
+        if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
+        mediosPago[tipo].total += monto
+        mediosPago[tipo].cantidad += 1
+        // Track para la sección separada
+        if (!pagosAnticipadosMedios[tipo]) pagosAnticipadosMedios[tipo] = 0
+        pagosAnticipadosMedios[tipo] += monto
+      })
+    })
+    totalGeneral += totalPagosAnticipados
 
     // Calculate efectivo from medios
     if (mediosPago['Efectivo']) {
@@ -915,10 +961,76 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
           created_at: v.created_at,
         })),
       },
+      pagos_anticipados: {
+        cantidad: pedidosAnticipados.length,
+        total: parseFloat(totalPagosAnticipados.toFixed(2)),
+        medios: pagosAnticipadosMedios,
+        detalle: pedidosAnticipados.map(ped => ({
+          id: ped.id,
+          numero: ped.numero,
+          nombre_cliente: ped.nombre_cliente,
+          total_pagado: parseFloat(ped.total_pagado) || parseFloat(ped.total) || 0,
+          pagos: ped.pagos,
+          cobrado_at: ped.cobrado_at,
+          cobrado_por: ped.cobrado_por,
+        })),
+      },
     })
   } catch (err) {
     logger.error('Error al obtener ventas POS:', err.message)
     res.status(500).json({ error: 'Error al obtener ventas del POS' })
+  }
+}))
+
+// GET /api/cierres-pos/:id/pedidos-pendientes-pm — chequear pedidos pendientes al cerrar turno PM
+// Solo considera "PM" si ya hubo otro cierre cerrado en la misma caja el mismo día.
+router.get('/:id/pedidos-pendientes-pm', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const { data: cierre, error } = await supabase
+      .from('cierres_pos')
+      .select('id, caja_id, fecha, caja:cajas(sucursal_id)')
+      .eq('id', req.params.id)
+      .single()
+
+    if (error || !cierre) {
+      return res.status(404).json({ error: 'Cierre POS no encontrado' })
+    }
+
+    // ¿Ya hubo un cierre cerrado previo para esta caja en la misma fecha?
+    const { count: cierresPreviosCerrados, error: errCount } = await supabase
+      .from('cierres_pos')
+      .select('id', { count: 'exact', head: true })
+      .eq('caja_id', cierre.caja_id)
+      .eq('fecha', cierre.fecha)
+      .neq('id', cierre.id)
+      .neq('estado', 'abierta')
+
+    if (errCount) throw errCount
+
+    const esPM = (cierresPreviosCerrados || 0) > 0
+    if (!esPM) {
+      return res.json({ es_pm: false, pedidos: [] })
+    }
+
+    // Pedidos pendientes con fecha_entrega <= fecha del cierre, de la sucursal de la caja
+    const sucursalId = cierre.caja?.sucursal_id
+    let query = supabase
+      .from('pedidos_pos')
+      .select('id, numero, nombre_cliente, tipo, fecha_entrega, turno_entrega, total_pagado, estado, sucursal_id')
+      .eq('estado', 'pendiente')
+      .lte('fecha_entrega', cierre.fecha)
+      .order('fecha_entrega', { ascending: true })
+      .order('created_at', { ascending: true })
+
+    if (sucursalId) query = query.eq('sucursal_id', sucursalId)
+
+    const { data: pedidos, error: errPedidos } = await query
+    if (errPedidos) throw errPedidos
+
+    res.json({ es_pm: true, pedidos: pedidos || [] })
+  } catch (err) {
+    logger.error('Error al verificar pedidos pendientes PM:', err)
+    res.status(500).json({ error: 'Error al verificar pedidos pendientes' })
   }
 }))
 

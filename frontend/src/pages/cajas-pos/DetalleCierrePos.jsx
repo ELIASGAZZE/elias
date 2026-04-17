@@ -1044,13 +1044,6 @@ const DetalleCierrePos = () => {
               )
             })()}
 
-            {/* Observaciones del cajero */}
-            {cierre.observaciones && (
-              <div className="pt-2 border-t border-gray-100">
-                <p className="text-xs text-gray-400">Observaciones del cajero</p>
-                <p className="text-sm text-gray-700">{cierre.observaciones}</p>
-              </div>
-            )}
           </div>
         )}
 
@@ -1444,6 +1437,34 @@ const DetalleCierrePos = () => {
           </div>
         )}
 
+        {/* Pagos anticipados de pedidos — impactan en caja */}
+        {posVentas?.pagos_anticipados?.cantidad > 0 && (
+          <div className="bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-emerald-800">
+              Pagos anticipados de pedidos ({posVentas.pagos_anticipados.cantidad})
+            </h3>
+            <p className="text-xs text-gray-500">Cobros de pedidos recibidos durante este turno. Incluidos en el total de caja.</p>
+            <div className="space-y-1">
+              {posVentas.pagos_anticipados.detalle.map(ped => (
+                <div key={ped.id} className="flex items-center justify-between px-3 py-2 bg-emerald-50/50 rounded-lg text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-emerald-600">#{ped.numero}</span>
+                    <span className="text-gray-700">{ped.nombre_cliente || 'Sin cliente'}</span>
+                    {ped.pagos?.map((p, i) => (
+                      <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{p.tipo || 'Efectivo'}</span>
+                    ))}
+                  </div>
+                  <span className="font-medium text-emerald-700">{formatMonto(ped.total_pagado)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-emerald-200 pt-2 flex justify-between text-sm font-medium">
+              <span className="text-emerald-800">Total pagos anticipados</span>
+              <span className="text-emerald-700">{formatMonto(posVentas.pagos_anticipados.total)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Gastos durante el turno */}
         {gastos.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
@@ -1772,6 +1793,14 @@ const DetalleCierrePos = () => {
           )
         })()}
 
+        {/* Observaciones del cajero */}
+        {cierre.observaciones && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <p className="text-sm font-medium text-amber-700 mb-1">Observaciones del cajero</p>
+            <p className="text-base text-gray-800">{cierre.observaciones}</p>
+          </div>
+        )}
+
         {/* Botones de accion */}
         <div className="flex gap-3">
           {!esBlind && cierre.estado !== 'abierta' && (
@@ -1793,12 +1822,26 @@ const DetalleCierrePos = () => {
           )}
 
           {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && cierre.tipo === 'delivery' && (
-            <Link
-              to={`/cajas-pos/cierre/${cierre.id}/verificar`}
+            <button
+              onClick={async () => {
+                try {
+                  await api.post(`/api/cierres-pos/${cierre.id}/verificar`, {
+                    billetes: {},
+                    monedas: {},
+                    total_efectivo: cierre.total_efectivo || 0,
+                    medios_pago: [],
+                    total_general: cierre.total_efectivo || 0,
+                    observaciones: '',
+                  })
+                  navigate('/cajas-pos')
+                } catch (err) {
+                  alert(err.response?.data?.error || 'Error al verificar delivery')
+                }
+              }}
               className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-3 rounded-xl font-medium transition-colors text-sm"
             >
               Verificar delivery
-            </Link>
+            </button>
           )}
 
           {(esGestor || esAdmin) && cierre.estado === 'pendiente_gestor' && cierre.tipo !== 'delivery' && (

@@ -832,18 +832,82 @@ const DetalleVenta = () => {
                 Concepto en Centum
               </span>
             </div>
-            <div className="divide-y divide-gray-200">
+            <div className="space-y-3">
               {giftCardsVendidas.map((gc, i) => (
-                <div key={i} className="py-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">Gift Card {gc.codigo}</p>
-                    {gc.comprador && <p className="text-xs text-gray-500">Comprador: {gc.comprador}</p>}
+                <div key={i} className="space-y-2">
+                  <div className="p-3 rounded-lg bg-violet-50 border border-violet-100">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-violet-600 uppercase font-medium">Gift Card</span>
+                        <span className="text-sm font-bold text-gray-800 ml-2">{gc.codigo}</span>
+                      </div>
+                      <span className="text-sm font-bold text-gray-700">{formatPrecio(gc.monto_nominal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-xs text-gray-500">
+                        {gc.comprador && `Comprador: ${gc.comprador}`}
+                        {gc.gift_card?.comprador_nombre && !gc.comprador && `Comprador: ${gc.gift_card.comprador_nombre}`}
+                      </span>
+                      {gc.gift_card && (
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                          gc.gift_card.estado === 'activa' ? 'bg-green-100 text-green-700' :
+                          gc.gift_card.estado === 'agotada' ? 'bg-gray-100 text-gray-600' :
+                          'bg-red-100 text-red-700'
+                        }`}>
+                          {gc.gift_card.estado === 'activa' ? `Activa — Saldo: ${formatPrecio(gc.gift_card.saldo)}` :
+                           gc.gift_card.estado === 'agotada' ? 'Agotada' : 'Anulada'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-sm font-bold text-gray-700">{formatPrecio(gc.monto_nominal)}</span>
+                  {gc.venta_uso && (
+                    <Link
+                      to={`/ventas/${gc.venta_uso.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-100 transition-colors"
+                    >
+                      <div>
+                        <span className="text-xs font-medium text-amber-600 uppercase">Usada en venta</span>
+                        <span className="text-sm font-medium text-gray-800 ml-2">
+                          #{gc.venta_uso.numero_venta}
+                        </span>
+                        {gc.venta_uso.centum_comprobante && (
+                          <span className="text-xs text-amber-600 ml-2">{gc.venta_uso.centum_comprobante}</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        {gc.monto_usado && <span className="text-sm font-medium text-red-500">-{formatPrecio(gc.monto_usado)}</span>}
+                        <span className="text-xs text-gray-400 block">{formatFechaHora(gc.venta_uso.created_at)}</span>
+                      </div>
+                    </Link>
+                  )}
+                  {gc.nota_credito && (
+                    <Link
+                      to={`/ventas/${gc.nota_credito.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-100 transition-colors"
+                    >
+                      <div>
+                        <span className="text-xs font-medium text-red-600 uppercase">Nota de Crédito</span>
+                        <span className="text-sm font-medium text-gray-800 ml-2">
+                          #{gc.nota_credito.numero_venta}
+                        </span>
+                        {gc.nota_credito.centum_comprobante && (
+                          <span className="text-xs text-red-600 ml-2">{gc.nota_credito.centum_comprobante}</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-medium text-red-500">-{formatPrecio(Math.abs(gc.nota_credito.total))}</span>
+                        <span className="text-xs text-gray-400 block">{formatFechaHora(gc.nota_credito.created_at)}</span>
+                      </div>
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>
-            <div className="mt-2 pt-2 border-t border-gray-300 flex justify-between text-xs text-gray-500">
+            <div className="mt-3 pt-2 border-t border-gray-300 flex justify-between text-xs text-gray-500">
               <span>Total nominal GC</span>
               <span className="font-bold">{formatPrecio(giftCardsVendidas.reduce((s, gc) => s + (gc.monto_nominal || 0), 0))}</span>
             </div>
