@@ -7,6 +7,17 @@ const logger = require('../config/logger')
 const { validate } = require('../middleware/validate')
 const { abrirCierrePosSchema, cerrarCierreSchema, editarConteoSchema } = require('../schemas/cierres')
 const asyncHandler = require('../middleware/asyncHandler')
+const { normalizarPago, resolverFormaCobro, ID_TO_FORMA, FORMAS_COBRO } = require('../config/formasCobro')
+
+const FC_EFECTIVO = FORMAS_COBRO.EFECTIVO
+const FC_TALO = FORMAS_COBRO.TALO_PAY
+
+// Resolver key de agrupación: usa forma_cobro_id si existe, sino normaliza por tipo
+const resolverKeyPago = (p) => {
+  const norm = normalizarPago(p)
+  return norm.forma_cobro_id || norm.tipo
+}
+const resolverNombrePago = (p) => normalizarPago(p).tipo
 
 const SELECT_CIERRE = '*, caja:cajas(id, nombre, sucursal_id, sucursales(id, nombre)), empleado:empleados!empleado_id(id, nombre), cajero:perfiles!cajero_id(id, nombre, username, sucursal_id), cerrado_por:empleados!cerrado_por_empleado_id(id, nombre)'
 
@@ -765,7 +776,7 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       }
     })
 
-    // Aggregate payments by type (solo ventas normales)
+    // Aggregate payments by forma_cobro_id (solo ventas normales)
     const mediosPago = {}
     let totalEfectivo = 0
     let totalGeneral = 0
@@ -774,16 +785,17 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       totalGeneral += parseFloat(v.total) || 0
       const pagos = v.pagos || []
       const vuelto = parseFloat(v.vuelto) || 0
-      const tieneEfectivo = pagos.some(p => (p.tipo || 'Efectivo') === 'Efectivo')
+      const tieneEfectivo = pagos.some(p => resolverKeyPago(p) === FC_EFECTIVO.id)
       pagos.forEach(p => {
-        const tipo = p.tipo || 'Efectivo'
-        if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
-        mediosPago[tipo].total += parseFloat(p.monto) || 0
-        mediosPago[tipo].cantidad += 1
+        const key = resolverKeyPago(p)
+        const nombre = resolverNombrePago(p)
+        if (!mediosPago[key]) mediosPago[key] = { nombre, forma_cobro_id: normalizarPago(p).forma_cobro_id, total: 0, cantidad: 0 }
+        mediosPago[key].total += parseFloat(p.monto) || 0
+        mediosPago[key].cantidad += 1
       })
       // Descontar vuelto del efectivo (el vuelto sale de la caja)
-      if (tieneEfectivo && vuelto > 0 && mediosPago['Efectivo']) {
-        mediosPago['Efectivo'].total -= vuelto
+      if (tieneEfectivo && vuelto > 0 && mediosPago[FC_EFECTIVO.id]) {
+        mediosPago[FC_EFECTIVO.id].total -= vuelto
       }
     })
 
@@ -795,26 +807,26 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
     pedidosAnticipados.forEach(ped => {
       const pagos = ped.pagos || []
       pagos.forEach(p => {
-        const tipo = p.tipo || 'Efectivo'
-        const tipoLower = tipo.toLowerCase()
+        const key = resolverKeyPago(p)
+        const nombre = resolverNombrePago(p)
         // Talo Pay se concilia aparte, no impacta en caja
-        if (tipoLower === 'talo pay') return
+        if (key === FC_TALO.id) return
         const monto = parseFloat(p.monto) || 0
         totalPagosAnticipados += monto
         // Sumar al mediosPago general del cierre
-        if (!mediosPago[tipo]) mediosPago[tipo] = { nombre: tipo, total: 0, cantidad: 0 }
-        mediosPago[tipo].total += monto
-        mediosPago[tipo].cantidad += 1
+        if (!mediosPago[key]) mediosPago[key] = { nombre, forma_cobro_id: normalizarPago(p).forma_cobro_id, total: 0, cantidad: 0 }
+        mediosPago[key].total += monto
+        mediosPago[key].cantidad += 1
         // Track para la sección separada
-        if (!pagosAnticipadosMedios[tipo]) pagosAnticipadosMedios[tipo] = 0
-        pagosAnticipadosMedios[tipo] += monto
+        if (!pagosAnticipadosMedios[key]) pagosAnticipadosMedios[key] = 0
+        pagosAnticipadosMedios[key] += monto
       })
     })
     totalGeneral += totalPagosAnticipados
 
     // Calculate efectivo from medios
-    if (mediosPago['Efectivo']) {
-      totalEfectivo = mediosPago['Efectivo'].total
+    if (mediosPago[FC_EFECTIVO.id]) {
+      totalEfectivo = mediosPago[FC_EFECTIVO.id].total
     }
 
     // Separar cupones Mercado Pago del cuadro comparativo
@@ -1248,7 +1260,7 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, asyncHandler(async (req
 
       // Sumar solo pagos en efectivo
       const efectivoBruto = pagos
-        .filter(p => (p.tipo || 'Efectivo') === 'Efectivo')
+        .filter(p => resolverKeyPago(p) === FC_EFECTIVO.id)
         .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
       const efectivoNeto = parseFloat((efectivoBruto - vuelto).toFixed(2))
 
@@ -1257,7 +1269,7 @@ router.get('/:id/movimientos', verificarAuth, soloAdmin, asyncHandler(async (req
 
       // Resumen de formas de pago
       const formasPago = pagos.map(p => {
-        const tipo = p.tipo || 'Efectivo'
+        const tipo = resolverNombrePago(p)
         const monto = parseFloat(p.monto) || 0
         return `${tipo} ${formatMontoBack(monto)}`
       })

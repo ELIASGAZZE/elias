@@ -13,6 +13,7 @@ const { validate } = require('../middleware/validate')
 const { crearVentaSchema } = require('../schemas/pos')
 const asyncHandler = require('../middleware/asyncHandler')
 const { fetchWithTimeout } = require('../utils/fetchWithTimeout')
+const { normalizarPago, FORMAS_COBRO } = require('../config/formasCobro')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // Lock en memoria para prevenir ventas duplicadas por doble-submit concurrente
@@ -596,18 +597,21 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       cierreAbiertoId = cierreRes.data?.id || null
     }
 
+    // Normalizar pagos: asignar forma_cobro_id y nombre canónico
+    const pagosNorm = (pagos || []).map(p => normalizarPago(p))
+
     // Prorratear pagos entre items y gift cards cuando es venta mixta
     // La proporción se basa en el monto real (total incluye descuentos ya aplicados)
     const proporcionItems = (tieneGC && total > 0) ? totalItemsSolo / total : 1
-    let pagosItems = pagos || []
-    let pagosGC = pagos || []
+    let pagosItems = pagosNorm
+    let pagosGC = pagosNorm
     if (tieneGC && tieneItems) {
-      pagosItems = (pagos || []).map(p => ({
+      pagosItems = pagosNorm.map(p => ({
         ...p,
         monto: parseFloat((parseFloat(p.monto) * proporcionItems).toFixed(2)),
       }))
       const proporcionGC = totalGCActivar / total
-      pagosGC = (pagos || []).map(p => ({
+      pagosGC = pagosNorm.map(p => ({
         ...p,
         monto: parseFloat((parseFloat(p.monto) * proporcionGC).toFixed(2)),
       }))
@@ -668,7 +672,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         vuelto: vueltoItems,
         items: JSON.stringify(items),
         promociones_aplicadas: promociones_aplicadas ? JSON.stringify(promociones_aplicadas) : null,
-        pagos: tieneGC ? pagosItems : (pagos || []),
+        pagos: tieneGC ? pagosItems : pagosNorm,
         descuento_forma_pago: descuento_forma_pago || null,
         descuento_grupo_cliente: parseFloat(descuento_grupo_cliente) || 0,
         grupo_descuento_nombre: grupo_descuento_nombre || null,
@@ -709,12 +713,15 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       // NO sobrescribir cobrado_at/cobrado_por/cobrado_en_cierre si ya fueron seteados (pago anticipado)
       if (pedido_pos_id && data) {
         const { data: pedidoOrig } = await supabase.from('pedidos_pos').select('total, total_pagado, cobrado_at').eq('id', pedido_pos_id).single()
-        const pedidoTotal = pedidoOrig ? parseFloat(pedidoOrig.total) || 0 : 0
-        const pedidoPagadoPrev = pedidoOrig ? parseFloat(pedidoOrig.total_pagado) || 0 : 0
-        const nuevoTotalPagado = Math.min(pedidoPagadoPrev + total, pedidoTotal)
-        const updatePedido = { total_pagado: nuevoTotalPagado }
-        // Solo setear datos de cobro si el pedido NO tenía cobro previo (pago en entrega, no anticipado)
+        const updatePedido = {}
+        // Solo actualizar total_pagado y datos de cobro si el pedido NO estaba ya pagado.
+        // Si cobrado_at ya existe, es un pago anticipado: la venta de entrega no debe
+        // sumar de nuevo al total_pagado (el dinero ya fue registrado al cobrar).
         if (!pedidoOrig?.cobrado_at) {
+          const pedidoTotal = pedidoOrig ? parseFloat(pedidoOrig.total) || 0 : 0
+          const pedidoPagadoPrev = pedidoOrig ? parseFloat(pedidoOrig.total_pagado) || 0 : 0
+          const nuevoTotalPagado = Math.min(pedidoPagadoPrev + total, pedidoTotal)
+          updatePedido.total_pagado = nuevoTotalPagado
           updatePedido.cobrado_at = new Date().toISOString()
           if (cierreRes?.data) {
             updatePedido.cobrado_en_cierre = cierreRes.data.numero
@@ -722,11 +729,18 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
             updatePedido.cobrado_sucursal_nombre = cierreRes.data.cajas?.sucursales?.nombre || null
           }
           if (pagos && Array.isArray(pagos)) updatePedido.pagos = pagos
+          if (descuento_forma_pago) updatePedido.descuento_forma_pago = descuento_forma_pago
+          if (descuento_grupo_cliente) {
+            updatePedido.descuento_grupo_cliente = descuento_grupo_cliente
+            if (grupo_descuento_nombre) updatePedido.grupo_descuento_nombre = grupo_descuento_nombre
+          }
         }
-        await supabase
-          .from('pedidos_pos')
-          .update(updatePedido)
-          .eq('id', pedido_pos_id)
+        if (Object.keys(updatePedido).length > 0) {
+          await supabase
+            .from('pedidos_pos')
+            .update(updatePedido)
+            .eq('id', pedido_pos_id)
+        }
       }
 
       // Registrar cambios de precio (async, no bloquea)
@@ -2676,6 +2690,8 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
 
     // Si hay pagos anticipados reales, registrar info de cobro en el pedido (sin crear venta — la venta se crea al entregar)
     if (data && pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0 && (parseFloat(total_pagado) || 0) > 0) {
+      // Normalizar pagos anticipados
+      const pagosAntNorm = pagos_anticipado.map(p => normalizarPago(p))
       try {
         // Buscar cierre activo para registrar quién cobró (por cajero_id o por caja_id)
         let cobradoPor = null
@@ -2710,7 +2726,7 @@ router.post('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
         }
 
         await supabase.from('pedidos_pos').update({
-          pagos: pagos_anticipado,
+          pagos: pagosAntNorm,
           descuento_forma_pago: req.body.descuento_forma_pago || null,
           cobrado_por: cobradoPor,
           cobrado_en_cierre: cobradoEnCierre,
@@ -3047,13 +3063,13 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       const pagosOriginales = Array.isArray(pedido.pagos) && pedido.pagos.length > 0 ? pedido.pagos : []
       let pagos
       if (!esAnticipado) {
-        pagos = [{ tipo: 'efectivo', monto: totalVenta }]
+        pagos = [normalizarPago({ tipo: 'Efectivo', monto: totalVenta })]
       } else if (esTaloPay) {
-        pagos = [{ tipo: 'Talo Pay', monto: totalVenta }]
+        pagos = [normalizarPago({ tipo: 'Talo Pay', monto: totalVenta })]
       } else {
         pagos = pagosOriginales.length > 0
-          ? pagosOriginales.map(p => ({ tipo: 'Pago anticipado', monto: p.monto, detalle: { ...(p.detalle || {}), forma_pago_original: p.tipo } }))
-          : [{ tipo: 'Pago anticipado', monto: totalVenta }]
+          ? pagosOriginales.map(p => normalizarPago({ tipo: 'Pago anticipado', monto: p.monto, detalle: { ...(p.detalle || {}), forma_pago_original: p.tipo } }))
+          : [normalizarPago({ tipo: 'Pago anticipado', monto: totalVenta })]
       }
 
       const insertVenta = {
@@ -3672,7 +3688,7 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
 
     // Registrar info de cobro en el pedido (sin crear venta — la venta se crea al entregar)
     if (pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0) {
-      updateData.pagos = pagos_anticipado
+      updateData.pagos = pagos_anticipado.map(p => normalizarPago(p))
       updateData.descuento_forma_pago = req.body.descuento_forma_pago || null
       // Talo Pay se concilia aparte — no asociar a ninguna caja/cierre
       const esTaloPay = pagos_anticipado.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
@@ -4450,6 +4466,70 @@ router.get('/saldo/:idClienteCentum', verificarAuth, asyncHandler(async (req, re
 
     if (error) throw error
 
+    // Enriquecer movimientos con datos de ventas relacionadas (NC, venta original, cierres)
+    const ventaIds = [...new Set((movimientos || []).map(m => m.venta_pos_id).filter(Boolean))]
+    let ventasMap = {}
+    if (ventaIds.length > 0) {
+      const { data: ventas } = await supabase
+        .from('ventas_pos')
+        .select('id, tipo, numero_venta, venta_origen_id, cierre_pos_id, centum_comprobante, created_at, cajero_id')
+        .in('id', ventaIds)
+      if (ventas) {
+        for (const v of ventas) ventasMap[v.id] = v
+      }
+      // Traer ventas origen (la venta original donde se vendió el producto)
+      const origenIds = [...new Set(ventas?.map(v => v.venta_origen_id).filter(Boolean) || [])]
+      if (origenIds.length > 0) {
+        const { data: origenes } = await supabase
+          .from('ventas_pos')
+          .select('id, numero_venta, cierre_pos_id, centum_comprobante, created_at, cajero_id')
+          .in('id', origenIds)
+        if (origenes) {
+          for (const o of origenes) ventasMap[`origen_${o.id}`] = o
+        }
+      }
+    }
+
+    // Recolectar cierre IDs y traer sus números
+    const allCierreIds = new Set()
+    for (const v of Object.values(ventasMap)) {
+      if (v.cierre_pos_id) allCierreIds.add(v.cierre_pos_id)
+    }
+    let cierresMap = {}
+    if (allCierreIds.size > 0) {
+      const { data: cierres } = await supabase
+        .from('cierres_pos')
+        .select('id, numero')
+        .in('id', [...allCierreIds])
+      if (cierres) {
+        for (const c of cierres) cierresMap[c.id] = c.numero
+      }
+    }
+
+    // Adjuntar info enriquecida a cada movimiento
+    for (const m of (movimientos || [])) {
+      if (m.venta_pos_id && ventasMap[m.venta_pos_id]) {
+        const venta = ventasMap[m.venta_pos_id]
+        m.venta_vinculada_id = venta.id
+        m.venta_vinculada_tipo = venta.tipo // 'venta' o 'nota_credito'
+        m.venta_vinculada_numero = venta.numero_venta
+        m.venta_vinculada_comprobante = venta.centum_comprobante
+        m.venta_vinculada_cierre_id = venta.cierre_pos_id
+        m.venta_vinculada_cierre_numero = venta.cierre_pos_id ? cierresMap[venta.cierre_pos_id] : null
+        if (venta.venta_origen_id) {
+          const origen = ventasMap[`origen_${venta.venta_origen_id}`]
+          if (origen) {
+            m.venta_origen_id = origen.id
+            m.venta_origen_numero = origen.numero_venta
+            m.venta_origen_comprobante = origen.centum_comprobante
+            m.venta_origen_cierre_id = origen.cierre_pos_id
+            m.venta_origen_cierre_numero = origen.cierre_pos_id ? cierresMap[origen.cierre_pos_id] : null
+            m.venta_origen_fecha = origen.created_at
+          }
+        }
+      }
+    }
+
     const saldo = (movimientos || []).reduce((s, m) => s + parseFloat(m.monto), 0)
 
     // Calcular desglose acumulado de forma_pago_origen para el saldo vigente
@@ -4497,7 +4577,7 @@ router.get('/saldos', verificarAuth, asyncHandler(async (req, res) => {
 
     // Filtrar solo saldo positivo
     const clientes = Object.values(clientesMap)
-      .filter(c => c.saldo > 0.01)
+      .filter(c => c.saldo > 0.01 && c.id_cliente_centum !== 2)
       .map(c => ({ ...c, saldo: Math.round(c.saldo * 100) / 100 }))
       .sort((a, b) => b.saldo - a.saldo)
 
@@ -4972,7 +5052,7 @@ router.post('/correccion-cliente', verificarAuth, asyncHandler(async (req, res) 
         vuelto: parseFloat(venta.vuelto) || 0,
         items: venta.items,
         promociones_aplicadas: promosOriginal ? JSON.stringify(promosOriginal) : null,
-        pagos: pagosOriginal,
+        pagos: (pagosOriginal || []).map(p => normalizarPago(p)),
         descuento_forma_pago: venta.descuento_forma_pago,
         tipo: 'venta',
         venta_origen_id: venta_id,
@@ -5435,7 +5515,7 @@ router.post('/anular-venta', verificarAuth, asyncHandler(async (req, res) => {
         descuento_forma_pago: -(parseFloat(venta.descuento_forma_pago) || 0),
         items: JSON.stringify(itemsNC),
         // Pagos negativos para que el cierre de caja descuente correctamente
-        pagos: pagosVenta.map(p => ({ tipo: p.tipo, monto: -Math.abs(parseFloat(p.monto) || 0), detalle: p.detalle })),
+        pagos: pagosVenta.map(p => normalizarPago({ tipo: p.tipo, monto: -Math.abs(parseFloat(p.monto) || 0), detalle: p.detalle, forma_cobro_id: p.forma_cobro_id })),
         tipo: 'nota_credito',
         venta_origen_id: venta_id,
       })
@@ -5444,17 +5524,8 @@ router.post('/anular-venta', verificarAuth, asyncHandler(async (req, res) => {
 
     if (ncErr) throw ncErr
 
-    // Registrar movimiento de saldo (para que quede en auditoría, aunque se devuelve inmediato)
+    // Anulación = NC + devolución de dinero inmediata, NO genera saldo a favor
     const totalMontoPagado = parseFloat(venta.monto_pagado) || totalVenta
-    await supabase.from('movimientos_saldo_pos').insert({
-      id_cliente_centum: idClienteCentum,
-      nombre_cliente: nombreCliente,
-      monto: totalVenta,
-      motivo: `Anulación de venta - ${motivo.trim()}`,
-      venta_pos_id: notaCredito.id,
-      created_by: req.perfil.id,
-      forma_pago_origen: calcularFormaPagoOrigen(pagosVenta, totalVenta, totalMontoPagado),
-    })
 
     // Sync NC a Centum
     let centumNC = null
