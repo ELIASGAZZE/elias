@@ -139,6 +139,22 @@ const PedidosPOS = ({ embebido, terminalConfig, onEntregarPedido, onEditarPedido
     const esPagado = pedido && ((pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY'))
     const totalPagado = pedido ? (parseFloat(pedido.total_pagado) || 0) : 0
 
+    // Bloquear entrega si tiene deuda pendiente (excepto pago en entrega)
+    if (estado === 'entregado' && pedido) {
+      const obs = pedido.observaciones || ''
+      const esPagoEnEntrega = obs.includes('PAGO EN ENTREGA: EFECTIVO')
+      if (!esPagoEnEntrega) {
+        const pedTotal = parseFloat(pedido.total) || 0
+        const descFP = pedido.descuento_forma_pago?.total || 0
+        const totalConDesc = Math.round((pedTotal - descFP) * 100) / 100
+        const deuda = Math.round((totalConDesc - totalPagado) * 100) / 100
+        if (deuda > 1) {
+          alert(`No se puede entregar: el pedido tiene una deuda de ${formatPrecio(deuda)}.\nDebe cobrarse el total antes de entregar.`)
+          return
+        }
+      }
+    }
+
     if (estado === 'cancelado' && esPagado && totalPagado > 0) {
       if (!confirm(`Se generará saldo a favor de ${formatPrecio(totalPagado)} para el cliente.\n\n¿Cancelar pedido?`)) return
     } else {

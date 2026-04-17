@@ -2866,6 +2866,21 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
       return res.status(400).json({ error: `Hay ${sinPago.length} pedido(s) sin forma de pago definida` })
     }
 
+    // Verificar que pedidos con pago anticipado estén completamente pagados
+    const conDeuda = pedidos.filter(p => {
+      const obs = p.observaciones || ''
+      if (obs.includes('PAGO EN ENTREGA: EFECTIVO')) return false // se cobra al entregar
+      const pedTotal = parseFloat(p.total) || 0
+      const pedPagado = parseFloat(p.total_pagado) || 0
+      const descFP = p.descuento_forma_pago?.total || 0
+      const totalConDesc = Math.round((pedTotal - descFP) * 100) / 100
+      return (totalConDesc - pedPagado) > 1
+    })
+    if (conDeuda.length > 0) {
+      const nums = conDeuda.map(p => `#${p.numero}`).join(', ')
+      return res.status(400).json({ error: `No se puede despachar: pedido(s) ${nums} tienen deuda pendiente. Deben cobrarse antes de entregar.` })
+    }
+
     // Obtener promo de descuento por pago en efectivo
     let descEfectivoPct = 0
     const { data: promos } = await supabase
@@ -3659,12 +3674,29 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
     // Leer pedido actual antes de actualizar (para saldo)
     const { data: pedidoActual } = await supabase
       .from('pedidos_pos')
-      .select('id, numero, id_cliente_centum, nombre_cliente, total_pagado, estado, historial')
+      .select('id, numero, id_cliente_centum, nombre_cliente, total, total_pagado, descuento_forma_pago, observaciones, estado, historial')
       .eq('id', req.params.id)
       .single()
 
     if (!pedidoActual || pedidoActual.estado !== 'pendiente') {
       return res.status(404).json({ error: 'Pedido no encontrado o ya procesado' })
+    }
+
+    // Validar pago completo antes de permitir entrega
+    if (estado === 'entregado') {
+      const obs = pedidoActual.observaciones || ''
+      const esPagoEnEntrega = obs.includes('PAGO EN ENTREGA: EFECTIVO')
+      // Solo permitir entrega sin pago completo si está marcado como "pago en entrega"
+      if (!esPagoEnEntrega) {
+        const pedTotal = parseFloat(pedidoActual.total) || 0
+        const pedPagado = parseFloat(pedidoActual.total_pagado) || 0
+        const descFP = pedidoActual.descuento_forma_pago?.total || 0
+        const totalConDesc = Math.round((pedTotal - descFP) * 100) / 100
+        const deuda = Math.round((totalConDesc - pedPagado) * 100) / 100
+        if (deuda > 1) {
+          return res.status(400).json({ error: `No se puede entregar: el pedido tiene una deuda de $${deuda.toFixed(2)}. Debe cobrarse el total antes de entregar.` })
+        }
+      }
     }
 
     // Preparar datos de entrega si corresponde

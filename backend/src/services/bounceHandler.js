@@ -122,37 +122,62 @@ async function procesarBounces() {
             continue
           }
 
-          // Buscar cliente con ese email en Supabase
+          // === Estrategia 1: buscar cliente con ese email en tabla clientes ===
           const { data: clientes } = await supabase
             .from('clientes')
             .select('id, razon_social, email, codigo')
             .ilike('email', emailRebotado)
 
-          if (!clientes || clientes.length === 0) {
-            logger.info(`[Bounces] Email rebotado ${emailRebotado} no corresponde a ningún cliente`)
-            uidsToDelete.push(msg.uid)
-            continue
+          if (clientes && clientes.length > 0) {
+            for (const cli of clientes) {
+              const { error: updErr } = await supabase
+                .from('clientes')
+                .update({ email: null })
+                .eq('id', cli.id)
+
+              if (updErr) {
+                logger.error(`[Bounces] Error limpiando email de cliente ${cli.codigo}: ${updErr.message}`)
+                resultado.errores++
+              } else {
+                resultado.limpiados++
+                resultado.detalles.push({
+                  email: emailRebotado,
+                  cliente: cli.razon_social,
+                  codigo: cli.codigo,
+                  via: 'clientes.email',
+                })
+                logger.info(`[Bounces] Email ${emailRebotado} eliminado del cliente ${cli.codigo} (${cli.razon_social})`)
+              }
+            }
           }
 
-          // Limpiar email de los clientes que lo tengan
-          for (const cli of clientes) {
-            const { error: updErr } = await supabase
-              .from('clientes')
-              .update({ email: null })
-              .eq('id', cli.id)
+          // === Estrategia 2: buscar en ventas_pos.email_enviado_a (email manual del cajero) ===
+          // Si el cajero ingresó un email incorrecto al enviar el comprobante,
+          // ese email no está en la ficha del cliente sino en la venta
+          const { data: ventas } = await supabase
+            .from('ventas_pos')
+            .select('id, numero_venta, id_cliente_centum, email_enviado_a')
+            .ilike('email_enviado_a', emailRebotado)
+            .limit(20)
 
-            if (updErr) {
-              logger.error(`[Bounces] Error limpiando email de cliente ${cli.codigo}: ${updErr.message}`)
-              resultado.errores++
-            } else {
-              resultado.limpiados++
-              resultado.detalles.push({
-                email: emailRebotado,
-                cliente: cli.razon_social,
-                codigo: cli.codigo,
-              })
-              logger.info(`[Bounces] Email ${emailRebotado} eliminado del cliente ${cli.codigo} (${cli.razon_social})`)
+          if (ventas && ventas.length > 0) {
+            // Marcar esas ventas como email NO enviado para que no se reintenten con el email malo
+            for (const v of ventas) {
+              await supabase
+                .from('ventas_pos')
+                .update({ email_enviado: false, email_enviado_a: null })
+                .eq('id', v.id)
             }
+            logger.info(`[Bounces] ${ventas.length} ventas tenían email_enviado_a=${emailRebotado}, reseteadas`)
+            resultado.detalles.push({
+              email: emailRebotado,
+              ventas_reseteadas: ventas.map(v => v.numero_venta),
+              via: 'ventas_pos.email_enviado_a',
+            })
+          }
+
+          if ((!clientes || clientes.length === 0) && (!ventas || ventas.length === 0)) {
+            logger.info(`[Bounces] Email rebotado ${emailRebotado} no corresponde a ningún cliente ni venta`)
           }
 
           // Marcar para borrar después de procesado
