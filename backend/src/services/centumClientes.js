@@ -658,6 +658,7 @@ async function actualizarClienteEnCentum(idCliente, datos) {
   if (datos.localidad !== undefined) body.Localidad = datos.localidad || ''
   if (datos.codigo_postal !== undefined) body.CodigoPostal = datos.codigo_postal || ''
   if (datos.telefono !== undefined) body.Telefono = datos.telefono || ''
+  if (datos.email !== undefined) body.Email = datos.email || ''
   if (datos.condicion_iva) {
     const condicion = CONDICION_IVA_MAP[datos.condicion_iva] || CONDICION_IVA_MAP.CF
     body.CondicionIVA = condicion.CondicionIVA

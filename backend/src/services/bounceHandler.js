@@ -2,6 +2,7 @@
 const { ImapFlow } = require('imapflow')
 const { createClient } = require('@supabase/supabase-js')
 const logger = require('../config/logger')
+const { actualizarClienteEnCentum } = require('./centumClientes')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
 
@@ -125,11 +126,12 @@ async function procesarBounces() {
           // === Estrategia 1: buscar cliente con ese email en tabla clientes ===
           const { data: clientes } = await supabase
             .from('clientes')
-            .select('id, razon_social, email, codigo')
+            .select('id, razon_social, email, codigo, id_centum')
             .ilike('email', emailRebotado)
 
           if (clientes && clientes.length > 0) {
             for (const cli of clientes) {
+              // Limpiar en Supabase
               const { error: updErr } = await supabase
                 .from('clientes')
                 .update({ email: null })
@@ -138,16 +140,27 @@ async function procesarBounces() {
               if (updErr) {
                 logger.error(`[Bounces] Error limpiando email de cliente ${cli.codigo}: ${updErr.message}`)
                 resultado.errores++
-              } else {
-                resultado.limpiados++
-                resultado.detalles.push({
-                  email: emailRebotado,
-                  cliente: cli.razon_social,
-                  codigo: cli.codigo,
-                  via: 'clientes.email',
-                })
-                logger.info(`[Bounces] Email ${emailRebotado} eliminado del cliente ${cli.codigo} (${cli.razon_social})`)
+                continue
               }
+
+              // Limpiar en Centum ERP (para que el sync no lo traiga de vuelta)
+              if (cli.id_centum) {
+                try {
+                  await actualizarClienteEnCentum(cli.id_centum, { email: '' })
+                  logger.info(`[Bounces] Email también limpiado en Centum para cliente ${cli.codigo} (id_centum: ${cli.id_centum})`)
+                } catch (errCentum) {
+                  logger.warn(`[Bounces] No se pudo limpiar email en Centum para ${cli.codigo}: ${errCentum.message}`)
+                }
+              }
+
+              resultado.limpiados++
+              resultado.detalles.push({
+                email: emailRebotado,
+                cliente: cli.razon_social,
+                codigo: cli.codigo,
+                via: 'clientes.email + centum',
+              })
+              logger.info(`[Bounces] Email ${emailRebotado} eliminado del cliente ${cli.codigo} (${cli.razon_social})`)
             }
           }
 
@@ -168,11 +181,37 @@ async function procesarBounces() {
                 .update({ email_enviado: false, email_enviado_a: null })
                 .eq('id', v.id)
             }
+
+            // Limpiar email en Centum para los clientes asociados a esas ventas
+            const idsCentumVentas = [...new Set(ventas.map(v => v.id_cliente_centum).filter(Boolean))]
+            for (const idCentum of idsCentumVentas) {
+              // Verificar si el cliente en Centum tiene este email (via BI local)
+              const { data: cliVenta } = await supabase
+                .from('clientes')
+                .select('id, codigo, email')
+                .eq('id_centum', idCentum)
+                .single()
+
+              if (cliVenta) {
+                // Limpiar email local si coincide
+                if (cliVenta.email && cliVenta.email.toLowerCase() === emailRebotado) {
+                  await supabase.from('clientes').update({ email: null }).eq('id', cliVenta.id)
+                }
+                // Limpiar en Centum siempre (el email puede estar en Centum aunque no esté local)
+                try {
+                  await actualizarClienteEnCentum(idCentum, { email: '' })
+                  logger.info(`[Bounces] Email limpiado en Centum para cliente id_centum=${idCentum}`)
+                } catch (errCentum) {
+                  logger.warn(`[Bounces] No se pudo limpiar email en Centum para id_centum=${idCentum}: ${errCentum.message}`)
+                }
+              }
+            }
+
             logger.info(`[Bounces] ${ventas.length} ventas tenían email_enviado_a=${emailRebotado}, reseteadas`)
             resultado.detalles.push({
               email: emailRebotado,
               ventas_reseteadas: ventas.map(v => v.numero_venta),
-              via: 'ventas_pos.email_enviado_a',
+              via: 'ventas_pos.email_enviado_a + centum',
             })
           }
 
