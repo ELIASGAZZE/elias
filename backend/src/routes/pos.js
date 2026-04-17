@@ -590,7 +590,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     if (caja_id) {
       const [cajaRes, cierreRes] = await Promise.all([
         supabase.from('cajas').select('sucursal_id').eq('id', caja_id).single(),
-        supabase.from('cierres_pos').select('id').eq('caja_id', caja_id).eq('estado', 'abierta').maybeSingle(),
+        supabase.from('cierres_pos').select('id, numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))').eq('caja_id', caja_id).eq('estado', 'abierta').maybeSingle(),
       ])
       sucursalDeCaja = cajaRes.data?.sucursal_id || null
       cierreAbiertoId = cierreRes.data?.id || null
@@ -704,11 +704,23 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       if (error) throw error
       data = ventaData
 
-      // Si la venta está vinculada a un pedido, actualizar total_pagado del pedido
+      // Si la venta está vinculada a un pedido, actualizar total_pagado y datos de cobro
       if (pedido_pos_id && data) {
+        // Obtener total del pedido para no excederlo (el vuelto no es saldo a favor)
+        const { data: pedidoOrig } = await supabase.from('pedidos_pos').select('total, total_pagado').eq('id', pedido_pos_id).single()
+        const pedidoTotal = pedidoOrig ? parseFloat(pedidoOrig.total) || 0 : 0
+        const pedidoPagadoPrev = pedidoOrig ? parseFloat(pedidoOrig.total_pagado) || 0 : 0
+        const nuevoTotalPagado = Math.min(pedidoPagadoPrev + total, pedidoTotal)
+        const updatePedido = { total_pagado: nuevoTotalPagado, cobrado_at: new Date().toISOString() }
+        if (cierreRes?.data) {
+          updatePedido.cobrado_en_cierre = cierreRes.data.numero
+          updatePedido.cobrado_por = cierreRes.data.empleado?.nombre || req.perfil.nombre || null
+          updatePedido.cobrado_sucursal_nombre = cierreRes.data.cajas?.sucursales?.nombre || null
+        }
+        if (pagos && Array.isArray(pagos)) updatePedido.pagos = pagos
         await supabase
           .from('pedidos_pos')
-          .update({ total_pagado: total })
+          .update(updatePedido)
           .eq('id', pedido_pos_id)
       }
 
@@ -1770,7 +1782,7 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ventas_pos')
-      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, mp_payment_id, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at, historial)')
+      .select('*, perfiles:cajero_id(nombre), sucursales:sucursal_id(nombre), pedido:pedido_pos_id(id, numero, nombre_cliente, tipo, observaciones, fecha_entrega, turno_entrega, total_pagado, total, sucursal_id, estado, created_at, venta_anticipada_id, cajero_nombre, creado_en_cierre, creado_sucursal_nombre, pagos, cobrado_por, cobrado_en_cierre, cobrado_sucursal_nombre, cobrado_at, mp_payment_id, entregado_por, entregado_en_cierre, entregado_sucursal_nombre, entregado_at, historial, items)')
       .eq('id', req.params.id)
       .single()
 
@@ -2747,7 +2759,27 @@ router.get('/pedidos', verificarAuth, asyncHandler(async (req, res) => {
     const { data, error } = await query
     if (error) throw error
 
-    res.json({ pedidos: data || [] })
+    // Enriquecer pedidos con datos de factura (venta vinculada)
+    const pedidos = data || []
+    if (pedidos.length > 0) {
+      const pedidoIds = pedidos.map(p => p.id)
+      const { data: ventas } = await supabase
+        .from('ventas_pos')
+        .select('id, pedido_pos_id, numero_venta, centum_comprobante, pagos, tipo')
+        .in('pedido_pos_id', pedidoIds)
+      if (ventas && ventas.length > 0) {
+        const ventasPorPedido = {}
+        for (const v of ventas) {
+          if (!ventasPorPedido[v.pedido_pos_id]) ventasPorPedido[v.pedido_pos_id] = []
+          ventasPorPedido[v.pedido_pos_id].push(v)
+        }
+        for (const p of pedidos) {
+          p.ventas_vinculadas = ventasPorPedido[p.id] || []
+        }
+      }
+    }
+
+    res.json({ pedidos })
   } catch (err) {
     logger.error('[POS] Error al listar pedidos:', err.message)
     res.status(500).json({ error: 'Error al listar pedidos' })
@@ -3629,36 +3661,41 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
     if (pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0) {
       updateData.pagos = pagos_anticipado
       updateData.descuento_forma_pago = req.body.descuento_forma_pago || null
-      updateData.caja_cobro_id = caja_cobro_id || null
+      // Talo Pay se concilia aparte — no asociar a ninguna caja/cierre
+      const esTaloPay = pagos_anticipado.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
+      updateData.caja_cobro_id = esTaloPay ? null : (caja_cobro_id || null)
       updateData.cobrado_at = new Date().toISOString()
 
-      // Buscar cierre activo para registrar quién cobró (por cajero_id o por caja_id)
-      let cierrePago = null
-      const { data: cierreByUserPago } = await supabase
-        .from('cierres_pos')
-        .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
-        .eq('cajero_id', req.perfil.id)
-        .is('cierre_at', null)
-        .order('apertura_at', { ascending: false })
-        .limit(1)
-      if (cierreByUserPago?.[0]) {
-        cierrePago = cierreByUserPago[0]
-      } else if (caja_cobro_id) {
-        const { data: cierreByCajaPago } = await supabase
+      // Talo Pay se concilia solo — no registrar cajero ni cierre
+      if (!esTaloPay) {
+        // Buscar cierre activo para registrar quién cobró (por cajero_id o por caja_id)
+        let cierrePago = null
+        const { data: cierreByUserPago } = await supabase
           .from('cierres_pos')
           .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
-          .eq('caja_id', caja_cobro_id)
+          .eq('cajero_id', req.perfil.id)
           .is('cierre_at', null)
           .order('apertura_at', { ascending: false })
           .limit(1)
-        if (cierreByCajaPago?.[0]) cierrePago = cierreByCajaPago[0]
-      }
-      if (cierrePago) {
-        updateData.cobrado_por = cierrePago.empleado?.nombre || null
-        updateData.cobrado_en_cierre = cierrePago.numero || null
-        updateData.cobrado_sucursal_nombre = cierrePago.cajas?.sucursales?.nombre || null
-      } else {
-        updateData.cobrado_por = req.perfil.nombre || null
+        if (cierreByUserPago?.[0]) {
+          cierrePago = cierreByUserPago[0]
+        } else if (caja_cobro_id) {
+          const { data: cierreByCajaPago } = await supabase
+            .from('cierres_pos')
+            .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(sucursales(nombre))')
+            .eq('caja_id', caja_cobro_id)
+            .is('cierre_at', null)
+            .order('apertura_at', { ascending: false })
+            .limit(1)
+          if (cierreByCajaPago?.[0]) cierrePago = cierreByCajaPago[0]
+        }
+        if (cierrePago) {
+          updateData.cobrado_por = cierrePago.empleado?.nombre || null
+          updateData.cobrado_en_cierre = cierrePago.numero || null
+          updateData.cobrado_sucursal_nombre = cierrePago.cajas?.sucursales?.nombre || null
+        } else {
+          updateData.cobrado_por = req.perfil.nombre || null
+        }
       }
     }
 
@@ -3717,18 +3754,9 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
     const updateEstado = { estado }
     if (estado === 'entregado') {
       updateEstado.entregado_at = new Date().toISOString()
-      // Buscar cierre activo por cajero_id, fallback por caja_id
+      // Buscar cierre activo: priorizar caja_id (terminal exacta), fallback por cajero_id
       let cierreEnt = null
-      const { data: cierreEntByUser } = await supabase
-        .from('cierres_pos')
-        .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
-        .eq('cajero_id', req.perfil.id)
-        .is('cierre_at', null)
-        .order('apertura_at', { ascending: false })
-        .limit(1)
-      if (cierreEntByUser?.[0]) {
-        cierreEnt = cierreEntByUser[0]
-      } else if (caja_id) {
+      if (caja_id) {
         const { data: cierreEntByCaja } = await supabase
           .from('cierres_pos')
           .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
@@ -3737,6 +3765,16 @@ router.put('/pedidos/:id/estado', verificarAuth, asyncHandler(async (req, res) =
           .order('apertura_at', { ascending: false })
           .limit(1)
         if (cierreEntByCaja?.[0]) cierreEnt = cierreEntByCaja[0]
+      }
+      if (!cierreEnt) {
+        const { data: cierreEntByUser } = await supabase
+          .from('cierres_pos')
+          .select('numero, empleado:empleados!empleado_id(nombre), cajas:caja_id(id, sucursales(nombre))')
+          .eq('cajero_id', req.perfil.id)
+          .is('cierre_at', null)
+          .order('apertura_at', { ascending: false })
+          .limit(1)
+        if (cierreEntByUser?.[0]) cierreEnt = cierreEntByUser[0]
       }
       if (cierreEnt) {
         updateEstado.entregado_por = cierreEnt.empleado?.nombre || null

@@ -800,6 +800,19 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                           <span>Entregado por: {pedido.entregado_por}{pedido.entregado_en_cierre ? <> (<a href={`/cajas-pos/cierre/${pedido.entregado_en_cierre}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-800" onClick={e => e.stopPropagation()}>Caja #{pedido.entregado_en_cierre}</a>)</> : ''}{pedido.entregado_sucursal_nombre ? ` - ${pedido.entregado_sucursal_nombre}` : ''}{pedido.entregado_at ? ` el ${new Date(pedido.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
                         </>
                       )}
+                      {Array.isArray(pedido.ventas_vinculadas) && pedido.ventas_vinculadas.filter(v => v.tipo !== 'nota_credito').map((venta, idx) => (
+                        <React.Fragment key={`fac-${idx}`}>
+                          <span>|</span>
+                          <span className="text-indigo-600 font-medium">
+                            Factura: <a href={`/ventas/${venta.id}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-indigo-800" onClick={e => e.stopPropagation()}>
+                              {venta.centum_comprobante || `#${venta.numero_venta}`}
+                            </a>
+                            {venta.pagos && Array.isArray(venta.pagos) && venta.pagos.length > 0 && (
+                              <> — {venta.pagos.map(p => p.tipo || p.forma).join(', ')}</>
+                            )}
+                          </span>
+                        </React.Fragment>
+                      ))}
                     </div>
                     {/* Obs entrega, obs pedido, tarjeta regalo */}
                     {(() => {
@@ -1164,13 +1177,15 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                   // Fallback: si tiene total_pagado pero no datos explícitos de cobro, usar datos de entrega
                   const cobroFallback = !tieneCobro && totalPagadoDet > 0 && pedidoDetalle.estado === 'entregado'
                   if (!tieneCobro && !cobroFallback) return null
+                  const esTaloPay = Array.isArray(pedidoDetalle.pagos) && pedidoDetalle.pagos.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
                   const esDelivery = pedidoDetalle.cobrado_en_cierre && !pedidoDetalle.cobrado_por
-                  const cierreNum = pedidoDetalle.cobrado_en_cierre || (cobroFallback ? pedidoDetalle.entregado_en_cierre : null)
-                  const sucursal = pedidoDetalle.cobrado_sucursal_nombre || (cobroFallback ? pedidoDetalle.entregado_sucursal_nombre : null)
+                  // Talo Pay se concilia solo — no mostrar caja, cajero ni sucursal
+                  const cierreNum = esTaloPay ? null : (pedidoDetalle.cobrado_en_cierre || (cobroFallback ? pedidoDetalle.entregado_en_cierre : null))
+                  const sucursal = esTaloPay ? null : (pedidoDetalle.cobrado_sucursal_nombre || (cobroFallback ? pedidoDetalle.entregado_sucursal_nombre : null))
                   const fechaCobro = pedidoDetalle.cobrado_at || (cobroFallback ? pedidoDetalle.entregado_at : null)
-                  const persona = pedidoDetalle.cobrado_por || (cobroFallback ? pedidoDetalle.entregado_por : null)
-                  const label = esDelivery ? 'Cobro en delivery:' : cobroFallback ? 'Cobrado al entregar:' : 'Cobrado:'
-                  const colorClass = esDelivery ? 'text-orange-700 bg-orange-50' : 'text-green-700 bg-green-50'
+                  const persona = esTaloPay ? null : (pedidoDetalle.cobrado_por || (cobroFallback ? pedidoDetalle.entregado_por : null))
+                  const label = esTaloPay ? 'Cobrado:' : esDelivery ? 'Cobro en delivery:' : cobroFallback ? 'Cobrado al entregar:' : 'Cobrado:'
+                  const colorClass = esTaloPay ? 'text-purple-700 bg-purple-50' : esDelivery ? 'text-orange-700 bg-orange-50' : 'text-green-700 bg-green-50'
                   const hoverClass = esDelivery ? 'hover:text-orange-900' : 'hover:text-green-900'
                   return (
                     <div className={`text-xs rounded px-2 py-1.5 ${colorClass}`}>
@@ -1219,6 +1234,20 @@ ${pedido.tarjeta_regalo ? `<div class="obs" style="margin-top:6px;"><div class="
                     {pedidoDetalle.entregado_sucursal_nombre ? ` — ${pedidoDetalle.entregado_sucursal_nombre}` : ''}
                     {pedidoDetalle.entregado_at ? ` — ${new Date(pedidoDetalle.entregado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
                   </div>
+                )}
+                {/* Factura vinculada */}
+                {Array.isArray(pedidoDetalle.ventas_vinculadas) && pedidoDetalle.ventas_vinculadas.filter(v => v.tipo !== 'nota_credito').length > 0 && (
+                  pedidoDetalle.ventas_vinculadas.filter(v => v.tipo !== 'nota_credito').map((venta, idx) => (
+                    <div key={`fac-${idx}`} className="text-xs text-indigo-700 bg-indigo-50 rounded px-2 py-1.5">
+                      <span className="font-semibold">Factura:</span>{' '}
+                      <a href={`/ventas/${venta.id}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-indigo-900 font-medium">
+                        {venta.centum_comprobante || `#${venta.numero_venta}`}
+                      </a>
+                      {venta.pagos && Array.isArray(venta.pagos) && venta.pagos.length > 0 && (
+                        <> — {venta.pagos.map(p => p.tipo || p.forma).join(', ')}</>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
             </div>

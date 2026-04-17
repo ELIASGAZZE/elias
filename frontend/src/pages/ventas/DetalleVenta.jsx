@@ -110,6 +110,19 @@ const DetalleVenta = () => {
   const itemsSinGC = items.filter(it => !it.es_gift_card)
   const tieneGCVendidas = giftCardsVendidas.length > 0
 
+  // Determinar cuáles items son del pedido y cuáles fueron agregados en caja
+  const pedidoItemCodigos = (() => {
+    if (!venta.pedido?.items) return null
+    const pedItems = typeof venta.pedido.items === 'string' ? JSON.parse(venta.pedido.items) : (venta.pedido.items || [])
+    const codigos = new Map()
+    for (const pi of pedItems) {
+      const key = pi.codigo || pi.id
+      codigos.set(key, (codigos.get(key) || 0) + (parseFloat(pi.cantidad) || 1))
+    }
+    return codigos
+  })()
+  const tieneItemsExtra = pedidoItemCodigos && itemsSinGC.length > pedidoItemCodigos.size
+
   // Calcular redondeo de efectivo (centenas)
   const saldoAplicadoNum = parseFloat(venta.saldo_aplicado) || 0
   const gcAplicadaMonto = parseFloat(venta.gc_aplicada_monto) || 0
@@ -780,12 +793,17 @@ const DetalleVenta = () => {
               const precioUnit = parseFloat(item.precio_unitario || item.precioFinal || item.precio || 0)
               const cant = parseFloat(item.cantidad || 1)
               const subtotal = precioUnit * cant
+              const esDelPedido = pedidoItemCodigos ? pedidoItemCodigos.has(item.codigo || item.id) : null
+              const esAgregado = pedidoItemCodigos && !esDelPedido
 
               return (
-                <div key={i} className="py-2">
+                <div key={i} className={`py-2 ${esAgregado ? 'pl-2 border-l-2 border-amber-400' : ''}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-800 font-medium truncate">{item.nombre || item.codigo}</p>
+                      <p className="text-sm text-gray-800 font-medium truncate">
+                        {item.nombre || item.codigo}
+                        {esAgregado && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Agregado en caja</span>}
+                      </p>
                       <p className="text-xs text-gray-400">
                         {item.codigo && `${item.codigo} — `}
                         {cant} x {formatPrecio(precioUnit)}

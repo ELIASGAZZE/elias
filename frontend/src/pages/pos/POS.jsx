@@ -2121,9 +2121,9 @@ const POS = () => {
   }
 
   // Marcar pedido como entregado en backend
-  async function marcarPedidoEntregado(pedidoId) {
+  async function marcarPedidoEntregado(pedidoId, cajaIdOverride) {
     try {
-      await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado', caja_id: terminalConfig?.caja_id || null })
+      await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado', caja_id: cajaIdOverride || terminalConfig?.caja_id || null })
     } catch (err) {
       console.error('Error marcando pedido como entregado:', err)
     }
@@ -2231,7 +2231,7 @@ const POS = () => {
         payload.saldo_aplicado = saldoAplicadoEntrega
       }
       await api.post('/api/pos/ventas', payload)
-      await marcarPedidoEntregado(pedidoEnProceso.id)
+      await marcarPedidoEntregado(pedidoEnProceso.id, payload.caja_id)
       limpiarVenta()
     } catch (err) {
       console.error('Error al entregar pedido pagado:', err)
