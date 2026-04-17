@@ -908,10 +908,17 @@ const DetalleCierrePos = () => {
                 const ventasFiltradas = (posVentas.detalle_ventas || []).filter(v =>
                   (v.pagos || []).some(filterFn)
                 )
-                if (ventasFiltradas.length === 0) return null
+                // Incluir anticipos de pedidos cobrados en este cierre que coincidan con el medio
+                const matchMedio = (tipo) => (tipo || '').toLowerCase() === labelMedio.toLowerCase()
+                const anticipadosEnMedio = (posVentas?.pagos_anticipados?.detalle || []).filter(ped =>
+                  (ped.pagos || []).some(p => matchMedio(p.tipo))
+                )
+                const totalAnticipadosMedio = anticipadosEnMedio.reduce((s, ped) =>
+                  s + (ped.pagos || []).filter(p => matchMedio(p.tipo)).reduce((ss, p) => ss + (parseFloat(p.monto) || 0), 0), 0)
+                if (ventasFiltradas.length === 0 && anticipadosEnMedio.length === 0) return null
                 const totalMedio = ventasFiltradas.reduce((sum, v) => {
                   return sum + (v.pagos || []).filter(filterFn).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
-                }, 0)
+                }, 0) + totalAnticipadosMedio
                 return (
                   <div className="bg-gray-50 rounded-lg p-3 -mt-1 mb-1">
                     <div className="flex items-center text-[10px] font-medium text-gray-400 py-1 border-b border-gray-200 mb-1">
@@ -932,6 +939,7 @@ const DetalleCierrePos = () => {
                           <span className="w-16 flex items-center gap-1">
                             <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className={`font-medium hover:underline ${esNC ? 'text-red-600' : 'text-blue-600'}`}>#{v.numero_venta || '—'}</a>
                             {esNC && <span className="text-[8px] font-bold text-red-600 bg-red-200 px-0.5 rounded">NC</span>}
+                            {v.canal === 'delivery' && <span className="text-[8px] font-bold text-orange-700 bg-orange-100 px-0.5 rounded">DLV</span>}
                           </span>
                           <span className="w-14 text-center text-gray-400 whitespace-nowrap">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
                           <span className={`flex-1 text-right ${esNC ? 'text-red-500' : 'text-gray-500'}`}>{formatMonto(v.total)}</span>
@@ -941,13 +949,30 @@ const DetalleCierrePos = () => {
                         </div>
                       )
                     })}
+                    {/* Anticipos de pedidos cobrados en este cierre */}
+                    {anticipadosEnMedio.map(ped => {
+                      const montoMedio = (ped.pagos || []).filter(p => matchMedio(p.tipo)).reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+                      return (
+                        <div key={`ant-${ped.id}`} className="flex items-center text-xs py-1 border-b last:border-b-0 border-emerald-100 bg-emerald-50 rounded px-1 -mx-1">
+                          <span className="w-16 flex items-center gap-1">
+                            <span className="text-[8px] font-bold text-emerald-700 bg-emerald-200 px-1 rounded">ANT</span>
+                          </span>
+                          <span className="w-14 text-center text-gray-400 whitespace-nowrap">{ped.cobrado_at ? new Date(ped.cobrado_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</span>
+                          <span className="flex-1 text-right text-emerald-700 text-[11px]">Pedido #{ped.numero} — {ped.nombre_cliente}</span>
+                          <span className="w-24 text-right text-emerald-700 font-medium">{formatMonto(montoMedio)}</span>
+                          {medioKey === 'Efectivo' && <span className="w-20 text-right text-gray-400">—</span>}
+                          {medioKey === 'Efectivo' && <span className="w-24 text-right font-medium text-emerald-700">{formatMonto(montoMedio)}</span>}
+                        </div>
+                      )
+                    })}
                     {(() => {
                       const ventasNorm = ventasFiltradas.filter(v => v.tipo !== 'nota_credito')
                       const ventasNC = ventasFiltradas.filter(v => v.tipo === 'nota_credito')
+                      const anticipadosEnFooter = anticipadosEnMedio
                       return (
                         <div className="flex items-center text-xs font-bold pt-2 border-t border-gray-200 mt-1">
                           <span className="flex-1 text-gray-700">
-                            {ventasNorm.length} venta(s){ventasNC.length > 0 && <span className="text-red-600"> · {ventasNC.length} anulación(es)</span>}
+                            {ventasNorm.length} venta(s){ventasNC.length > 0 && <span className="text-red-600"> · {ventasNC.length} anulación(es)</span>}{anticipadosEnFooter.length > 0 && <span className="text-emerald-600"> · {anticipadosEnFooter.length} anticipo(s)</span>}
                           </span>
                           <span className="w-24 text-right text-teal-700">{formatMonto(totalMedio)}</span>
                         </div>
@@ -1049,6 +1074,50 @@ const DetalleCierrePos = () => {
 
           </div>
         )}
+
+        {/* Seccion Ventas Delivery */}
+        {!esBlind && cierre.estado !== 'abierta' && cierre.tipo !== 'delivery' && posVentas && (() => {
+          const ventasDelivery = (posVentas.detalle_ventas || []).filter(v => v.canal === 'delivery')
+          if (ventasDelivery.length === 0) return null
+          const totalDelivery = ventasDelivery.reduce((s, v) => s + (parseFloat(v.total) || 0), 0)
+          return (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-orange-800 flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                </svg>
+                Ventas Delivery — {ventasDelivery.length} venta(s) — Total: {formatMonto(totalDelivery)}
+              </h3>
+              <div className="bg-white rounded-lg border border-orange-100 overflow-hidden">
+                <div className="flex items-center text-[10px] font-medium text-gray-400 py-1.5 px-3 border-b border-orange-100">
+                  <span className="w-16">Venta</span>
+                  <span className="w-14 text-center">Hora</span>
+                  <span className="w-28">ID Plataforma</span>
+                  <span className="flex-1">Forma de cobro</span>
+                  <span className="w-24 text-right">Total</span>
+                </div>
+                {ventasDelivery.map(v => {
+                  const formaCobro = (v.pagos || []).map(p => p.tipo || 'Efectivo').join(', ')
+                  return (
+                    <div key={v.id} className="flex items-center text-xs py-1.5 px-3 border-b last:border-b-0 border-orange-50 hover:bg-orange-50/50">
+                      <span className="w-16">
+                        <a href={`/ventas/${v.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-600 hover:underline">#{v.numero_venta || '—'}</a>
+                      </span>
+                      <span className="w-14 text-center text-gray-400">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                      <span className="w-28 font-mono text-orange-700 font-medium">{v.id_pedido_plataforma || '—'}</span>
+                      <span className="flex-1 text-gray-600">{formaCobro}</span>
+                      <span className="w-24 text-right font-medium text-gray-800">{formatMonto(v.total)}</span>
+                    </div>
+                  )
+                })}
+                <div className="flex items-center text-xs font-bold py-2 px-3 border-t border-orange-200 bg-orange-50">
+                  <span className="flex-1 text-orange-800">{ventasDelivery.length} venta(s) delivery</span>
+                  <span className="w-24 text-right text-orange-800">{formatMonto(totalDelivery)}</span>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Alertas de pagos posnet con problema */}
         {posVentas && (() => {

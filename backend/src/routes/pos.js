@@ -518,7 +518,7 @@ router.delete('/promociones/:id', verificarAuth, soloGestorOAdmin, asyncHandler(
 // Guarda una venta POS localmente
 router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(async (req, res) => {
   try {
-    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
+    const { id_cliente_centum, nombre_cliente, items, promociones_aplicadas, subtotal, descuento_total, total, monto_pagado, vuelto, pagos, descuento_forma_pago, pedido_pos_id, saldo_aplicado, saldo_forma_pago_origen, gift_cards_aplicadas, gift_cards_a_activar, caja_id, canal, id_pedido_plataforma, descuento_grupo_cliente, grupo_descuento_nombre, created_at_offline, condicion_iva, ticket_uid } = req.body
 
     // === IDEMPOTENCIA: ticket_uid siempre existe (frontend lo genera, backend lo garantiza) ===
     const idempotencyKey = ticket_uid || crypto.randomUUID()
@@ -685,6 +685,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       if (cierreAbiertoId) insertData.cierre_pos_id = cierreAbiertoId
       if (pedido_pos_id) insertData.pedido_pos_id = pedido_pos_id
       if (canal && canal !== 'pos') insertData.canal = canal
+      if (id_pedido_plataforma) insertData.id_pedido_plataforma = id_pedido_plataforma
       if (created_at_offline) insertData.created_at = created_at_offline
       // GC aplicada como pago: guardar monto y códigos para forzar B PRUEBA + NC concepto en Centum
       if (gift_cards_aplicadas && Array.isArray(gift_cards_aplicadas) && gift_cards_aplicadas.length > 0) {
@@ -704,20 +705,24 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       if (error) throw error
       data = ventaData
 
-      // Si la venta está vinculada a un pedido, actualizar total_pagado y datos de cobro
+      // Si la venta está vinculada a un pedido, actualizar total_pagado
+      // NO sobrescribir cobrado_at/cobrado_por/cobrado_en_cierre si ya fueron seteados (pago anticipado)
       if (pedido_pos_id && data) {
-        // Obtener total del pedido para no excederlo (el vuelto no es saldo a favor)
-        const { data: pedidoOrig } = await supabase.from('pedidos_pos').select('total, total_pagado').eq('id', pedido_pos_id).single()
+        const { data: pedidoOrig } = await supabase.from('pedidos_pos').select('total, total_pagado, cobrado_at').eq('id', pedido_pos_id).single()
         const pedidoTotal = pedidoOrig ? parseFloat(pedidoOrig.total) || 0 : 0
         const pedidoPagadoPrev = pedidoOrig ? parseFloat(pedidoOrig.total_pagado) || 0 : 0
         const nuevoTotalPagado = Math.min(pedidoPagadoPrev + total, pedidoTotal)
-        const updatePedido = { total_pagado: nuevoTotalPagado, cobrado_at: new Date().toISOString() }
-        if (cierreRes?.data) {
-          updatePedido.cobrado_en_cierre = cierreRes.data.numero
-          updatePedido.cobrado_por = cierreRes.data.empleado?.nombre || req.perfil.nombre || null
-          updatePedido.cobrado_sucursal_nombre = cierreRes.data.cajas?.sucursales?.nombre || null
+        const updatePedido = { total_pagado: nuevoTotalPagado }
+        // Solo setear datos de cobro si el pedido NO tenía cobro previo (pago en entrega, no anticipado)
+        if (!pedidoOrig?.cobrado_at) {
+          updatePedido.cobrado_at = new Date().toISOString()
+          if (cierreRes?.data) {
+            updatePedido.cobrado_en_cierre = cierreRes.data.numero
+            updatePedido.cobrado_por = cierreRes.data.empleado?.nombre || req.perfil.nombre || null
+            updatePedido.cobrado_sucursal_nombre = cierreRes.data.cajas?.sucursales?.nombre || null
+          }
+          if (pagos && Array.isArray(pagos)) updatePedido.pagos = pagos
         }
-        if (pagos && Array.isArray(pagos)) updatePedido.pagos = pagos
         await supabase
           .from('pedidos_pos')
           .update(updatePedido)
@@ -3037,11 +3042,19 @@ router.post('/guias-delivery/despachar', verificarAuth, asyncHandler(async (req,
         totalVenta = Math.round((pedidoTotal - descuento) * 100) / 100
       }
 
-      // Usar pagos del pedido si existen (anticipado), sino construir
-      const tipoAnticipado = esTaloPay ? 'Talo Pay' : 'Pago anticipado'
-      const pagos = esAnticipado
-        ? (Array.isArray(pedido.pagos) && pedido.pagos.length > 0 ? pedido.pagos : [{ tipo: tipoAnticipado, monto: totalVenta }])
-        : [{ tipo: 'efectivo', monto: totalVenta }]
+      // Pagos de la venta: si fue anticipado, marcar como "Pago anticipado" para que
+      // el cierre no lo cuente como efectivo nuevo (ya fue cobrado en otro cierre).
+      const pagosOriginales = Array.isArray(pedido.pagos) && pedido.pagos.length > 0 ? pedido.pagos : []
+      let pagos
+      if (!esAnticipado) {
+        pagos = [{ tipo: 'efectivo', monto: totalVenta }]
+      } else if (esTaloPay) {
+        pagos = [{ tipo: 'Talo Pay', monto: totalVenta }]
+      } else {
+        pagos = pagosOriginales.length > 0
+          ? pagosOriginales.map(p => ({ tipo: 'Pago anticipado', monto: p.monto, detalle: { ...(p.detalle || {}), forma_pago_original: p.tipo } }))
+          : [{ tipo: 'Pago anticipado', monto: totalVenta }]
+      }
 
       const insertVenta = {
         cajero_id: req.perfil.id,

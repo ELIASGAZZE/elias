@@ -789,6 +789,9 @@ const POS = () => {
   // Modo delivery: solo artículos configurados, precios delivery, sin promos ni descuentos
   const [modoDelivery, setModoDelivery] = useState(false)
   const [articulosDelivery, setArticulosDelivery] = useState([])
+  const [idPedidoPlataforma, setIdPedidoPlataforma] = useState('')
+  const [mostrarPopupDeliveryId, setMostrarPopupDeliveryId] = useState(false)
+  const [popupDeliveryIdTemp, setPopupDeliveryIdTemp] = useState('')
 
   // Gift cards para vender junto con artículos
   const [giftCardsEnVenta, setGiftCardsEnVenta] = useState([])
@@ -1178,17 +1181,18 @@ const POS = () => {
 
   // Toggle modo delivery
   const toggleModoDelivery = useCallback(() => {
-    setModoDelivery(prev => {
+    if (!modoDelivery) {
+      // Activando: mostrar popup para pedir ID de plataforma
+      setPopupDeliveryIdTemp('')
+      setMostrarPopupDeliveryId(true)
+    } else {
+      // Desactivando
+      setModoDelivery(false)
       setCarrito([])
       setBusquedaArt('')
-      if (!prev) {
-        // Activando: desactivar modo empleado
-        setEmpleadoActivo(null)
-        setDescuentosEmpleado({})
-      }
-      return !prev
-    })
-  }, [])
+      setIdPedidoPlataforma('')
+    }
+  }, [modoDelivery])
 
   // Favoritos: siempre visibles como tiles, ordenados por rubro
   const articulosFavoritos = useMemo(() => {
@@ -2181,12 +2185,19 @@ const POS = () => {
         subRubro: i.articulo.subRubro?.nombre || null,
       }))
 
-      // Usar pagos del pedido si existen, sino fallback
-      // Si el pedido fue pagado con Talo Pay (mp_payment_id presente y pagos null), marcar como 'Talo Pay'
-      const esTaloPay = !pedidoEnProceso.pagos && pedidoEnProceso.mp_payment_id
-      const pagosVenta = pedidoEnProceso.pagos || [
-        { tipo: esTaloPay ? 'Talo Pay' : 'Pago anticipado', monto: totalPagado, detalle: null },
-      ]
+      // Pagos de la venta: marcar como "Pago anticipado" para que el cierre no lo cuente
+      // como efectivo nuevo (el dinero ya fue cobrado en el cierre del cobro).
+      // Excepción: Talo Pay se marca aparte.
+      const esTaloPay = (pedidoEnProceso.pagos || []).some(p => (p.tipo || '').toLowerCase() === 'talo pay')
+        || (!pedidoEnProceso.pagos && pedidoEnProceso.mp_payment_id)
+      const pagosOriginales = pedidoEnProceso.pagos || [{ tipo: 'Efectivo', monto: totalPagado, detalle: null }]
+      const pagosVenta = esTaloPay
+        ? [{ tipo: 'Talo Pay', monto: totalPagado, detalle: null }]
+        : pagosOriginales.map(p => ({
+            tipo: 'Pago anticipado',
+            monto: p.monto,
+            detalle: { ...(p.detalle || {}), forma_pago_original: p.tipo },
+          }))
 
       // Si la diferencia entre total y pagado es < $1 (redondeo centenas), igualar para que no falle validación
       const montoPagadoFinal = (totalPagado + saldoAplicadoEntrega)
@@ -2253,6 +2264,11 @@ const POS = () => {
     setBusquedaArt('')
     setPedidoEnProceso(null)
     setGiftCardsEnVenta([])
+    // En modo delivery, limpiar ID y desactivar para el siguiente pedido
+    if (modoDelivery) {
+      setIdPedidoPlataforma('')
+      setModoDelivery(false)
+    }
     // Regenerar ticketUid para el próximo ticket
     setTickets(prev => {
       const idx = ticketActivoRef.current
@@ -2511,7 +2527,7 @@ const POS = () => {
       {/* Banner modo delivery */}
       {modoDelivery && (
         <div className="bg-orange-500 text-white text-center py-1.5 text-sm font-bold tracking-wide">
-          MODO DELIVERY — Solo artículos y precios configurados — Sin promos ni descuentos
+          MODO DELIVERY — Pedido #{idPedidoPlataforma} — Solo artículos y precios configurados — Sin promos ni descuentos
         </div>
       )}
       {/* Banner pedido en proceso */}
@@ -3758,11 +3774,63 @@ const POS = () => {
           saldoDesglose={saldoDesglose}
           canal={modoDelivery ? 'delivery' : 'pos'}
           modoDelivery={modoDelivery}
+          idPedidoPlataforma={idPedidoPlataforma}
           giftCardsEnVenta={giftCardsEnVenta}
           descuentoGrupoCliente={descuentoGrupoCliente}
           grupoDescuentoNombre={cliente.grupo_descuento_nombre}
           grupoDescuentoPorcentaje={cliente.grupo_descuento_porcentaje}
         />
+      )}
+
+      {/* Popup ID pedido plataforma (delivery) */}
+      {mostrarPopupDeliveryId && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onKeyDown={e => {
+          if (e.key === 'Escape') setMostrarPopupDeliveryId(false)
+        }}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 space-y-4">
+            <h3 className="text-lg font-bold text-gray-800">ID Pedido Plataforma</h3>
+            <p className="text-sm text-gray-500">Ingresá el ID o Nro. de Orden del pedido (Rappi / PedidosYa)</p>
+            <input
+              type="number"
+              autoFocus
+              value={popupDeliveryIdTemp}
+              onChange={e => setPopupDeliveryIdTemp(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && popupDeliveryIdTemp.trim()) {
+                  setIdPedidoPlataforma(popupDeliveryIdTemp.trim())
+                  setModoDelivery(true)
+                  setCarrito([])
+                  setBusquedaArt('')
+                  setEmpleadoActivo(null)
+                  setDescuentosEmpleado({})
+                  setMostrarPopupDeliveryId(false)
+                }
+              }}
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-lg font-mono focus:outline-none focus:ring-2 focus:ring-orange-500"
+              placeholder="Ej: 461949435"
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setMostrarPopupDeliveryId(false)}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >Cancelar</button>
+              <button
+                onClick={() => {
+                  if (!popupDeliveryIdTemp.trim()) return
+                  setIdPedidoPlataforma(popupDeliveryIdTemp.trim())
+                  setModoDelivery(true)
+                  setCarrito([])
+                  setBusquedaArt('')
+                  setEmpleadoActivo(null)
+                  setDescuentosEmpleado({})
+                  setMostrarPopupDeliveryId(false)
+                }}
+                disabled={!popupDeliveryIdTemp.trim()}
+                className="px-4 py-2 text-sm bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >Confirmar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal venta empleado — seleccionar o confirmar */}

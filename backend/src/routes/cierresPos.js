@@ -696,7 +696,7 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    const SELECT_VENTAS = 'id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at, tipo, anulada, centum_comprobante, id_cliente_centum'
+    const SELECT_VENTAS = 'id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at, tipo, anulada, centum_comprobante, id_cliente_centum, canal, id_pedido_plataforma'
 
     // Primero: buscar ventas vinculadas directamente por cierre_pos_id
     let { data: ventas, error: errorVentas } = await supabase
@@ -921,6 +921,8 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         tipo: v.tipo || 'venta',
         nombre_cliente: v.nombre_cliente,
         venta_origen_id: v.venta_origen_id || null,
+        canal: v.canal || 'pos',
+        id_pedido_plataforma: v.id_pedido_plataforma || null,
       })),
       retiro_empleados: {
         cantidad: ventasEmpleados.length,

@@ -645,7 +645,7 @@ const CerrarCajaPos = () => {
         <div className="space-y-3 mb-6">
           <h3 className="text-sm font-medium text-gray-500">Otros medios de pago</h3>
           <div className="grid grid-cols-3 gap-3">
-            {formasCobro.map(f => (
+            {formasCobro.filter(f => !(f.nombre || '').toLowerCase().includes('rappi') && !(f.nombre || '').toLowerCase().includes('pedidosya')).map(f => (
               <CampoMedio
                 key={f.id}
                 label={f.nombre}
