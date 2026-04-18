@@ -11,7 +11,7 @@ export function imprimirCanastos(canastos) {
   const paginasHTML = canastos.map((c, cIdx) => {
     const filas = [0, 1, 2, 3].map(fIdx => `
       <div class="fila">
-        <canvas id="bc-${cIdx}-${fIdx}"></canvas>
+        <svg id="bc-${cIdx}-${fIdx}"></svg>
         <div class="codigo">${c.codigo}</div>
       </div>
     `).join('')
@@ -22,8 +22,8 @@ export function imprimirCanastos(canastos) {
     [0, 1, 2, 3].map(fIdx => `
       JsBarcode("#bc-${cIdx}-${fIdx}", "${c.codigo}", {
         format: "CODE128",
-        width: 4,
-        height: 100,
+        width: 3,
+        height: 60,
         displayValue: false,
         margin: 0,
       });
@@ -38,33 +38,36 @@ export function imprimirCanastos(canastos) {
 <style>
   @page { size: 100mm 150mm; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; width: 100mm; }
   .pagina {
     width: 100mm;
-    height: 148mm;
+    height: 150mm;
     page-break-after: always;
-    padding: 1mm 2mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    align-items: center;
+    padding: 2mm 2mm;
   }
   .pagina:last-child { page-break-after: auto; }
   .fila {
-    width: 96mm;
-    height: 35mm;
+    width: 94mm;
+    height: 34mm;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border: 1px dashed #888;
-    margin: 0 auto 1mm auto;
+    border: 1px dashed #aaa;
     padding: 1mm 2mm;
     overflow: hidden;
   }
-  .fila canvas {
-    max-width: 90mm;
-    height: 22mm;
+  .fila svg {
+    width: 88mm;
+    height: 20mm;
   }
   .codigo {
     font-family: 'Courier New', monospace;
-    font-size: 12pt;
+    font-size: 11pt;
     font-weight: bold;
     margin-top: 1mm;
     letter-spacing: 2px;
