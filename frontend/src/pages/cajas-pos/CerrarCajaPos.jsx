@@ -312,19 +312,8 @@ const CerrarCajaPos = () => {
           denomActivas.filter(d => d.tipo === 'billete').sort((a, b) => a.orden - b.orden)
         )
         // Filter active formas de cobro, sorted by orden
-        // Excluir las que se concilian de otra forma (efectivo=billetes, MP=cupones, CC/Talo/Anticipado/Saldo=automático)
-        const OCULTAS_CIERRE = new Set([
-          '2b3a4947-4299-4f29-99b7-d1dcf9c3d1d1', // Efectivo
-          '666f620f-dab7-4737-9ca5-d01c7ff8a4ab', // Posnet MP
-          '9f5efb0c-86a2-4668-aa89-390614523226', // QR MP
-          'e3e35892-b4e8-4179-a031-4445b050ada1', // RAPPI / PEDIDO YA
-          'd4de1915-6687-49d5-bc9c-288b57f9fa34', // Cuenta Corriente
-          'a6eba9d9-7d0f-46bf-a70d-3a357c21dac6', // Talo Pay
-          '92216d1d-4b75-4060-8935-c7431cb02df4', // Pago Anticipado
-          'f5fdda59-0587-46e0-8dde-b67d9ba3eb97', // Saldo
-        ])
         const formasActivas = (formasRes.data || [])
-          .filter(f => f.activo && !OCULTAS_CIERRE.has(f.id))
+          .filter(f => f.activo)
           .sort((a, b) => a.orden - b.orden)
         setFormasCobro(formasActivas)
 
