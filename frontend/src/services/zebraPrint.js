@@ -104,46 +104,39 @@ async function enviarZPLBatch(zplArray) {
 // Zebra GK420t 100x150mm (4x6") = 812x1218 dots a 203 dpi
 
 function zplEtiquetaCanasto(codigo) {
-  // 4 códigos de barras en etiqueta 100x150mm (812x1218 dots @ 203dpi)
-  // Cada bloque ocupa ~300 dots de alto (1218/4 ≈ 304)
-  // Barcode ancho completo: módulo 4, ratio 2, altura 150
-  // Línea punteada de corte entre cada bloque
-  const bloqueAlto = 304
-  const margenLinea = 20
-  const anchoLinea = 772  // 812 - 2*20
-  const barcodeAlto = 150
-  // Code128 con módulo 4: ~11 módulos por carácter * 8 chars + start/stop ≈ 480 dots
-  // Centrado: (812 - 480) / 2 ≈ 160
-  const barcodeX = 160
+  // Etiqueta 100x150mm (812x1218 dots @ 203dpi)
+  // 4 bloques iguales con barcode centrado + texto + línea de corte
+  const anchoEtiqueta = 812
+  const altoEtiqueta = 1218
+  const bloques = 4
+  const bloqueAlto = Math.floor(altoEtiqueta / bloques) // 304
+  const barcodeAlto = 140
+  // Code128 "CAN-0001": start(11)+8chars*11+stop(13)+2quiet = 113 módulos * 3 = 339 dots
+  const barcodeX = Math.floor((anchoEtiqueta - 340) / 2) // ~236
 
   let zpl = `^XA
 ^CI28
 ^LH0,0
 ~SD25
 `
-
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < bloques; i++) {
     const baseY = i * bloqueAlto
-    const barcodeY = baseY + 20
-    const textoY = barcodeY + barcodeAlto + 10
+    const barcodeY = baseY + 30
+    const textoY = barcodeY + barcodeAlto + 15
     // Barcode Code128 centrado
-    zpl += `^FO${barcodeX},${barcodeY}^BY4,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
+    zpl += `^FO${barcodeX},${barcodeY}^BY3,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
 `
-    // Texto centrado debajo
-    zpl += `^FO0,${textoY}^FB812,1,0,C,0^CF0,40^FD${codigo}^FS
+    // Texto centrado
+    zpl += `^FO0,${textoY}^FB${anchoEtiqueta},1,0,C,0^CF0,36^FD${codigo}^FS
 `
-    // Línea punteada de corte (excepto después del último)
-    if (i < 3) {
-      const lineaY = baseY + bloqueAlto - 8
-      // Línea punteada con segmentos cortos
-      for (let x = margenX; x < margenX + anchoLinea; x += 20) {
-        zpl += `^FO${x},${lineaY}^GB10,2,2^FS
+    // Línea de corte (excepto después del último)
+    if (i < bloques - 1) {
+      const lineaY = (i + 1) * bloqueAlto
+      zpl += `^FO20,${lineaY}^GB${anchoEtiqueta - 40},0,1^FS
 `
-      }
     }
   }
-
-  zpl += `^XZ`
+  zpl += '^XZ'
   return zpl
 }
 
