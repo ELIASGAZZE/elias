@@ -159,25 +159,16 @@ function zplLineaHorizontal(x, y, largo, grosor = 1) {
 // ─── Templates ZPL ───
 
 function zplEtiquetaCanasto(codigo) {
-  const { ancho, alto } = getEtiqueta('100x150')
-  const bloques = 4
-  const bloqueAlto = Math.floor(alto / bloques)
-  const barcodeAlto = 140
-
-  const textoAlto = 36
-  const gap = 15
-  const contenidoAlto = barcodeAlto + gap + textoAlto // 191
-  const padY = Math.floor((bloqueAlto - contenidoAlto) / 2) // centrado vertical
+  const { ancho, alto } = getEtiqueta('50x25')
+  const barcodeAlto = 100
+  const textoAlto = 28
+  const gap = 8
+  const contenidoAlto = barcodeAlto + gap + textoAlto
+  const padY = Math.floor((alto - contenidoAlto) / 2)
 
   let zpl = zplInicio()
-  for (let i = 0; i < bloques; i++) {
-    const baseY = i * bloqueAlto + padY
-    zpl += zplBarcodeCentrado(0, baseY, ancho, codigo, 3, barcodeAlto)
-    zpl += zplTextoCentrado(baseY + barcodeAlto + gap, ancho, codigo, textoAlto)
-    if (i < bloques - 1) {
-      zpl += zplLineaHorizontal(20, (i + 1) * bloqueAlto, ancho - 40)
-    }
-  }
+  zpl += zplBarcodeCentrado(0, padY, ancho, codigo, 2, barcodeAlto)
+  zpl += zplTextoCentrado(padY + barcodeAlto + gap, ancho, codigo, textoAlto)
   zpl += '^XZ'
   return zpl
 }
