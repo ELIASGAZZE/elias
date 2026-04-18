@@ -612,7 +612,11 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
       ? gift_cards_aplicadas.reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0) : 0
 
     // Validar que monto_pagado + saldo + gift cards >= total
-    if (montoPagadoNum + saldoApl + totalGCAplicadas < total - 0.01) {
+    // Tolerancia de $100 cuando hay efectivo: el POS redondea a centenas (Math.round)
+    // porque el cajero no maneja monedas, lo que puede generar hasta ~$50 de diferencia
+    const tieneEfectivo = pagos && pagos.some(p => p.tipo === 'Efectivo')
+    const toleranciaRedondeo = tieneEfectivo ? 100 : 0.01
+    if (montoPagadoNum + saldoApl + totalGCAplicadas < total - toleranciaRedondeo) {
       ventaTicketLock.delete(idempotencyKey)
       return res.status(400).json({ error: 'monto_pagado + saldo_aplicado debe ser >= total' })
     }
