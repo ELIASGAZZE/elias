@@ -16,21 +16,35 @@ export function setNombreImpresora(nombre) {
   impresoraZebra = nombre
 }
 
+// ─── Seguridad QZ Tray ───
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+// Certificado público — servido como archivo estático desde /qz-certificate.pem
+qz.security.setCertificatePromise(function(resolve, reject) {
+  fetch('/qz-certificate.pem', { cache: 'no-store' })
+    .then(r => r.ok ? r.text() : Promise.reject('No se pudo cargar certificado QZ'))
+    .then(resolve)
+    .catch(reject)
+})
+
+// Firma server-side — el backend firma con la clave privada
+qz.security.setSignatureAlgorithm('SHA512')
+qz.security.setSignaturePromise(function(toSign) {
+  return function(resolve, reject) {
+    fetch(`${API_URL}/api/qz/sign?request=${encodeURIComponent(toSign)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.text() : Promise.reject('Error firmando request QZ'))
+      .then(resolve)
+      .catch(reject)
+  }
+})
+
 // ─── Conexión ───
 
 export async function conectar() {
   if (conectado && qz.websocket.isActive()) return true
 
   try {
-    // Modo sin firma — QZ Tray mostrará popup de confianza al usuario
-    qz.security.setCertificatePromise(function(resolve, reject) {
-      resolve('')
-    })
-    qz.security.setSignaturePromise(function(toSign) {
-      return function(resolve, reject) {
-        resolve('')
-      }
-    })
 
     await qz.websocket.connect({ retries: 3, delay: 1 })
     conectado = true

@@ -50,6 +50,7 @@ const comprasRoutes = require('./routes/compras')
 const traspasosRoutes = require('./routes/traspasos')
 const notificacionesRoutes = require('./routes/notificaciones')
 const mercadolibreRoutes = require('./routes/mercadolibre')
+const qzRoutes = require('./routes/qz')
 const { mountMcp } = require('../mcp-server')
 const { iniciarCronJobs } = require('./jobs/cron')
 
@@ -144,6 +145,7 @@ app.use('/api/compras', comprasRoutes)
 app.use('/api/traspasos', traspasosRoutes)
 app.use('/api/notificaciones', notificacionesRoutes)
 app.use('/api/mercadolibre', mercadolibreRoutes)
+app.use('/api/qz', qzRoutes)
 
 // ── MCP Server (Cowork) ──────────────────────────────────────────────────────
 mountMcp(app)
@@ -193,8 +195,22 @@ app.use((err, req, res, next) => {
 })
 
 // ── Inicio del servidor ───────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   logger.info(`Servidor corriendo en http://localhost:${PORT}`)
+
+  // Auto-migración: agregar columnas para desactivación automática de promos
+  try {
+    const supabase = require('./config/supabase')
+    const { error } = await supabase.from('promociones_pos').select('desactivada_auto').limit(1)
+    if (error && error.message.includes('does not exist')) {
+      logger.info('[MIGRATION] Creando columnas desactivada_auto en promociones_pos...')
+      const { error: e1 } = await supabase.rpc('exec_sql', { sql: "ALTER TABLE promociones_pos ADD COLUMN IF NOT EXISTS desactivada_auto boolean DEFAULT false; ALTER TABLE promociones_pos ADD COLUMN IF NOT EXISTS desactivada_auto_fecha timestamptz;" })
+      if (e1) logger.warn('[MIGRATION] RPC no disponible, ejecutar SQL manualmente: sql/promociones_auto_desactivar.sql')
+    }
+  } catch (err) {
+    logger.warn('[MIGRATION] Check promos columns:', err.message)
+  }
+
   iniciarCronJobs()
 })
 
