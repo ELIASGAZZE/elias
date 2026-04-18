@@ -4575,17 +4575,32 @@ router.get('/saldos', verificarAuth, asyncHandler(async (req, res) => {
       // La más reciente ya viene primera por el order
     }
 
-    // Filtrar solo saldo positivo
+    // Filtrar clientes
+    const incluirCero = req.query.incluir_cero === 'true'
     const clientes = Object.values(clientesMap)
-      .filter(c => c.saldo > 0.01 && c.id_cliente_centum !== 2)
+      .filter(c => c.id_cliente_centum !== 2 && (incluirCero ? c.saldo >= -0.01 : c.saldo > 0.01))
       .map(c => ({ ...c, saldo: Math.round(c.saldo * 100) / 100 }))
       .sort((a, b) => b.saldo - a.saldo)
 
-    // Filtro de búsqueda opcional
+    // Filtro de búsqueda opcional (por nombre, id_centum o CUIT)
     const buscar = req.query.buscar?.toLowerCase()
-    const resultado = buscar
-      ? clientes.filter(c => c.nombre_cliente?.toLowerCase().includes(buscar))
-      : clientes
+    let resultado = clientes
+    if (buscar) {
+      // Si es numérico, buscar también por CUIT en tabla clientes
+      let idsCuit = new Set()
+      if (/^\d+$/.test(buscar.trim())) {
+        const { data: cliDB } = await supabase
+          .from('clientes')
+          .select('id_centum')
+          .like('cuit', `%${buscar.trim()}%`)
+        if (cliDB) cliDB.forEach(c => { if (c.id_centum) idsCuit.add(c.id_centum) })
+      }
+      resultado = clientes.filter(c =>
+        c.nombre_cliente?.toLowerCase().includes(buscar) ||
+        String(c.id_cliente_centum).includes(buscar) ||
+        idsCuit.has(c.id_cliente_centum)
+      )
+    }
 
     res.json({ clientes: resultado })
   } catch (err) {

@@ -707,7 +707,7 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
       return res.status(404).json({ error: 'Cierre no encontrado' })
     }
 
-    const SELECT_VENTAS = 'id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at, tipo, anulada, centum_comprobante, id_cliente_centum, canal, id_pedido_plataforma'
+    const SELECT_VENTAS = 'id, numero_venta, total, monto_pagado, vuelto, pagos, descuento_forma_pago, nombre_cliente, items, gift_cards_vendidas, created_at, tipo, anulada, anulada_motivo, centum_comprobante, id_cliente_centum, canal, id_pedido_plataforma, venta_origen_id'
 
     // Primero: buscar ventas vinculadas directamente por cierre_pos_id
     let { data: ventas, error: errorVentas } = await supabase
@@ -942,8 +942,71 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
         detalle: retiroEmpleadosDetalle,
       },
       cupones_mp: cuponesMP,
-      notas_credito: (() => {
-        const ncs = ventasNormales.filter(v => v.tipo === 'nota_credito')
+      notas_credito: await (async () => {
+        const ncs = ventasNormales.filter(v => {
+          if (v.tipo !== 'nota_credito') return false
+          // Excluir NCs por consumo de gift card (no son problemas reales)
+          let items = []
+          try { items = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []) } catch {}
+          if (items.length > 0 && items.every(it => it.es_gift_card)) return false
+          return true
+        })
+        // Buscar motivos de movimientos_saldo_pos para las NCs
+        let motivosMap = {}
+        // Buscar consumos de saldo (movimientos negativos) vinculados a clientes de las NCs
+        let consumosPorCliente = {} // { id_cliente_centum: [{ venta_pos_id, monto }] }
+        if (ncs.length > 0) {
+          const ncIds = ncs.map(v => v.id)
+          const { data: movimientos } = await supabase
+            .from('movimientos_saldo_pos')
+            .select('venta_pos_id, motivo, monto, id_cliente_centum, created_at')
+            .in('venta_pos_id', ncIds)
+          if (movimientos) {
+            movimientos.forEach(m => { motivosMap[m.venta_pos_id] = m.motivo })
+          }
+          // Buscar movimientos negativos (consumos de saldo) de los mismos clientes
+          const clienteIds = [...new Set(ncs.map(v => v.id_cliente_centum).filter(Boolean))]
+          if (clienteIds.length > 0) {
+            const { data: consumos } = await supabase
+              .from('movimientos_saldo_pos')
+              .select('venta_pos_id, monto, id_cliente_centum, created_at')
+              .in('id_cliente_centum', clienteIds)
+              .lt('monto', 0)
+              .order('created_at', { ascending: true })
+            if (consumos) {
+              consumos.forEach(c => {
+                if (!consumosPorCliente[c.id_cliente_centum]) consumosPorCliente[c.id_cliente_centum] = []
+                consumosPorCliente[c.id_cliente_centum].push(c)
+              })
+            }
+          }
+          // Obtener datos completos de las ventas donde se consumió saldo
+          const ventaConsumoIds = [...new Set(Object.values(consumosPorCliente).flat().map(c => c.venta_pos_id).filter(Boolean))]
+          if (ventaConsumoIds.length > 0) {
+            const { data: ventasConsumo } = await supabase
+              .from('ventas_pos')
+              .select('id, numero_venta, items, created_at, cierre_pos_id, caja:cajas(nombre, sucursales(nombre))')
+              .in('id', ventaConsumoIds)
+            if (ventasConsumo) {
+              ventasConsumo.forEach(vc => {
+                Object.values(consumosPorCliente).forEach(arr => {
+                  arr.forEach(c => {
+                    if (c.venta_pos_id === vc.id) {
+                      c.numero_venta = vc.numero_venta
+                      c.venta_created_at = vc.created_at
+                      c.cierre_pos_id = vc.cierre_pos_id
+                      c.sucursal = vc.caja?.sucursales?.nombre || null
+                      c.caja_nombre = vc.caja?.nombre || null
+                      let items = []
+                      try { items = typeof vc.items === 'string' ? JSON.parse(vc.items) : (vc.items || []) } catch {}
+                      c.items = items.map(it => ({ nombre: it.nombre || it.descripcion, cantidad: it.cantidad, precio: it.precioUnitario || it.precio_unitario || it.precio }))
+                    }
+                  })
+                })
+              })
+            }
+          }
+        }
         return {
           cantidad: ncs.length,
           total: parseFloat(ncs.reduce((s, v) => s + (parseFloat(v.total) || 0), 0).toFixed(2)),
@@ -953,6 +1016,20 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
             const ventaOrigen = v.venta_origen_id
               ? (ventas || []).find(vo => vo.id === v.venta_origen_id)
               : null
+            // Parsear items de la NC
+            let itemsNC = []
+            try { itemsNC = typeof v.items === 'string' ? JSON.parse(v.items) : (v.items || []) } catch {}
+            // Extraer tipo_problema y observacion del motivo del movimiento de saldo
+            const motivoCompleto = motivosMap[v.id] || null
+            let tipo_problema = null
+            let observacion_cajero = null
+            if (motivoCompleto) {
+              // Formato: "Devolución - TIPO. items... Obs: texto" o "Diferencia de precio. items..."
+              const matchTipo = motivoCompleto.match(/^(Devolución - [^.]+|Diferencia de precio|Corrección de cliente)/)
+              tipo_problema = matchTipo ? matchTipo[1] : motivoCompleto.split('.')[0]
+              const matchObs = motivoCompleto.match(/\. Obs: (.+)$/)
+              observacion_cajero = matchObs ? matchObs[1] : null
+            }
             return {
               id: v.id,
               numero_venta: v.numero_venta,
@@ -964,8 +1041,36 @@ router.get('/:id/pos-ventas', verificarAuth, asyncHandler(async (req, res) => {
               venta_origen_numero: ventaOrigen?.numero_venta || null,
               venta_origen_total: ventaOrigen ? parseFloat(ventaOrigen.total) : null,
               centum_comprobante: v.centum_comprobante,
-              motivo: ventaOrigen?.anulada_motivo || null,
+              centum_comprobante_origen: ventaOrigen?.centum_comprobante || null,
+              motivo: motivoCompleto,
+              tipo_problema,
+              observacion_cajero,
+              items: itemsNC.map(it => ({
+                nombre: it.nombre,
+                cantidad: it.cantidad,
+                precio: it.precioUnitario || it.precio,
+                descripcionProblema: it.descripcionProblema || null,
+                precio_cobrado: it.precio_cobrado || null,
+                precio_correcto: it.precio_correcto || null,
+              })),
             }
+          }),
+          // Resumen de consumos de saldo agrupado por cliente (no por NC)
+          saldo_consumido: Object.entries(consumosPorCliente).flatMap(([clienteId, consumos]) => {
+            const clienteNombre = ncs.find(n => String(n.id_cliente_centum) === String(clienteId))?.nombre_cliente || 'Cliente'
+            return consumos
+              .filter(c => c.venta_pos_id && c.numero_venta)
+              .map(c => ({
+                venta_id: c.venta_pos_id,
+                numero_venta: c.numero_venta,
+                monto: Math.abs(c.monto),
+                cliente: clienteNombre,
+                created_at: c.venta_created_at || null,
+                cierre_pos_id: c.cierre_pos_id || null,
+                sucursal: c.sucursal || null,
+                caja_nombre: c.caja_nombre || null,
+                items: c.items || [],
+              }))
           }),
         }
       })(),

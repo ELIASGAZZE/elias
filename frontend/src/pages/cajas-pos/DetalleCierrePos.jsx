@@ -600,7 +600,7 @@ const DetalleCierrePos = () => {
             )}
 
             {/* Tabla derecha: Fin de turno */}
-            {cierre.cambio_billetes && Object.keys(cierre.cambio_billetes).length > 0 && (
+            {((cierre.cambio_billetes && Object.keys(cierre.cambio_billetes).length > 0) || cierre.apertura_siguiente) && (
               <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-gray-700">Cambio — Fin de turno</h3>
                 {cierre.apertura_siguiente ? (
@@ -1262,34 +1262,85 @@ const DetalleCierrePos = () => {
               <div className="space-y-2">
                 {nc.detalle.map((item, idx) => {
                   const pagos = item.pagos || []
-                  const formasPago = pagos.map(p => `${p.tipo} ${formatMonto(p.monto)}`).join(', ')
+                  const itemsNC = item.items || []
                   return (
                     <div key={idx} className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                      {/* Header: NC number + comprobante + monto */}
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           <a href={`/ventas/${item.id}`} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-red-700 hover:underline">
                             NC #{item.numero_venta}
                           </a>
-                          {item.venta_origen_numero && (
-                            <span className="text-[10px] text-gray-500">
-                              anula <a href={`/ventas/${item.venta_origen_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">#{item.venta_origen_numero}</a>
-                            </span>
-                          )}
                           {item.centum_comprobante && (
                             <span className="text-[10px] text-violet-500 font-medium">{item.centum_comprobante}</span>
                           )}
                         </div>
                         <span className="text-sm font-bold text-red-700">{formatMonto(item.total)}</span>
                       </div>
-                      <div className="flex items-center justify-between text-xs text-gray-500">
+
+                      {/* Tipo de problema */}
+                      {item.tipo_problema && (
+                        <div className="text-xs font-medium text-red-700 mt-1">
+                          {item.tipo_problema}
+                        </div>
+                      )}
+
+                      {/* Cliente + hora */}
+                      <div className="flex items-center justify-between text-xs text-gray-500 mt-0.5">
                         <span>{item.nombre_cliente || 'Consumidor Final'}</span>
                         <span>{new Date(item.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                      {item.motivo && (
-                        <div className="text-xs text-red-600 mt-1 italic">Motivo: {item.motivo}</div>
+
+                      {/* Factura original */}
+                      {item.venta_origen_numero && (
+                        <div className="text-xs text-gray-600 mt-1 flex items-center gap-1">
+                          <span className="text-gray-400">Factura original:</span>
+                          <a href={`/ventas/${item.venta_origen_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+                            #{item.venta_origen_numero}
+                          </a>
+                          {item.centum_comprobante_origen && (
+                            <span className="text-[10px] text-violet-400 ml-1">{item.centum_comprobante_origen}</span>
+                          )}
+                          {item.venta_origen_total != null && (
+                            <span className="text-gray-400 ml-1">({formatMonto(item.venta_origen_total)})</span>
+                          )}
+                        </div>
                       )}
+
+                      {/* Artículos afectados */}
+                      {itemsNC.length > 0 && (
+                        <div className="mt-1.5 space-y-0.5">
+                          <span className="text-[10px] text-gray-400 uppercase tracking-wide">Artículos afectados</span>
+                          {itemsNC.map((it, iidx) => (
+                            <div key={iidx} className="flex items-center justify-between text-xs text-gray-600">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-gray-400">{it.cantidad}x</span>
+                                <span>{it.nombre}</span>
+                                {it.descripcionProblema && (
+                                  <span className="text-red-500 italic text-[10px]">— {it.descripcionProblema}</span>
+                                )}
+                                {it.precio_cobrado != null && it.precio_correcto != null && (
+                                  <span className="text-orange-500 text-[10px]">
+                                    (cobrado {formatMonto(it.precio_cobrado)} → góndola {formatMonto(it.precio_correcto)})
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-red-600 font-medium">{formatMonto(-(it.precio * it.cantidad))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Observaciones del cajero */}
+                      {item.observacion_cajero && (
+                        <div className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mt-1.5 italic">
+                          Obs: {item.observacion_cajero}
+                        </div>
+                      )}
+
+                      {/* Formas de pago */}
                       {pagos.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
+                        <div className="flex flex-wrap gap-1 mt-1.5">
                           {pagos.map((p, pidx) => (
                             <span key={pidx} className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">
                               {p.tipo} {formatMonto(p.monto)}
@@ -1301,6 +1352,49 @@ const DetalleCierrePos = () => {
                   )
                 })}
               </div>
+
+              {/* Resumen de saldo consumido (a nivel sección, no por NC) */}
+              {nc.saldo_consumido?.length > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 mt-2">
+                  <div className="text-xs font-medium text-green-700 mb-1">Saldo utilizado en:</div>
+                  <div className="space-y-2">
+                    {nc.saldo_consumido.map((sc, scidx) => (
+                      <div key={scidx} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <a href={`/ventas/${sc.venta_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+                              Venta #{sc.numero_venta}
+                            </a>
+                            {sc.sucursal && <span className="text-gray-500">{sc.sucursal}{sc.caja_nombre ? ` — ${sc.caja_nombre}` : ''}</span>}
+                            {sc.cierre_pos_id && (
+                              <a href={`/cajas-pos/cierre/${sc.cierre_pos_id}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-gray-600 hover:underline">
+                                Caja
+                              </a>
+                            )}
+                            {sc.created_at && (
+                              <span className="text-gray-400">
+                                {new Date(sc.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} {new Date(sc.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-green-700 font-medium">{formatMonto(sc.monto)}</span>
+                        </div>
+                        {sc.items?.length > 0 && (
+                          <div className="pl-3 space-y-0.5">
+                            {sc.items.map((it, iidx) => (
+                              <div key={iidx} className="text-[11px] text-gray-500 flex items-center gap-1">
+                                <span className="text-gray-400">{it.cantidad}x</span>
+                                <span>{it.nombre}</span>
+                                {it.precio != null && <span className="text-gray-400">({formatMonto(it.precio)})</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )
         })()}

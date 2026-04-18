@@ -61,6 +61,8 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
 
   // Cupones MP (informativo)
   const [cuponesMP, setCuponesMP] = useState({ posnet: 0, qr: 0, problema: 0, anulaciones: 0 })
+  const [ventasDelivery, setVentasDelivery] = useState([])
+  const [deliveryExpanded, setDeliveryExpanded] = useState(false)
 
   // Retiros y gastos del turno
   const [retiros, setRetiros] = useState([])
@@ -129,6 +131,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
           })
         })
         setCuponesMP({ posnet, qr, problema, anulaciones })
+        setVentasDelivery(detalleVentas.filter(v => v.canal === 'delivery'))
 
         const cierreData = cierreRes.data
         setCierre(cierreData)
@@ -209,7 +212,7 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
   }
 
   const cerrarCaja = async () => {
-    if (!esAdmin && !empleadoResuelto) {
+    if (!empleadoResuelto) {
       setError('Ingresa un codigo de empleado valido')
       return
     }
@@ -327,10 +330,6 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                     <p className="font-semibold">Sesion POS</p>
                     <p>Caja: {cierre.caja?.nombre || '-'} · Empleado: {cierre.empleado?.nombre || '-'} · {formatFecha(cierre.fecha)} · Apertura: {formatHora(cierre.apertura_at)} · Cambio: {formatMonto(cierre.fondo_fijo)}</p>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs text-violet-600">Total efectivo</span>
-                    <p className="text-lg font-bold text-violet-700">{formatMonto(totalEfectivo)}</p>
-                  </div>
                 </div>
               )}
 
@@ -363,6 +362,37 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <span>Problema: <strong>{cuponesMP.problema}</strong></span>
+                  </div>
+                )}
+              </div>
+
+              {/* Ventas Delivery (informativo, desplegable) */}
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+                <div className="flex items-center gap-2 text-sm cursor-pointer" onClick={() => setDeliveryExpanded(prev => !prev)}>
+                  <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                  </svg>
+                  <span className="text-orange-800 font-medium">Ventas Delivery: {ventasDelivery.length}</span>
+                  {ventasDelivery.length > 0 && (
+                    <span className="text-orange-800 font-bold ml-2">
+                      Total: {formatMonto(ventasDelivery.reduce((s, v) => s + (parseFloat(v.total) || 0), 0))}
+                    </span>
+                  )}
+                  {ventasDelivery.length > 0 && (
+                    <span className="ml-auto text-orange-400 text-xs">{deliveryExpanded ? '▲' : '▼'}</span>
+                  )}
+                </div>
+                {deliveryExpanded && ventasDelivery.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {ventasDelivery.map(v => (
+                      <div key={v.id} className="flex items-center text-xs bg-white rounded-lg px-2 py-1.5 border border-orange-100">
+                        <span className="w-14 font-medium text-blue-600">#{v.numero_venta}</span>
+                        <span className="w-12 text-gray-400">{new Date(v.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                        <span className="w-28 font-mono text-orange-700 font-medium">{v.id_pedido_plataforma || '—'}</span>
+                        <span className="flex-1 text-gray-500">{(v.pagos || []).map(p => p.tipo || 'Efectivo').join(', ')}</span>
+                        <span className="font-medium text-gray-800">{formatMonto(v.total)}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -460,7 +490,10 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
               <div className="space-y-3">
                 <h3 className="text-sm font-medium text-gray-500">Otros medios de pago</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  {formasCobro.map(f => (
+                  {formasCobro.filter(f => {
+                    const n = (f.nombre || '').toLowerCase()
+                    return !n.includes('rappi') && !n.includes('pedido ya') && !n.includes('pedidosya')
+                  }).map(f => (
                     <CampoMedio
                       key={f.id}
                       label={f.nombre}
@@ -470,16 +503,6 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                       onCantidadChange={(val) => actualizarMedio(f.id, 'cantidad', val)}
                     />
                   ))}
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
-                  <textarea
-                    value={observaciones}
-                    onChange={(e) => setObservaciones(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                    rows={2}
-                    placeholder="Observaciones opcionales..."
-                  />
                 </div>
               </div>
 
@@ -501,52 +524,12 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
                     <span className="text-xs text-gray-500 block">Cambio que queda</span>
                     <span className="font-bold text-amber-700">{formatMonto(cambioQueQueda)}</span>
                   </div>
-                  <div className="flex-1 bg-white border border-amber-200 rounded-lg p-2 text-center">
-                    <span className="text-xs text-gray-500 block">Efectivo retirado</span>
-                    <span className="font-bold text-violet-700">{formatMonto(efectivoRetirado)}</span>
-                  </div>
                 </div>
               </div>
 
-              {/* Resumen */}
-              <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-violet-800 mb-2">Resumen del cierre</h3>
-                <div className="flex flex-wrap gap-4 text-sm">
-                  <div className="flex gap-2 text-gray-600">
-                    <span>Apertura:</span>
-                    <span className="font-medium">{cierre && formatHora(cierre.apertura_at)}</span>
-                  </div>
-                  <div className="flex gap-2 text-gray-600">
-                    <span>Cambio inicial:</span>
-                    <span className="font-medium">{cierre && formatMonto(cierre.fondo_fijo)}</span>
-                  </div>
-                  <div className="flex gap-2 text-gray-600">
-                    <span>Total efectivo:</span>
-                    <span className="font-medium">{formatMonto(totalEfectivo)}</span>
-                  </div>
-                  {totalOtrosMedios > 0 && (
-                    <div className="flex gap-2 text-gray-600">
-                      <span>Otros medios:</span>
-                      <span className="font-medium">{formatMonto(totalOtrosMedios)}</span>
-                    </div>
-                  )}
-                  <div className="flex gap-2 text-amber-700">
-                    <span>Cambio queda:</span>
-                    <span className="font-medium">{formatMonto(cambioQueQueda)}</span>
-                  </div>
-                  <div className="flex gap-2 text-gray-600">
-                    <span>Retirado:</span>
-                    <span className="font-medium">{formatMonto(efectivoRetirado)}</span>
-                  </div>
-                  <div className="flex gap-2 text-violet-800 font-bold ml-auto">
-                    <span>Total general:</span>
-                    <span>{formatMonto(totalGeneral)}</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Codigo empleado (admins exentos) */}
-              {!esAdmin && (
+              {/* Codigo empleado */}
+              {(
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <label className="text-sm font-medium text-gray-700 mb-2 block">Codigo de empleado que cierra</label>
                 <input
@@ -574,6 +557,20 @@ const ModalCerrarCaja = ({ cierreId, onClose, onCajaCerrada }) => {
             </>
           )}
         </div>
+
+        {/* Observaciones — al final antes del botón */}
+        {!cargando && (
+          <div className="px-5 pb-3">
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Observaciones</label>
+            <textarea
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              rows={2}
+              placeholder="Observaciones opcionales..."
+            />
+          </div>
+        )}
 
         {/* Footer fijo */}
         {!cargando && (

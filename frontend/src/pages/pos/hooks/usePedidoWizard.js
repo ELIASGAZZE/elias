@@ -459,7 +459,10 @@ export function usePedidoWizard({
           if (datosPago.descuento_forma_pago) {
             payload.descuento_forma_pago = datosPago.descuento_forma_pago
           }
-          payload.total_pagado = montoPagadoNeto || totalPedido
+          // Capar total_pagado al monto real adeudado (después de desc. forma pago)
+          // para que el redondeo de centenas no genere saldo falso
+          const totalRealAdeudado = parseFloat(datosPago?.total) || totalPedido
+          payload.total_pagado = Math.min(montoPagadoNeto, totalRealAdeudado) || totalPedido
         } else {
           payload.observaciones = 'PAGO ANTICIPADO'
           payload.total_pagado = datosPago?.monto_pagado || totalPedido
@@ -511,8 +514,12 @@ export function usePedidoWizard({
           const observaciones = vueltoDado > 0
             ? `PAGO ANTICIPADO: ${resumenPago} (se dio $${vueltoDado} de vuelto al cobrar)`
             : `PAGO ANTICIPADO: ${resumenPago}`
+          // Capar total_pagado al monto real adeudado (después de desc. forma pago)
+          // para que el redondeo de centenas no genere saldo falso
+          const totalRealAdeudado = parseFloat(datosPago?.total) || pedido.total
+          const totalPagadoFinal = Math.min(montoPagadoNeto, totalRealAdeudado)
           await api.put(`/api/pos/pedidos/${pedido.id}/pago`, {
-            total_pagado: montoPagadoNeto || pedido.total,
+            total_pagado: totalPagadoFinal || pedido.total,
             observaciones,
             pagos_anticipado: pagosNeto,
             caja_cobro_id: terminalConfig?.caja_id || null,

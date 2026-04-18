@@ -1915,6 +1915,30 @@ const POS = () => {
         condicion_iva: pedido.condicion_iva || null,
         grupo_descuento_nombre: pedido.grupo_descuento_nombre || null,
       })
+      // Recuperar datos completos del cliente (grupo de descuento + rubros)
+      if (pedido.id_cliente_centum) {
+        api.get('/api/clientes', { params: { buscar: pedido.id_cliente_centum, limit: 1 } })
+          .then(({ data }) => {
+            const cli = (data?.clientes || data?.data || []).find(c => c.id_centum === pedido.id_cliente_centum)
+            if (cli) {
+              setCliente(prev => ({
+                ...prev,
+                grupo_descuento_id: cli.grupo_descuento_id || null,
+                grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
+                grupo_descuento_nombre: cli.grupos_descuento?.nombre || prev.grupo_descuento_nombre,
+                lista_precio_id: cli.lista_precio_id || 1,
+              }))
+              if (cli.grupos_descuento?.grupos_descuento_rubros?.length > 0) {
+                const rubroMap = {}
+                for (const r of cli.grupos_descuento.grupos_descuento_rubros) {
+                  rubroMap[r.rubro] = parseFloat(r.porcentaje) || 0
+                }
+                setDescuentosGrupoRubros(rubroMap)
+              }
+            }
+          })
+          .catch(err => console.warn('No se pudo cargar datos de cliente para pedido:', err.message))
+      }
     }
     const esPagado = (pedido.observaciones || '').includes('PAGO ANTICIPADO') || (pedido.observaciones || '').includes('TALO PAY')
     const totalPagado = parseFloat(pedido.total_pagado) || 0
@@ -1974,7 +1998,7 @@ const POS = () => {
         condicion_iva: pedido.condicion_iva || null,
         grupo_descuento_nombre: pedido.grupo_descuento_nombre || null,
       })
-      // Recuperar datos completos del cliente (grupo de descuento) para recalcular si se modifica
+      // Recuperar datos completos del cliente (grupo de descuento + rubros) para recalcular si se modifica
       if (pedido.id_cliente_centum) {
         api.get('/api/clientes', { params: { buscar: pedido.id_cliente_centum, limit: 1 } })
           .then(({ data }) => {
@@ -1982,10 +2006,18 @@ const POS = () => {
             if (cli) {
               setCliente(prev => ({
                 ...prev,
-                grupo_descuento_porcentaje: cli.grupo_descuento_porcentaje || 0,
-                grupo_descuento_nombre: cli.grupo_descuento_nombre || prev.grupo_descuento_nombre,
+                grupo_descuento_id: cli.grupo_descuento_id || null,
+                grupo_descuento_porcentaje: cli.grupos_descuento?.porcentaje || 0,
+                grupo_descuento_nombre: cli.grupos_descuento?.nombre || prev.grupo_descuento_nombre,
                 lista_precio_id: cli.lista_precio_id || 1,
               }))
+              if (cli.grupos_descuento?.grupos_descuento_rubros?.length > 0) {
+                const rubroMap = {}
+                for (const r of cli.grupos_descuento.grupos_descuento_rubros) {
+                  rubroMap[r.rubro] = parseFloat(r.porcentaje) || 0
+                }
+                setDescuentosGrupoRubros(rubroMap)
+              }
             }
           })
           .catch(err => console.warn('No se pudo cargar datos de cliente:', err.message))
@@ -2138,10 +2170,10 @@ const POS = () => {
     if (!pedidoEnProceso || carrito.length === 0) return
 
     const totalPagado = pedidoEnProceso.totalPagado || 0
-    // Calcular total efectivo considerando descuento forma pago del pedido
+    // Calcular total efectivo considerando descuento grupo + descuento forma pago del pedido
     const descFormaPago = pedidoEnProceso.descuento_forma_pago
     const descuentoTotal = descFormaPago?.total || 0
-    const totalConDescuento = Math.round((total - descuentoTotal) * 100) / 100
+    const totalConDescuento = Math.round((totalConDescGrupo - descuentoTotal) * 100) / 100
     const difRaw = totalConDescuento - totalPagado
     // Tolerancia de $1 por redondeo a centenas del efectivo
     const diferencia = Math.abs(difRaw) < 1 ? 0 : difRaw
@@ -3278,10 +3310,10 @@ const POS = () => {
                 )}
                 {/* Si hay pedido en proceso YA pagado y NO editando: entregar directo */}
                 {pedidoEnProceso && !pedidoEnProceso.editando && pedidoEnProceso.esPagado && (() => {
-                  // Aplicar descuento forma pago congelado del pedido (ej. 10% efectivo)
+                  // Aplicar descuento grupo + descuento forma pago congelado del pedido
                   // para que la diferencia visible coincida con la que calcula handleEntregarPedidoPagado.
                   const descFP = parseFloat(pedidoEnProceso.descuento_forma_pago?.total) || 0
-                  const totalConDescuento = Math.round((total - descFP) * 100) / 100
+                  const totalConDescuento = Math.round((totalConDescGrupo - descFP) * 100) / 100
                   const dif = totalConDescuento - (pedidoEnProceso.totalPagado || 0)
                   const saldoCubreFaltante = dif > 0.01 && saldoCliente >= dif
                   const habilitado = dif <= 0.01 || saldoCubreFaltante
@@ -3409,8 +3441,8 @@ const POS = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                {/* Tile Gift Card — solo visible si no hay artículos en el carrito */}
-                {carrito.length === 0 && (
+                {/* Tile Gift Card — solo visible si no hay artículos en el carrito y no es delivery */}
+                {carrito.length === 0 && !modoDelivery && (
                 <div
                   onClick={() => setMostrarAgregarGC(true)}
                   className={`relative rounded-xl cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-95 select-none shadow-sm ${

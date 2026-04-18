@@ -339,7 +339,10 @@ const VerificarCierrePos = () => {
           {/* Col 2: Otros medios + Observaciones */}
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Otros medios de pago</h3>
-            {formasCobro.map(f => (
+            {formasCobro.filter(f => {
+              const n = (f.nombre || '').toLowerCase()
+              return !n.includes('rappi') && !n.includes('pedido ya') && !n.includes('pedidosya')
+            }).map(f => (
               <CampoMedio
                 key={f.id}
                 label={f.nombre}

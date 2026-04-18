@@ -124,10 +124,11 @@ const DetalleVenta = () => {
   const tieneItemsExtra = pedidoItemCodigos && itemsSinGC.length > pedidoItemCodigos.size
 
   // Calcular redondeo de efectivo (centenas)
+  // El total ya es el valor completo de la venta (sin restar saldo ni GC, que son formas de pago)
   const saldoAplicadoNum = parseFloat(venta.saldo_aplicado) || 0
   const gcAplicadaMonto = parseFloat(venta.gc_aplicada_monto) || 0
   const totalEsperado = Math.round(
-    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0) - saldoAplicadoNum - gcAplicadaMonto) * 100
+    ((parseFloat(venta.subtotal) || 0) - (parseFloat(venta.descuento_total) || 0) - (descFormaPago?.total || 0) - (parseFloat(venta.descuento_grupo_cliente) || 0)) * 100
   ) / 100
   const redondeoEfectivo = Math.round((parseFloat(venta.total) - totalEsperado) * 100) / 100
 

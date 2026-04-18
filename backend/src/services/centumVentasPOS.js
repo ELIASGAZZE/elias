@@ -374,12 +374,10 @@ async function registrarVentaPOSEnCentum(ventaLocal, config) {
       }).eq('id', ventaLocal.id).then(() => {}).catch(() => {})
     }
 
-    // Si hay GC aplicada, la factura debe ser por el monto completo (total + GC),
-    // porque la GC es un medio de pago, no un descuento. La NC posterior descuenta el monto de la GC.
+    // El total ya incluye el valor completo de la venta (sin restar medios de pago como saldo o GC).
+    // Saldo y GC son formas de pago, no descuentos — el total no cambia por cómo se paga.
     const gcAplicada = parseFloat(ventaLocal.gc_aplicada_monto) || 0
-    const totalParaCentum = gcAplicada > 0
-      ? (parseFloat(ventaLocal.total) || 0) + gcAplicada
-      : (parseFloat(ventaLocal.total) || 0)
+    const totalParaCentum = parseFloat(ventaLocal.total) || 0
 
     const resultado = await crearVentaPOS({
       idCliente: ventaLocal.id_cliente_centum || 2,

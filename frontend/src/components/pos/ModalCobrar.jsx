@@ -750,7 +750,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
           ...descuentosPorForma,
         ],
       } : null,
-      total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
+      total: totalConDescFormaPago,
       monto_pagado: totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
       pagos: [
@@ -807,7 +807,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       subtotal,
       descuentoTotal,
       totalDescuentoPagos,
-      total: totalOperativo > 0 ? totalOperativo : totalConDescFormaPago,
+      total: totalConDescFormaPago,
       totalPagado,
       vuelto: vuelto > 0 ? vuelto : 0,
       descuentoGrupoCliente,

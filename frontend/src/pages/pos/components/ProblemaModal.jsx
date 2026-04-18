@@ -132,7 +132,7 @@ export default function ProblemaModal(props) {
                           if (v.anulada) return false
                           // Excluir ventas cobradas con Talo Pay (no se pueden anular)
                           const pagos = typeof v.pagos === 'string' ? JSON.parse(v.pagos) : (v.pagos || [])
-                          const esTaloPay = pagos.some(p => ['talo pay', 'pago anticipado'].includes((p.tipo || '').toLowerCase()))
+                          const esTaloPay = pagos.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
                           if (esTaloPay) return false
                           return true
                         })

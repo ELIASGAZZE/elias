@@ -42,18 +42,22 @@ function VistaAdmin({ embebido }) {
   const [nuevoMonto, setNuevoMonto] = useState('')
   const [nuevoMotivo, setNuevoMotivo] = useState('')
   const [cargandoNuevo, setCargandoNuevo] = useState(false)
+  const [mostrarConsumidos, setMostrarConsumidos] = useState(false)
 
   const cargarSaldos = useCallback(async () => {
     setCargando(true)
     try {
-      const { data } = await api.get('/api/pos/saldos', { params: busqueda ? { buscar: busqueda } : {} })
+      const params = {}
+      if (busqueda) params.buscar = busqueda
+      if (mostrarConsumidos) params.incluir_cero = 'true'
+      const { data } = await api.get('/api/pos/saldos', { params })
       setClientes(data.clientes || [])
     } catch (err) {
       console.error('Error cargando saldos:', err)
     } finally {
       setCargando(false)
     }
-  }, [busqueda])
+  }, [busqueda, mostrarConsumidos])
 
   useEffect(() => {
     const timeout = setTimeout(cargarSaldos, 300)
@@ -173,7 +177,18 @@ function VistaAdmin({ embebido }) {
 
       <div className={embebido ? 'px-4 pt-3' : 'max-w-4xl mx-auto px-4 pt-4'}>
         <div className="flex items-center justify-between mb-3">
-          <span className="text-sm text-gray-500 font-medium">{clientes.length} cliente{clientes.length !== 1 ? 's' : ''} con saldo</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500 font-medium">{clientes.length} cliente{clientes.length !== 1 ? 's' : ''}{mostrarConsumidos ? '' : ' con saldo'}</span>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={mostrarConsumidos}
+                onChange={e => setMostrarConsumidos(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+              />
+              <span className="text-xs text-gray-500">Consumidos</span>
+            </label>
+          </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => { setMostrarCargar(true); setClienteNuevo(null); setBusquedaCliente(''); setResultadosBusqueda([]); setNuevoMonto(''); setNuevoMotivo('') }}
@@ -196,7 +211,7 @@ function VistaAdmin({ embebido }) {
             type="text"
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
-            placeholder="Buscar por nombre de cliente..."
+            placeholder="Buscar por nombre o DNI/CUIT..."
             className="w-full pl-9 pr-8 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent"
           />
           {busqueda && (
@@ -240,7 +255,7 @@ function VistaAdmin({ embebido }) {
                       Ultima actividad: {new Date(cli.ultima_actividad).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
                     </div>
                   </div>
-                  <span className="text-lg font-bold text-emerald-600">{formatPrecio(cli.saldo)}</span>
+                  <span className={`text-lg font-bold ${cli.saldo > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>{formatPrecio(cli.saldo)}</span>
                 </div>
               </div>
             ))}
@@ -441,20 +456,58 @@ function VistaAdmin({ embebido }) {
                 <div className="text-center py-8 text-gray-400 text-sm">Sin movimientos</div>
               ) : (
                 <div className="space-y-2">
-                  {movimientos.map(mov => {
+                  {(() => {
+                    // Calcular saldo acumulado en cada punto (movimientos vienen DESC)
+                    let acum = 0
+                    const saldosAcum = []
+                    for (let i = movimientos.length - 1; i >= 0; i--) {
+                      acum += parseFloat(movimientos[i].monto)
+                      saldosAcum[i] = Math.round(acum * 100) / 100
+                    }
+                    return movimientos.map((mov, idx) => ({ ...mov, _saldoAlMomento: saldosAcum[idx] }))
+                  })().map(mov => {
                     const esCredito = parseFloat(mov.monto) > 0
+                    const linkStyle = 'text-purple-600 hover:text-purple-800 hover:underline cursor-pointer'
                     return (
                       <div key={mov.id} className={`rounded-lg border p-3 ${esCredito ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-gray-700">{mov.motivo}</span>
-                          <span className={`text-sm font-bold ${esCredito ? 'text-emerald-600' : 'text-red-600'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-sm font-medium text-gray-700 flex-1">{mov.motivo}</span>
+                          <span className={`text-sm font-bold whitespace-nowrap ${esCredito ? 'text-emerald-600' : 'text-red-600'}`}>
                             {esCredito ? '+' : ''}{formatPrecio(parseFloat(mov.monto))}
                           </span>
                         </div>
-                        <div className="text-xs text-gray-400 mt-1">
-                          {new Date(mov.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })}{' '}
-                          {new Date(mov.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                        <div className="flex items-center justify-between text-xs text-gray-400 mt-1">
+                          <span>
+                            {new Date(mov.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })}{' '}
+                            {new Date(mov.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className="font-medium text-gray-500">Saldo: {formatPrecio(mov._saldoAlMomento)}</span>
                         </div>
+                        {/* Links de trazabilidad */}
+                        {(mov.venta_vinculada_id || mov.venta_origen_id) && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs">
+                            {mov.venta_vinculada_id && (
+                              <span className={linkStyle} onClick={() => window.open(`/ventas/${mov.venta_vinculada_id}`, '_blank')}>
+                                {mov.venta_vinculada_tipo === 'nota_credito' ? '📄 NC' : '🧾 Venta'} {mov.venta_vinculada_numero ? `#${mov.venta_vinculada_numero}` : ''}
+                              </span>
+                            )}
+                            {mov.venta_origen_id && (
+                              <span className={linkStyle} onClick={() => window.open(`/ventas/${mov.venta_origen_id}`, '_blank')}>
+                                🧾 Venta original {mov.venta_origen_numero ? `#${mov.venta_origen_numero}` : ''}
+                              </span>
+                            )}
+                            {mov.venta_origen_cierre_id && (
+                              <span className={linkStyle} onClick={() => window.open(`/cierres/${mov.venta_origen_cierre_id}`, '_blank')}>
+                                📋 Cierre venta {mov.venta_origen_cierre_numero ? `#${mov.venta_origen_cierre_numero}` : ''}
+                              </span>
+                            )}
+                            {mov.venta_vinculada_cierre_id && mov.venta_vinculada_cierre_id !== mov.venta_origen_cierre_id && (
+                              <span className={linkStyle} onClick={() => window.open(`/cierres/${mov.venta_vinculada_cierre_id}`, '_blank')}>
+                                📋 Cierre {mov.venta_vinculada_tipo === 'nota_credito' ? 'devolución' : ''} {mov.venta_vinculada_cierre_numero ? `#${mov.venta_vinculada_cierre_numero}` : ''}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
