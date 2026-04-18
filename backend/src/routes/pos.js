@@ -1255,7 +1255,11 @@ router.get('/ventas', verificarAuth, asyncHandler(async (req, res) => {
       const desgloseMediosR = {}
       ventas.forEach(v => {
         const totalBase = parseFloat(v.total) || 0
-        const total = totalBase
+        // Para ventas con GC aplicada como pago, sumar gc_aplicada_monto al total.
+        // Centum registra la factura por total + GC y una NC separada por -GC,
+        // así que el resumen POS debe hacer lo mismo para coincidir.
+        const gcAplicada = v.tipo !== 'nota_credito' ? (parseFloat(v.gc_aplicada_monto) || 0) : 0
+        const total = totalBase + gcAplicada
         if (v.tipo === 'nota_credito') {
           // NC se resta (valor negativo) para coincidir con Centum BI
           totalNCR -= Math.abs(total)
@@ -1339,7 +1343,7 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, asyncHandler(async 
     // 4. Consultar ventas POS del mismo rango
     let posQuery = supabase
       .from('ventas_pos')
-      .select('id, total, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
+      .select('id, total, gc_aplicada_monto, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
       .gte('created_at', `${fechaDesde}T00:00:00-03:00`)
       .lte('created_at', `${fechaHasta}T23:59:59-03:00`)
     if (sucursal_id) posQuery = posQuery.eq('sucursal_id', sucursal_id)
@@ -1360,7 +1364,7 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, asyncHandler(async 
     if (centumIdsNoMatcheados.length > 0) {
       const { data: ventasPOSExtra } = await supabase
         .from('ventas_pos')
-        .select('id, total, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
+        .select('id, total, gc_aplicada_monto, centum_sync, id_venta_centum, created_at, nombre_cliente, tipo, sucursal_id, centum_error, centum_comprobante, cajero_id, numero_venta')
         .in('id_venta_centum', centumIdsNoMatcheados)
       for (const v of (ventasPOSExtra || [])) {
         if (v.id_venta_centum && !posPorVentaId.has(v.id_venta_centum)) {
@@ -1387,7 +1391,9 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, asyncHandler(async 
 
     // Recorrer ventas POS
     for (const vp of (ventasPOS || [])) {
-      const totalPOS = parseFloat(vp.total) || 0
+      // Sumar gc_aplicada_monto porque Centum registra factura por total + GC
+      const gcAplicada = vp.tipo !== 'nota_credito' ? (parseFloat(vp.gc_aplicada_monto) || 0) : 0
+      const totalPOS = (parseFloat(vp.total) || 0) + gcAplicada
       const sucNombre = sucursalesMap.get(vp.sucursal_id) || '—'
 
       if (!vp.centum_sync && !vp.centum_comprobante) {
@@ -1469,7 +1475,10 @@ router.get('/ventas/conciliacion', verificarAuth, soloAdmin, asyncHandler(async 
 
     // 6. KPIs sobre todas las filas (antes de filtrar por estado)
     const kpis = {
-      pos: { count: (ventasPOS || []).length, total: (ventasPOS || []).reduce((s, v) => s + (parseFloat(v.total) || 0), 0) },
+      pos: { count: (ventasPOS || []).length, total: (ventasPOS || []).reduce((s, v) => {
+        const gcApl = v.tipo !== 'nota_credito' ? (parseFloat(v.gc_aplicada_monto) || 0) : 0
+        return s + (parseFloat(v.total) || 0) + gcApl
+      }, 0) },
       centum: { count: centumPOS.length, total: centumPOS.reduce((s, v) => s + (parseFloat(v.Total) || 0), 0) },
       matched: { count: 0, total: 0 },
       mismatch: { count: 0, total_diff: 0 },
@@ -2200,45 +2209,86 @@ router.get('/ventas/:id', verificarAuth, asyncHandler(async (req, res) => {
       }
     }
 
-    // Si la venta usó saldo, buscar la(s) NC que generaron ese saldo
+    // Si la venta usó saldo, reconstruir FIFO para determinar qué NCs contribuyeron
     const saldoAplicadoFinal = parseFloat(data.saldo_aplicado) || 0
     if (saldoAplicadoFinal > 0 && data.id_cliente_centum) {
-      // Buscar movimientos positivos (NCs) del mismo cliente que tienen venta_pos_id (la NC)
-      const { data: movsPositivos } = await supabase
+      // Obtener TODOS los movimientos del cliente en orden cronológico
+      // Sin filtro de fecha: el movimiento negativo se crea ms después de la venta
+      const { data: todosMovs } = await supabase
         .from('movimientos_saldo_pos')
-        .select('venta_pos_id, monto, motivo, created_at')
+        .select('id, venta_pos_id, monto, motivo, created_at')
         .eq('id_cliente_centum', data.id_cliente_centum)
-        .gt('monto', 0)
-        .not('venta_pos_id', 'is', null)
-        .order('created_at', { ascending: false })
-      if (movsPositivos && movsPositivos.length > 0) {
-        // Obtener las NCs referenciadas
-        const ncIds = [...new Set(movsPositivos.map(m => m.venta_pos_id))]
-        const { data: ncs } = await supabase
-          .from('ventas_pos')
-          .select('id, numero_venta, total, created_at, venta_origen_id, centum_comprobante')
-          .in('id', ncIds)
-          .eq('tipo', 'nota_credito')
-          .order('created_at', { ascending: false })
-        if (ncs && ncs.length > 0) {
-          // Para cada NC, obtener la venta origen (factura original)
-          const origenIds = [...new Set(ncs.filter(nc => nc.venta_origen_id).map(nc => nc.venta_origen_id))]
-          let ventasOrigen = []
-          if (origenIds.length > 0) {
-            const { data: origenes } = await supabase
-              .from('ventas_pos')
-              .select('id, numero_venta, total, created_at, centum_comprobante, nombre_cliente')
-              .in('id', origenIds)
-            ventasOrigen = origenes || []
+        .order('created_at', { ascending: true })
+
+      if (todosMovs && todosMovs.length > 0) {
+        // Cola FIFO: los créditos más antiguos se consumen primero
+        const colaCreditos = []
+        let ncIdsConsumidas = []
+
+        for (const mov of todosMovs) {
+          if (parseFloat(mov.monto) > 0) {
+            // Movimiento positivo = NC generó saldo
+            colaCreditos.push({
+              venta_pos_id: mov.venta_pos_id,
+              montoRestante: parseFloat(mov.monto),
+            })
+          } else {
+            // Movimiento negativo = saldo consumido en una venta
+            let porConsumir = Math.abs(parseFloat(mov.monto))
+            const consumidasAqui = []
+
+            for (const credito of colaCreditos) {
+              if (porConsumir <= 0.01) break
+              if (credito.montoRestante <= 0.01) continue
+
+              const consumo = Math.min(credito.montoRestante, porConsumir)
+              credito.montoRestante -= consumo
+              porConsumir -= consumo
+              consumidasAqui.push({
+                venta_pos_id: credito.venta_pos_id,
+                montoConsumido: Math.round(consumo * 100) / 100,
+              })
+            }
+
+            // Si este movimiento negativo corresponde a ESTA venta, guardar las NCs
+            if (mov.venta_pos_id === data.id) {
+              ncIdsConsumidas = consumidasAqui
+            }
           }
-          data.saldo_notas_credito = ncs.map(nc => ({
-            id: nc.id,
-            numero_venta: nc.numero_venta,
-            total: nc.total,
-            centum_comprobante: nc.centum_comprobante,
-            created_at: nc.created_at,
-            venta_origen: ventasOrigen.find(v => v.id === nc.venta_origen_id) || null,
-          }))
+        }
+
+        if (ncIdsConsumidas.length > 0) {
+          const ncIds = [...new Set(ncIdsConsumidas.map(c => c.venta_pos_id).filter(Boolean))]
+          const { data: ncs } = await supabase
+            .from('ventas_pos')
+            .select('id, numero_venta, total, created_at, venta_origen_id, centum_comprobante')
+            .in('id', ncIds)
+            .eq('tipo', 'nota_credito')
+            .order('created_at', { ascending: false })
+
+          if (ncs && ncs.length > 0) {
+            const origenIds = [...new Set(ncs.filter(nc => nc.venta_origen_id).map(nc => nc.venta_origen_id))]
+            let ventasOrigen = []
+            if (origenIds.length > 0) {
+              const { data: origenes } = await supabase
+                .from('ventas_pos')
+                .select('id, numero_venta, total, created_at, centum_comprobante, nombre_cliente')
+                .in('id', origenIds)
+              ventasOrigen = origenes || []
+            }
+            data.saldo_notas_credito = ncs.map(nc => {
+              const info = ncIdsConsumidas.find(c => c.venta_pos_id === nc.id)
+              return {
+                id: nc.id,
+                numero_venta: nc.numero_venta,
+                total: nc.total,
+                monto_consumido: info ? info.montoConsumido : null,
+                centum_comprobante: nc.centum_comprobante,
+                created_at: nc.created_at,
+                venta_origen: ventasOrigen.find(v => v.id === nc.venta_origen_id) || null,
+              }
+            })
+          }
         }
       }
     }
@@ -4797,22 +4847,28 @@ router.post('/devolucion', verificarAuth, asyncHandler(async (req, res) => {
 
     // Calcular proporción sobre el subtotal original
     const subtotalVenta = parseFloat(venta.subtotal) || 0
-    const totalVenta = parseFloat(venta.total) || 0
 
     if (subtotalVenta <= 0) {
       return res.status(400).json({ error: 'Subtotal de venta inválido' })
     }
 
-    // Saldo = proporción del total pagado (que ya tiene descuentos aplicados)
+    // Total después de descuentos de la tienda (promos + forma pago + grupo)
+    // pero SIN restar saldo/GC/redondeo (que son del cliente, no descuentos)
+    const descPromos = parseFloat(venta.descuento_total) || 0
+    const descFormaPago = venta.descuento_forma_pago?.total || 0
+    const descGrupo = parseFloat(venta.descuento_grupo_cliente) || 0
+    const totalConDescTienda = subtotalVenta - descPromos - descFormaPago - descGrupo
+
+    // Saldo = proporción del total con descuentos de tienda
     const proporcion = subtotalDevuelto / subtotalVenta
-    const saldoAFavor = Math.round(proporcion * totalVenta * 100) / 100
+    const saldoAFavor = Math.round(proporcion * totalConDescTienda * 100) / 100
 
     if (saldoAFavor <= 0) {
       return res.status(400).json({ error: 'El importe de la devolución es $0. No se puede generar una nota de crédito con importe cero.' })
     }
 
-    // Armar items de la nota de crédito (con precio proporcional al descuento)
-    const factorDescuento = subtotalVenta > 0 ? totalVenta / subtotalVenta : 1
+    // Armar items de la nota de crédito (con precio proporcional al descuento de tienda)
+    const factorDescuento = subtotalVenta > 0 ? totalConDescTienda / subtotalVenta : 1
     const itemsNC = items_devueltos.map(dev => {
       const itemOriginal = itemsVenta[dev.indice] || {}
       const precioOriginal = itemOriginal.precio_unitario || itemOriginal.precioUnitario || itemOriginal.precio || 0
@@ -5256,8 +5312,12 @@ router.post('/devolucion-precio', verificarAuth, asyncHandler(async (req, res) =
     if (ventaErr || !venta) return res.status(404).json({ error: 'Venta no encontrada' })
 
     const subtotalVenta = parseFloat(venta.subtotal) || 0
-    const totalVenta = parseFloat(venta.total) || 0
-    const factorDescuento = subtotalVenta > 0 ? totalVenta / subtotalVenta : 1
+    // Total con descuentos de tienda (promos + forma pago + grupo), sin restar saldo/GC/redondeo
+    const descPromos = parseFloat(venta.descuento_total) || 0
+    const descFormaPago = venta.descuento_forma_pago?.total || 0
+    const descGrupo = parseFloat(venta.descuento_grupo_cliente) || 0
+    const totalConDescTienda = subtotalVenta - descPromos - descFormaPago - descGrupo
+    const factorDescuento = subtotalVenta > 0 ? totalConDescTienda / subtotalVenta : 1
 
     // Calcular diferencia total
     let diferenciaTotal = 0
