@@ -680,6 +680,8 @@ const POS = () => {
   // Promociones
   const [promociones, setPromociones] = useState([])
   const [cargandoPromos, setCargandoPromos] = useState(false)
+  const [promosFinalizadas, setPromosFinalizadas] = useState([])
+  const [bannerPromosCerrado, setBannerPromosCerrado] = useState(false)
 
   // Modal cobrar
   const [mostrarCobrar, setMostrarCobrar] = useState(false)
@@ -882,6 +884,10 @@ const POS = () => {
     cargarClientesCache()
     cargarFavoritos()
     cargarArticulosDelivery()
+    // Cargar promos finalizadas para banner
+    api.get('/api/pos/promociones/finalizadas')
+      .then(({ data }) => setPromosFinalizadas(data.finalizadas || []))
+      .catch(() => {})
   }, [])
 
   async function cargarFavoritos() {
@@ -1951,6 +1957,7 @@ const POS = () => {
     setPedidoEnProceso({
       id: pedido.id, numero: pedido.numero, esPagado, totalPagado,
       ventaAnticipadaId: pedido.venta_anticipada_id || null,
+      ventasVinculadas: pedido.ventas_vinculadas || [],
       pagos: pedido.pagos || null,
       descuento_forma_pago: pedido.descuento_forma_pago || null,
       caja_cobro_id: pedido.caja_cobro_id || null,
@@ -2038,6 +2045,7 @@ const POS = () => {
       turno_entrega: pedido.turno_entrega || '',
       sucursal_id: pedido.sucursal_id || '',
       ventaAnticipadaId: pedido.venta_anticipada_id || null,
+      ventasVinculadas: pedido.ventas_vinculadas || [],
     }
     setPedidoEnProceso(pedidoData)
     // Cargar campos extras del pedido
@@ -2158,10 +2166,20 @@ const POS = () => {
 
   // Marcar pedido como entregado en backend
   async function marcarPedidoEntregado(pedidoId, cajaIdOverride) {
-    try {
-      await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado', caja_id: cajaIdOverride || terminalConfig?.caja_id || null })
-    } catch (err) {
-      console.error('Error marcando pedido como entregado:', err)
+    const cajaId = cajaIdOverride || terminalConfig?.caja_id || null
+    // Reintentar hasta 3 veces — si la venta ya fue creada, es crítico que el estado se actualice
+    for (let intento = 1; intento <= 3; intento++) {
+      try {
+        await api.put(`/api/pos/pedidos/${pedidoId}/estado`, { estado: 'entregado', caja_id: cajaId })
+        return // éxito
+      } catch (err) {
+        console.error(`Error marcando pedido como entregado (intento ${intento}/3):`, err)
+        if (intento === 3) {
+          alert(`⚠️ La venta y factura ya se generaron, pero no se pudo marcar el pedido como entregado. Por favor marcarlo manualmente desde la lista de pedidos.`)
+        } else {
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
     }
   }
 
@@ -2198,6 +2216,13 @@ const POS = () => {
 
     setGuardandoPedido(true)
     try {
+      // Si ya existe una venta vinculada (por entrega previa fallida), no crear otra — solo marcar entregado
+      if (pedidoEnProceso.ventasVinculadas?.some(v => v.tipo === 'venta')) {
+        await marcarPedidoEntregado(pedidoEnProceso.id, pedidoEnProceso.caja_cobro_id || terminalConfig?.caja_id || null)
+        limpiarVenta()
+        return
+      }
+
       // Si ya existe venta anticipada (pedidos legacy), solo marcar entregado
       if (pedidoEnProceso.ventaAnticipadaId) {
         await marcarPedidoEntregado(pedidoEnProceso.id)
@@ -2556,6 +2581,29 @@ const POS = () => {
 
       {/* === TAB VENTA === */}
       {vistaActiva === 'venta' && <>
+      {/* Banner promos finalizadas */}
+      {promosFinalizadas.length > 0 && !bannerPromosCerrado && (
+        <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-4 py-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span className="text-lg">⚠️</span>
+              <span>
+                {promosFinalizadas.length === 1
+                  ? `La promoción "${promosFinalizadas[0].nombre}" finalizó y fue desactivada automáticamente`
+                  : `${promosFinalizadas.length} promociones finalizaron y fueron desactivadas: ${promosFinalizadas.map(p => p.nombre).join(', ')}`}
+              </span>
+            </div>
+            <button
+              onClick={() => setBannerPromosCerrado(true)}
+              className="text-white/70 hover:text-white ml-3 shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       {/* Banner modo delivery */}
       {modoDelivery && (
         <div className="bg-orange-500 text-white text-center py-1.5 text-sm font-bold tracking-wide">

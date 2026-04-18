@@ -3760,7 +3760,7 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
 
     const { data: pedido } = await supabase
       .from('pedidos_pos')
-      .select('id, estado, total, total_pagado, id_cliente_centum, nombre_cliente, items, venta_anticipada_id')
+      .select('id, estado, total, total_pagado, id_cliente_centum, nombre_cliente, items, venta_anticipada_id, descuento_forma_pago, observaciones, pagos')
       .eq('id', req.params.id)
       .single()
 
@@ -3778,13 +3778,29 @@ router.put('/pedidos/:id/pago', verificarAuth, asyncHandler(async (req, res) => 
 
     const updateData = {
       total_pagado: nuevoTotalPagado,
-      observaciones: observaciones || pedido.observaciones || 'PAGO ANTICIPADO',
+      // Acumular observaciones: mantener historial de pagos previos
+      observaciones: pedido.observaciones && observaciones
+        ? `${pedido.observaciones} | ${observaciones}`
+        : (observaciones || pedido.observaciones || 'PAGO ANTICIPADO'),
     }
 
     // Registrar info de cobro en el pedido (sin crear venta — la venta se crea al entregar)
     if (pagos_anticipado && Array.isArray(pagos_anticipado) && pagos_anticipado.length > 0) {
-      updateData.pagos = pagos_anticipado.map(p => normalizarPago(p))
-      updateData.descuento_forma_pago = req.body.descuento_forma_pago || null
+      // Acumular pagos previos + nuevos
+      const pagosExistentes = Array.isArray(pedido.pagos) ? pedido.pagos : []
+      const pagosNuevos = pagos_anticipado.map(p => normalizarPago(p))
+      updateData.pagos = [...pagosExistentes, ...pagosNuevos]
+      // Acumular descuento_forma_pago (NO sobrescribir — total_pagado se acumula, el descuento también)
+      const descExistente = pedido.descuento_forma_pago || null
+      const descNuevo = req.body.descuento_forma_pago || null
+      if (descExistente && descNuevo) {
+        updateData.descuento_forma_pago = {
+          total: (parseFloat(descExistente.total) || 0) + (parseFloat(descNuevo.total) || 0),
+          detalle: [...(descExistente.detalle || []), ...(descNuevo.detalle || [])],
+        }
+      } else {
+        updateData.descuento_forma_pago = descNuevo || descExistente
+      }
       // Talo Pay se concilia aparte — no asociar a ninguna caja/cierre
       const esTaloPay = pagos_anticipado.some(p => (p.tipo || '').toLowerCase() === 'talo pay')
       updateData.caja_cobro_id = esTaloPay ? null : (caja_cobro_id || null)
