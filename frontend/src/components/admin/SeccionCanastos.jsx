@@ -157,6 +157,14 @@ const SeccionCanastos = () => {
             Reintentar
           </button>
         )}
+        <a
+          href="/override.crt"
+          download="override.crt"
+          className="ml-auto text-xs text-gray-500 hover:text-cyan-600 underline"
+          title="Descargar e instalar en C:\Program Files\QZ Tray\ para eliminar popups de seguridad"
+        >
+          Descargar certificado QZ Tray
+        </a>
       </div>
 
       {/* Stats */}
