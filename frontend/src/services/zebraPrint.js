@@ -100,40 +100,63 @@ async function enviarZPLBatch(zplArray) {
   await qz.print(config, data)
 }
 
+// ─── Tamaños de etiqueta (dots @ 203 dpi) ───
+// Para agregar un tamaño nuevo: definir ancho/alto en mm, se convierte automáticamente
+const DPI = 203
+const mmToDots = (mm) => Math.round(mm * DPI / 25.4)
+
+const ETIQUETAS = {
+  '100x150': { ancho: mmToDots(100), alto: mmToDots(150) }, // 812x1218 — GK420t estándar
+  '100x50':  { ancho: mmToDots(100), alto: mmToDots(50) },  // 812x406
+  '50x25':   { ancho: mmToDots(50),  alto: mmToDots(25) },  // 406x203
+  '80x40':   { ancho: mmToDots(80),  alto: mmToDots(40) },  // 650x325
+}
+
+function getEtiqueta(nombre) {
+  return ETIQUETAS[nombre] || ETIQUETAS['100x150']
+}
+
+// ─── Helpers ZPL ───
+
+function zplInicio(oscuridad = 25) {
+  return `^XA\n^CI28\n^LH0,0\n~SD${oscuridad}\n`
+}
+
+function zplBarcodeCentrado(x, y, ancho, codigo, modulo = 3, alto = 140) {
+  // Code128: cada carácter ≈ 11 módulos, start=11, stop=13, quiet=20
+  const modulosTotales = (codigo.length * 11 + 11 + 13 + 20)
+  const anchoBc = modulosTotales * modulo
+  const offsetX = Math.max(0, Math.floor((ancho - anchoBc) / 2))
+  return `^FO${offsetX},${y}^BY${modulo},2,${alto}^BCN,${alto},N,N,N^FD${codigo}^FS\n`
+}
+
+function zplTextoCentrado(y, ancho, texto, tamano = 36) {
+  return `^FO0,${y}^FB${ancho},1,0,C,0^CF0,${tamano}^FD${texto}^FS\n`
+}
+
+function zplTexto(x, y, texto, tamano = 30) {
+  return `^FO${x},${y}^CF0,${tamano}^FD${texto}^FS\n`
+}
+
+function zplLineaHorizontal(x, y, largo, grosor = 1) {
+  return `^FO${x},${y}^GB${largo},${grosor},${grosor}^FS\n`
+}
+
 // ─── Templates ZPL ───
-// Zebra GK420t 100x150mm (4x6") = 812x1218 dots a 203 dpi
 
 function zplEtiquetaCanasto(codigo) {
-  // Etiqueta 100x150mm (812x1218 dots @ 203dpi)
-  // 4 bloques iguales con barcode centrado + texto + línea de corte
-  const anchoEtiqueta = 812
-  const altoEtiqueta = 1218
+  const { ancho, alto } = getEtiqueta('100x150')
   const bloques = 4
-  const bloqueAlto = Math.floor(altoEtiqueta / bloques) // 304
+  const bloqueAlto = Math.floor(alto / bloques)
   const barcodeAlto = 140
-  // Code128 "CAN-0001": start(11)+8chars*11+stop(13)+2quiet = 113 módulos * 3 = 339 dots
-  const barcodeX = Math.floor((anchoEtiqueta - 340) / 2) // ~236
 
-  let zpl = `^XA
-^CI28
-^LH0,0
-~SD25
-`
+  let zpl = zplInicio()
   for (let i = 0; i < bloques; i++) {
     const baseY = i * bloqueAlto
-    const barcodeY = baseY + 30
-    const textoY = barcodeY + barcodeAlto + 15
-    // Barcode Code128 centrado
-    zpl += `^FO${barcodeX},${barcodeY}^BY3,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
-`
-    // Texto centrado
-    zpl += `^FO0,${textoY}^FB${anchoEtiqueta},1,0,C,0^CF0,36^FD${codigo}^FS
-`
-    // Línea de corte (excepto después del último)
+    zpl += zplBarcodeCentrado(0, baseY + 30, ancho, codigo, 3, barcodeAlto)
+    zpl += zplTextoCentrado(baseY + 30 + barcodeAlto + 15, ancho, codigo, 36)
     if (i < bloques - 1) {
-      const lineaY = (i + 1) * bloqueAlto
-      zpl += `^FO20,${lineaY}^GB${anchoEtiqueta - 40},0,1^FS
-`
+      zpl += zplLineaHorizontal(20, (i + 1) * bloqueAlto, ancho - 40)
     }
   }
   zpl += '^XZ'
@@ -141,29 +164,19 @@ function zplEtiquetaCanasto(codigo) {
 }
 
 function zplEtiquetaPedido(pedido) {
+  const { ancho } = getEtiqueta('100x150')
   const fecha = pedido.fecha || new Date().toLocaleDateString('es-AR')
   const cliente = (pedido.cliente_nombre || 'Sin cliente').substring(0, 30)
   const numero = pedido.numero || pedido.id?.substring(0, 8) || ''
 
-  return `^XA
-^CI28
-^LH0,0
-
-~SD25
-
-^CF0,40
-^FO30,30^FDPedido: ${numero}^FS
-
-^CF0,30
-^FO30,90^FD${cliente}^FS
-^FO30,130^FDFecha: ${fecha}^FS
-
-^FO30,180^BY3,2,80^BCN,80,Y,N,N^FD${numero}^FS
-
-^CF0,25
-^FO30,310^FDItems: ${pedido.items?.length || 0}^FS
-
-^XZ`
+  let zpl = zplInicio()
+  zpl += zplTexto(30, 30, `Pedido: ${numero}`, 40)
+  zpl += zplTexto(30, 90, cliente, 30)
+  zpl += zplTexto(30, 130, `Fecha: ${fecha}`, 30)
+  zpl += `^FO30,180^BY3,2,80^BCN,80,Y,N,N^FD${numero}^FS\n`
+  zpl += zplTexto(30, 310, `Items: ${pedido.items?.length || 0}`, 25)
+  zpl += '^XZ'
+  return zpl
 }
 
 function zplEtiquetaTraspaso(orden) {
@@ -172,26 +185,15 @@ function zplEtiquetaTraspaso(orden) {
   const destino = (orden.sucursal_destino_nombre || '').substring(0, 25)
   const fecha = orden.fecha || new Date().toLocaleDateString('es-AR')
 
-  return `^XA
-^CI28
-^LH0,0
-
-~SD25
-
-^CF0,35
-^FO30,30^FDTRASPASO^FS
-
-^CF0,40
-^FO30,75^FD${numero}^FS
-
-^CF0,28
-^FO30,130^FDOrigen: ${origen}^FS
-^FO30,170^FDDestino: ${destino}^FS
-^FO30,210^FDFecha: ${fecha}^FS
-
-^FO30,260^BY3,2,90^BCN,90,Y,N,N^FD${numero}^FS
-
-^XZ`
+  let zpl = zplInicio()
+  zpl += zplTexto(30, 30, 'TRASPASO', 35)
+  zpl += zplTexto(30, 75, numero, 40)
+  zpl += zplTexto(30, 130, `Origen: ${origen}`, 28)
+  zpl += zplTexto(30, 170, `Destino: ${destino}`, 28)
+  zpl += zplTexto(30, 210, `Fecha: ${fecha}`, 28)
+  zpl += `^FO30,260^BY3,2,90^BCN,90,Y,N,N^FD${numero}^FS\n`
+  zpl += '^XZ'
+  return zpl
 }
 
 // ─── API pública por módulo ───
