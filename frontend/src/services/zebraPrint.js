@@ -32,7 +32,8 @@ export async function conectar() {
     return true
   } catch (err) {
     // Si ya está conectado, no es error
-    if (err.message?.includes('already active')) {
+    const errMsg = typeof err === 'string' ? err : (err.message || '')
+    if (errMsg.includes('already active') || errMsg.includes('already exists')) {
       conectado = true
       impresoraZebra = getNombreImpresora()
       return true
