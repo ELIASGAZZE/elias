@@ -109,9 +109,12 @@ function zplEtiquetaCanasto(codigo) {
   // Barcode ancho completo: módulo 4, ratio 2, altura 150
   // Línea punteada de corte entre cada bloque
   const bloqueAlto = 304
-  const margenX = 20
+  const margenLinea = 20
   const anchoLinea = 772  // 812 - 2*20
   const barcodeAlto = 150
+  // Code128 con módulo 4: ~11 módulos por carácter * 8 chars + start/stop ≈ 480 dots
+  // Centrado: (812 - 480) / 2 ≈ 160
+  const barcodeX = 160
 
   let zpl = `^XA
 ^CI28
@@ -123,8 +126,8 @@ function zplEtiquetaCanasto(codigo) {
     const baseY = i * bloqueAlto
     const barcodeY = baseY + 20
     const textoY = barcodeY + barcodeAlto + 10
-    // Barcode Code128 ancho completo
-    zpl += `^FO${margenX},${barcodeY}^BY4,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
+    // Barcode Code128 centrado
+    zpl += `^FO${barcodeX},${barcodeY}^BY4,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
 `
     // Texto centrado debajo
     zpl += `^FO0,${textoY}^FB812,1,0,C,0^CF0,40^FD${codigo}^FS
