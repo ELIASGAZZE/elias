@@ -4,6 +4,3 @@ node_modules/
 !.env.example
 *.log
 npm-debug.log*
-
-# QZ Tray private key — NUNCA subir
-qz-private-key.pem
