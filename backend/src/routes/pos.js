@@ -17,7 +17,9 @@ const { normalizarPago, FORMAS_COBRO } = require('../config/formasCobro')
 const OPERADOR_MOVIL_USER_PRUEBA = process.env.CENTUM_OPERADOR_PRUEBA_USER || 'api123'
 
 // Lock en memoria para prevenir ventas duplicadas por doble-submit concurrente
-const ventaTicketLock = new Set()
+// Usa Map con timestamp para auto-expirar locks colgados (TTL 60s)
+const ventaTicketLock = new Map()
+const LOCK_TTL_MS = 60000
 
 // Helper: enriquecer gift_cards_vendidas con estado actual, venta de uso y NC
 async function enriquecerGCVendidas(gcVendidas, ventaId) {
@@ -426,6 +428,28 @@ router.get('/promociones', verificarAuth, asyncHandler(async (req, res) => {
   }
 }))
 
+// GET /api/pos/promociones/finalizadas
+// Devuelve promos desactivadas automáticamente en las últimas 48h
+router.get('/promociones/finalizadas', verificarAuth, asyncHandler(async (req, res) => {
+  try {
+    const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+
+    const { data, error } = await supabase
+      .from('promociones_pos')
+      .select('id, nombre, tipo, fecha_desde, fecha_hasta, desactivada_auto_fecha')
+      .eq('desactivada_auto', true)
+      .gte('desactivada_auto_fecha', hace48h)
+      .order('desactivada_auto_fecha', { ascending: false })
+
+    if (error) throw error
+
+    res.json({ finalizadas: data || [] })
+  } catch (err) {
+    logger.error('[POS] Error al listar promos finalizadas:', err.message)
+    res.status(500).json({ error: 'Error al listar promos finalizadas' })
+  }
+}))
+
 // POST /api/pos/promociones (admin/gestor)
 router.post('/promociones', verificarAuth, soloGestorOAdmin, asyncHandler(async (req, res) => {
   try {
@@ -528,11 +552,15 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     }
 
     // Capa 1: lock en memoria — bloquea requests concurrentes con mismo ticket_uid
-    if (ventaTicketLock.has(idempotencyKey)) {
+    const lockTime = ventaTicketLock.get(idempotencyKey)
+    if (lockTime && (Date.now() - lockTime) < LOCK_TTL_MS) {
       logger.warn(`[POS] Venta duplicada bloqueada (lock) — ticket_uid ${idempotencyKey} ya está siendo procesado`)
       return res.status(409).json({ error: 'Esta venta ya se está procesando', duplicada: true })
     }
-    ventaTicketLock.add(idempotencyKey)
+    if (lockTime) {
+      logger.warn(`[POS] Lock expirado para ticket_uid ${idempotencyKey} (${Math.round((Date.now() - lockTime) / 1000)}s) — permitiendo reintento`)
+    }
+    ventaTicketLock.set(idempotencyKey, Date.now())
 
     // Capa 2: check en DB — por si el lock se perdió (restart del server, etc)
     try {
@@ -575,7 +603,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
     // Validar que haya items o gift cards a activar
     const tieneItems = items && Array.isArray(items) && items.length > 0
     const tieneGC = gift_cards_a_activar && Array.isArray(gift_cards_a_activar) && gift_cards_a_activar.length > 0
-    if (!tieneItems && !tieneGC) return res.status(400).json({ error: 'items o gift_cards_a_activar es requerido' })
+    if (!tieneItems && !tieneGC) { ventaTicketLock.delete(idempotencyKey); return res.status(400).json({ error: 'items o gift_cards_a_activar es requerido' }) }
 
     const saldoApl = parseFloat(saldo_aplicado) || 0
     const totalACobrar = total - saldoApl
@@ -585,6 +613,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
 
     // Validar que monto_pagado + saldo + gift cards >= total
     if (montoPagadoNum + saldoApl + totalGCAplicadas < total - 0.01) {
+      ventaTicketLock.delete(idempotencyKey)
       return res.status(400).json({ error: 'monto_pagado + saldo_aplicado debe ser >= total' })
     }
 
@@ -596,6 +625,7 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
         .eq('id_cliente_centum', id_cliente_centum)
       const saldoDisponible = (saldoRows || []).reduce((s, r) => s + parseFloat(r.monto), 0)
       if (saldoApl > saldoDisponible + 0.01) {
+        ventaTicketLock.delete(idempotencyKey)
         return res.status(400).json({ error: `Saldo insuficiente. Disponible: ${saldoDisponible.toFixed(2)}` })
       }
     }
