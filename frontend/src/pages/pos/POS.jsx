@@ -1256,14 +1256,18 @@ const POS = () => {
   // Parsear código de barras de balanza Kretz (EAN-13, prefijo 20)
   // Formato: 20 PPPPP WWWWW C → PLU (5 dígitos) + Peso en gramos (5 dígitos) + check
   const parsearBarcodeBalanza = useCallback((barcode) => {
-    const code = barcode.replace(/\s/g, '')
+    const code = barcode.replace(/[^0-9]/g, '')
     if (code.length === 13 && code.startsWith('20')) {
-      const plu = code.substring(2, 7)        // 5 dígitos PLU
-      const pesoGramos = parseInt(code.substring(7, 12), 10) // 5 dígitos peso
+      const plu = code.substring(2, 7)
+      const pesoGramos = parseInt(code.substring(7, 12), 10)
       const pesoKg = pesoGramos / 1000
-      if (pesoKg > 0) {
-        return { plu, pesoKg }
-      }
+      if (pesoKg > 0) return { plu, pesoKg }
+    }
+    if (code.length === 14 && code.startsWith('020')) {
+      const plu = code.substring(3, 8)
+      const pesoGramos = parseInt(code.substring(8, 13), 10)
+      const pesoKg = pesoGramos / 1000
+      if (pesoKg > 0) return { plu, pesoKg }
     }
     return null
   }, [])

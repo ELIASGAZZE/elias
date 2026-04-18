@@ -371,6 +371,7 @@ const Preparacion = () => {
   // Procesar código escaneado (compartido entre onKeyDown Enter y timeout)
   const procesarCodigoEscaneado = (codigo) => {
     if (!codigo) return
+    console.log('[SCAN-DEBUG]', JSON.stringify(codigo), 'len=' + codigo.length, 'chars=' + [...codigo].map(c => c.charCodeAt(0)).join(','))
     if (faseRef.current === 'detalle' && itemDetalleRef.current) {
       handleScanDetalleRef.current?.(codigo)
     } else {
@@ -459,10 +460,19 @@ const Preparacion = () => {
 
   // === UTILIDADES ===
   const parsearBarcodeBalanza = (barcode) => {
-    const code = barcode.replace(/\s/g, '')
+    // Limpiar espacios y caracteres no numéricos (AIM identifiers, etc.)
+    const code = barcode.replace(/[^0-9]/g, '')
+    // EAN-13 directo: 20PPPPPWWWWWC
     if (code.length === 13 && code.startsWith('20')) {
       const plu = code.substring(2, 7)
       const pesoGramos = parseInt(code.substring(7, 12), 10)
+      const pesoKg = pesoGramos / 1000
+      if (pesoKg > 0) return { plu, pesoKg }
+    }
+    // EAN-14 (leading 0) o scanner que agrega dígito extra: 020PPPPPWWWWWC
+    if (code.length === 14 && code.startsWith('020')) {
+      const plu = code.substring(3, 8)
+      const pesoGramos = parseInt(code.substring(8, 13), 10)
       const pesoKg = pesoGramos / 1000
       if (pesoKg > 0) return { plu, pesoKg }
     }

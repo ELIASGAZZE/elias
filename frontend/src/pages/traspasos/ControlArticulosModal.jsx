@@ -2,10 +2,16 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import api from '../../services/api'
 
 const parsearBarcodeBalanza = (barcode) => {
-  const code = barcode.replace(/\s/g, '')
+  const code = barcode.replace(/[^0-9]/g, '')
   if (code.length === 13 && code.startsWith('20')) {
     const plu = code.substring(2, 7)
     const pesoGramos = parseInt(code.substring(7, 12), 10)
+    const pesoKg = pesoGramos / 1000
+    if (pesoKg > 0) return { plu, pesoKg }
+  }
+  if (code.length === 14 && code.startsWith('020')) {
+    const plu = code.substring(3, 8)
+    const pesoGramos = parseInt(code.substring(8, 13), 10)
     const pesoKg = pesoGramos / 1000
     if (pesoKg > 0) return { plu, pesoKg }
   }
