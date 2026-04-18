@@ -12,16 +12,23 @@ const SeccionCanastos = () => {
   const [impresoras, setImpresoras] = useState([])
   const [imprimiendo, setImprimiendo] = useState(null)
 
+  const [qzError, setQzError] = useState('')
+
   // Intentar conectar QZ Tray al montar
-  useEffect(() => {
-    conectar()
-      .then(async () => {
-        setQzConectado(true)
-        const lista = await getImpresoras()
-        setImpresoras(lista)
-      })
-      .catch(() => setQzConectado(false))
-  }, [])
+  const intentarConectar = async () => {
+    try {
+      setQzError('')
+      await conectar()
+      setQzConectado(true)
+      const lista = await getImpresoras()
+      setImpresoras(lista)
+    } catch (err) {
+      setQzConectado(false)
+      setQzError(err.message || 'Error desconocido')
+    }
+  }
+
+  useEffect(() => { intentarConectar() }, [])
 
   const cargar = async () => {
     try {
@@ -128,6 +135,7 @@ const SeccionCanastos = () => {
           <span className="text-gray-600">
             {qzConectado ? 'QZ Tray conectado' : 'QZ Tray no disponible (se usará impresión HTML)'}
           </span>
+          {qzError && <span className="text-red-500 text-xs ml-2">{qzError}</span>}
         </div>
         {qzConectado && impresoras.length > 0 && (
           <select
@@ -143,14 +151,7 @@ const SeccionCanastos = () => {
         )}
         {!qzConectado && (
           <button
-            onClick={async () => {
-              try {
-                await conectar()
-                setQzConectado(true)
-                const lista = await getImpresoras()
-                setImpresoras(lista)
-              } catch { /* silencio */ }
-            }}
+            onClick={intentarConectar}
             className="text-cyan-600 hover:text-cyan-800 text-xs font-medium"
           >
             Reintentar
