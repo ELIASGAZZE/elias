@@ -22,9 +22,15 @@ export async function conectar() {
   if (conectado && qz.websocket.isActive()) return true
 
   try {
-    // QZ Tray no requiere firma en desarrollo/demo
-    qz.security.setCertificatePromise(() => Promise.resolve(''))
-    qz.security.setSignaturePromise(() => Promise.resolve(''))
+    // Modo sin firma — QZ Tray mostrará popup de confianza al usuario
+    qz.security.setCertificatePromise(function(resolve, reject) {
+      resolve('')
+    })
+    qz.security.setSignaturePromise(function(toSign) {
+      return function(resolve, reject) {
+        resolve('')
+      }
+    })
 
     await qz.websocket.connect({ retries: 3, delay: 1 })
     conectado = true
