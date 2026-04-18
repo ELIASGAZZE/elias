@@ -104,28 +104,44 @@ async function enviarZPLBatch(zplArray) {
 // Zebra GK420t 100x150mm (4x6") = 812x1218 dots a 203 dpi
 
 function zplEtiquetaCanasto(codigo) {
-  // 4 códigos de barras iguales distribuidos en etiqueta 100x150mm (812x1218 dots @ 203dpi)
-  // Espaciado uniforme: 1218 / 5 = ~243 dots entre cada bloque
-  // Cada bloque: barcode 120 dots + texto 30 dots = 150 dots
-  // Posiciones Y: 100, 370, 640, 910
-  return `^XA
+  // 4 códigos de barras en etiqueta 100x150mm (812x1218 dots @ 203dpi)
+  // Cada bloque ocupa ~300 dots de alto (1218/4 ≈ 304)
+  // Barcode ancho completo: módulo 4, ratio 2, altura 150
+  // Línea punteada de corte entre cada bloque
+  const bloqueAlto = 304
+  const margenX = 20
+  const anchoLinea = 772  // 812 - 2*20
+  const barcodeAlto = 150
+
+  let zpl = `^XA
 ^CI28
 ^LH0,0
 ~SD25
+`
 
-^FO80,100^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
-^FO250,230^CF0,35^FD${codigo}^FS
+  for (let i = 0; i < 4; i++) {
+    const baseY = i * bloqueAlto
+    const barcodeY = baseY + 20
+    const textoY = barcodeY + barcodeAlto + 10
+    // Barcode Code128 ancho completo
+    zpl += `^FO${margenX},${barcodeY}^BY4,2,${barcodeAlto}^BCN,${barcodeAlto},N,N,N^FD${codigo}^FS
+`
+    // Texto centrado debajo
+    zpl += `^FO0,${textoY}^FB812,1,0,C,0^CF0,40^FD${codigo}^FS
+`
+    // Línea punteada de corte (excepto después del último)
+    if (i < 3) {
+      const lineaY = baseY + bloqueAlto - 8
+      // Línea punteada con segmentos cortos
+      for (let x = margenX; x < margenX + anchoLinea; x += 20) {
+        zpl += `^FO${x},${lineaY}^GB10,2,2^FS
+`
+      }
+    }
+  }
 
-^FO80,370^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
-^FO250,500^CF0,35^FD${codigo}^FS
-
-^FO80,640^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
-^FO250,770^CF0,35^FD${codigo}^FS
-
-^FO80,910^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
-^FO250,1040^CF0,35^FD${codigo}^FS
-
-^XZ`
+  zpl += `^XZ`
+  return zpl
 }
 
 function zplEtiquetaPedido(pedido) {
