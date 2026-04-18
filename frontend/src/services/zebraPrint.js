@@ -140,7 +140,7 @@ function zplBarcodeCentrado(x, y, ancho, codigo, modulo = 3, alto = 140) {
   // Code128: cada carácter ≈ 11 módulos, start=11, stop=13, quiet=20
   const modulosTotales = (codigo.length * 11 + 11 + 13 + 20)
   const anchoBc = modulosTotales * modulo
-  const offsetX = Math.max(0, Math.floor((ancho - anchoBc) / 2))
+  const offsetX = Math.max(0, Math.floor((ancho - anchoBc) / 2)) + 15
   return `^FO${offsetX},${y}^BY${modulo},2,${alto}^BCN,${alto},N,N,N^FD${codigo}^FS\n`
 }
 
