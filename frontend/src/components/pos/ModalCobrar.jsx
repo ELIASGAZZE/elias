@@ -587,6 +587,8 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
 
   function agregarEfectivo(monto) {
     if (!monto || monto <= 0) return
+    if (agregandoEfectivoRef.current) return
+    agregandoEfectivoRef.current = true
     setPagos(prev => [...prev, { tipo: 'Efectivo', monto, detalle: {} }])
     setMontoEfectivoInput('')
   }
@@ -602,6 +604,9 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
       setMontoEfectivoInput(prev => prev + key)
     }
   }
+
+  // Resetear guard de doble-click en efectivo después de que pagos se actualice
+  useEffect(() => { agregandoEfectivoRef.current = false }, [pagos])
 
   // Auto-focus el div root para que capture teclas después de cualquier cambio de estado
   useEffect(() => {
@@ -674,6 +679,7 @@ const ModalCobrar = ({ total, subtotal, descuentoTotal, ivaTotal, carrito, clien
   }
 
   const submittingRef = useRef(false)
+  const agregandoEfectivoRef = useRef(false)
 
   const ventaTimeoutRef = useRef(null)
 
