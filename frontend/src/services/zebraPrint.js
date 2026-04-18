@@ -150,11 +150,16 @@ function zplEtiquetaCanasto(codigo) {
   const bloqueAlto = Math.floor(alto / bloques)
   const barcodeAlto = 140
 
+  const textoAlto = 36
+  const gap = 15
+  const contenidoAlto = barcodeAlto + gap + textoAlto // 191
+  const padY = Math.floor((bloqueAlto - contenidoAlto) / 2) // centrado vertical
+
   let zpl = zplInicio()
   for (let i = 0; i < bloques; i++) {
-    const baseY = i * bloqueAlto
-    zpl += zplBarcodeCentrado(0, baseY + 30, ancho, codigo, 3, barcodeAlto)
-    zpl += zplTextoCentrado(baseY + 30 + barcodeAlto + 15, ancho, codigo, 36)
+    const baseY = i * bloqueAlto + padY
+    zpl += zplBarcodeCentrado(0, baseY, ancho, codigo, 3, barcodeAlto)
+    zpl += zplTextoCentrado(baseY + barcodeAlto + gap, ancho, codigo, textoAlto)
     if (i < bloques - 1) {
       zpl += zplLineaHorizontal(20, (i + 1) * bloqueAlto, ancho - 40)
     }
