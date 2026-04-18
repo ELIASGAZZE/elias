@@ -22,11 +22,11 @@ export async function conectar() {
   if (conectado && qz.websocket.isActive()) return true
 
   try {
-    // QZ Tray no requiere firma en desarrollo
+    // QZ Tray no requiere firma en desarrollo/demo
     qz.security.setCertificatePromise(() => Promise.resolve(''))
     qz.security.setSignaturePromise(() => Promise.resolve(''))
 
-    await qz.websocket.connect()
+    await qz.websocket.connect({ retries: 3, delay: 1 })
     conectado = true
     impresoraZebra = getNombreImpresora()
     return true
@@ -38,7 +38,8 @@ export async function conectar() {
       return true
     }
     console.error('Error conectando QZ Tray:', err)
-    throw new Error('No se pudo conectar con QZ Tray. Verificá que esté instalado y corriendo.')
+    const msg = typeof err === 'string' ? err : (err.message || JSON.stringify(err))
+    throw new Error(msg)
   }
 }
 
