@@ -555,7 +555,22 @@ router.post('/ventas', verificarAuth, validate(crearVentaSchema), asyncHandler(a
 
     // Calcular total de gift cards a activar (se resta del total para ventas_pos)
     const totalGCActivar = (gift_cards_a_activar || []).reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0)
-    const totalItemsSolo = Math.round((total - totalGCActivar) * 100) / 100
+    let totalItemsSolo = Math.round((total - totalGCActivar) * 100) / 100
+
+    // Safeguard: si el frontend restó gc_aplicadas del total, corregirlo.
+    // La GC aplicada es un MEDIO DE PAGO, no un descuento — el total de la venta
+    // debe reflejar el valor completo de los artículos vendidos.
+    // Centum registra la factura por el total completo + una NC por la GC.
+    const totalGCAplicadasCheck = (gift_cards_aplicadas && Array.isArray(gift_cards_aplicadas))
+      ? gift_cards_aplicadas.reduce((s, gc) => s + (parseFloat(gc.monto) || 0), 0) : 0
+    if (totalGCAplicadasCheck > 0) {
+      const totalConGC = totalItemsSolo + totalGCAplicadasCheck
+      const totalSinDescuentos = (subtotal || 0) - (descuento_total || 0) - (parseFloat(descuento_grupo_cliente) || 0)
+      // Si sumar la GC al total no excede el subtotal, el frontend la restó → corregir
+      if (totalConGC <= totalSinDescuentos + 1) {
+        totalItemsSolo = Math.round(totalConGC * 100) / 100
+      }
+    }
 
     // Validar que haya items o gift cards a activar
     const tieneItems = items && Array.isArray(items) && items.length > 0
