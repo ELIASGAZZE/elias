@@ -104,21 +104,26 @@ async function enviarZPLBatch(zplArray) {
 // Zebra GK420t 100x150mm (4x6") = 812x1218 dots a 203 dpi
 
 function zplEtiquetaCanasto(codigo) {
-  // 4 códigos de barras iguales distribuidos en la etiqueta
-  // Para pegar en los 4 lados del canasto
+  // 4 códigos de barras iguales distribuidos en etiqueta 100x150mm (812x1218 dots @ 203dpi)
+  // Espaciado uniforme: 1218 / 5 = ~243 dots entre cada bloque
+  // Cada bloque: barcode 120 dots + texto 30 dots = 150 dots
+  // Posiciones Y: 100, 370, 640, 910
   return `^XA
 ^CI28
 ^LH0,0
-
 ~SD25
 
-^FO60,30^BY3,2,90^BCN,90,Y,N,N^FD${codigo}^FS
+^FO80,100^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
+^FO250,230^CF0,35^FD${codigo}^FS
 
-^FO60,200^BY3,2,90^BCN,90,Y,N,N^FD${codigo}^FS
+^FO80,370^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
+^FO250,500^CF0,35^FD${codigo}^FS
 
-^FO60,370^BY3,2,90^BCN,90,Y,N,N^FD${codigo}^FS
+^FO80,640^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
+^FO250,770^CF0,35^FD${codigo}^FS
 
-^FO60,540^BY3,2,90^BCN,90,Y,N,N^FD${codigo}^FS
+^FO80,910^BY3,2,120^BCN,120,N,N,N^FD${codigo}^FS
+^FO250,1040^CF0,35^FD${codigo}^FS
 
 ^XZ`
 }
